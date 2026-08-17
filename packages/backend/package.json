@@ -16,7 +16,7 @@
     "db:studio": "drizzle-kit studio"
   },
   "dependencies": {
-    "@hono/node-server": "^1.14.0",
+    "@hono/node-server": "^2.1.1",
     "@hono/zod-validator": "^0.7.6",
     "@infos/shared": "workspace:*",
     "@modelcontextprotocol/sdk": "^1.29.0",
