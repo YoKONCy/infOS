@@ -59,7 +59,7 @@
     "@changesets/cli": "^2.31.0",
     "@electron/rebuild": "4.0.3",
     "@tailwindcss/vite": "^4.2.4",
-    "@types/node": "^22.19.17",
+    "@types/node": "^26.2.0",
     "@typescript-eslint/eslint-plugin": "^8.54.0",
     "@typescript-eslint/parser": "^8.54.0",
     "@vitejs/plugin-vue": "^6.0.1",

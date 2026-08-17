@@ -13,7 +13,7 @@
     "ws": "^8.20.0"
   },
   "devDependencies": {
-    "@types/node": "^22.15.0",
+    "@types/node": "^26.2.0",
     "@types/ws": "^8.18.1",
     "electron": "^40.2.1",
     "electron-vite": "^3.1.0",
