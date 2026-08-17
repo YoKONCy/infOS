@@ -17,9 +17,9 @@
   },
   "dependencies": {
     "@hono/node-server": "^1.14.0",
-    "@hono/zod-validator": "^0.7.6",
+    "@hono/zod-validator": "^0.9.0",
     "@infos/shared": "workspace:*",
-    "@modelcontextprotocol/sdk": "^1.29.0",
+    "@modelcontextprotocol/sdk": "^1.30.0",
     "@opentelemetry/api": "^1.9.1",
     "@opentelemetry/exporter-trace-otlp-http": "^0.221.0",
     "@opentelemetry/resources": "^2.10.0",
@@ -29,14 +29,14 @@
     "@types/ws": "^8.18.1",
     "better-sqlite3": "12.11.1",
     "consola": "^3.4.2",
-    "drizzle-orm": "^0.44.0",
-    "hono": "^4.7.0",
-    "msedge-tts": "^2.0.5",
+    "drizzle-orm": "^0.45.2",
+    "hono": "^4.13.2",
+    "msedge-tts": "^2.0.7",
     "nunjucks": "^3.2.4",
     "prom-client": "^15.1.3",
     "triviumdb": "^0.7.3",
-    "uuid": "^14.0.0",
-    "ws": "^8.20.0",
+    "uuid": "^14.0.1",
+    "ws": "^8.21.3",
     "xmlbuilder": "11.0.1",
     "zod": "^3.25.76"
   },
@@ -54,7 +54,7 @@
     "@types/uuid": "^11.0.0",
     "drizzle-kit": "^0.31.0",
     "rimraf": "^6.1.2",
-    "tsx": "^4.20.0",
+    "tsx": "^4.23.12",
     "typescript": "^5.9.3"
   }
 }

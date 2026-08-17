@@ -9,8 +9,8 @@
   },
   "dependencies": {
     "@infos/shared": "workspace:*",
-    "adm-zip": "^0.5.17",
-    "ws": "^8.20.0"
+    "adm-zip": "^0.6.0",
+    "ws": "^8.21.3"
   },
   "devDependencies": {
     "@types/node": "^22.15.0",
@@ -22,7 +22,7 @@
   },
   "optionalDependencies": {
     "bufferutil": "^4.1.0",
-    "electron-updater": "^6.6.3",
+    "electron-updater": "^6.8.9",
     "utf-8-validate": "^6.0.6"
   }
 }

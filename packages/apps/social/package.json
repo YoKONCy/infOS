@@ -4,10 +4,10 @@
   "private": true,
   "type": "module",
   "dependencies": {
-    "drizzle-orm": "^0.44.0",
-    "hono": "^4.7.0",
+    "drizzle-orm": "^0.45.2",
+    "hono": "^4.13.2",
     "triviumdb": "^0.7.3",
-    "uuid": "^14.0.0"
+    "uuid": "^14.0.1"
   },
   "devDependencies": {
     "@types/uuid": "^11.0.0"
