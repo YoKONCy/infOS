@@ -4,6 +4,7 @@ import type { ChatMessage, ToolDefinition } from './types'
 import { releaseFileEditReferences } from '../execution/fileEditing'
 import { releaseToolObservations } from '../execution/toolObservation'
 import { createLogger } from '../../lib/logger'
+import { compareToolNames } from '../agent/toolOrder'
 
 const logger = createLogger('PromptReplay')
 
@@ -25,11 +26,12 @@ export function promptFingerprint(value: unknown): string {
 }
 
 export function canonicalTools(tools?: ToolDefinition[]): ToolDefinition[] | undefined {
-  return tools
-    ?.map((tool) => canonicalValue(tool) as ToolDefinition)
-    .sort((a, b) =>
-      a.function.name < b.function.name ? -1 : a.function.name > b.function.name ? 1 : 0,
-    )
+  return (
+    tools
+      ?.map((tool) => canonicalValue(tool) as ToolDefinition)
+      // 动态工具排在末尾，上下线不改变常驻工具前缀。
+      .sort((a, b) => compareToolNames(a.function.name, b.function.name))
+  )
 }
 
 export function historyKey(message: ChatMessage): string {

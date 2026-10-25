@@ -31,6 +31,7 @@ import type { ToolRegistry } from '../services/agent/toolRegistry'
 import type { InteractionMode } from '@infos/shared'
 import { isToolAllowedInInteractionMode, MINIMAL_TOOLS } from '../tools/interactionMode'
 import { isSystemProtocolTool } from '../tools/systemProtocolTools'
+import { compareToolNames } from '../services/agent/toolOrder'
 import { createLogger } from '../lib/logger'
 
 const logger = createLogger('CapabilityGate')
@@ -688,7 +689,8 @@ export class CapabilityGate {
     const allDefs = this.toolRegistry.getDefinitions()
     const filtered = allDefs
       .filter((d) => allowedTools.has(d.name) && this.isToolAllowedInMode(d.name, mode))
-      .sort((a, b) => (a.name < b.name ? -1 : a.name > b.name ? 1 : 0))
+      // 与发给模型的函数定义同序：动态工具在末尾，减少提示词缓存失效。
+      .sort((a, b) => compareToolNames(a.name, b.name))
 
     if (filtered.length === 0) return ''
 

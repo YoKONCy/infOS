@@ -68,74 +68,77 @@ describe('ApplicationToolManager', () => {
     for (const dir of dirs.splice(0)) rmSync(dir, { recursive: true, force: true })
   })
 
-  it('离线时仅保留目录条目，上线后才进入工具注册表并可随时撤回', async () => {
+  it('子应用启动前不登记任何工具，上线时动态注册、下线时整条移除', async () => {
     const { tools, realms, manager, realm } = setup()
     const declaration = manager.declare(realm('demo'), manifest('demo', [projection('demo_run')]))
 
-    expect(manager.list()).toEqual([
-      expect.objectContaining({
-        name: 'demo_run',
-        appId: 'demo',
-        appName: 'demo 应用',
-        available: false,
-      }),
-    ])
+    expect(manager.list()).toEqual([])
     expect(tools.has('demo_run')).toBe(false)
 
     expect(declaration.online('demo_run', handler)).toBe(true)
-    expect(tools.has('demo_run')).toBe(true)
+    expect(manager.list()).toEqual([
+      expect.objectContaining({ name: 'demo_run', appId: 'demo', appName: 'demo 应用' }),
+    ])
     expect(tools.getDefinition('demo_run')?.packageId).toBe('application:demo')
     expect(realms.isHostProjection('demo_run')).toBe(true)
     expect(realms.isPrivateTool('demo_run')).toBe(false)
-    expect(manager.get('demo_run')?.available).toBe(true)
 
     await declaration.offlineAll()
     expect(tools.has('demo_run')).toBe(false)
-    expect(manager.get('demo_run')?.available).toBe(false)
+    expect(manager.list()).toEqual([])
   })
 
-  it('跳过尚未支持的 open_session 声明，其余工具照常登记', () => {
+  it('跳过尚未支持的 open_session 声明，其余工具照常可上线', () => {
     const { manager, realm } = setup()
     const declaration = manager.declare(
       realm('demo'),
       manifest('demo', [projection('demo_run'), projection('demo_chat', 'open_session')]),
     )
     expect(declaration.names).toEqual(['demo_run'])
-    expect(manager.get('demo_chat')).toBeUndefined()
+    expect(() => declaration.online('demo_chat', handler)).toThrow('APPLICATION_TOOL_UNDECLARED')
   })
 
-  it('不同子应用声明同名工具时整体拒绝，且不留下半登记', () => {
-    const { manager, realm } = setup()
-    manager.declare(realm('a'), manifest('a', [projection('shared_tool')]))
-    expect(() =>
-      manager.declare(realm('b'), manifest('b', [projection('b_only'), projection('shared_tool')])),
-    ).toThrow('APPLICATION_TOOL_NAME_CONFLICT')
-    expect(manager.get('b_only')).toBeUndefined()
-    expect(manager.list().map((entry) => entry.name)).toEqual(['shared_tool'])
-  })
-
-  it('与主应用已有工具重名时上线失败，不覆盖原工具', async () => {
+  it('与其他子应用或主应用工具重名时上线失败，不覆盖已有工具', () => {
     const { tools, manager, realm } = setup()
     const builtin = vi.fn(async () => 'builtin')
     tools.register({ name: 'web_search', description: '', parameters: {} }, builtin)
-    const declaration = manager.declare(realm('demo'), manifest('demo', [projection('web_search')]))
-    expect(declaration.online('web_search', handler)).toBe(false)
+    const a = manager.declare(realm('a'), manifest('a', [projection('shared_tool')]))
+    const b = manager.declare(
+      realm('b'),
+      manifest('b', [projection('shared_tool'), projection('web_search')]),
+    )
+
+    expect(a.online('shared_tool', handler)).toBe(true)
+    expect(b.online('shared_tool', handler)).toBe(false)
+    expect(b.online('web_search', handler)).toBe(false)
+    expect(manager.get('shared_tool')?.appId).toBe('a')
+    expect(manager.has('web_search')).toBe(false)
     expect(tools.getHandler('web_search')).toBe(builtin)
-    expect(manager.get('web_search')?.available).toBe(false)
   })
 
   it('只能上下线本子应用声明过的工具', async () => {
-    const { manager, realm } = setup()
-    manager.declare(realm('a'), manifest('a', [projection('a_tool')]))
+    const { tools, manager, realm } = setup()
+    const a = manager.declare(realm('a'), manifest('a', [projection('a_tool')]))
     const b = manager.declare(realm('b'), manifest('b', [projection('b_tool')]))
+    a.online('a_tool', handler)
     expect(() => b.online('a_tool', handler)).toThrow('APPLICATION_TOOL_UNDECLARED')
+    await b.offline('a_tool')
+    expect(tools.has('a_tool')).toBe(true)
   })
 
-  it('Realm 释放后目录条目一并撤销，可重新登记', async () => {
+  it('同一子应用重复接入时拒绝', () => {
+    const { manager, realm } = setup()
+    const demo = realm('demo')
+    manager.declare(demo, manifest('demo', []))
+    expect(() => manager.declare(demo, manifest('demo', []))).toThrow(
+      'APPLICATION_TOOLS_ALREADY_DECLARED',
+    )
+  })
+
+  it('Realm 释放后在线工具一并撤销，可重新接入', async () => {
     const { tools, manager, realm } = setup()
     const demo = realm('demo')
-    const declaration = manager.declare(demo, manifest('demo', [projection('demo_run')]))
-    declaration.online('demo_run', handler)
+    manager.declare(demo, manifest('demo', [projection('demo_run')])).online('demo_run', handler)
     await demo.dispose()
     expect(tools.has('demo_run')).toBe(false)
     expect(manager.list()).toEqual([])
@@ -164,7 +167,7 @@ describe('ApplicationToolManager', () => {
     const gate = new CapabilityGate([root], skills as unknown as SkillLoader, tools)
     const declaration = manager.declare(realm('demo'), manifest('demo', [projection('demo_run')]))
 
-    // 离线：即使角色允许全部工具，也不可调用。
+    // 子应用未启动：即使角色允许全部工具，也不可调用。
     expect(gate.isToolAllowed('open', 'desktop', 'demo_run')).toBe(false)
 
     declaration.online('demo_run', handler)

@@ -92,7 +92,7 @@ describe('ArcaCapabilityRuntime', () => {
     expect(realms.isHostProjection('arca_document_inspect')).toBe(true)
     expect(realms.isPrivateTool('arca_document_inspect')).toBe(false)
     expect(tools.getDefinition('arca_changeset_propose')?.requiresApproval).toBe(true)
-    expect(applicationTools.get('arca_document_inspect')?.available).toBe(true)
+    expect(applicationTools.get('arca_document_inspect')?.appId).toBe('infos.arca')
 
     remove()
     await vi.waitFor(() => expect(tools.has('arca_document_inspect')).toBe(false))
@@ -100,8 +100,8 @@ describe('ArcaCapabilityRuntime', () => {
     expect(runtime.available()).toBe(false)
     expect(tools.has('arca_document_inspect')).toBe(false)
     expect(realms.ownsTool('arca_document_inspect')).toBe(false)
-    // 下线后目录仍保留声明，供能力配置界面继续展示。
-    expect(applicationTools.get('arca_document_inspect')?.available).toBe(false)
+    // 下线后整条移除，不常驻工具列表。
+    expect(applicationTools.list()).toEqual([])
 
     await runtime.stop()
     await realms.shutdown()

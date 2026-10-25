@@ -281,6 +281,7 @@ import { tokenCounter } from './services/tokenizer/tokenCounter'
 // ── AIOS 第八阶段：Agent 应用层（系统 + 独立应用） ──
 import { ApplicationRealmManager } from './applications/applicationRealm'
 import { ApplicationToolManager } from './applications/applicationToolManager'
+import { setDynamicToolPredicate } from './services/agent/toolOrder'
 import { SqliteGrantRegistry, type GrantRegistry } from './applications/grantRegistry'
 import { AppManagerImpl, type AppManager } from './applications/appManager'
 import { ApplicationResourceAccessService } from './applications/applicationResourceAccessService'
@@ -1082,6 +1083,8 @@ export async function createAppContext(config: AppConfig): Promise<AppContext> {
   kernelLifecycle.defer(() => applicationRealms.shutdown())
   // 子应用工具管理层：各子应用 infOS 侧适配器声明的工具统一在此登记，再交 CapabilityGate 管理。
   const applicationTools = new ApplicationToolManager()
+  // 在线子应用工具属于动态工具，排在工具列表末尾。
+  kernelLifecycle.defer(setDynamicToolPredicate((name) => applicationTools.has(name)))
   const arcaRealm = applicationRealms.register({
     realmId: 'infos.arca',
     appId: 'infos.arca',

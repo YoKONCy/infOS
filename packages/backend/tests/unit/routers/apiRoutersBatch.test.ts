@@ -70,7 +70,7 @@ describe('AgentRouter', () => {
     },
   )
 
-  it('子应用工具标明来源与在线状态，离线声明仍列出供提前配置', async () => {
+  it('只列出已启动子应用的工具并标明来源，未上线的声明不出现', async () => {
     const toolRegistry = new ToolRegistry()
     const applicationRealms = new ApplicationRealmManager(toolRegistry)
     const applicationTools = new ApplicationToolManager()
@@ -101,22 +101,11 @@ describe('AgentRouter', () => {
     try {
       const response = await router.request('http://test/tools')
       const body = (await response.json()) as {
-        data: Array<{ name: string; channels: string[]; available?: boolean; source?: unknown }>
+        data: Array<{ name: string; channels: string[]; source?: unknown }>
       }
       const source = { kind: 'application', appId: 'demo', appName: 'Demo' }
       expect(body.data).toEqual([
-        expect.objectContaining({
-          name: 'demo_online',
-          available: true,
-          source,
-          channels: ['desktop'],
-        }),
-        expect.objectContaining({
-          name: 'demo_offline',
-          available: false,
-          source,
-          channels: ['desktop'],
-        }),
+        expect.objectContaining({ name: 'demo_online', source, channels: ['desktop'] }),
       ])
     } finally {
       await realm.dispose()

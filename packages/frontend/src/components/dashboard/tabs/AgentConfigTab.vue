@@ -223,8 +223,9 @@ const categoryOrder = computed(() => [
   __t('ui.settings', '网页访问'),
   __t('ui.settings', '系统操作'),
   __t('ui.settings', '提醒记忆'),
-  __t('ui.settings', '子应用'),
   __t('ui.settings', '其他'),
+  // 子应用工具随子应用启动动态出现，固定排在最后。
+  __t('ui.settings', '子应用'),
 ])
 
 const avatarSrc = computed(() => {
@@ -1297,12 +1298,7 @@ onBeforeUnmount(() => {
                   <span>
                     <b>
                       {{ tool.display?.label }}
-                      <em v-if="tool.source" class="tool-source">
-                        {{ tool.source.appName }}
-                        <template v-if="tool.available === false">
-                          · {{ __t('ui.settings', '未连接') }}
-                        </template>
-                      </em>
+                      <em v-if="tool.source" class="tool-source">{{ tool.source.appName }}</em>
                     </b>
                     <small>{{ tool.description }}</small>
                   </span>
