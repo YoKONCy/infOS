@@ -6,5 +6,6 @@
   "原始审计报告已保留；{0} 项公告已核验精确补丁及回归测试。": "The raw audit report is preserved; exact patches and regression tests were verified for {0} advisories.",
   "依赖安全检查通过；原始扫描结果与本地回补记录分开保存。": "Dependency security check passed; raw findings and local backport records are saved separately.",
   "依赖安全检查失败：{0}": "Dependency security check failed: {0}",
-  "未修复依赖漏洞：{0}，等级：{1}，公告：{2}": "Unpatched dependency vulnerability: {0}, severity: {1}, advisory: {2}"
+  "未修复依赖漏洞：{0}，等级：{1}，公告：{2}": "Unpatched dependency vulnerability: {0}, severity: {1}, advisory: {2}",
+  "已核验 {0} 项私有工作区路径误报；原始报告与锁文件证据分别保留。": "Verified {0} false findings caused by private workspace paths; the original report and lockfile evidence are preserved separately."
 }

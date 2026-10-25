@@ -40,6 +40,7 @@ describe('Vite 与安全版 esbuild 的浏览器目标兼容', () => {
     ['Pictoria', 'packages/apps/pictoria/client/vite.config.ts'],
     ['Web', 'packages/frontend/vite.config.ts'],
     ['Electron', 'electron.vite.config.ts'],
+    ['Wiki', 'packages/wiki/.vitepress/config.mts'],
   ])('%s 的实际配置显式覆盖依赖预打包目标', async (name, file) => {
     // runner 在内存加载配置，不向 node_modules 写临时配置构建产物。
     // 默认 bundle 加载器会注入配置所在目录；runner 测试显式补齐同一值。
@@ -56,9 +57,11 @@ describe('Vite 与安全版 esbuild 的浏览器目标兼容', () => {
     const config =
       name === 'Electron'
         ? (loaded!.config as UserConfig & { renderer: UserConfig }).renderer
-        : loaded!.config
+        : name === 'Wiki'
+          ? (loaded!.config as UserConfig & { vite: UserConfig }).vite
+          : loaded!.config
     expect(config.optimizeDeps?.esbuildOptions?.target).toEqual(browserTargets)
-    if (name === 'Web') expect(config.build?.target).toEqual(browserTargets)
+    if (name === 'Web' || name === 'Wiki') expect(config.build?.target).toEqual(browserTargets)
     if (name === 'Arca' || name === 'Pictoria') expect(config.build?.target).toBe('es2022')
   })
 })

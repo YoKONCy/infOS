@@ -76,6 +76,14 @@ Electron 44.9.3 的官方组件记录仍标注 Node 24.22.0，低于本轮 24.22
 - 富文本净化回归改用 DOMPurify 官方支持的 jsdom 环境，避免 happy-dom 对净化流程的兼容缺陷掩盖危险属性；生产环境仍使用浏览器原生 DOM。
 - Electron 44.9.3 实际内嵌 Node 24.22.0，`security:electron` 仍失败。官方稳定版当前没有满足 Node 24.22.1 基线的发行版；保留构建前与产物门禁，不以修改下限或版本豁免恢复发包。
 - 本地未执行构建、打包或容器启动。源码与标签可正常同步，桌面发行完成与否以标签流水线实际结果为准。
+
+### 正式版本号下的工作区审计误报
+
+pnpm 9 与 10 的审计会将 `electron/` importer 的路径末段与应用版本 `0.9.6` 组合，误报成 npm 的 `electron@0.9.6`；这与真实锁定的 `electron@44.9.3` 不同。预发布版本号不匹配相关漏洞范围，版本同步前的审计因此未暴露该问题。
+
+审计评估同时核验 importer 对应的真实清单与完整锁文件：仅识别私有、真实名称不同于路径末段、版本完全相同、无依赖路径，且锁文件没有同名同版本实际依赖的 finding。任一条件缺失仍按原公告阻断；混合公告保留所有真实依赖 finding。原始报告不改写，核验记录单独保存，并附上锁文件证据。额外回归覆盖误报、真实依赖、peer 后缀、混合公告、路径、名称、私有性和锁文件缺失边界。此修正不改变 Electron 实际二进制安全门禁。
+
+云端构建另暴露 Wiki 的 VitePress 入口仍使用默认 Safari 14.0 目标，Mermaid 依赖在 esbuild 0.28 的解构转换阶段失败。该入口补齐与 Web 相同的 `browserTargets` 及依赖预打包目标，配置回归覆盖第五个入口；不回退安全依赖、不伪造语法支持。本地仅验证配置与定向测试，实际构建继续交由 CD。
 - 后续安全公告需继续更新分支基线；每日 Dependabot 不会自动证明 YAML 固定版本和内嵌运行时已修复。
 
 官方来源：[Node 2026-10 安全公告](https://nodejs.org/en/blog/vulnerability/october-2026-security-releases)、[Electron 44.9.3 组件](https://releases.electronjs.org/release/v44.9.3)、[Electron 证书安全公告](https://github.com/electron/electron/security/advisories/GHSA-jr5w-w6x2-84p9)。
