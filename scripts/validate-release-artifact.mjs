@@ -34,6 +34,7 @@ const summary = {
   artifactDirectory: path.resolve(artifactDirectory),
   runRoot,
   executable: '',
+  connectionProfile: '',
   healthReady: false,
   requiredLogsFound: false,
   portableDataFound: false,
@@ -238,6 +239,24 @@ try {
   }
 
   summary.executable = executable
+  // 产物烟测显式选择本地模式；只写入本次隔离目录，正常用户仍显示首次连接选择。
+  const metadata = JSON.parse(
+    await fsp.readFile(new URL('../package.json', import.meta.url), 'utf8'),
+  )
+  const connectionDirectory =
+    mode === 'portable' ? path.dirname(executable) : path.join(appData, metadata.productName)
+  const connectionRelative = path.relative(runRoot, connectionDirectory)
+  if (
+    !connectionRelative ||
+    connectionRelative.startsWith('..') ||
+    path.isAbsolute(connectionRelative)
+  )
+    throw new Error('验收连接配置目录越界')
+  await fsp.mkdir(connectionDirectory, { recursive: true })
+  summary.connectionProfile = path.join(connectionDirectory, 'client-connection.json')
+  await fsp.writeFile(summary.connectionProfile, JSON.stringify({ version: 1, mode: 'local' }), {
+    flag: 'wx',
+  })
   const processLogFd = fs.openSync(processLogPath, 'a')
   try {
     desktopChild = spawn(executable, [], {
