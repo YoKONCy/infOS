@@ -218,6 +218,7 @@ const tabComponents: Record<string, Component> = Object.fromEntries(
     'voice_config',
     'mcp_config',
     'distributed',
+    'backups',
     'social',
     'terminal',
     'system_reset',

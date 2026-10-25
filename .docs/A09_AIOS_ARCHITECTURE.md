@@ -2,10 +2,22 @@
 
 > **适用范围**：infOS-TS 全项目（后端 Daemon、前端客户端、Electron 壳、资产与扩展）
 > **状态**：当前架构基线 + 后续演进约束
-> **最后更新**：2026-10-17
-> **来源**：融合历史 AIOS 设计草案（原 `.aios/00` 至 `.aios/12`）的设计原则、已完成重构结论与后续设计草案。
+> **最后更新**：2026-10-26
+> **阅读约定**：本文中的“必须/不得”为架构约束；抽象接口与演进目标不自动代表已有完整实现。当前调用链、数据来源和明确限制由对应 B 类文档说明。
 
 ---
+
+## 实现参照与设计约束
+
+| 架构概念 | 阅读实际实现的入口 |
+| --- | --- |
+| 上下文、Region 与提示词 | `services/context/contextCompiler.ts`；[B17](./B17_PROMPT_WORKSPACE.md) |
+| 执行会话、审批与文件终端 | `services/execution/`、`tools/productivityRuntimeHolder.ts`；[B01](./B01_PRODUCTIVITY_RUNTIME.md) |
+| 社交 Realm、平台账号与任务交付 | `packages/apps/social/runtime/`；[B21](./B21_SOCIAL_CAPABILITIES.md) |
+| 持久队列与主动任务 | `services/conversation/conversationQueueService.ts`、`services/task/`；[B20](./B20_PROACTIVE_WORK.md)、[B26](./B26_CONVERSATION_QUEUE.md) |
+| Application 协议与接入约束 | [A10](./A10_APPLICATION_INTEGRATION.md)、`packages/node-sdk/`、`packages/node-host/` |
+
+未带包前缀的源码路径相对于 `packages/backend/src/`。OS 强隔离、第三方应用的全部生态适配、跨语言 SDK 等不能从本文的概念模型推导为现有承诺；读取具体模块限制后再设计调用方。
 
 ## 1. 架构使命与不可变原则
 

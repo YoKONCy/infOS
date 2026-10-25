@@ -54,8 +54,13 @@ export function isTriviumFile(fileName: string, baseName: string): boolean {
 
 export function triviumFiles(databasePath: string): string[] {
   const directory = path.dirname(databasePath)
-  if (!existsSync(directory)) return []
-  return readdirSync(directory)
+  let names: string[]
+  try { names = readdirSync(directory) }
+  catch (error) {
+    if ((error as NodeJS.ErrnoException).code === 'ENOENT') return []
+    throw error
+  }
+  return names
     .filter((name) => isTriviumFile(name, path.basename(databasePath)))
     .map((name) => {
       const file = path.join(directory, name)

@@ -72,7 +72,7 @@
 
 ## 酒馆预设兼容
 
-> 以下内容并入自原 `SILLYTAVERN_PRESETS.md`。
+此节描述酒馆预设的导入、宏求值及历史插入契约。
 
 入口：设置 → 提示词 → 新建框架 → SillyTavern 格式。已有 JSON 预设通过顶部「导入」进入审阅面板，选好排序方案与生效范围后加入草稿。编辑、预览、保存、发布、版本恢复与其他框架共用；导入不会自动发布。
 
@@ -86,7 +86,7 @@
 
 框架类型决定编排与正文处理方式，数据来源仍由上下文编译器提供。工具权限、工具 Schema、任务调度和任务结果校验不由提示词绕过。
 
-### 第一版已接入
+### 支持的格式与宏
 
 - Chat Completion 预设的 `prompts`、`prompt_order`、启停、角色、列表位置、历史内插入、深度、顺序与生成触发类型。默认优先选用 `character_id = 100001` 的排序方案；其他方案可在导入时选择。
 - 旧版 `main_prompt`、`nsfw_prompt`、`jailbreak_prompt` 转换为可编辑条目。
@@ -122,7 +122,7 @@ infOS 的通用 Provider 兼容层只保证开头的 system。为避免静默移
 
 角色覆盖和资料属于 infOS 框架配置，使用整个工作区 JSON 导出保留；酒馆预设导出不代替角色卡导出。
 
-### 本版边界
+### 兼容边界
 
 - 不支持 Text Completion 的 instruct/context 模板导入。
 - 不实现世界书激活引擎、酒馆扩展脚本、STScript 或完整酒馆运行时。未支持宏会显示兼容错误，启用时不能发布；不要把它当成完整酒馆环境。
@@ -141,7 +141,7 @@ infOS 的通用 Provider 兼容层只保证开头的 system。为避免静默移
 - 预设解析与导出：`services/prompt/sillyTavernPreset.ts`。
 - 宏与历史装配：`services/prompt/sillyTavernMacros.ts`、`sillyTavernFramework.ts`。
 - 界面：`PromptManagementTab.vue`、`SillyTavernFrameworkEditor.vue`。
-- 回归用例覆盖导入导出、触发过滤、宏隔离、历史深度和图片定位。本次仅新增用例并人工审阅，未运行测试、构建、类型检查、静态检查或应用启动。
+- 维护回归关注导入导出、触发过滤、宏隔离、历史深度和图片定位；入口为 `packages/backend/tests/unit/services/prompt/promptWorkspace.test.ts` 及同目录预设/宏用例。
 
 ### 参考
 
@@ -150,4 +150,8 @@ infOS 的通用 Provider 兼容层只保证开头的 system。为避免静默移
 - [默认 Chat Completion 预设](https://github.com/SillyTavern/SillyTavern/blob/release/default/content/presets/openai/Default.json)
 - [官方历史插入实现](https://github.com/SillyTavern/SillyTavern/blob/release/public/scripts/openai.js)
 
-本次只进行了源码编辑和人工审阅，未运行构建、测试、类型检查、静态检查或应用启动。新增回归测试尚未执行。
+## 编译链与维护边界
+
+`packages/backend/src/services/prompt/promptWorkspace.ts` 管理草稿、发布与指派。主 ContextCompiler 或 Social Compiler 读取各自权威数据，交给 MdpEngine 按生效框架快照装配，最后由请求编译器完成 Provider 请求。预览是示例数据渲染，不等于真实社交现场；缺少示例变量应显示诊断，不能用桌面状态补齐社交变量。
+
+固定规则与工具目录保持稳定，检索、时间、会话现场放在靠近输入的动态区。共享组件按变量是否存在渲染，不能因为变量名相同就跨 Realm 读取数据。社交记忆、联系人补充与心流的来源见 [B21](./B21_SOCIAL_CAPABILITIES.md)，角色三状态见 [B10](./B10_CHARACTER_STATE.md)，知识/事实召回见 [B03](./B03_DOCUMENT_KNOWLEDGE.md)。

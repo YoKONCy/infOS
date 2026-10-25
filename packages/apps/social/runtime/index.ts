@@ -1646,8 +1646,8 @@ export class SocialAppRuntime implements AgentAppRuntime {
       flowState: { currentGoal: flowState.currentGoal, privateFacts: flowState.privateFacts },
       // 用户称呼：取该 Agent 的 agent.json owner_appellation（兜底"主人"），用于替换社交规则/身份提示中的"主人"占位
       ownerAppellation: this.ctx.agentManager.getOwnerAppellation(this.socialAgentId),
-      // 主人名称：主人在主 app 里登记的名字（owner.name，兜底"用户"），与称呼语义区分
-      ownerName: (await this.ctx.configRepo?.get('owner.name')) ?? '用户',
+      // 名称读取主应用登记值；未登记时沿用当前角色的专属称呼。
+      ownerName: (await this.ctx.configRepo?.get('owner.name')) || this.ctx.agentManager.getOwnerAppellation(this.socialAgentId),
       stickersAvailable,
       contactImpression: contactImpression
         ? {
@@ -1727,14 +1727,8 @@ export class SocialAppRuntime implements AgentAppRuntime {
     let resourceUnconfirmed = false
     const sentResources = new Map<string, Promise<string>>()
     const situation = [
-      `人格主体：${agentId}。桌面与当前平台账号都是你自己的不同入口；工具范围以本轮实际能力目录为准。`,
-      activeWork.length ? `你正在处理的工作（宿主权威状态）：${JSON.stringify(activeWork)}` : '',
-      `触发方式: ${params.trigger}`,
-      `当前参与关系: ${params.participation}`,
-      params.trigger === 'proactive_review' ? '没有人要求你回复；是否参与完全由你自己决定。' : '',
-      channelType === 'group' && stickerAccountId
-        ? `当前群状态机（真实运行状态，时间为 Unix 毫秒）：${JSON.stringify(this.getGroupState(agentId, stickerAccountId, channelId, platform))}`
-        : '',
+      activeWork.length ? `当前正在处理的工作：${JSON.stringify(activeWork)}` : '',
+      params.trigger === 'proactive_review' ? '当前是在主动查看群聊，可以按话题决定是否参与。' : '',
       params.deferredIntent
         ? `你之前想稍后重新考虑：${params.deferredIntent.intention}${params.deferredIntent.condition ? `；当时的条件：${params.deferredIntent.condition}` : ''}`
         : '',
@@ -1742,9 +1736,9 @@ export class SocialAppRuntime implements AgentAppRuntime {
       .filter(Boolean)
       .join('\n')
     const last = compiled.messages[compiled.currentMessageIndex ?? compiled.messages.length - 1]
-    if (last && typeof last.content === 'string') {
+    if (situation && last && typeof last.content === 'string') {
       last.content = `<social_situation>\n${situation}\n</social_situation>\n\n${last.content}`
-    } else if (last && Array.isArray(last.content)) {
+    } else if (situation && last && Array.isArray(last.content)) {
       last.content = [
         { type: 'text', text: `<social_situation>\n${situation}\n</social_situation>` },
         ...last.content,
@@ -2200,7 +2194,7 @@ export class SocialAppRuntime implements AgentAppRuntime {
       sendResource: (source, caption, key) =>
         runSocialStep(key, () => executeScopedTool('send_file', { source, caption })),
     })
-    const scopedDefinitions = [socialActDefinition(capabilityDefinitions)]
+    const scopedDefinitions = [socialActDefinition(capabilityDefinitions, this.ctx.agentManager.getOwnerAppellation(this.socialAgentId))]
     const replayMessages = () =>
       Object.values(
         (recovery.record.checkpoint.sentMessages as Record<

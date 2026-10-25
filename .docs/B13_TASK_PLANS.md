@@ -30,3 +30,9 @@
 ## 数据库
 
 标准迁移 `0009_task_plans.sql` 创建 `task_plans`，扩展定时记录关联字段，并将旧 `lifecycle.plan` 搬入统一清单。Schema snapshot 与 journal 由 Drizzle Kit 生成；没有启动时临时建表或独立执行引擎。
+
+## 源码与状态归属
+
+`packages/backend/src/services/task/taskPlanService.ts` 校验计划作用域、修订和步骤关联，`repositories/taskPlan.repo.ts` 持久化，`routers/taskPlan.router.ts` 提供管理接口。调用方提交最新修订，服务生成实际计划投影，前端不能直接把步骤勾选写成后台任务终态。
+
+维护回归入口为 `packages/backend/tests/unit/services/task/taskPlanLifecycle.test.ts`。修改派发或定时时同时审阅 [B20](./B20_PROACTIVE_WORK.md) 的去重与领取规则；修改计划提示词时审阅 [B17](./B17_PROMPT_WORKSPACE.md) 的组件装配，避免同时注入两份计划。

@@ -247,6 +247,13 @@ syncSourceVersion(
 )
 
 syncSourceVersion(
+  'packages/backend/src/services/backup/backupService.ts',
+  /const APP_VERSION\s*=\s*'[^']*'/,
+  `const APP_VERSION = '${VERSION}'`,
+  'backup APP_VERSION',
+)
+
+syncSourceVersion(
   'packages/apps/arca/src/applicationHost.ts',
   /appVersion:\s*'[^']*'/,
   `appVersion: '${VERSION}'`,

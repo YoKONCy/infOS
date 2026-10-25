@@ -76,3 +76,11 @@ Gateway 只通知投影失效，业务数据通过 REST 重读；角色切换丢
 ## 数据库
 
 标准迁移 `0002_proactive_work.sql` 扩展 `scheduled_tasks` 并创建 `proactive_suggestions`，`0017_recurring_schedules.sql` 增加周期字段。旧的 `is_triggered = 1` 记录迁移为完成态，避免升级后重放。结构变更进入统一迁移 journal，不增加启动时的临时建表逻辑。
+
+## 调用链与维护入口
+
+用户/Agent 授权的计划先持久化，到期由调度器领取，再经 BackgroundTaskService 创建实际任务；任务执行完成后由投递链保存通知、历史事件和队列唤醒。计划已派发、任务已完成、结果已投递与会话已消费是不同状态，不允许合并为一个“成功”。
+
+任务领域入口为 `packages/backend/src/services/task/backgroundTaskService.ts`，会话唤醒入口为 `services/conversation/conversationQueueService.ts`。维护计划派发时保护领取租约、固定去重键、取消后的迟到结算与周期不重叠；排查任务完成但对话无结果时沿投递账本和队列继续定位，而不是再次派发同一任务。
+
+公开计划的修订见 [B13](./B13_TASK_PLANS.md)，队列恢复见 [B26](./B26_CONVERSATION_QUEUE.md)，社交来源的交付与宿主端口见 [B21](./B21_SOCIAL_CAPABILITIES.md)。

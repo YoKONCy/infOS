@@ -331,7 +331,7 @@ export class KnowledgeService {
       throw new AppError('RESOURCE_BUSY', { message: '知识库暂不可重建，请稍后重试' })
     if (this.reindexJob || (resetPhysical && this.jobs.size))
       throw new AppError('RESOURCE_BUSY', { message: '文档索引任务正在运行，请稍后重试' })
-    if (resetPhysical) this.index.resetPhysicalStore()
+    if (resetPhysical) await this.index.resetPhysicalStoreForMaintenance(execution?.signal)
     else this.index.rebuild()
     if (!this.embedding.isAvailable) {
       this.embeddingChanged()

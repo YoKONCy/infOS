@@ -11,10 +11,10 @@
   "tools": [
     {
       "name": "manage_task",
-      "description": "创建、查询和管理持久任务。修改任务时携带当前 revision，可通过 list/get 查询；get 支持 resultOffset/resultLimit 分页读取完整结果。后台任务可创建受限子任务、读取自身，仅管理自己的子任务；使用 finish_task 的 task_result.waitForTaskId 等待子任务交付。",
+      "description": "派发后台任务、查询进度与完整结果，或暂停、恢复、取消及处理问答。创建返回任务编号，完成情况以查询结果为准；get 通过 resultOffset/resultLimit 分页读取完整结果。",
       "display": {
         "label": "管理任务",
-        "description": "安排后台任务、查看结果，或暂停、恢复、取消任务及处理问答。聊天与工作模式可用。",
+        "description": "安排后台任务、查看结果，或暂停、恢复、取消任务及处理问答。",
         "icon": "list",
         "color": "purple"
       },
@@ -23,6 +23,7 @@
         "properties": {
           "action": {
             "type": "string",
+            "description": "create 派发（需 instruction）；list 列表；get 详情；update 调整；pause 暂停；resume 继续；cancel 取消；answer 回答；approve 审批；resolve_delivery 核验投递",
             "enum": [
               "create",
               "list",
@@ -37,64 +38,96 @@
             ]
           },
           "taskId": {
-            "type": "string"
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 160,
+            "description": "除 create/list 外必填，取自创建结果或任务列表的 id"
           },
           "expectedRevision": {
             "type": "integer",
+            "minimum": 1,
             "description": "除 create/list/get 外必填，取自任务当前 revision"
           },
           "instruction": {
-            "type": "string"
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 4000,
+            "description": "任务指令；create 必填，update 时可用于调整要求"
           },
           "title": {
-            "type": "string"
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 100,
+            "description": "可选的任务标题"
           },
           "successCriteria": {
-            "type": "string"
+            "type": "string",
+            "maxLength": 2000,
+            "description": "任务完成时可核对的验收条件"
           },
           "message": {
-            "type": "string"
+            "type": "string",
+            "maxLength": 4000,
+            "description": "补充说明，可用于单题回答、审批理由或恢复时的核验说明"
           },
           "inputId": {
-            "type": "string"
+            "type": "string",
+            "minLength": 1,
+            "description": "answer/approve 必填，使用 get 返回的 request.id"
           },
           "selectedOptionIds": {
             "type": "array",
+            "maxItems": 20,
+            "description": "answer 的单题选项 ID；多题使用 answers",
             "items": {
               "type": "string"
             }
           },
           "decision": {
             "type": "string",
+            "description": "approve 必填：allow_once 同意本次请求，deny_once 拒绝本次请求",
             "enum": ["allow_once", "deny_once"]
           },
           "recovery": {
             "type": "string",
+            "description": "任务中断后的恢复方式：默认 confirm 等待核验；仅只读任务可选 read_only 自动继续",
             "enum": ["read_only", "confirm"]
           },
           "confirmUncertain": {
             "type": "boolean",
-            "description": "仅用户明确核验过结果不明的动作后，才可设为 true"
+            "description": "仅在 {{ owner_appellation }} 明确核验结果不明的动作后设为 true"
           },
           "deadline": {
             "type": "string",
-            "description": "用户指定的截止时间，ISO 8601"
+            "description": "{{ owner_appellation }} 指定的截止时间，ISO 8601"
           },
           "maxSegments": {
-            "type": "integer"
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 1000,
+            "description": "任务分段执行次数上限，默认 48"
           },
           "maxLlmCalls": {
-            "type": "integer"
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 10000,
+            "description": "任务调用模型的总次数上限，默认 192"
           },
           "maxToolCalls": {
-            "type": "integer"
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 50000,
+            "description": "任务调用工具的总次数上限，默认 768"
           },
           "deliveryId": {
-            "type": "string"
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 250,
+            "description": "resolve_delivery 必填，使用 get 返回的 deliveries 中待核验记录的 id"
           },
           "deliveryDecision": {
             "type": "string",
-            "description": "仅用户确认已送达或未送达后，才可标记 sent 或要求 retry",
+            "description": "仅在 {{ owner_appellation }} 确认已送达或未送达后，标记 sent 或要求 retry",
             "enum": ["sent", "retry"]
           },
           "answers": {
@@ -106,18 +139,23 @@
               "type": "object",
               "properties": {
                 "questionId": {
-                  "type": "string"
+                  "type": "string",
+                  "minLength": 1,
+                  "maxLength": 80,
+                  "description": "当前待回答的问题 ID"
                 },
                 "selectedOptionIds": {
                   "type": "array",
                   "maxItems": 4,
+                  "description": "该题选中的选项 ID，不使用选项时可省略",
                   "items": {
                     "type": "string"
                   }
                 },
                 "message": {
                   "type": "string",
-                  "maxLength": 4000
+                  "maxLength": 4000,
+                  "description": "该题的文字回答或补充说明"
                 }
               },
               "required": ["questionId"],

@@ -1,23 +1,16 @@
 # 测试规范
 
 > **适用范围**：infOS-TS 全部 packages
-> **最后更新**：2026-10-17
-> **核心原则**：**每开发一个模块，就必须同步编写对应的单元测试**
+> **最后更新**：2026-10-26
+> **核心原则**：围绕核心行为、关键边界与真实回归保留必要测试，不按模块数量、断言数量或覆盖率堆用例。
 
 ---
 
-## 1. 强制要求
+## 1. 选取范围与执行权限
 
-| 规则               | 说明                                                                         |
-| ------------------ | ---------------------------------------------------------------------------- |
-| **模块必须有测试** | Service / Repository / Composable / 工具函数必须有 `*.test.ts`               |
-| **PR 不裸奔**      | 不允许提交没有测试的业务模块代码（纯类型/常量除外）                          |
-| **测试伴随代码**   | 测试文件放在对应 package 的 `tests/unit` 目录，并保持与 `src` 内模块路径一致 |
-| **测试即文档**     | 测试用例描述必须使用中文                                                     |
+新增/修改核心行为时评估可失败的关键路径，优先补强已有用例；低影响样式、装饰文案和可直接审阅的胶水改动不机械追加单测。权限、持久化、并发、取消恢复和真实文件格式是优先验证的边界。没有业务风险的“模块存在性测试”不作为提交条件。
 
-### 豁免范围
-
-纯类型定义 (`.d.ts`)、纯常量/枚举、配置文件、入口引导文件 (`index.ts` 仅 re-export)、Electron 壳层胶水代码。
+测试描述用中文，每项围绕一个行为，预期来自需求与独立样例。失败应能定位到具体契约，必要的边界数字说明含义。运行测试、构建、类型检查与程序性静态检查须遵守根目录 AGENTS.md 的授权规则；编写测试不代表已经执行或证明行为。
 
 ---
 
@@ -72,60 +65,21 @@ packages/backend/
 
 测试用例必须遵循 Arrange / Act / Assert 三段式。可用空行分隔三个阶段；如测试逻辑较长，可以使用中文注释标记阶段。测试描述必须使用中文，并说明期望行为。
 
-```typescript
-describe('MemoryService', () => {
-  describe('创建记忆', () => {
-    it('应当成功创建并返回新记忆的 ID', async () => {
-      const mockRepo = { create: vi.fn() }
-      const service = new MemoryService(mockRepo)
-      mockRepo.create.mockResolvedValue({ id: 'mem_001', content: '测试' })
+Arrange 建立独立输入与必要外部边界，Act 调用公开行为，Assert 检查需求规定的结果。不要用调用被测函数得到 expected，也不要让 mock 的业务结论替代实际判断；只有 mock 返回值的透传断言通常不能保护核心行为。
 
-      const result = await service.createMemory({ content: '测试', agentId: 'agent_001' })
+### 4.2 按风险选择场景
 
-      expect(result.id).toBe('mem_001')
-      expect(mockRepo.create).toHaveBeenCalledOnce()
-    })
-
-    it('内容为空时应当抛出验证错误', async () => {
-      const mockRepo = { create: vi.fn() }
-      const service = new MemoryService(mockRepo)
-
-      await expect(service.createMemory({ content: '', agentId: 'agent_001' })).rejects.toThrow(
-        '内容不能为空',
-      )
-    })
-  })
-})
-```
-
-### 4.2 每个 describe 至少包含
-
-1. **正常路径** (Happy Path)
-2. **边界条件** (空字符串、null、极大值)
-3. **错误处理** (非法输入、依赖失败)
+围绕一次具体行为选择有意义的成功、边界或失败场景，不要求每个 describe 凑齐固定套餐。分页应检查全部内容和游标前进；文件生成应由独立读取器检查内容；并发与持久化应使用可独立观察的存储状态，不能共享请求快照对象掩盖错误。
 
 ### 4.3 Mock 策略
 
-```typescript
-// 1. DI → Mock 构造函数参数
-const mockRepo = { findById: vi.fn() }
-const service = new MemoryService(mockRepo)
-
-// 2. 模块级 Mock
-vi.mock('../utils/tokenizer', () => ({
-  countTokens: vi.fn().mockReturnValue(100),
-}))
-
-// 3. 外部 API → msw
-const server = setupServer(
-  http.post('https://api.openai.com/v1/chat/completions', () => {
-    return HttpResponse.json({ choices: [{ message: { content: '测试' } }] })
-  }),
-)
-
-// 4. SQLite → 内存模式
-const testDb = drizzle(new Database(':memory:'))
-```
+| 边界 | 隔离方式与限制 |
+| --- | --- |
+| 外部模型与平台 API | 模拟独立协议响应、超时与部分成功；业务判断使用真实实现 |
+| SQLite 事务与查询 | 使用独立内存库或临时库及真实迁移，不能用数组 mock 证明 SQL 行为 |
+| 文件生成、解析与持久恢复 | 使用真实临时文件及独立读取；夹具放在 TEMP，不触碰用户数据 |
+| 时间与调度 | 单元计时逻辑使用 fake timers；真实进程/IO 集成使用可观察状态和有界等待 |
+| 依赖注入 | 替换外部端口，不替换正在验证的算法、权限或状态转换 |
 
 ### 4.4 禁止事项
 
@@ -133,15 +87,19 @@ const testDb = drizzle(new Database(':memory:'))
 | ------------------- | ----------------------- |
 | 测试间共享可变状态  | 用 `beforeEach` 重置    |
 | 测试依赖执行顺序    | 每个 `it` 独立可运行    |
-| 测试中 `setTimeout` | 用 `vi.useFakeTimers()` |
+| 用固定 sleep 猜异步完成 | 等待可观察结果；纯计时逻辑用 fake timers |
 | 直接测试私有方法    | 通过公开 API 间接验证   |
-| 快照测试滥用        | 仅对 UI 渲染结构使用    |
+| 同义反复或复制算法作 expected | 使用独立输入与业务预期 |
+| 按被测结果决定是否执行关键断言 | 关键断言必须执行，意外结果直接失败 |
+| 断言当前 Bug 或第三方错误原文 | 保护需求和稳定错误契约 |
+| 只查文件头、符号或 mock 调用次数 | 验证实际内容、状态与边界 |
+| 快照测试滥用        | 仅保存小而稳定的对外契约，避免大段内部输出 |
 
 ---
 
 ## 5. 测试价值与覆盖率
 
-不设覆盖率百分比门禁。CI 只运行一次功能测试；`test:coverage` 用于手动排查遗漏，不参与发布门禁。
+不设覆盖率百分比门禁。CI 在各 OS 矩阵中运行功能测试，不再另起重复的覆盖率测试任务；`test:coverage` 用于手动排查遗漏，不参与发布门禁。
 
 - 从需求和对外契约推导预期，优先检查权限、持久化、并发、失败恢复与业务边界。
 - 不为 CSS 数值、装饰 class、图标路径、默认文案或源码写法编写单元测试。

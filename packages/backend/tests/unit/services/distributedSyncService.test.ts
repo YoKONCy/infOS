@@ -4,6 +4,7 @@ import { mkdirSync, writeFileSync } from 'node:fs'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { afterEach, describe, expect, it, vi } from 'vitest'
+import Database from 'better-sqlite3'
 import { DistributedSyncService } from '../../../src/services/distributed/distributedSyncService'
 
 const roots: string[] = []
@@ -174,7 +175,11 @@ describe('DistributedSyncService 完整快照', () => {
     const targetDir = path.join(base, 'target')
     await mkdir(path.join(sourceDir, 'skills'), { recursive: true })
     await writeFile(path.join(sourceDir, 'skills', 'source.md'), '来源数据')
-    const backup = vi.fn(async (target: string) => writeFile(target, 'source-db'))
+    const backup = vi.fn(async (target: string) => {
+      const database = new Database(target)
+      try { database.exec("CREATE TABLE snapshot_data(value TEXT); INSERT INTO snapshot_data VALUES ('来源数据库')") }
+      finally { database.close() }
+    })
     const source = new DistributedSyncService(
       sourceDir,
       { $client: { backup } } as never,

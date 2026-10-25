@@ -1,4 +1,0 @@
-{
-  "Docker 模拟冒烟通过：构建定义、运行用户、卷、健康检查、代理与发布引用均已校准。": "Docker simulation smoke passes: build definition, running user, volumes, health checks, agents and release references are all calibrated.",
-  "说明：本脚本不执行 Docker Build、Compose Up 或 Registry Push。": "Note: This script does not perform Docker Build, Compose Up, or Registry Push."
-}

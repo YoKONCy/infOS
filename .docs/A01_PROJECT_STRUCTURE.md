@@ -1,7 +1,7 @@
 # 项目结构与 Monorepo 规范
 
 > **适用范围**：infOS-TS 项目整体
-> **最后更新**：2026-10-17
+> **最后更新**：2026-10-26
 
 ---
 
@@ -116,7 +116,7 @@ Service 按功能域分目录，超 500 行必须拆分子模块。
 ```
 services/
 ├── memory/            # 记忆核心域（eventMemory*、eventReflection*、dailyNotesService、
-│                      #   socialScorer、graph/、maintenance/ 等）
+│                      #   graph/、maintenance/ 等；SocialScorer 归社交应用）
 ├── gateway/           # 版本化JSON WebSocket Gateway（gatewayHub/wsUpgrade/durableGatewayStream）
 ├── agent/             # Agent 服务 + ReAct 循环
 ├── conversation/      # 会话与对话日志
@@ -128,7 +128,7 @@ services/
 ├── voice/ tokenizer/  # 语音 TTS/VAD 与分词
 ├── scheduler/         # 调度
 ├── stronghold/        # 多角色房间
-├── social/            # 社交运行时
+├── social/            # 宿主侧社交桥接；应用运行时位于 packages/apps/social/runtime/
 ├── mcp/ mdp/          # MCP 与 MDP 集成
 └── …                  # 其余功能域：attachment、companion、distributed、execution、flow、
                        #   integrations、knowledge、maintenance、pipeline、runtime、session、
@@ -152,8 +152,8 @@ services/
 | 第三方Application三层Adapter、协议与Arca参考实现               | [A10](./A10_APPLICATION_INTEGRATION.md) |
 | 性能预算、安全、故障注入与发布验证                             | [A08](./A08_DEVOPS.md)                |
 
-已完成或被拆分的设计文档移入 `archived/`，仅作为历史背景，不再作为新实现的权威规范。第三方 Application 接入的权威规范见活动文档 [A10_APPLICATION_INTEGRATION](./A10_APPLICATION_INTEGRATION.md)。
+长期技术文档按当前职责持续维护，完成实现不意味着应归档其技术说明。被替代的方案、一次性调查与历史计划可留在本地 `archived/`，不作为当前实现的权威规范。文档分类和阅读路线见 [开发者入口](./README.md)。第三方 Application 接入的权威规范见活动文档 [A10_APPLICATION_INTEGRATION](./A10_APPLICATION_INTEGRATION.md)。
 
 ---
 
-_本文档由 Carola 整理，适用于 infOS-TS 项目结构规范。_
+原生能力通过上游 npm 依赖接入；本仓库没有自有 Rust/Cargo 工程。ABI 适配和发行资源维护见 [B27](./B27_RUNTIME_SECURITY.md)。

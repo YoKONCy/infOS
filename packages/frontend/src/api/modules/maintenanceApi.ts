@@ -7,30 +7,8 @@
 import { apiClient } from '../client'
 import type { TaskStats } from './schedulerApi'
 
-export type IndexScope = 'main' | 'social' | 'facts' | 'knowledge'
-export interface IndexMaintenanceStatus {
-  dimension: number
-  model: string
-  embeddingAvailable: boolean
-  busy: boolean
-  indexes: Array<{
-    scope: IndexScope
-    agentId?: string
-    exists: boolean
-    dimension: number | null
-    nodeCount: number | null
-    error?: string
-  }>
-  jobs: Array<{
-    executionId?: string
-    scope: IndexScope | 'all'
-    agentId?: string
-    state: string
-    completed: number
-    total: number
-    error?: string
-  }>
-}
+import type { IndexScope, IndexMaintenanceStatus } from '@infos/shared'
+export type { IndexScope, IndexMaintenanceStatus } from '@infos/shared'
 
 /** 维护系统状态 */
 export interface MaintenanceStatus {

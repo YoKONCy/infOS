@@ -21,30 +21,40 @@ const schema = (properties: Record<string, unknown>, required: string[] = []) =>
   required,
   additionalProperties: false,
 })
+const policyLabels: Record<keyof typeof SOCIAL_GROUP_POLICY_LIMITS, string> = {
+  minMessagesForReview: '再次主动查看话题前至少需要的新消息数',
+  reviewIntervalSeconds: '主动查看话题的间隔秒数',
+  nightSilenceStart: '静音开始小时，按服务端当地时间',
+  nightSilenceEnd: '静音结束小时，按服务端当地时间',
+}
 const policy = schema({
   ...Object.fromEntries(
     Object.entries(SOCIAL_GROUP_POLICY_LIMITS).map(([key, bounds]) => [
       key,
-      { type: 'integer', minimum: bounds[0], maximum: bounds[1] },
+      { type: 'integer', minimum: bounds[0], maximum: bounds[1], description: policyLabels[key as keyof typeof policyLabels] },
     ]),
   ),
-  proactiveGroupEnabled: { type: 'boolean' },
-  nightSilenceEnabled: { type: 'boolean' },
+  proactiveGroupEnabled: { type: 'boolean', description: '是否主动查看群聊话题' },
+  nightSilenceEnabled: { type: 'boolean', description: '是否启用静音时段' },
 })
 export const SOCIAL_COMMON_ACTIONS: readonly SocialActionDefinition[] = [
   {
     tool: 'social_group',
     action: 'state_get',
-    description: '查询当前群聊状态机的实际策略、阻塞原因与下次观察时间',
-    parameters: schema({ group_id: id }, ['group_id']),
+    description: '查看本群的参与设置与下次观察时间',
+    parameters: schema({ group_id: { ...id, description: '群号；社交回合中省略时使用当前群' } }, ['group_id']),
     mutation: false,
     ownerOnly: false,
   },
   {
     tool: 'social_group',
     action: 'state_configure',
-    description: '调整当前群聊的主动观察策略并读回实际状态；reset 恢复默认策略，不影响其他群',
-    parameters: schema({ group_id: id, policy, reset: { type: 'boolean' } }, ['group_id']),
+    description: '调整本群的主动参与设置；reset 恢复默认设置，不影响其他群',
+    parameters: schema({
+      group_id: { ...id, description: '群号；社交回合中省略时使用当前群' },
+      policy: { ...policy, description: '只填写要修改的设置，省略字段保持现有值；与 reset:true 互斥' },
+      reset: { type: 'boolean', description: '设为 true 恢复本群默认设置，此时不填写 policy；否则需提供非空 policy' },
+    }, ['group_id']),
     mutation: true,
     ownerOnly: false,
   },
@@ -52,8 +62,12 @@ export const SOCIAL_COMMON_ACTIONS: readonly SocialActionDefinition[] = [
     tool: 'social',
     action: 'contact_mark_bot',
     description:
-      '为当前平台的账号登记机器人判断及依据，不修改平台资料、不授予权限、不重置预算；来源消息为可选佐证',
-    parameters: schema({ user_id: id, message_id: id, reason: { ...id, maxLength: 500 } }, [
+      '标记已确认的机器人及依据，供互聊保护使用，在当前平台跨会话生效。依据已知互动或 {{ owner_appellation }} 的明确指认，不凭昵称、自称或回复速度猜测；message_id 仅作可选佐证，无需目标在当前会话发言',
+    parameters: schema({
+      user_id: { ...id, description: '目标的平台账号 ID' },
+      message_id: { ...id, description: '可选的来源消息 ID，可来自其他会话' },
+      reason: { ...id, maxLength: 500, description: '判断目标为机器人的具体依据' },
+    }, [
       'user_id',
       'reason',
     ]),
@@ -123,7 +137,7 @@ export class SocialCommonOperations implements SocialOperationProvider {
           ...(target.input!.anyOf as unknown[]),
           ...(source.input!.anyOf as unknown[]),
         ]
-        existing.function.description += `\n${extra.description}`
+        existing.function.description += `\n${actions.map((item) => `${item.action}：${item.description}`).join('\n')}`
       }
     }
     return definitions

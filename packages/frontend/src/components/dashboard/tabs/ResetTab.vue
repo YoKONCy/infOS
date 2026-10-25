@@ -17,7 +17,7 @@ import { t as __t } from '../../../i18n/index'
  */
 import { onMounted, ref, watch } from 'vue'
 import { PixelIcon } from '../../pixel'
-import { configApi } from '../../../api/modules/configApi'
+import { useMainNav } from '../../../composables/main/useMainNav'
 import { resetApi, RESET_CONFIRM_PHRASES, type ResetOperation } from '../../../api/modules/resetApi'
 import { agentApi } from '../../../api/modules/agentApi'
 import { useDashboardContext } from '../../../composables/dashboard'
@@ -202,38 +202,7 @@ async function confirmReset() {
 }
 
 // ── 数据导出（安全操作） ──
-const isExporting = ref(false)
-async function exportData() {
-  if (isExporting.value) return
-  isExporting.value = true
-  try {
-    const res = await configApi.exportAll()
-    // 下载为 JSON 文件
-    const blob = new Blob([JSON.stringify(res.data, null, 2)], { type: 'application/json' })
-    const url = URL.createObjectURL(blob)
-    const a = document.createElement('a')
-    a.href = url
-    a.download = `infos-config-export-${new Date().toISOString().slice(0, 10)}.json`
-    a.click()
-    URL.revokeObjectURL(url)
-    notif.toast(__t('ui.settings', '数据已导出'), {
-      type: 'success',
-      get title() {
-        return __t('ui.settings', '数据导出')
-      },
-    })
-  } catch (err) {
-    logger.error('ResetTab', __t('logs.frontend.settings', '导出失败'), err)
-    notif.toast(__t('ui.settings', '导出失败，请稍后重试'), {
-      type: 'error',
-      get title() {
-        return __t('ui.settings', '数据导出')
-      },
-    })
-  } finally {
-    isExporting.value = false
-  }
-}
+const { setTab } = useMainNav()
 </script>
 
 <template>
@@ -269,17 +238,16 @@ async function exportData() {
           </div>
           <div class="min-w-0">
             <h3 class="text-sm font-black text-[var(--rz-text)] font-pixel">
-              {{ __t('ui.settings', '数据导出') }}
+              {{ __t('ui.backup', '数据与备份') }}
             </h3>
             <p class="text-[11px] text-[var(--rz-sub)] mt-0.5">
-              {{ __t('ui.settings', '导出配置、记忆与对话记录') }}
+              {{ __t('ui.backup', '按范围导出数据，管理备份与恢复') }}
             </p>
           </div>
         </div>
-        <button class="rz-btn rz-btn-sky" :disabled="isExporting" @click="exportData">
-          <PixelIcon v-if="isExporting" name="refresh" size="xs" animation="spin" />
-          <PixelIcon v-else name="download" size="xs" />
-          {{ isExporting ? __t('ui.settings', '导出中…') : __t('ui.settings', '导出全部数据') }}
+        <button class="rz-btn rz-btn-sky" @click="setTab('backups')">
+          <PixelIcon name="database" size="xs" />
+          {{ __t('ui.backup', '打开数据与备份') }}
         </button>
       </div>
 

@@ -217,9 +217,9 @@ Policy / Approval       当前调用裁决
 
 ---
 
-## 8.下一阶段 OS 基建
+## 8. 资源原语与架构扩展约束
 
-Package Runtime 已完成后，下一阶段不再建设第二套插件框架，而是补齐用户空间资源原语：
+Package 扩展沿用统一运行时与授权链。下列资源原语是设计扩展的约束，不表示每种资源已有独立产品接口：
 
 ```text
 Asset / File Handle
@@ -262,13 +262,15 @@ Application不得读取Kernel数据库或依赖主Agent Thread；它通过Node/A
 
 ---
 
-## 9.验收规则
+## 9. 激活与释放的不变量
 
 Package 相关变更至少验证：
 
 - Manifest 重复 ID、无效 Entry 与越界路径
-- required Capability 缺失时拒绝激活 -激活失败原子回滚 -停用后 Tool、Provider、Skill、Event 与 Process 全部释放
-- Consumer 只能获得 Bound Port -历史清单只在安装边界出现 -生产源码不存在 ExtensionManager、ExtensionLoader 或 ServiceRunner -用户安装和云同步目录统一为 `packages/`
+- required Capability 缺失时拒绝激活，激活失败原子回滚。
+- 停用后 Tool、Provider、Skill、Event 与 Process 全部释放。
+- Consumer 只能获得 Bound Port；历史清单只在安装边界兼容。
+- 不恢复旧 ExtensionManager / ExtensionLoader / ServiceRunner 路径；用户安装和云同步目录统一为 `packages/`。
 
 ## 10. 用户插件管理与发行目录
 
@@ -354,4 +356,4 @@ export function createContribution(host) {
 
 UI 命名区域为 `dashboard.overview`、`chat.header`、`chat.footer`、`integrations`。前端使用实际 PCard/PButton 与主题变量，包含自定义背景的半透明承托；不执行插件 HTML、CSS 或 Vue 源码。插件自定义文字属于插件内容。停用立即撤销面板动作路由、工具、Hook、Context Provider 与资源注册；用户页面下次激活或定时刷新后同步撤下卡片。
 
-`application`、内核 `policy` 和底层 `runtime-adapter` 的动态开放不包含在本轮基础设施内；它们继续遵循各自正式的 Realm、Principal 和 Capability 契约。
+当前贡献工厂不动态开放 `application`、内核 `policy` 或底层 `runtime-adapter`；这些能力遵循各自的 Realm、Principal 和 Capability 契约。

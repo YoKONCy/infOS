@@ -1,89 +1,65 @@
 # 运行时与依赖安全基线
 
-> 最后复核：2026-10-25。覆盖本轮 Node.js、Electron 及完整依赖审计发现的问题。
-> 当前策略：按用户明确选择保留 Electron 稳定版，独立 Node 与 Electron 内嵌 Node 分别核验基线。内嵌 Node 与独立安全基线的差异保留警告，不宣称相关漏洞已经修复。文内包含历史验收记录，实际发行结果以最新标签流水线为准。
+本文说明运行时选择、依赖审计和发行门禁的维护契约。版本下限与公告来源由策略文件维护，验证结果留在 CI 与审计产物中；文档不凭历史通过记录宣称当前依赖安全。
 
-## 运行时版本
+## 两类 Node 运行时
 
-- 基线集中在 `scripts/runtime-security-policy.json`。独立 Node 分支下限为 22.23.4、24.22.1、26.12.1；Electron 内嵌 Node 使用单独的 24.22.0 兼容下限。未知主版本与预发布版本继续阻断。
-- 开发依赖、发行基础配置及锁文件的 Electron 版本必须完全一致；当前锁定稳定版 44.9.3。
-- `scripts/rebuild-daemon-deps.mjs` 从 Electron 包声明读取目标版本，避免本机 ABI 重编译仍停留在旧版本。
-- `.node-version` 固定 Node 22.23.4，CI 使用该文件；Docker 构建与后端运行镜像同步使用 `node:22.23.4-bookworm-slim`。
-- 根包 engines 只接受达到当前安全基线的 Node 分支；安装已有旧包的用户仍需后续安全版本升级，源码配置不会改变既有安装程序。
-
-Electron 44.9.3 的官方组件记录仍标注 Node 24.22.0，低于独立 Node 的 24.22.1 安全基线。Node 更新已合并到上游 44-x-y 分支，但尚未提供对应稳定包。用户明确选择修改门禁并保持稳定版，因此在 Electron 模式按内嵌兼容下限放行，同时输出差异警告；这不构成 Node 本轮漏洞已经全部修复的证据。
-
-内置 Daemon 通过 Electron 可执行文件的 Node 模式运行，因此只升级宿主机 Node 无法修复该路径。发布检查读取实际二进制的 `process.versions`，不能使用 CI 构建机 Node 或 npm 类型声明代替。
-
-## 发布门控
-
-1. `pnpm security:runtime` 检查当前 Node、声明与锁文件、Electron 打包配置及 Docker 镜像基线。
-2. `pnpm security:electron` 检查本地 Electron 实际运行时。探测清除继承的 `NODE_OPTIONS`，不打开 GUI，不加载应用与用户数据。
-3. Release 的标准、Steam 与便携构建均在业务构建前检查 Electron。
-4. electron-builder 的 beforePack 再检查一次；标准版安装器钩子先执行同一检查，再准备展示插件。
-5. afterPack 检查最终解包 EXE 的实际版本；签名、归档与发包不能绕过内嵌 Node 安全基线。
-
-已下载 Electron 44.9.3 官方预编译运行时并以 Node 模式只读探测，确认实际内嵌 24.22.0。调整后的门禁保留实际二进制检查、稳定版下限、版本匹配和内嵌兼容下限。独立 Node 模式仍拒绝 24.22.0；不能借 Electron 兼容策略放宽 CI、Docker 或 Linux 的独立 Node 要求。
-
-## 依赖更新与本地回补
-
-本轮更新 Electron Builder、HTTP / WebSocket、MCP、Drizzle、Vue、Vite、压缩、XML、代理与工具链等依赖，并使用分支约束避免旧的传递依赖继续解析到已知漏洞版本。所有变更由 `package.json` 和 `pnpm-lock.yaml` 保存；pnpm install 使用 ignore-scripts，没有运行原生编译。
-
-两条旧依赖链采用明确的本地回补：
-
-| 公告 | 原因 | 补丁与边界 |
+| 执行路径 | 实际运行时 | 判定依据 |
 | --- | --- | --- |
-| GHSA-ch52-4w7c-c8xp | http-cache-semantics 4.2.0 没有上游修复版本 | 安全清零或不可存储条目必须重新验证，客户端 max-stale 不能重新启用；覆盖 cookie、private、no-store、no-cache、Vary 与正常公开缓存 |
-| GHSA-5v7r-6r5c-r473 | nut-js → Jimp 仍使用 CommonJS file-type 16；不能直接换入 ESM 21 并假定 API 兼容 | 检查 ASF 子头的整数、最小尺寸及文件剩余长度，阻止负的负载长度使解析游标回退；保留 CommonJS API 与合法 PNG 识别 |
+| 源码后端、Linux 服务、Docker、CI 脚本 | 独立 Node.js | `nodeMinimums` |
+| Electron 内置 Daemon 的 Node 模式 | Electron 内嵌 Node.js | `electronEmbeddedNodeMinimums` 及 Electron 基线 |
 
-补丁在 `patches/`，由 pnpm patchedDependencies 应用；`scripts/security-backports.json` 精确记录公告、包版本、补丁 SHA-256 及回归测试。
+策略入口为 `scripts/runtime-security-policy.json`，实现入口为 `scripts/runtime-security.cjs`。独立 Node 与 Electron 内嵌 Node 分开判断，未知主版本与预发布版本按门禁规则拒绝。兼容放行不能表述为相应安全漏洞已修复；内嵌版本低于独立安全下限时保留差异警告，不能用该兼容规则放宽 Docker 或 Linux 的独立 Node 要求。
 
-`pnpm security:audit` 调用 npm 官方审计端点，保留完整原始结果，再核验回补：包名、公告、全部发现版本、补丁内容、清单与锁文件必须匹配，回归测试也必须通过。同包的新公告、混入其他版本或失效补丁仍会失败。网络错误和不完整报告不能当作零漏洞。
+Electron 的开发依赖、锁文件和发行配置必须一致。升级宿主 Node 不会改变内置 Daemon 的内嵌运行时；检查实际可执行文件的 `process.versions`，不能使用构建机 Node 或类型声明代替证据。
 
-`pnpm security:audit:raw` 输出未分类的原始扫描结果。扫描器仍可能报告上述两个原版本的告警；不能将它们描述为上游审计已清零。原始报告与核验结果分别存于 `TEMP/security-audit/raw.json`、`evaluation.json`，CI 保存为审阅产物。
+## 发行检查链
 
-## Electron 安全边界与兼容调整
+1. `security:runtime` 核对当前 Node、清单、锁文件、Electron 配置及 Docker 镜像基线。
+2. `security:electron` 探测本地 Electron 二进制。探测清除继承的 `NODE_OPTIONS`，不加载应用或用户数据。
+3. 标签流水线在业务构建前执行检查，标准版、Steam 和便携版遵守同一规则。
+4. `scripts/electron-security-before-pack.cjs` 在打包入口检查；安装器钩子不能绕过该入口。
+5. `scripts/electron-security-after-pack.cjs` 核验最终解包产物的实际版本，避免下载缓存或构建配置导致产物偏离声明。
 
-- Windows 透明窗口不能设置 Electron 的 `backgroundMaterial`，包括 `none`，也不能调用 `setBackgroundMaterial('none')`。Electron 44 的该实现会把 DWM 客户区边距归零并切换合成状态，导致透明区域变为黑底。桌宠、独立开屏与通知覆盖层改用现有 koffi 直接写入 `DWMWA_SYSTEMBACKDROP_TYPE=DWMSBT_NONE`，仅关闭系统背景，保留 Electron 的逐像素透明合成；旧系统或原生组件不可用时保留原透明配置。隔离实窗验证复现了旧方案的 RGB(18,18,18) 黑底，并验证新方案在首次显示及重新显窗后均能透出后方测试窗口；记录位于 `TEMP/transparent-window-check/result.json`。这不代替打包后的完整应用及第三方美化工具兼容验收。
+更新运行时时同时审阅 `.node-version`、根 `package.json`、`pnpm-lock.yaml`、Electron 发行配置、Dockerfile 与工作流。具体下限以策略 JSON 为准，避免在多个文档复制版本数字形成第二权威源。
 
-- Vite 6 默认的依赖预打包目标包含 Safari 14.0，与升级后的 esbuild 0.28 解构语法处理不兼容，会导致 Vue 依赖预打包失败并触发开发进程整体退出。`scripts/vite-browser-compat.ts` 统一保留 ES2020、Chrome 87、Edge 88、Firefox 78，并将 Safari 下限调整为 14.1；Arca、Pictoria、Web 和 Electron 渲染器均显式配置依赖预打包目标。Web 正式输出也使用同一范围，两个子应用已有的 ES2022 输出范围保持不变。不能只设置 `build.target`、伪造 `supported`，或回退已修复安全问题的依赖。定向回归覆盖实际 Vue 响应式源码及四个配置入口；依赖预打包检查结果保存在 `TEMP/vite-compat/result.json`。
+## 审计与精确回补
 
-- 主窗口明确启用 sandbox、contextIsolation、webSecurity，关闭 Node 集成、webview 与不安全混合内容；调用者的额外选项不能覆盖这些安全设置。
-- 桌宠移除 webSecurity=false。模型 asset 协议只接受只读请求，拒绝不匹配的网络 Origin，并为正式 file 页面与精确开发来源提供 CORS 响应。
-- 外部浏览器使用独立 Session，权限请求与权限检查均默认拒绝；原有原生弹窗拒绝策略保留。
-- 适配 Electron 新版异步剪贴板与 ClipboardItem；写入必须等待成功再回传，失败不能被吞掉。
-- electron-builder 升至 26.15.3 后已人工核对自定义安装 / 卸载页宏入口与顺序；实际安装、卸载、透明窗口、模型加载及原生模块兼容仍须在获准构建后验收。
+`scripts/dependency-security.cjs` 调用官方审计端点，保留原始报告并单独记录评估结果。网络失败、不完整报告或缺失证据不能当作零漏洞。入口 `security:audit:raw` 输出原始结果，`security:audit` 进行分类、回补核验和门控。
 
-## 验证边界与后续事项
+回补清单为 `scripts/security-backports.json`，每项绑定公告、包名、精确版本、补丁文件、SHA-256 与回归测试。pnpm 的 patchedDependencies、锁文件、实际补丁和清单必须一致；同包新公告、其他版本、补丁失效或回归失败仍须阻断。
 
-### 窗口激活命令注入修复（Issue #78）
+| 回补对象 | 必须保护的行为 |
+| --- | --- |
+| http-cache-semantics 的缓存重新验证 | 清零或不可存储的响应不能被客户端 max-stale 重新启用；保留正常公开缓存，覆盖 Cookie、private、no-store、no-cache、Vary 边界 |
+| file-type 的 CommonJS 兼容链 | ASF 子头的整数、最小尺寸和剩余长度合法，解析游标不能因负负载倒退；同时保留合法图片识别与既有 CommonJS API |
 
-`activate_window` 已删除 Windows、macOS、Linux 三个平台将 `target` 拼入 Shell 或脚本的降级分支。窗口激活只委托已注入的客户端 `WindowProvider`；缺少提供者返回 `WINDOW_ACTIVATION_UNAVAILABLE`，提供者执行失败返回 `WINDOW_ACTIVATION_FAILED`，两种情况都不会启动本机命令。空白或非字符串目标返回 `WINDOW_TARGET_REQUIRED`，合法中文、引号及括号名称继续作为普通数据传递。
+回补不改变上游版本号，原始扫描仍可能报告原公告。报告位于 `TEMP/security-audit/raw.json` 与 `evaluation.json`，CI 保存审阅产物；不能称为“上游已修复”或删除原始 finding 来制造清零结果。上游发布兼容修复后，优先升级并成套删除补丁、清单条目和例外核验。
 
-参数错误、能力不可用及执行失败提示已维护三语言词条。新增回归用例使用模拟提供者与被拦截的命令执行函数，覆盖三平台缺少提供者、提供者失败、特殊字符名称、非法参数及本地化；本次仅修改并人工审阅，尚未执行这些用例、类型检查、构建或发布。
+### 私有工作区 importer 误报
 
-### 既有安全基线验证记录
+审计可能把工作区 importer 路径末段与应用版本组合成同名 npm 包。评估器只有同时满足私有包、真实名称不同、版本完全匹配、无真实依赖路径、完整锁文件不存在同名同版本依赖等条件时，才识别为工作区误报。任一证据缺失按原公告处理；混合 finding 必须保留真实依赖部分。该分类不改变 Electron 二进制门禁。
 
-- 本轮获准执行依赖审计、类型检查与相关定向单测；全包及测试代码类型检查通过，主批 16 文件 / 131 项及补充的运行时与办公交换定向用例通过。依赖门禁核验两份本地回补并通过对应回归测试；原始扫描仍报告这两个旧版本公告。日志位于 TEMP/security-hardening 与 TEMP/security-audit。
-- 未执行构建、原生编译、安装卸载、真实账号登录或攻击复现；没有提交或发布改动。
-- 待上游 Electron 内嵌 Node 安全补丁可用后，优先更新稳定版本并消除差异警告；继续执行构建前及产物二进制门控。
-- 待 http-cache-semantics 发布修复版、Jimp 链迁移后，优先移除本地回补及对应核验记录。
+## 应用安全边界
 
-### 0.9.6 非构建验收
+- 主窗口固定 sandbox、contextIsolation、webSecurity，关闭 Node 集成、webview 与不安全混合内容；额外窗口选项不能覆盖安全设置。
+- 桌宠资源协议只接受只读请求，校验 Origin；正式 file 页面与精确开发来源分别处理 CORS，不能关闭 webSecurity 解决资源加载问题。
+- 外部浏览器使用独立 Session，权限请求与权限检查默认拒绝；网页内容不获得宿主权限。
+- 窗口激活只委托客户端 `WindowProvider`，目标名称按普通数据传递，不拼入 Shell 或脚本。缺少提供者、非法目标和执行失败分别返回稳定错误，不能降级为本机命令执行。
+- 异步剪贴板写入必须等待成功；未完成写入不能提前返回成功。
 
-- Windows 本地全量测试通过：439 个文件、2876 项用例；工作区、Vue 模板及测试代码类型检查通过，ESLint 为 0 错误、16 条非阻断警告。
-- 运行时配置、当前 Node 与 Docker 静态接线检查通过。运行时 pnpm 升至 10.34.5，Zod 升至 4.6.7 并迁移记录类型与递归 Schema，happy-dom 升至 21.0.4；全依赖安全门禁通过，继续核验两份精确回补。
-- 富文本净化回归改用 DOMPurify 官方支持的 jsdom 环境，避免 happy-dom 对净化流程的兼容缺陷掩盖危险属性；生产环境仍使用浏览器原生 DOM。
-- 初次验收时，Electron 44.9.3 内嵌 Node 24.22.0 被共用的 Node 24.22.1 基线阻断。之后按用户明确选择拆分两种基线；Electron 稳定版按兼容下限核验并保留警告，独立 Node 的安全补丁要求不变。
-- 本地未执行构建、打包或容器启动。源码与标签可正常同步，桌面发行完成与否以标签流水线实际结果为准。
+生产力运行时的软件策略和 OS 隔离边界见 [B01](./B01_PRODUCTIVITY_RUNTIME.md)；设备身份、Capability 与 Realm 的调用授权见 [M02](./M02_CAPABILITY_GATE.md) 和 [A09](./A09_AIOS_ARCHITECTURE.md)。
 
-### 正式版本号下的工作区审计误报
+## 原生依赖与兼容维护
 
-pnpm 9 与 10 的审计会将 `electron/` importer 的路径末段与应用版本 `0.9.6` 组合，误报成 npm 的 `electron@0.9.6`；这与真实锁定的 `electron@44.9.3` 不同。预发布版本号不匹配相关漏洞范围，版本同步前的审计因此未暴露该问题。
+仓库通过 npm 接入 TriviumDB、node-pty、better-sqlite3 等原生依赖，不维护这些依赖的 Rust 源码或 Cargo 工程。`scripts/rebuild-daemon-deps.mjs` 按 Electron 声明重建指定 ABI 依赖，`scripts/collect-daemon-deps.mjs` 收集实际运行文件。升级时分别核对 ABI、存储格式、资源路径与目标架构；源码依赖能安装不代表安装包完整。
 
-审计评估同时核验 importer 对应的真实清单与完整锁文件：仅识别私有、真实名称不同于路径末段、版本完全相同、无依赖路径，且锁文件没有同名同版本实际依赖的 finding。任一条件缺失仍按原公告阻断；混合公告保留所有真实依赖 finding。原始报告不改写，核验记录单独保存，并附上锁文件证据。额外回归覆盖误报、真实依赖、peer 后缀、混合公告、路径、名称、私有性和锁文件缺失边界。此修正不改变 Electron 实际二进制安全门禁。
+Windows 透明窗口不能通过 Electron `backgroundMaterial`（包括 none）关闭系统背景，该路径可能破坏透明合成。现有实现使用 koffi 调用 DWM 仅关闭系统 backdrop，原生接口不可用时保持透明配置。维护者应检查桌宠、开屏与通知层的首次显示和重新显窗，不能以普通不透明窗口替代验证。
 
-云端构建另暴露 Wiki 的 VitePress 入口仍使用默认 Safari 14.0 目标，Mermaid 依赖在 esbuild 0.28 的解构转换阶段失败。该入口补齐与 Web 相同的 `browserTargets` 及依赖预打包目标，配置回归覆盖第五个入口；不回退安全依赖、不伪造语法支持。本地仅验证配置与定向测试，实际构建继续交由 CD。
-- 后续安全公告需继续更新分支基线；每日 Dependabot 不会自动证明 YAML 固定版本和内嵌运行时已修复。
+前端语法目标集中于 `scripts/vite-browser-compat.ts`。依赖预打包和正式输出分别使用明确目标，Web、Electron、子应用和 Wiki 入口都须审阅；只改 build.target 不能解决 optimizeDeps 的语法兼容问题，也不能伪造 supported 掩盖编译器限制。
 
-官方来源：[Node 2026-10 安全公告](https://nodejs.org/en/blog/vulnerability/october-2026-security-releases)、[Electron 44.9.3 组件](https://releases.electronjs.org/release/v44.9.3)、[Electron 证书安全公告](https://github.com/electron/electron/security/advisories/GHSA-jr5w-w6x2-84p9)。
+## 维护顺序与故障定位
+
+先确认失败属于版本声明、实际二进制、上游审计、回补证据还是资源收集，再修改对应权威文件。门禁失败应保留真实错误，不跳过检查或把检查对象换成构建机运行时。需要兼容例外时明确范围、保留差异，并记录消除条件。
+
+补丁回归入口由回补 JSON 指定；运行时与审计分类用例分别为 `packages/shared/tests/runtimeSecurity.test.ts`、`dependencySecurity.test.ts`。回归应验证过旧运行时、混入真实漏洞依赖、缺失锁文件和被修改补丁等失败路径。执行任何测试、静态检查或构建前仍遵守根目录 AGENTS.md；具体结果属于执行记录，不写入本文。

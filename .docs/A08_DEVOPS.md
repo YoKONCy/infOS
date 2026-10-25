@@ -1,6 +1,6 @@
 # DevOps 与运维规范
 
-> **版本**：0.9.6 · **更新时间**：2026-10-17
+> **版本**：0.9.6 · **更新时间**：2026-10-26
 > **适用范围**：CI/CD、数据库迁移、版本发布、安全、可观测性、API 文档
 > **依赖规范**：[A04_DEPLOYMENT](./A04_DEPLOYMENT.md)、[S04_TESTING_STANDARDS](./S04_TESTING_STANDARDS.md)
 >
@@ -10,81 +10,26 @@
 
 ## 1. CI/CD 流水线
 
-### 运行时与依赖安全门禁
+工作流以 `.github/workflows/ci.yml`、`release.yml` 为权威入口。不要在文档复制整份 YAML 骨架，否则依赖顺序、运行矩阵和 Action 版本容易与实际分叉。
 
-普通 CI 增加阻断式安全任务：使用 `.node-version`，核对 Electron 开发 / 打包 / 锁文件及 Docker Node 基线，并执行官方依赖审计。本地回补必须核验精确补丁、锁文件和回归测试，原始报告单独保留。Release 在业务构建前探测 Electron 实际内嵌 Node；原生重编译读取同一 Electron 声明，打包前再次检查，打包后在现有 afterPack 链路检查实际 EXE 副本。详见 [运行时与依赖安全基线](./B27_RUNTIME_SECURITY.md)。
+### 1.1 普通 CI 的职责
 
-当前 Electron 44.9.3 仍标注内嵌 Node 24.22.0，尚不满足 24.22.1 安全基线，桌面 Release 应被门禁拒绝，不能据此宣称已具备安全发包条件。
+| 任务 | 内容与失败行为 |
+| --- | --- |
+| security | 按 `.node-version` 与运行时策略检查声明，执行依赖审计和精确回补核验；阻断并保留证据 |
+| lint | ESLint 与格式提示；当前为非阻断任务，不是测试的前置依赖 |
+| test | Linux / Windows 矩阵运行功能测试；不另起重复覆盖率任务 |
+| build | 依赖 test，执行包/模板及测试代码类型检查、版本一致性、全包构建和 Daemon 发行依赖检查 |
 
-### 1.1 工具选型
+不设覆盖率百分比门禁；手动 coverage 用于定位遗漏，不能代替有效断言。测试选取标准见 [S04](./S04_TESTING_STANDARDS.md)。
 
-GitHub Actions，与项目 GitHub 仓库原生集成。
+### 1.2 触发与发行
 
-### 1.2 流水线设计
+push 到 main/dev、面向 main 的 PR 触发普通 CI；Release 可通过 workflow_call 复用。标签发行构建 Windows 标准、便携和 Steam 产物；镜像发布取决于对应 Registry 凭据。普通 main push 不等同于 Electron Release，也不存在仅凭 release 分支名称就完成 Steam 发布的保证。
 
-```yaml
-# .github/workflows/ci.yml 骨架
-name: CI
+### 1.3 运行时与依赖门禁
 
-on:
-  push:
-    branches: [main, dev]
-  pull_request:
-    branches: [main]
-
-jobs:
-  lint:
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-      - uses: pnpm/action-setup@v4
-      - run: pnpm install --frozen-lockfile
-      - run: pnpm lint # ESLint + Prettier 检查
-
-  test:
-    runs-on: ubuntu-latest
-    needs: lint
-    steps:
-      - uses: actions/checkout@v4
-      - uses: pnpm/action-setup@v4
-      - run: pnpm install --frozen-lockfile
-      - run: pnpm test:run # Vitest 全量测试，只执行一次
-
-  build:
-    runs-on: ubuntu-latest
-    needs: test
-    steps:
-      - uses: actions/checkout@v4
-      - uses: pnpm/action-setup@v4
-      - run: pnpm install --frozen-lockfile
-      - run: pnpm build # 全包构建验证
-
-  # 可选：Electron 打包（仅 main/release 分支）
-  electron-build:
-    if: github.ref == 'refs/heads/main'
-    runs-on: windows-latest
-    needs: build
-    steps:
-      - uses: actions/checkout@v4
-      - uses: pnpm/action-setup@v4
-      - run: pnpm install --frozen-lockfile
-      - run: pnpm electron:build
-      - uses: actions/upload-artifact@v4
-        with:
-          name: electron-dist
-          path: dist_electron/
-```
-
-### 1.3 分支策略
-
-CI/CD 不设覆盖率百分比门禁，也不自动上传 Codecov。需要定位遗漏时可手动运行 `pnpm test:coverage`，报告不设最低比例。
-
-| 分支        | 用途     | CI 触发                             |
-| ----------- | -------- | ----------------------------------- |
-| `main`      | 稳定版本 | lint → test → build → Electron 打包 |
-| `dev`       | 开发主线 | lint → test → build                 |
-| `feature/*` | 功能分支 | PR 时触发 lint + test               |
-| `release/*` | 发布准备 | 全量 CI + Steam 构建                |
+Node、Electron 声明、锁文件与 Docker 镜像必须符合 `scripts/runtime-security-policy.json`。独立 Node 与 Electron 内嵌 Node 分别判断；兼容下限放行仍保留安全差异，不能写成统一安全下限已经满足。Release 在构建前、beforePack 与 afterPack 检查实际 Electron 二进制。完整规则和回补证据见 [B27](./B27_RUNTIME_SECURITY.md)。
 
 ### 1.4 Electron 启动环境
 
@@ -123,8 +68,8 @@ packages/backend/src/database/
 
 - **向前兼容**：新增列给默认值，不删除现有列（可标记 deprecated）
 - **不可逆操作需确认**：删表、改列类型等操作需要人工审批
-- **每次 PR 最多一个迁移文件**：避免迁移冲突
-- **TriviumDB 升级需保护完整文件组**：当前固定 0.8.11，与 0.8.9 使用相同的主文件格式 v9；本次不要求数据迁移、重算 Embedding 或重建 QuIVer。已有 QuIVer 若要应用 0.8.10 的新构图策略，可通过既有索引重建流程生成；本次不自动触发全库重建。首次可写打开 v5–v8 库前，注册表持有共享读锁并保留完整、带 SHA-256 清单的副本；有待恢复 WAL 时停止旧格式迁移，先正常恢复并退出。不要只备份 `.tdb` 主文件。
+- **迁移目的明确、顺序稳定**：每个迁移聚焦相关结构变化；多迁移按 journal 顺序执行，不改写已发布迁移
+- **TriviumDB 升级需保护完整文件组**：当前固定 0.8.11，与 0.8.9 使用相同的主文件格式 v9；同主文件格式升级不要求重算 Embedding 或重建 QuIVer。已有 QuIVer 若要应用 0.8.10 的新构图策略，可通过既有索引重建流程生成；依赖升级不自动触发全库重建。首次可写打开 v5–v8 库前，注册表持有共享读锁并保留完整、带 SHA-256 清单的副本；有待恢复 WAL 时停止旧格式迁移，先正常恢复并退出。不要只备份 `.tdb` 主文件。
 
 新升级备份位于 `@data/.store-upgrades/0.8.11/<原数据库相对路径>/<文件组摘要>/`，不参与分布式同步。0.8.9 等旧版本备份继续保留并纳入角色发现、重建、清空和永久删除的定向清理，防止已遗忘正文被恢复。回退版本前必须停止应用，并从同一备份目录恢复整组文件；主文件格式相同不代表可以忽略新版发布中断现场。社交图谱不能作为可丢弃向量缓存处理。
 
@@ -151,18 +96,11 @@ packages/backend/src/database/
 
 所有子包版本号通过 `pnpm version:sync` 统一同步。
 
-### 3.2 Changelog 自动生成
+### 3.2 版本变更与 Release 正文
 
-使用 **changesets** 管理版本和变更日志：
+根脚本保留 changesets 的变更记录与包发布入口；统一应用版本通过 `pnpm version:sync` 同步。GitHub 标签发行的正文由 `scripts/generate-release-notes.mjs` 生成：优先读取 `.github/release-notes/<标签>.md` 的人工摘要，再附上前一标签至当前提交的记录与下载说明。changesets 不能代替该流程，也不能用包发布成功推断 Electron 产物已通过发行检查。
 
-```bash
-# 开发者在 PR 中添加变更描述
-pnpm changeset
-
-# 发布时自动生成 CHANGELOG.md + 更新版本号
-pnpm changeset version
-pnpm changeset publish
-```
+维护者应按最终改动编写版本摘要、重构要点、兼容性与升级说明；一次性调查过程和测试流水账留在 CI/提交记录。发布会产生远程变更，是否执行仍按用户授权决定。
 
 ### 3.3 发布渠道
 
@@ -207,7 +145,7 @@ pnpm audit
 
 | 信息类型      | 存储位置                | 注意事项                       |
 | ------------- | ----------------------- | ------------------------------ |
-| LLM API Key   | `config.json`（@data/） | 不提交 Git；进入手动完整同步包时必须使用同步会话密钥加密，并由目标 Server 主密钥重新封装 |
+| LLM API Key   | 模型/连接持久配置（SQLite 等，见 B22） | 不提交 Git；进入手动完整同步包时必须使用同步会话密钥加密，并由目标 Server 主密钥重新封装 |
 | Gateway Token | `gateway_token.json`    | 机器身份凭据，不进入同步包；目标 Server 保留自己的 Token |
 | Steam App ID  | 代码硬编码 `4457100`    | 公开信息，无需保护             |
 
@@ -217,45 +155,19 @@ pnpm audit
 
 ### 5.1 日志（已有）
 
-见 [S03_LOGGING_SPEC](./S03_LOGGING_SPEC.md)，使用 consola，日志消息中文。
+见 [S03_LOGGING_SPEC](./S03_LOGGING_SPEC.md)，使用 consola；中文原文作为 i18n 查询键，显示跟随运行端语言。
 
 ### 5.2 健康检查
 
-```typescript
-// 后端健康检查端点
-app.get('/health', (c) => c.json({
-  code: 'OK',
-  data: {
-    status: 'ok',
-    uptime: process.uptime(),
-    version: APP_VERSION,
-    memory: process.memoryUsage(),
-  }
-}))
+公开健康入口为 `GET /api/health`，实现位于 `packages/backend/src/routers/health.router.ts`，返回版本、运行时、进程时长与内存摘要。`/api/system/health` 是系统路由中的另一管理入口，调用方须按所需认证与响应契约选择，不能把 Router 内相对路径 /health 当成根路径。
 
-// Docker Compose 健康检查
-healthcheck:
-  test: ["CMD", "curl", "-f", "http://localhost:9120/api/health"]
-  interval: 30s
-  timeout: 5s
-  retries: 3
-```
+Docker healthcheck 以实际 Compose/Dockerfile 为准，探测服务端监听地址。进程健康不代表外部模型、社交账号或客户端 Capability 在线；这些状态由对应领域端口单独判断。日志查询沿用后端权限与分页契约，不能因健康接口公开就公开日志内容。
 
-### 5.3 APM / 分布式追踪（可选）
+### 5.3 OpenTelemetry
 
-Docker 版可接入 OpenTelemetry：
+后端入口为 `packages/backend/src/lib/telemetry.ts`，统一创建 LLM 调用 Span，并接入请求 Trace Context。配置 `OTEL_EXPORTER_OTLP_TRACES_ENDPOINT`，或回退使用 `OTEL_EXPORTER_OTLP_ENDPOINT`，可启用批量 OTLP HTTP 导出；`OTEL_SERVICE_NAME` 覆盖服务名。`INFOS_OTEL_CONSOLE=true` 可使用控制台导出，`OTEL_SDK_DISABLED=true` 禁用初始化。
 
-```typescript
-// 仅 Docker 版启用，Electron 版跳过
-if (isDocker && process.env.OTEL_ENDPOINT) {
-  initOpenTelemetry({
-    serviceName: 'infos-backend',
-    endpoint: process.env.OTEL_ENDPOINT,
-  })
-}
-```
-
-**当前不需要实现**，infOS 是单用户应用，日志 + 健康检查已足够。
+未配置导出器时仍保留本地 Span 与上下文传播，不代表已有远程观测平台。退出时调用 shutdownTelemetry 刷新批量数据。排查无链路时核对初始化、导出地址、Trace Context 与关闭流程，不能仅凭存在 OTEL 环境变量认为数据已送达。
 
 ---
 
@@ -279,28 +191,13 @@ Scheduler必须保证交互优先、同Agent与跨Agent公平、模型与Provide
 
 ## 6. API 文档
 
-### 6.1 方案
+### 6.1 当前接口来源
 
-使用 Hono 的 **OpenAPI** 插件 + **Scalar** 可视化：
+当前后端使用 Hono Router、项目级 validate 包装器和 Zod 校验；接口信封与稳定错误见 [S02](./S02_API_SPEC.md)，精确字段以 Router Schema 为准。仓库没有在这里描述的统一 OpenAPIHono / Scalar 文档服务，不能把计划中的 /openapi.json 或 /docs 写成现有端点。
 
-```typescript
-import { swaggerUI } from '@hono/swagger-ui'
-import { OpenAPIHono } from '@hono/zod-openapi'
+### 6.2 接口变更的维护范围
 
-const app = new OpenAPIHono()
-
-// Zod schema 同时用于验证和文档生成
-app.openapi(chatRoute, handler)
-
-// 挂载 Scalar UI
-app.get('/docs', swaggerUI({ url: '/openapi.json' }))
-```
-
-### 6.2 优势
-
-- **Zod schema 复用**：验证逻辑和文档描述是同一份代码，保证一致性
-- **零额外维护**：不需要手写 Swagger YAML
-- **内置 Playground**：Scalar 自带请求测试功能
+变更同时核对 Router 校验、共享 DTO、前端 API 客户端和 S02；兼容期与弃用行为须明确。若增加 OpenAPI 导出，应从实际 Schema 生成并覆盖真实错误/认证契约，单独实现并验证后再记录为现有能力。
 
 ---
 
@@ -334,17 +231,14 @@ Kernel Core
 
 ---
 
-## 8. 里程碑对照表
+## 8. 维护入口
 
-| 里程碑           | 需落地的运维项                       |
-| ---------------- | ------------------------------------ |
-| 首个模块开发完成 | CI/CD 流水线（§1）                   |
-| 数据库模块开发   | Drizzle 迁移配置（§2）               |
-| 后端 Hono 搭建   | 健康检查（§5.2）、Dependabot（§4.2） |
-| 首批 Router 完成 | API 文档生成（§6）                   |
-| 首个 Alpha 发布  | 版本策略 + Changelog（§3）           |
-| Docker 版上线    | APM 评估（§5.3）                     |
+| 变更类型 | 必须共同审阅的配置/实现 |
+| --- | --- |
+| 运行时和原生依赖升级 | 运行时策略、依赖声明/锁文件、重编译与收集脚本、beforePack/afterPack；见 B27 |
+| 存储结构与格式 | Drizzle Schema、迁移及 journal、Store 注册表与完整文件组；见 A05 |
+| 版本发行 | `scripts/sync-version.ts`、标签工作流、版本摘要与产物验证 |
+| Docker 部署 | Dockerfile、Compose、运行时配置与实际镜像健康检查；见 A04 |
+| 接口与可观测性 | Router Schema、S02、日志 i18n 与 Trace Context |
 
----
-
-_本文档由 Carola 整理，适用于 infOS 运维与 DevOps 规范。_
+操作前先区分源码配置、构建产物、运行环境与用户数据。针对实际故障保留证据并验证对应层，不靠重复门禁或改写历史通过记录替代问题定位。具体命令执行仍遵守根目录 AGENTS.md 的权限约定。

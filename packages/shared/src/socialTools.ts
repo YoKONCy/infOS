@@ -46,7 +46,7 @@ export function socialToolDefinition(
   const label = { social: '社交', social_group: '群聊', social_account: '账号与空间' }[tool]
   return {
     name: tool,
-    description: `${label}操作。action 选择操作，input 使用对应参数。社交应用内通过 social_act 的 call 步骤调用；日常聊天使用 social_act 的 reply。\n${available.map((item) => `${item.action}：${item.description}；${(item.parameters.required as string[]).length ? `必填 ${(item.parameters.required as string[]).join('、')}` : '无必填参数'}`).join('\n')}`,
+    description: `${label}操作。action 选择操作，input 使用对应参数。\n${available.map((item) => `${item.action}：${item.description}`).join('\n')}`,
     display: { label, description: `${label}操作`, icon: 'chat', color: 'pink' },
     actionPermissions: Object.fromEntries(
       available.map((item) => [
@@ -61,7 +61,7 @@ export function socialToolDefinition(
           type: 'string',
           minLength: 1,
           maxLength: 200,
-          description: '省略使用当前会话账号；跨账号仅主人可用',
+          description: '省略使用当前会话账号；跨账号操作需授权',
         },
         input: {
           anyOf: available.map((item) => ({ ...item.parameters, description: item.action })),

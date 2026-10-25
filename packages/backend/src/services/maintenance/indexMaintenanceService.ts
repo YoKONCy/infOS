@@ -1,15 +1,20 @@
 import type { AppContext } from '../../container'
 import { AppError } from '../../lib/appError'
-import type { KernelExecutionId } from '@infos/shared'
+import type { KernelExecutionId, IndexScope, IndexMaintenanceTarget } from '@infos/shared'
+import { t as __t } from '../../lib/i18n'
+import { storeDiagnostic } from '../../lib/storeDiagnostics'
 
-export type IndexScope = 'main' | 'social' | 'facts' | 'knowledge'
+export type { IndexScope } from '@infos/shared'
 type Target = { scope: IndexScope; agentId?: string }
 type Job = {
   executionId?: KernelExecutionId
   scope: IndexScope | 'all'
   agentId?: string
   completed: number
+  processed: number
+  failed: number
   total: number
+  results: IndexMaintenanceTarget[]
   error?: string
 }
 const terminal = new Set(['completed', 'failed', 'cancelled', 'timed_out'])
@@ -45,9 +50,11 @@ export class IndexMaintenanceService {
             )
           : this.ctx.storeRegistry.resolveSharedStorePath(target.scope as 'facts' | 'knowledge')
         try {
-          return { ...target, ...this.ctx.storeRegistry.describeStore(path) }
+          if (this.ctx.storeRegistry.isMaintaining(path))
+            return { ...target, exists: true, dimension: null, nodeCount: null, maintenance: true }
+          return { ...target, ...this.ctx.storeRegistry.describeStore(path), warnings: this.ctx.storeRegistry.storeDiagnostics(path) }
         } catch (error) {
-          return { ...target, exists: true, dimension: null, nodeCount: null, error: String(error) }
+          return { ...target, exists: true, dimension: null, nodeCount: null, error: String(error), diagnostic: storeDiagnostic(error) }
         }
       }),
       jobs: this.jobs.map((job) => {
@@ -71,7 +78,8 @@ export class IndexMaintenanceService {
         targets.push(...ids.map((id) => ({ scope: kind, agentId: id })))
       else targets.push({ scope: kind })
     }
-    const job: Job = { scope, agentId, total: targets.length, completed: 0 }
+    const job: Job = { scope, agentId, total: targets.length, completed: 0, processed: 0, failed: 0,
+      results: targets.map((target): IndexMaintenanceTarget => ({ ...target, state: 'queued' })) }
     this.pending = true
     this.jobs = [...this.jobs.slice(-9), job]
     const dimension = this.ctx.storeRegistry.getDimension()
@@ -87,7 +95,6 @@ export class IndexMaintenanceService {
         run: async (context) => {
           const { signal } = context
           try {
-            const failures: string[] = []
             for (const target of targets) {
               signal.throwIfAborted()
               if (
@@ -95,6 +102,11 @@ export class IndexMaintenanceService {
                 embeddingConfig !== this.ctx.embeddingService.getConfig()
               )
                 throw new Error('向量配置已变化，请重新重建索引')
+              const result = job.results.find((item) => item.scope === target.scope && item.agentId === target.agentId)!
+              result.state = 'running'
+              const storePath = target.agentId
+                ? this.ctx.storeRegistry.resolveAgentStorePath(target.agentId, target.scope as 'main' | 'social')
+                : this.ctx.storeRegistry.resolveSharedStorePath(target.scope as 'facts' | 'knowledge')
               try {
                 if (target.agentId && !this.ctx.agentManager.getAgent(target.agentId))
                   throw new Error('角色已删除，已停止该角色的索引重建')
@@ -105,8 +117,9 @@ export class IndexMaintenanceService {
                     signal,
                   )
                 else if (target.scope === 'social')
-                  this.ctx.storeRegistry.rebuildSocialStore(target.agentId!)
-                else if (target.scope === 'facts') await this.ctx.factsRepo.rebuildStore()
+                  await this.ctx.storeRegistry.withMaintenance(storePath,
+                    () => this.ctx.storeRegistry.rebuildSocialStore(target.agentId!), signal)
+                else if (target.scope === 'facts') await this.ctx.factsRepo.rebuildStore(signal)
                 else {
                   await this.ctx.knowledgeService.reindex(true, context)
                   signal.throwIfAborted()
@@ -117,15 +130,21 @@ export class IndexMaintenanceService {
                   )
                     throw new Error('部分文档向量重建失败，请查看文档知识库')
                 }
-                job.completed++
-              } catch (error) {
                 signal.throwIfAborted()
-                failures.push(
-                  `${target.scope}${target.agentId ? ` (${target.agentId})` : ''}：${error instanceof Error ? error.message : String(error)}`,
-                )
+                job.completed++
+                result.state = 'completed'
+              } catch (error) {
+                result.state = signal.aborted ? 'cancelled' : 'failed'
+                result.error = storeDiagnostic(error)
+                signal.throwIfAborted()
+                job.failed++
+              } finally {
+                job.processed++
+                result.warnings = this.ctx.storeRegistry.storeDiagnostics(storePath)
               }
             }
-            if (failures.length) throw new Error(failures.join('；'))
+            if (job.failed) throw new AggregateError(job.results.filter((item) => item.error).map((item) => item.error),
+              __t('server.index-maintenance', '索引重建部分失败：成功 {0}，失败 {1}', [job.completed, job.failed]))
           } catch (error) {
             job.error = error instanceof Error ? error.message : String(error)
             throw error

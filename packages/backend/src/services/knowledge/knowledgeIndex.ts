@@ -118,6 +118,14 @@ export class KnowledgeIndex {
     this.rebuild()
   }
 
+  /** 统一维护入口在重置文件前等待在途访问，模型调用仍由上层调度。 */
+  async resetPhysicalStoreForMaintenance(signal?: AbortSignal): Promise<void> {
+    await this.stores.withMaintenance(this.stores.resolveSharedStorePath('knowledge'), () => {
+      signal?.throwIfAborted()
+      this.resetPhysicalStore()
+    }, signal)
+  }
+
   private current(entry: IndexedPart): boolean {
     const current = this.repo.version(entry.document.id)
     return current?.status === 'ready' && current.revision === entry.document.revision

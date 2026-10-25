@@ -65,7 +65,12 @@ describe('MemoryStoreRegistry维度联动', () => {
         registry.replaceAgentStore('pero', 'social', () => {
           throw new Error('模拟构建失败')
         }),
-      ).toThrow('模拟构建失败')
+      ).toThrow(expect.objectContaining({
+        diagnostic: expect.objectContaining({
+          phase: 'build',
+          causes: [expect.objectContaining({ message: '模拟构建失败' })],
+        }),
+      }))
       expect(registry.getAgentStore('pero', 'social').get(1)?.payload).toEqual({
         content: '保留的记忆',
       })
@@ -215,7 +220,7 @@ describe('MemoryStoreRegistry维度联动', () => {
       const store = registry.getAgentStore('pero', 'main')
       const path = registry.resolveAgentStorePath('pero', 'main')
       registry.markTextIndexDirty(path)
-      const build = vi.spyOn(store, 'buildTextIndex').mockImplementationOnce(() => {
+      const build = vi.spyOn(Object.getPrototypeOf(store), 'buildTextIndex').mockImplementationOnce(() => {
         throw new Error('模拟文本索引损坏')
       })
       expect(() => registry.ensureTextIndexReady('pero', 'desktop')).toThrow('模拟文本索引损坏')

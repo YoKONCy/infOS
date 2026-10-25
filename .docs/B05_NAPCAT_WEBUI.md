@@ -25,3 +25,9 @@
 界面分别显示进程、管理页和 Bot 连接状态。QQ 登录的具体状态在 NapCat 原生页面展示；连接失败不能直接当成 QQ 未登录。运行日志默认折叠，展开时才挂载终端。
 
 当前入口针对本机 Electron 管理的 NapCat。浏览器和 Docker 部署仍使用外部 NapCat，不开放任意远程管理地址。
+
+## 源码与故障定位
+
+主进程入口为 `electron/main/services/napcat.ts`，安装、进程修复、管理页和状态分别拆分到同目录 napcatInstallation、napcatRuntimeRepair、napcatWebUi、napcatDashboard 模块。修改登录入口时同时核对私有 Session、导航白名单和凭据脱敏，不能直接复用普通浏览器标签的 preload。
+
+先按进程存活、WebUI 就绪、QQ 登录、Bot 到后端连接四层定位故障；不要以重启某一层替代判断。社交协议与账号生命周期见 [B21](./B21_SOCIAL_CAPABILITIES.md)。

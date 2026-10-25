@@ -30,3 +30,9 @@
 本次操作在内存中保留受影响文件的撤回前版本。文件恢复或消息删除抛错时，尝试补偿已经修改的路径。补偿只覆盖仍等于本次恢复结果的文件；再次变化的文件保留当前内容，其撤回前版本另存到对应角色目录的 `rewind-recovery/<操作ID>/`，包含 `recovery.json` 和原始字节备份。
 
 该补偿处理运行中的可捕获错误，不提供进程崩溃后的自动恢复，也尚未提供撤销回滚本身的入口。任意外部进程的文件写入不受应用内串行队列约束。
+
+## 实现入口与一致性维护
+
+文件检查点由 `packages/backend/src/services/workspace/workspaceCheckpointService.ts` 维护，前端撤回入口为 `components/chat/ConversationRewindDialog.vue` 和 `composables/chat/useConversationRewind.ts`。历史删除还影响队列、角色状态与工具原件，分别遵循 [B26](./B26_CONVERSATION_QUEUE.md)、[B10](./B10_CHARACTER_STATE.md) 和 [B01](./B01_PRODUCTIVITY_RUNTIME.md)。
+
+修改时重点保护同轮首次/最终版本、外部修改冲突和补偿恢复。不能通过简单覆盖文件再删除消息来模拟原子撤回；补偿目录须保留可恢复的原始字节与操作记录。

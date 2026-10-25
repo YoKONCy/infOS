@@ -10,6 +10,7 @@ import {
 import { useAgentStore, useNotificationStore } from '../../stores'
 import { getApiBaseUrl } from '../../api/transport'
 import { PButton, PCard, PixelIcon, PSelect } from '../pixel'
+import type { IndexMaintenanceDiagnostic } from '@infos/shared'
 
 const props = defineProps<{ socialAgentId?: string }>()
 const agents = useAgentStore()
@@ -80,6 +81,19 @@ const job = computed(() =>
     )
     .at(-1),
 )
+const jobIssues = computed(() => job.value?.results?.filter((item) => item.error || item.warnings?.length) ?? [])
+const phases: Record<string, string> = {
+  drain: '等待在途操作', build: '构建新索引', 'close-candidate': '关闭候选库',
+  validate: '校验新索引', 'close-active': '关闭原索引', publish: '发布新索引',
+  rollback: '回滚原索引', cleanup: '清理旧文件', access: '访问索引',
+  snapshot: '捕获快照', rebuild: '重建索引',
+}
+function diagnosticText(value: IndexMaintenanceDiagnostic, depth = 0): string {
+  const phase = phases[value.phase] ? __t('ui.index-maintenance', phases[value.phase]!) : value.phase
+  return [`${phase} · ${value.code}`, value.path, value.message,
+    ...(depth < 4 ? (value.causes ?? []).map((cause) => diagnosticText(cause, depth + 1)) : []),
+  ].filter(Boolean).join('\n')
+}
 const stateNames: Record<string, string> = {
   queued: '排队中',
   running: '重建中',
@@ -215,7 +229,7 @@ onUnmounted(() => {
               class="index-source-icon"
               aria-hidden="true"
             />
-            <span>{{ names[item.scope] }}</span>
+            <span>{{ __t('ui.settings', names[item.scope]) }}</span>
             <span v-if="item.agentId" class="index-agent-name">· {{ item.agentName }}</span>
           </strong>
           <small
@@ -225,7 +239,7 @@ onUnmounted(() => {
             }"
           >
             {{
-              item.error ||
+              (item.maintenance ? __t('ui.index-maintenance', '索引维护中') : item.error) ||
               (!item.exists
                 ? __t('ui.settings', '未建立')
                 : __t('ui.settings', '{0} 维 · {1} 节点', [
@@ -237,6 +251,11 @@ onUnmounted(() => {
               {{ __t('ui.settings', '· 待重建') }}
             </span>
           </small>
+          <details v-if="item.diagnostic || item.warnings?.length" class="index-diagnostics">
+            <summary>{{ __t('ui.index-maintenance', item.diagnostic ? '查看维护详情' : '索引可用，部分清理待重试') }}</summary>
+            <pre v-if="item.diagnostic" class="index-warning">{{ diagnosticText(item.diagnostic) }}</pre>
+            <pre v-for="(warning, index) in item.warnings" :key="index">{{ diagnosticText(warning) }}</pre>
+          </details>
         </div>
       </div>
       <PButton
@@ -262,9 +281,19 @@ onUnmounted(() => {
       </PButton>
     </div>
     <div v-if="job" class="index-progress" role="status" aria-live="polite">
-      <span>{{ stateNames[job.state] ?? job.state }} · {{ job.completed }}/{{ job.total }}</span>
-      <progress :value="job.completed" :max="Math.max(1, job.total)" />
-      <small v-if="job.error" class="index-warning">{{ job.error }}</small>
+      <span>{{ __t('ui.settings', stateNames[job.state] ?? job.state) }} ·
+        {{ __t('ui.index-maintenance', '已处理 {0}/{1} · 成功 {2} · 失败 {3}', [job.processed ?? job.completed, job.total, job.completed, job.failed ?? 0]) }}
+      </span>
+      <progress :value="job.processed ?? job.completed" :max="Math.max(1, job.total)" />
+      <small v-if="job.error && !jobIssues.some((item) => item.error)" class="index-warning">{{ job.error }}</small>
+      <details v-if="jobIssues.length" class="index-diagnostics">
+        <summary>{{ __t('ui.index-maintenance', '查看维护详情') }}</summary>
+        <div v-for="item in jobIssues" :key="`${item.scope}:${item.agentId ?? ''}`" class="index-issue">
+          <strong>{{ __t('ui.settings', names[item.scope]) }}<template v-if="item.agentId"> · {{ agentProfiles.get(item.agentId)?.name ?? item.agentId }}</template></strong>
+          <pre v-if="item.error" class="index-warning">{{ diagnosticText(item.error) }}</pre>
+          <pre v-for="(warning, index) in item.warnings" :key="index">{{ diagnosticText(warning) }}</pre>
+        </div>
+      </details>
     </div>
   </PCard>
 </template>
@@ -392,5 +421,27 @@ onUnmounted(() => {
   width: 100%;
   height: 5px;
   accent-color: var(--color-sky-400, #38bdf8);
+}
+.index-diagnostics {
+  margin-top: 6px;
+  font-size: 11px;
+  color: var(--text-secondary);
+}
+.index-diagnostics summary {
+  cursor: pointer;
+  color: var(--color-amber-400, #d4a35a);
+}
+.index-issue {
+  margin-top: 8px;
+  padding: 8px 10px;
+  border-left: 2px solid var(--border-color);
+  background: var(--bg-secondary, transparent);
+}
+.index-diagnostics pre {
+  margin: 6px 0;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  font-size: 11px;
+  line-height: 1.7;
 }
 </style>

@@ -80,6 +80,8 @@
 
 NapCat 接口依据：[官方 API](https://napneko.github.io/onebot/api)。
 
-## 验证
+## 维护入口与失败边界
 
-遵循仓库权限约定，只执行静态类型与 Vue 模板语法检查；未执行构建、测试或界面调试。
+资源经过附件保存、消息引用、当前轮多模态投影和客户端预览四个阶段。原始文件存在不等于模型已收到像素/音频，平台接受发送也不等于对方已读。模型输入能力、引用可访问性与投递回执必须分别判断。
+
+后端入口位于 `packages/backend/src/services/attachment/`；HTML 预览票据由其中的 `htmlPreviewService.ts` 管理。工作区预览见 [B14](./B14_WORKSPACE_FILE_PREVIEW.md)，Gemini 模型开关与连接协议见 [B22](./B22_PROVIDER_CONNECTIONS.md)，社交发送确认见 [B21](./B21_SOCIAL_CAPABILITIES.md)。修改资源传递时保护作用域、大小限制、取消和未确认发送，不把失效引用静默当成空内容。

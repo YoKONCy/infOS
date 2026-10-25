@@ -1,0 +1,17 @@
+{
+  "捕获快照": "Capturing snapshot",
+  "查看维护详情": "View maintenance details",
+  "等待在途操作": "Waiting for active operations",
+  "发布新索引": "Publishing candidate index",
+  "访问索引": "Accessing index",
+  "构建新索引": "Building candidate index",
+  "关闭候选库": "Closing candidate database",
+  "关闭原索引": "Closing previous index",
+  "清理旧文件": "Cleaning retired files",
+  "索引可用，部分清理待重试": "Index available; some cleanup needs retrying",
+  "校验新索引": "Validating candidate index",
+  "已处理 {0}/{1} · 成功 {2} · 失败 {3}": "Processed {0}/{1} · Succeeded {2} · Failed {3}",
+  "重建索引": "Rebuilding index",
+  "索引维护中": "Index maintenance in progress",
+  "回滚原索引": "Restoring previous index"
+}

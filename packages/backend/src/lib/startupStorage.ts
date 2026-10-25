@@ -1,5 +1,5 @@
 import { createHash } from 'node:crypto'
-import { mkdir, mkdtemp, readFile, realpath, rename, rm, rmdir, writeFile } from 'node:fs/promises'
+import { lstat, mkdir, mkdtemp, readFile, realpath, rename, rm, rmdir, writeFile } from 'node:fs/promises'
 import path from 'node:path'
 import Database from 'better-sqlite3'
 
@@ -52,12 +52,12 @@ export class StartupStorageError extends Error {
   }
 }
 
-/** 覆盖整个后端生命周期；放在数据目录外，避免同步快照替换目录时绕过锁。 */
+/** 卷内固定锁跨容器互斥；同时持有旧锁，兼容仍使用目录外锁的本地版本。 */
 export async function acquireDaemonLease(dataDirectory: string): Promise<{
   dataDirectory: string
   release: () => void
 }> {
-  let connection: Database.Database | undefined
+  const connections: Database.Database[] = []
   let lockPath = dataDirectory
   try {
     await retryStartupIo(() => mkdir(dataDirectory, { recursive: true }))
@@ -65,30 +65,35 @@ export async function acquireDaemonLease(dataDirectory: string): Promise<{
     // Windows 路径大小写和符号链接必须落到同一个实例锁。
     const identity = process.platform === 'win32' ? physical.toLowerCase() : physical
     const name = createHash('sha256').update(identity).digest('hex')
-    const directory = path.join(path.dirname(physical), '.infos-runtime-locks')
-    await retryStartupIo(() => mkdir(directory, { recursive: true }))
-    lockPath = path.join(directory, `${name}.sqlite`)
-    connection = await retryStartupIo(() => new Database(lockPath, { timeout: 0 }))
-    try {
-      connection.exec('BEGIN IMMEDIATE')
-    } catch (error) {
-      if (['SQLITE_BUSY', 'SQLITE_LOCKED'].includes((error as NodeJS.ErrnoException).code ?? '')) {
-        throw new DaemonAlreadyRunningError(physical, error)
+    const storage = path.join(physical, '.backup-state')
+    await retryStartupIo(() => mkdir(storage, { recursive: true, mode: 0o700 }))
+    if ((await lstat(storage)).isSymbolicLink()) throw new Error('BACKUP_STORAGE_INVALID')
+    const locks = [
+      path.join(storage, 'runtime-locks', 'daemon.sqlite'),
+      path.join(path.dirname(physical), '.infos-runtime-locks', `${name}.sqlite`),
+    ]
+    for (const file of locks) {
+      lockPath = file
+      await retryStartupIo(() => mkdir(path.dirname(file), { recursive: true, mode: 0o700 }))
+      const connection = await retryStartupIo(() => new Database(file, { timeout: 0 }))
+      connections.push(connection)
+      try { connection.exec('BEGIN IMMEDIATE') }
+      catch (error) {
+        if (['SQLITE_BUSY', 'SQLITE_LOCKED'].includes((error as NodeJS.ErrnoException).code ?? '')) throw new DaemonAlreadyRunningError(physical, error)
+        throw error
       }
-      throw error
     }
-    const acquired = connection
     let released = false
     return {
       dataDirectory: physical,
       release: () => {
         if (released) return
-        acquired.close()
+        for (const connection of connections) connection.close()
         released = true
       },
     }
   } catch (error) {
-    connection?.close()
+    for (const connection of connections) connection.close()
     if (error instanceof DaemonAlreadyRunningError) throw error
     throw new StartupStorageError(lockPath, 'instance-lock', error)
   }

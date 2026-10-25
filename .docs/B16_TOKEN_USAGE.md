@@ -9,7 +9,7 @@
 ## 统计口径
 
 - 在统一 `LlmService.chat`／`chatStream` 的每个实际尝试结束时记录一次。工具循环、后台任务、陪伴、记忆处理、知识库整理和图片转述均在该入口统计；自动重试分别计数。
-- 优先使用供应商回传的 usage，不使用聊天消息中的本地 Token 估算，也不从旧聊天反推消耗。账本从此次功能启用后开始积累；正在执行但尚未结束的调用不计入已结算用量。
+- 优先使用供应商回传的 usage，不使用聊天消息中的本地 Token 估算，也不从旧聊天反推消耗。账本从实际记录开始积累；正在执行但尚未结束的调用不计入已结算用量。
 - 记录成功、失败、取消和中断状态。失败或中断时已收到的 usage 仍保留；缺失或非法计数存为 NULL，而不是零。只有部分回传时标记为部分上报；界面没有该维度的计数时显示「—」。
 - 输入包含缓存输入。Anthropic 的普通输入、缓存读取、缓存创建先合并；缓存数量另存为输入的子项，不重复加入总量。OpenAI 缓存和思考、Responses 缓存和思考、Gemini 缓存和思考均保留；Gemini 输出包括其单列的思考 Token。
 - 总数优先保留供应商总量，并至少包含已知输入＋输出。供应商仅回传总数、未细分的部分在走势中用中性色展示；未上报和部分上报会提示统计不完整。
@@ -27,3 +27,9 @@
 `agentId` 可省略。响应包含区间总计、小时／日期桶、模型分布、用途分布、首条记录时间和生成时间。查询先由数据库按 UTC 分钟与模型／用途聚合，再映射到请求时区；前端不遍历聊天历史或逐条调用记录。
 
 协议口径参考：[Claude 缓存用量](https://platform.claude.com/docs/en/build-with-claude/prompt-caching)、[Gemini Token 与思考计数](https://ai.google.dev/gemini-api/docs/generate-content/tokens)。
+
+## 维护入口与统计边界
+
+`packages/backend/src/services/llm/tokenUsageService.ts` 统一记录供应商 usage，`repositories/tokenUsage.repo.ts` 负责时间聚合，`packages/frontend/src/components/usage/TokenUsageCard.vue` 展示账本。当前输入预算由上下文编译/请求估算提供，与消费账本不能混用。
+
+新增 Provider 的 usage 映射时检查输入是否已包含缓存、输出是否已包含思考以及总数是否重复累加；使用独立响应样例验证，不从同一映射函数生成预期。缺失字段保留 NULL，不能为了图表完整补零。

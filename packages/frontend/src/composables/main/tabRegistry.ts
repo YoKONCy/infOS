@@ -25,6 +25,7 @@ const loaders: Record<string, TabLoader> = {
   voice_config: () => import('../../components/dashboard/tabs/VoiceTab.vue'),
   mcp_config: () => import('../../components/integrations/ToolsExtensionsTab.vue'),
   distributed: () => import('../../components/dashboard/tabs/DistributedTab.vue'),
+  backups: () => import('../../components/dashboard/tabs/BackupsTab.vue'),
   social: () => import('../../components/dashboard/tabs/SocialTab.vue'),
   terminal: () => import('../../components/dashboard/tabs/TerminalTab.vue'),
   system_reset: () => import('../../components/dashboard/tabs/ResetTab.vue'),

@@ -1,4 +1,18 @@
+import indexMaintenanceCn from '../locales/zh-CN/server/index-maintenance.json'
+import indexMaintenanceTw from '../locales/zh-TW/server/index-maintenance.json'
+import indexMaintenanceEn from '../locales/en-US/server/index-maintenance.json'
+import { registerCatalog as registerIndexMaintenanceCatalog } from '../index'
+registerIndexMaintenanceCatalog('server.index-maintenance', 'zh-CN', indexMaintenanceCn)
+registerIndexMaintenanceCatalog('server.index-maintenance', 'zh-TW', indexMaintenanceTw)
+registerIndexMaintenanceCatalog('server.index-maintenance', 'en-US', indexMaintenanceEn)
 import audioInputCn from '../locales/zh-CN/server/audio-input.json'
+import backupCn from '../locales/zh-CN/server/backup.json'
+import backupTw from '../locales/zh-TW/server/backup.json'
+import backupEn from '../locales/en-US/server/backup.json'
+import { registerCatalog as registerBackupCatalog } from '../index'
+registerBackupCatalog('server.backup', 'zh-CN', backupCn)
+registerBackupCatalog('server.backup', 'zh-TW', backupTw)
+registerBackupCatalog('server.backup', 'en-US', backupEn)
 import knowledgeRecallCn from '../locales/zh-CN/logs/knowledge-recall.json'
 import knowledgeRecallTw from '../locales/zh-TW/logs/knowledge-recall.json'
 import knowledgeRecallEn from '../locales/en-US/logs/knowledge-recall.json'

@@ -145,6 +145,6 @@ final_prompt = f"{blocks['header']}\n\n{rag_content}\n\n{blocks['footer']}"
 - `{{ system_core }}`: 核心系统指令（所有模式共享）。
 - `{{ persona_definition }}`: Agent 的核心人设定义。
 - `{{ output_constraint }}`: 强制性的输出格式约束（如 JSON、Markdown 限制）。
-- `{{ social_instructions }}`: 社交模式下的特定回复准则。
+- `{{ social_rules }}`: 社交模式下的身份、参与方式与失败恢复指导。
 
 </div>

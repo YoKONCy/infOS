@@ -28,6 +28,8 @@ PDF 阅读组件按需加载。两种 Vite 入口共用 `pdfAssetsPlugin`，提�
 
 PDF 渲染与画布生命周期依据 [PDF.js 官方示例](https://mozilla.github.io/pdf.js/examples/)，接口类型以固定依赖版本为准。
 
-## 验证边界
+## 维护入口与运行限制
 
-仅进行静态类型、Vue 模板语法与源码变更检查；未运行构建、测试套件或应用调试，实际编解码与播放显示待运行时验证。
+入口为 `packages/frontend/src/components/workspace/WorkspaceFilePreview.vue`，PDF、图片与媒体分别由同目录 `WorkspacePdfViewer.vue`、`WorkspaceImageViewer.vue`、`WorkspaceMediaViewer.vue` 承接，类型识别见 `packages/backend/src/services/workspace/workspaceFileType.ts`。
+
+音视频是否可播放取决于客户端编解码器，不能仅凭扩展名承诺支持。PDF 乱码先检查本地字体/CMap 等资源及实际响应，文件切换后旧请求和画布必须释放。预览与工作区写入分离，截断预览不能保存为完整文件；版本与写入契约见 [B01](./B01_PRODUCTIVITY_RUNTIME.md)。

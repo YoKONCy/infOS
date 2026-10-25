@@ -23,6 +23,8 @@
 
 PeroperoChat 使用独立的通知专用 Gateway 连接，回复完成时通知先持久化，离线恢复后按设备补收。接收、展示与实际已读分别确认；手机不依赖 Electron 完成提醒能力。协议与移动端对接顺序见 [设备通知接入](./B23_DEVICE_NOTIFICATIONS.md)。
 
-## 验证状态
+## 维护与排障
 
-已补充客户端开关、可见性、去重、持久化、声音异常以及后端无需 Input Seat 的回归用例源码。当前仅人工审阅，未运行测试、构建、调试或类型／静态检查，未进行实际听感与 Windows 通知验证。
+后端完成事件入口为 `packages/backend/src/services/conversation/completionAlertService.ts`；Electron 的 `electron/main/services/completionAlertController.ts` 决定可见性、去重和声音，`completionAlerts.ts` 执行原生提醒。设置位于 `packages/frontend/src/components/notification/CompletionAlertSettings.vue`。
+
+排查漏提醒时分别核对业务终态、事件持久化、设备连接、客户端可见性与本机开关；声音失败不能阻断业务完成。桌面提醒的模拟用例不能证明实际听感或 OS 通知权限，移动端补收契约见 B23。

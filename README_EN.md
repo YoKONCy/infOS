@@ -86,7 +86,7 @@ In the current AI explosion era, we've seen too many powerful tools — they are
 - **Proactive Care**: No longer just "ask and answer". It can understand your state and offer a caring word at the right moment.
 - **Evolution**: It makes mistakes, but it also reflects. Through the NIT tool protocol and the Reflection self-introspection system, it learns how to understand you better with each interaction.
 
-PeroperoChat is more than a desktop pet app — it's **Pero's "soul container"**; **infOS** is the intelligent runtime kernel that carries it, an AI workstation centered around a "Principal Agent". It has been fully rewritten from Python to a **TypeScript full-stack architecture** (Hono + Vue 3 + Electron), with core high-performance operators implemented in **Rust**: conversations are carried by the Thread model, context is assembled by a read-only compiler, and memories pass through "candidate → gate → canonical memory" — so every bit of warmth rests on clear, auditable engineering.
+PeroperoChat is more than a desktop pet app — it's **Pero's "soul container"**; **infOS** is the intelligent runtime kernel that carries it, an AI workstation centered around a "Principal Agent". It has been fully rewritten from Python to a **TypeScript full-stack architecture** (Hono + Vue 3 + Electron), with native storage and retrieval integrated through the upstream **TriviumDB** npm package: conversations are carried by the Thread model, context is assembled by a read-only compiler, and memories pass through "candidate → gate → canonical memory" — so every bit of warmth rests on clear, auditable engineering.
 
 <br/>
 
@@ -106,13 +106,12 @@ PeroperoChat is more than a desktop pet app — it's **Pero's "soul container"**
 
 ### 🏗️ Infrastructure
 
-The foundation that lets an AI companion **actually run**: Electron for the desktop shell, a Node service (Hono) for the backend, and Rust for the performance-critical pieces. Together they form a runtime that can be deployed independently, audited, and extended — an "AI operating system" foundation.
+The foundation that lets an AI companion **actually run**: Electron for the desktop shell, a Node service (Hono) for the backend, and the upstream TriviumDB package for native storage and retrieval. Together they form a runtime that can be deployed independently, audited, and extended — an "AI operating system" foundation.
 
 <p>
   <img src="https://img.shields.io/badge/TypeScript-3178c6?style=flat-square&amp;logo=typescript&amp;logoColor=white" alt="TypeScript" />
   <img src="https://img.shields.io/badge/Vue_3-4b8978?style=flat-square&amp;logo=vuedotjs&amp;logoColor=white" alt="Vue 3" />
   <img src="https://img.shields.io/badge/Electron-657e96?style=flat-square&amp;logo=electron&amp;logoColor=white" alt="Electron" />
-  <img src="https://img.shields.io/badge/Rust-936d85?style=flat-square&amp;logo=rust&amp;logoColor=white" alt="Rust" />
   <img src="https://img.shields.io/badge/Node.js-668c6a?style=flat-square&amp;logo=nodedotjs&amp;logoColor=white" alt="Node.js" />
   <img src="https://img.shields.io/badge/Docker-648fc4?style=flat-square&amp;logo=docker&amp;logoColor=white" alt="Docker" />
   <img src="https://img.shields.io/badge/SQLite-637a9c?style=flat-square&amp;logo=sqlite&amp;logoColor=white" alt="SQLite" />
@@ -188,7 +187,7 @@ Put the three together and you get **infOS**: solid infrastructure carrying a wa
 
 > For developers — this is the "how it works under the hood" part, so there are more technical terms, but each one comes with a plain-language explanation.
 
-- **⚡ Millisecond Associative Memory**: Recalling relevant things from a huge memory store, in milliseconds. It uses a proprietary retrieval algorithm (PEDSA) with the core code written in Rust (the TriviumDB engine), and hits roughly **2.95ms** in a benchmark with 100 million noise entries. During retrieval it also combines semantic decomposition, graph diffusion, and diversity sampling, so results are both accurate and non-redundant.
+- **⚡ Associative Memory**: Text, vector, and graph retrieval use the upstream TriviumDB npm package. infOS maintains event notes, provenance, retrieval orchestration, and data consistency; native engine source and its build toolchain are maintained upstream.
 - **🧠 Principal Agent + Thread Model**: Six things — identity, memory, workspace, context, conversation (Thread), and capabilities — are managed together for each companion. One conversation is one Thread, and the channel (`desktop` desktop / `group` stronghold) decides what context it uses, what it remembers, and what it can do ("companion" has been retired into a request-level `ambient` scope, no longer a persistent channel). Whoever is in which window or room stays there; nothing bleeds across.
 - **✍️ Read-only Context Compiler**: The prompt fed to the AI isn't assembled ad hoc by the frontend — the backend "compiles" it. History is never duplicated, and every piece of information can answer "why is this in this round's prompt", making it easy to inspect and audit.
 - **📜 NIT Tool Protocol**: A small "scripting language" for AI, letting it orchestrate multi-step operations like a mini program (with conditionals, loops, parallelism, and error handling), then execute them through standard tool calls.
@@ -219,9 +218,9 @@ flowchart TD
             API["Hono REST API (:9120)"]
             Agent["Agent Service + ReAct Loop"]
 
-            subgraph "Memory Core"
-                TDB["TriviumDB (Rust N-API)"]
-                NIT["NIT Runtime (Rust N-API)"]
+            subgraph "Storage & Tool Runtime"
+                TDB["TriviumDB (upstream native dependency)"]
+                NIT["NIT Runtime (TypeScript)"]
             end
 
             API --> Agent
@@ -324,7 +323,7 @@ infOS/
 | :------------------ | :--------------- | :-------------------------------------------------- |
 | **Backend**         | Hono             | Lightweight, native TypeScript, Web-standard API    |
 | **Data access**     | Drizzle          | Reads like SQL, first-class SQLite support          |
-| **Vector + Graph**  | TriviumDB (Rust) | Proprietary engine: vector + graph + relations in one |
+| **Vector + Graph** | TriviumDB npm package | Upstream native engine; TS integration and data compatibility maintained here |
 | **Frontend**        | Vue 3 + Pinia    | Reactive + composable style, clear state management |
 | **Communication**   | JSON over WS     | Lightweight JSON over WebSocket (Protobuf is a future-extension option) |
 | **Desktop Shell**   | Electron         | 3D rendering + system-level interaction             |
@@ -345,7 +344,7 @@ infOS/
 
 PeroperoChat's companionship is powered by the infOS memory engine — the project's most critical technology. This engine isn't simply "store and retrieve"; it's a full **Perceive → Store → Associate → Retrieve → Reflect** loop: record what happened, recall related memories when needed, and tidy itself up afterward.
 
-All algorithms and performance are carried by the proprietary **TriviumDB** engine (a Rust "vector + graph" database). The rebuilt long-term memory is no longer a "summary node" but an **Agent's subjective event notes (EventNote) about real interactions with the user**: the system timeline is the authoritative backbone, and every note carries **Provenance** — answering where it came from, why it matters, and whether it has been superseded.
+Vector and graph storage use the upstream **TriviumDB** npm package; TypeScript services maintain retrieval orchestration and memory lifecycles. The rebuilt long-term memory is no longer a "summary node" but an **Agent's subjective event notes (EventNote) about real interactions with the user**: the system timeline is the authoritative backbone, and every note carries **Provenance** — answering where it came from, why it matters, and whether it has been superseded.
 
 ### The Life of a Memory
 
@@ -472,9 +471,9 @@ Feedback applies only to advanced automatic-RAG hits for the current Pair. Trace
 
 ### 3. TriviumDB Engine Layer
 
-All vectors, graphs, and retrieval algorithms are unified under **TriviumDB** (the proprietary Rust engine):
+Vector and graph indexes use the upstream **TriviumDB** npm package; infOS maintains application retrieval and data lifecycles:
 
-- **Vector + graph unified storage**: A `.tdb` file stores both the "similarity index" (HNSW) and the "relationship graph", so a single file can be fully migrated
+- **Vector + graph storage**: TriviumDB provides vector and relation indexes. Migration requires a consistent snapshot of the complete file group; copying only the `.tdb` main file is insufficient
 - **Native dual-layer graph**: One "temporal chain graph" (ordered by time) + one "entity concept graph" (ordered by concept relations), both written through the same interface
 - **Memory isolation & diary interop**: Each companion has its own event-memory store (`memory.tdb`); the social runtime can read that Agent's daily notes (`dailynotes/*.md`) through the host diary port, sharing the same diary with desktop
 

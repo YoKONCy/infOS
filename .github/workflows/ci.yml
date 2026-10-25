@@ -141,15 +141,12 @@ jobs:
 
       - run: pnpm install --frozen-lockfile
 
-      - name: 静态验证 Docker 与发布接线
-        run: pnpm docker:smoke
-
       - name: 生成隔离容器的烟测凭据
         run: |
           node -e 'const fs = require("node:fs"); const { randomBytes } = require("node:crypto"); const token = randomBytes(32).toString("hex"); console.log("::add-mask::" + token); fs.appendFileSync(process.env.GITHUB_ENV, "INFOS_API_TOKEN=" + token + "\n");'
 
       - name: 验证 Compose 配置
-        run: docker compose config --quiet
+        run: pnpm docker:validate
 
       - name: 构建完整镜像
         run: docker compose build
@@ -165,7 +162,7 @@ jobs:
           curl --fail http://localhost:3000/applications/pictoria/
 
       - name: 验证子应用启动、传输与停止
-        run: node scripts/docker-runtime-smoke.mjs http://localhost:3000
+        run: pnpm docker:smoke http://localhost:3000
 
       - name: 输出容器日志
         if: failure()

@@ -245,6 +245,11 @@ const navGroups: MainNavGroup[] = [
         icon: 'network',
       },
       {
+        id: 'backups',
+        get label() { return __t('ui.backup', '数据与备份') },
+        icon: 'database',
+      },
+      {
         id: 'social',
         get label() {
           return __t('ui.navigation', '社交配置')

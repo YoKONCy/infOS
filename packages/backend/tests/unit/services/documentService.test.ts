@@ -1,5 +1,6 @@
 import path from 'node:path'
-import { fileURLToPath } from 'node:url'
+import { createRequire } from 'node:module'
+import { fileURLToPath, pathToFileURL } from 'node:url'
 import { tmpdir } from 'node:os'
 import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
@@ -186,14 +187,34 @@ describe('统一文档工具', () => {
     expect(read.markdown).toContain('带伞')
   })
 
-  it('PDFKit 使用随包字体生成真实 PDF，独立服务端无需 Electron', async () => {
+  it('PDFKit 产物能由客户端阅读器读回完整中文正文，无需 Electron', async () => {
     const result = (await service.execute(
       { action: 'export', format: 'pdf', content: '# 中文标题\n这里是中文正文。' },
       context,
     )) as { path: string }
     const bytes = await readFile(path.join(root, result.path))
-    expect(bytes.subarray(0, 5).toString()).toBe('%PDF-')
-    expect(bytes.subarray(-100).toString()).toContain('%%EOF')
+    // 复用客户端实际安装的阅读器，独立解析服务端产物，不新增解析依赖。
+    const frontendRequire = createRequire(
+      new URL('../../../../frontend/package.json', import.meta.url),
+    )
+    const { getDocument } = await import(
+      pathToFileURL(frontendRequire.resolve('pdfjs-dist/legacy/build/pdf.mjs')).href
+    )
+    const loading = getDocument({
+      data: Uint8Array.from(bytes),
+      useSystemFonts: false,
+      disableFontFace: true,
+    })
+    try {
+      const document = await loading.promise
+      expect(document.numPages).toBe(1)
+      const content = await (await document.getPage(1)).getTextContent()
+      const text = content.items.map((item: { str?: string }) => item.str ?? '').join('')
+      expect(text).toContain('中文标题')
+      expect(text).toContain('这里是中文正文。')
+    } finally {
+      await loading.destroy()
+    }
     expect(chromium.render).not.toHaveBeenCalled()
   })
 

@@ -173,6 +173,7 @@ jobs:
         with:
           sparse-checkout: |
             /scripts/validate-release-artifact.mjs
+            /scripts/release-artifact-checks.cjs
             /scripts/i18n.mjs
             /packages/shared/src/i18n/locales/zh-CN/scripts/validate-release-artifact.json
             /packages/shared/src/i18n/locales/zh-TW/scripts/validate-release-artifact.json

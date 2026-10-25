@@ -1,0 +1,7 @@
+{
+  "数据库仍有操作未结束，已保留原索引": "Database operations are still active. The previous index has been retained.",
+  "数据库索引已切换，旧访问已取消，请重新读取": "The database index has changed. The old access was cancelled; read it again.",
+  "数据库维护未完成，阶段：{0}，路径：{1}": "Database maintenance did not complete. Phase: {0}; path: {1}",
+  "数据库正在维护，请稍后重试": "The database is under maintenance. Please try again shortly.",
+  "索引重建部分失败：成功 {0}，失败 {1}": "Index rebuild partially failed: {0} succeeded, {1} failed."
+}

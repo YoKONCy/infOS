@@ -55,7 +55,7 @@ const groupManage = { ...manage, groupRole: 'admin' as const }
 const groupOwner = { ...manage, groupRole: 'owner' as const }
 
 add('social', 'contacts_list', '查询好友')
-add('social', 'contact_get', '查询用户资料', user, ['user_id'])
+add('social', 'contact_get', '查询联系人资料', user, ['user_id'])
 add(
   'social',
   'contact_remark',
@@ -127,7 +127,7 @@ add(
   ['message_ids'],
   { legacy: 'social_read_image' },
 )
-add('social', 'emoji_list', '查询当前会话的 QQ 原生系统/商城表情来源及已记录引用，不返回平台密钥', {
+add('social', 'emoji_list', '查询当前会话的 QQ 原生系统/商城表情来源及已记录引用', {
   message_ids: list(id('来源消息 ID'), 10),
 })
 add(
@@ -189,11 +189,11 @@ add(
 for (const action of ['list', 'search', 'read', 'collect', 'describe', 'delete']) {
   const parameters: Record<string, [SocialParameters, string[]]> = {
     list: [
-      { offset: integer('起始位置', 0, 4096), limit: integer('数量', 1, 60), refresh: boolean },
+      { offset: integer('起始位置', 0, 4096), limit: integer('数量', 1, 60), refresh: { ...boolean, description: '跳过缓存重新读取收藏；核验结果不明的收藏写入时使用' } },
       [],
     ],
     search: [
-      { query: text('关键词', 200), limit: integer('数量', 1, 60), refresh: boolean },
+      { query: text('关键词', 200), limit: integer('数量', 1, 60), refresh: { ...boolean, description: '跳过缓存重新读取收藏' } },
       ['query'],
     ],
     read: [{ sticker_id: id('表情 ID') }, ['sticker_id']],

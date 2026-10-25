@@ -1,8 +1,8 @@
 # Application 接入协议与 Arca 参考实现
 
 > **适用范围**：第三方开源应用、Application Node、生态 Adapter、Arca 迁移
-> **状态**：目标规范与首个参考实现计划
-> **最后更新**：2026-08-22
+> **性质**：Application 接入设计规范；通用协议约束与扩展方向，不是所有第三方应用的支持清单。
+> **最后更新**：2026-10-26
 
 ---
 
@@ -10,7 +10,7 @@
 
 infOS 不要求 OpenCode、Pi、SillyTavern 等第三方应用重写为进程内 `AgentAppRuntime`。第三方应用保持自己的进程、UI、后端、Agent、会话、任务、数据和插件生态；infOS 通过标准 Application Integration Protocol 完成身份核验、通信、能力授权、任务调度、审计和 UI 集成。
 
-Arca 是该协议的首个标准参考实现。Social 是历史兼容特例，不定义第三方 Application ABI，也不作为首个迁移模板。
+Arca 的 Host、Client 和桥接代码是阅读本规范的参考入口；本文的通用 Envelope、跨语言 SDK 及外部生态步骤属于设计契约，不能据此假设已有可直接使用的完整产品接口。实现入口为 `packages/node-sdk/`、`packages/node-host/`、`packages/apps/arca/` 和后端 `applications/`。Social 是历史兼容特例，不定义第三方 Application ABI，也不作为首个迁移模板。
 
 核心原则：
 
@@ -266,7 +266,7 @@ offeredCapabilities:
   - example.task.execute
 ```
 
-生态至少提供：
+生态工具的设计目标如下；这不是当前仓库的包清单，不能据此引用尚未提供的 SDK 或 CLI。现有协议实现从 node-sdk / node-host 阅读：
 
 - `@infos/application-sdk`：第二层 Backend Adapter；
 - `@infos/application-ui-sdk`：第二层前端 Surface；
@@ -279,9 +279,9 @@ offeredCapabilities:
 
 ---
 
-## 8. Arca 参考实现计划
+## 8. 参考实现的接入步骤与扩展约束
 
-### 8.1 目标形态
+### 8.1 分层关系（设计模型）
 
 ```text
 Application Integration Foundation
@@ -300,7 +300,7 @@ Arca Application Host Adapter
 Arca Host + Arca Client
 ```
 
-### 8.2 第一阶段：协议抽取
+### 8.2 协议边界
 
 1. 从现有 `node-sdk`、`node-host` 和 Arca Federation 中抽取 Application Address、Hello、Endpoint、Task 和 Event；
 2. 定义 Application Manifest、Envelope 和错误目录；
@@ -308,7 +308,7 @@ Arca Host + Arca Client
 4. 为 Persona、Knowledge、Workspace 和 Model 定义首批 Port；
 5. 添加版本协商、Correlation、Deadline、Idempotency 和 Lease 契约测试。
 
-### 8.3 第二阶段：Arca 三层拆分
+### 8.3 适配器职责
 
 1. 保持 Arca Document Engine 和 Host 为对象 Authority；
 2. 将 infOS 内 Arca UI Tab 明确为第二层 Frontend Adapter；
@@ -317,7 +317,7 @@ Arca Host + Arca Client
 5. 所有 Arca 长任务改为 `submitTask → taskId → event/result`；
 6. 主 Agent 只通过 Arca Tool Projection、Session 或 Task API 通信。
 
-### 8.4 第三阶段：资源授权
+### 8.4 资源授权约束
 
 1. Arca 通过 `infos.persona.read` 获取版本化 Persona Projection；
 2. 通过 `infos.knowledge.query` 使用知识库；
@@ -325,13 +325,13 @@ Arca Host + Arca Client
 4. 通过 `infos.model.generate` 使用模型但不接触 Credential；
 5. 断开 Kernel 后验证本地 Document Authority 继续工作，依赖 Kernel 的能力进入等待。
 
-### 8.5 第四阶段：生态验收
+### 8.5 外部应用适配的验证目标
 
 完成一个非 Arca、非 Social 的外部应用 Adapter，验证协议未被 Document 领域绑死。候选优先选择具有稳定插件或 MCP/HTTP 接口的编码 Agent。
 
 ---
 
-## 9. 验收条件
+## 9. 接入必须保护的不变量
 
 - 主 Agent Execution 取消后，已接收的 Arca Task 继续运行；
 - Arca Adapter 或 Client 崩溃不损坏 Document Authority；

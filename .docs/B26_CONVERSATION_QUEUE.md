@@ -40,8 +40,10 @@
 
 SQLite 的持久保证仍依赖宿主磁盘兑现同步写入；磁盘故障或系统返回写入错误时，接口不会确认入队成功。
 
-## 验证范围
+## 维护入口与并发约束
 
-仓储、调度和 ReAct 交接回归用例覆盖幂等、并发版本、顺序、失败暂停、未发送消息的异常恢复与在飞请求取消。移除合成续接后，用例改为验证旧续接项取消、中断项退出队列、用户后续输入原样派发和不额外生成消息对。
+`packages/backend/src/services/conversation/conversationQueueService.ts` 负责领取、派发与恢复，`repositories/conversationQueue.repo.ts` 保存队列和版本；前端 `components/chat/ConversationQueue.vue` 与 `composables/chat/useConversationQueue.ts` 消费权威状态。
 
-先前版本经授权执行过测试与静态检查；本次移除合成续接仅进行了人工代码审阅，未运行测试、构建、类型检查或 ESLint。
+修改队列时保护幂等、并发版本、顺序、失败暂停、在飞取消以及回滚派发锁。用户后续输入须按原文派发，旧合成续接项按兼容规则退出，不能额外生成消息对。排查卡住条目时分别核对持久状态、当前 Execution、领取版本和锁，不以客户端列表为空推断已处理。
+
+已有回归入口为 `packages/backend/tests/unit/services/conversationQueueService.test.ts` 与 `repositories/conversationQueue.repo.test.ts`。任务结果入队与投递状态的区分见 [B20](./B20_PROACTIVE_WORK.md)。

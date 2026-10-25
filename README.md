@@ -86,7 +86,7 @@
 - **主动的关怀 (Proactive Care)**：它不满足于单纯的"你问我答"，还能理解你的状态，在合适的时机递上一句关心。
 - **成长的能力 (Evolution)**：它会犯错，但也会反思。通过 NIT 工具协议和 Reflection 自省系统，它在一次次交互中学会如何更好地理解你。
 
-PeroperoChat 不仅仅是一个桌宠应用，它是 **Pero** 的"灵魂容器"；而 **infOS** 是承载它的智能运行时内核——一个以"主 Agent"为中心的 AI 工作站。它已从 Python 版全面重写为 **TypeScript 全栈架构**（Hono + Vue 3 + Electron），并用 **Rust** 重写了最耗性能的核心算法：会话（Thread）负责承载对话、编译器负责统一整理上下文、记忆则经过"候选 → 门控 → 正式记忆"三层把关——让每一份温暖都建立在清晰、可审计的工程之上。
+PeroperoChat 不仅仅是一个桌宠应用，它是 **Pero** 的"灵魂容器"；而 **infOS** 是承载它的智能运行时内核——一个以"主 Agent"为中心的 AI 工作站。它已从 Python 版全面重写为 **TypeScript 全栈架构**（Hono + Vue 3 + Electron），并通过上游 npm 依赖 **TriviumDB** 接入原生存储与检索能力：会话（Thread）负责承载对话、编译器负责统一整理上下文、记忆则经过"候选 → 门控 → 正式记忆"三层把关——让每一份温暖都建立在清晰、可审计的工程之上。
 
 <br/>
 
@@ -106,13 +106,12 @@ PeroperoChat 不仅仅是一个桌宠应用，它是 **Pero** 的"灵魂容器"�
 
 ### 🏗️ Infrastructure · 基础设施
 
-让 AI 伙伴能**真正跑起来**的地基：桌面端用 Electron 呈现，后端用 Node 服务（Hono）承载，高性能算子交给 Rust——三条技术栈各司其职，共同组成一个可独立部署、可审计、可扩展的「AI 操作系统」底座。
+让 AI 伙伴能**真正跑起来**的地基：桌面端用 Electron 呈现，后端用 Node 服务（Hono）承载，原生存储与检索接入上游 TriviumDB 包——各层通过明确接口协作，共同组成一个可独立部署、可审计、可扩展的「AI 操作系统」底座。
 
 <p>
   <img src="https://img.shields.io/badge/TypeScript-3178c6?style=flat-square&amp;logo=typescript&amp;logoColor=white" alt="TypeScript" />
   <img src="https://img.shields.io/badge/Vue_3-4b8978?style=flat-square&amp;logo=vuedotjs&amp;logoColor=white" alt="Vue 3" />
   <img src="https://img.shields.io/badge/Electron-657e96?style=flat-square&amp;logo=electron&amp;logoColor=white" alt="Electron" />
-  <img src="https://img.shields.io/badge/Rust-936d85?style=flat-square&amp;logo=rust&amp;logoColor=white" alt="Rust" />
   <img src="https://img.shields.io/badge/Node.js-668c6a?style=flat-square&amp;logo=nodedotjs&amp;logoColor=white" alt="Node.js" />
   <img src="https://img.shields.io/badge/Docker-648fc4?style=flat-square&amp;logo=docker&amp;logoColor=white" alt="Docker" />
   <img src="https://img.shields.io/badge/SQLite-637a9c?style=flat-square&amp;logo=sqlite&amp;logoColor=white" alt="SQLite" />
@@ -188,7 +187,7 @@ PeroperoChat 不仅仅是一个桌宠应用，它是 **Pero** 的"灵魂容器"�
 
 > 面向开发者——这是引擎底层"凭什么能做到"的部分，术语会多一些，但都配了白话解释。
 
-- **⚡ 毫秒级联想记忆**：从海量记忆里"想起"相关的事，快到毫秒级。它用的是自研检索算法（PEDSA），核心代码用 Rust 写（TriviumDB 引擎），在 1 亿条噪音数据的测试里能做到约 **2.95ms** 出结果。检索时还会综合语义分解、图谱扩散、多样性采样等多种手段，既找得准、又不重复。
+- **⚡ 联想记忆**：通过上游 TriviumDB npm 包接入文本、向量与图检索。infOS 负责事件记事、来源追溯、检索编排与数据一致性，原生引擎源码及其编译链由上游维护。
 - **🧠 主 Agent + 会话（Thread）模型**：把每个伙伴的「身份、记忆、工作区、上下文、会话、能力」六样东西统一管理。一次对话就是一个 Thread（会话），而 channel（`desktop` 桌面 / `group` 据点群聊）决定它用什么上下文、记住什么、能做什么（「陪伴」已退役为请求级 `ambient` 作用域，不再是持久 channel）。谁在哪个窗口、哪个房间，就归谁管，互不串台。
 - **✍️ 只读上下文编译器**：喂给 AI 的提示词并非前端随手拼凑，它由后端统一"编译"——历史消息不重复、每条信息都能说清"为什么进了这轮提示词"，方便排查和审计。
 - **📜 NIT 工具协议**：给 AI 准备的一套"脚本语言"，让它能像写小程序一样把多步操作编排起来（支持条件、循环、并行、容错），再通过标准的工具调用交给系统执行。
@@ -219,9 +218,9 @@ flowchart TD
             API["Hono REST API (:9120)"]
             Agent["Agent Service + ReAct Loop"]
 
-            subgraph "Memory Core"
-                TDB["TriviumDB (Rust N-API)"]
-                NIT["NIT Runtime (Rust N-API)"]
+            subgraph "Storage & Tool Runtime"
+                TDB["TriviumDB（上游原生依赖）"]
+                NIT["NIT Runtime（TypeScript）"]
             end
 
             API --> Agent
@@ -324,7 +323,7 @@ infOS/
 | :-------------- | :--------------- | :------------------------------------------------- |
 | **后端框架**    | Hono             | 轻量、原生 TypeScript、遵循 Web 标准               |
 | **数据库访问**  | Drizzle          | 写法贴近 SQL，对 SQLite 支持好                     |
-| **向量+图谱**   | TriviumDB (Rust) | 自研引擎，向量、图谱、关系三合一                   |
+| **向量+图谱**   | TriviumDB npm 包 | 上游原生引擎；仓库维护 TS 适配与数据兼容 |
 | **前端**        | Vue 3 + Pinia    | 响应式 + 组合式写法，状态管理清晰                  |
 | **通信**        | JSON over WS     | 通过 WebSocket 传输轻量 JSON 消息（Protobuf 为后续可扩展项） |
 | **桌面壳**      | Electron         | 支持 3D 渲染与系统级交互                           |
@@ -345,7 +344,7 @@ infOS/
 
 PeroperoChat 的陪伴体验，建立在 infOS 的记忆引擎之上——这是整个项目最核心的技术。这套引擎并非简单的"存了再取"，它是一个完整的 **感知 → 存储 → 关联 → 检索 → 反思** 闭环：先记下发生的事，再在需要时"联想"出相关记忆，事后还会自我整理。
 
-所有算法和性能都由自研的 **TriviumDB** 引擎（用 Rust 编写的"向量 + 图谱"数据库）承载。重构后的长记忆不再是"摘要节点"，而是 **Agent 对与用户真实互动的主观事件记事（EventNote）**：以系统时间轴为权威主干，每条记事都带**来源追溯（Provenance）**，能回答"它从哪来、为什么重要、是否已被取代"。
+向量与图存储通过上游 **TriviumDB** npm 包接入，应用侧检索编排与记忆生命周期由 TypeScript 服务维护。重构后的长记忆不再是"摘要节点"，而是 **Agent 对与用户真实互动的主观事件记事（EventNote）**：以系统时间轴为权威主干，每条记事都带**来源追溯（Provenance）**，能回答"它从哪来、为什么重要、是否已被取代"。
 
 ### 记忆的一生
 
@@ -472,9 +471,9 @@ infOS 将“系统自动想起记忆”和“Agent 主动查图”拆成两条�
 
 ### 3. TriviumDB 引擎层
 
-所有向量、图谱与检索算法都由 **TriviumDB**（自研的 Rust 引擎）统一承载：
+向量与图索引由上游 **TriviumDB** npm 包提供，infOS 负责应用侧检索与数据生命周期：
 
-- **向量 + 图谱一体存储**：`.tdb` 文件同时保存"相似度索引"（HNSW）和"关系图谱"，一个文件就能完整迁移
+- **向量 + 图谱统一管理**：TriviumDB 提供向量与关系索引；迁移须使用一致性快照并保留完整文件组，不能只复制 `.tdb` 主文件
 - **原生双层图谱**：一张"时间链图谱"（按时间先后串）+ 一张"实体概念图谱"（按概念关系串），都用同一套接口写入
 - **记忆隔离与日记互通**：每个伙伴拥有独立的事件记忆库（`memory.tdb`）；社交运行时可通过宿主日记端口读取该 Agent 的每日日记（`dailynotes/*.md`），与桌面共享同一份日记。
 
@@ -629,6 +628,8 @@ docker compose up -d
 
 数据持久化至 Docker Volume `infos-data` 与 `infos-workspaces`。可在启动前设置 `INFOS_WEB_PORT`、`INFOS_PORT`、`INFOS_CAPABILITY_PORT`、`INFOS_LOG_LEVEL` 和 `INFOS_API_TOKEN`。仓库根目录的 `docker-compose.yml` 仍用于开发者从源码构建本地镜像。
 
+开发验收：`pnpm docker:validate` 调用 Compose 校验配置；在隔离环境的容器启动后，运行 `pnpm docker:smoke http://localhost:3000`，验证子应用启动、传输与停止。烟测要求初始子应用未启动，鉴权令牌通过 `INFOS_API_TOKEN` 传入。
+
 <br/>
 
 <a id="quick-start"></a>
@@ -650,6 +651,27 @@ docker compose up -d
     <td width="66%" valign="top"><a href=".github/assets/showcase-launcher.png"><img src=".github/assets/showcase-launcher.png" width="100%" alt="浅色 infOS 启动器中的伙伴选择和服务检查" /></a></td>
   </tr>
 </table>
+
+### 数据与备份
+
+侧栏 **设置 → 数据与备份** 管理当前连接的服务端数据。连接远程服务器时，备份保存在远端，点击“导出到本机”或“下载”才会下载到当前设备。
+
+| 范围 | 用途 |
+| :--- | :--- |
+| 配置 | 模型、服务商、提示词与偏好设置 |
+| 角色 | 所选角色的人设、头像和资源、主模式及社交记忆、对话与受管工作区 |
+| 内容 | 按会话、文档、事实对象、任务筛选，组合选择数据模块 |
+| 完整服务端 | 服务端业务数据及子应用数据的整体迁移与恢复 |
+
+局部导出采用逻辑记录；完整导出采用 SQLite 与 TDB 一致性快照。任务导出会附带关联会话和受管工作区；子应用内部的成果需同时选择“子应用数据”。筛选留空表示全部，选择角色范围时须明确勾选角色。筛选列表显示最近 1,000 项；空筛选仍包含全部数据。外部工作目录需单独备份。
+
+导入流程：上传 `.infos-backup` 文件或选择已有备份 → 查看数据量、来源版本与冲突 → 选择保留、覆盖或追加副本，可映射到新角色 → 确认暂存 → **重启当前服务端**。刷新浏览器不会应用导入。完整恢复仅支持整体覆盖，子应用数据不支持追加副本。未确认预览一小时后清理；已确认计划保留至应用或取消。
+
+实际应用前自动建立加密恢复点；恢复点可在备份记录中再次预览和恢复。安装使用数据目录内部的影子目录和恢复日志，保留 Docker 挂载根目录、本机身份及配对信息。分布式同步导入也接入恢复点机制。恢复后的在途任务、审批和待投递请求不会自动重放。
+
+默认排除连接凭据；包含凭据时须设置至少八位口令，使用 scrypt 与 AES-256-GCM 加密。对话正文与用户文件保持原文，其中自行记录的敏感内容也会随包携带。自动恢复点使用服务端本地密钥保护，下载时须指定至少八位口令重新加密；迁移恢复点应从界面下载。备份文件和归档中原文件总量各限 20 GiB，局部逻辑记录总量限 256 MiB。备份目录为数据目录内的 `.backup-state/`，应保留足够空间存放暂存副本和恢复点。
+
+备份捕获时须无正在执行的前台或后台任务；备份子应用或完整服务端时须先停止 Arca、Pictoria。导入目前要求主数据库位于标准路径 `<数据目录>/infos.db`；自定义数据库路径仍可导出，导入前需迁回标准路径。当前支持手动备份与导入前恢复点，暂不包含定时备份。
 
 ### 2. 开发者 (源码运行)
 

@@ -71,4 +71,8 @@ XLSX 的结构化输入示例：
 - 发行依赖收集保留文档库实际解析到的依赖版本，并检查当前平台 anydoc 原生模块，避免 Node 开发目录可用、发行包缺模块。
 - 单次原文件/成果各限 20MB，正文读取每页最多 32000 字符，工作簿最多 50000 单元格；服务端并发 2 个文档任务，总时限 60 秒。Chromium 页面另设 30 秒和 4MB HTML 限制。
 
-本次新增回归用例覆盖模式门控、分页、中文导出、工作簿类型与公式、输出边界、不覆盖、取消及附件上传。是否执行测试以实际验证记录为准。
+## 维护入口
+
+后端领域入口为 `packages/backend/src/services/document/documentService.ts`。修改解析、生成或导出时，通过真实原件读回验证分页、中文、工作簿值类型与公式；只检查文件头或 mock 库成功返回不能证明文档可用。已有回归入口为 `packages/backend/tests/unit/services/documentService.test.ts`。
+
+同时保护工作模式准入、输出根、禁止覆盖、大小/并发限制和取消释放。文档资源的投递与客户端预览继续遵循 [B12](./B12_MESSAGE_RESOURCES.md) 与 [B14](./B14_WORKSPACE_FILE_PREVIEW.md)，不在文档服务重复实现附件协议。

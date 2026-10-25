@@ -6,6 +6,9 @@ import os from 'node:os'
 import path from 'node:path'
 import { spawn, spawnSync } from 'node:child_process'
 import { randomUUID } from 'node:crypto'
+import artifactChecks from './release-artifact-checks.cjs'
+
+const { isHealthyResponse, assertStartupLogs } = artifactChecks
 
 const [mode, artifactDirectory, evidenceDirectory] = process.argv.slice(2)
 if (!['standard', 'portable'].includes(mode) || !artifactDirectory || !evidenceDirectory) {
@@ -127,7 +130,8 @@ function probeHealth() {
       (response) => {
         let body = ''
         response.on('data', (chunk) => (body += chunk.toString()))
-        response.on('end', () => resolve(response.statusCode === 200 && body.includes('"ok"')))
+        response.once('error', () => resolve(false))
+        response.on('end', () => resolve(isHealthyResponse(response.statusCode, body)))
       },
     )
     request.once('timeout', () => {
@@ -164,29 +168,16 @@ async function collectLogs(roots) {
     } catch {
       continue
     }
-    combined += `\n===== ${file} =====\n${content}\n`
     await fsp.writeFile(
       path.join(evidenceDirectory, `${String(index + 1).padStart(2, '0')}-${path.basename(file)}`),
       content,
       'utf8',
     )
+    // 文件标题不算日志内容，空文件不能充当启动证据。
+    if (content.trim()) combined += `\n===== ${file} =====\n${content}\n`
   }
   await fsp.writeFile(path.join(evidenceDirectory, 'combined-logs.txt'), combined, 'utf8')
   return combined
-}
-
-function assertStartupLogs(logs) {
-  const forbidden = [
-    'App whenReady 失败',
-    'ERR_INVALID_ARG_VALUE',
-    'Cannot find module',
-    'Daemon 提前退出',
-    '未捕获的异常',
-  ]
-  const failures = forbidden.filter((text) => logs.includes(text))
-  if (failures.length) {
-    throw new Error(`启动日志验收失败；致命错误: ${failures.join(', ')}`)
-  }
 }
 
 function stopProcessTree(child) {
@@ -283,15 +274,25 @@ try {
 
   const logRoots =
     mode === 'portable' ? [path.join(path.dirname(executable), 'data')] : [appData, localAppData]
-  let logs = ''
+  // 健康就绪后继续观察五秒，避免首条日志出现就结束验收。
   const logDeadline = Date.now() + 5_000
   while (Date.now() < logDeadline) {
-    logs = await collectLogs(logRoots)
-    if (logs.trim()) break
+    if (desktopChild.exitCode !== null || desktopChild.signalCode !== null) {
+      throw new Error(__t('scripts.validate-release-artifact', '观察期结束时桌面进程或后端健康状态异常'))
+    }
     await new Promise((resolve) => setTimeout(resolve, 500))
   }
-  assertStartupLogs(logs)
+  const logs = await collectLogs(logRoots)
+  const processLogs = await fsp.readFile(processLogPath, 'utf8')
+  try {
+    assertStartupLogs(logs, processLogs)
+  } catch (error) {
+    throw new Error(__t('scripts.validate-release-artifact', '启动日志验收失败：{0}', [error.message]))
+  }
   summary.requiredLogsFound = true
+  if (desktopChild.exitCode !== null || desktopChild.signalCode !== null || !(await probeHealth())) {
+    throw new Error(__t('scripts.validate-release-artifact', '观察期结束时桌面进程或后端健康状态异常'))
+  }
 
   if (mode === 'portable') {
     summary.portableDataFound = fs.existsSync(path.join(path.dirname(executable), 'data'))

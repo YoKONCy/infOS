@@ -1,4 +1,6 @@
 {
+  "启动日志验收失败：{0}": "Startup log acceptance failed: {0}",
+  "观察期结束时桌面进程或后端健康状态异常": "The desktop process or backend health is abnormal at the end of the observation period",
   "{0} 最终产物黑盒验收通过": "{0} Final product black box acceptance passed",
   "验收连接配置目录越界": "Acceptance connection profile directory is outside the isolated root",
   "验收环境缺少 7-Zip 解压工具": "7-Zip is missing from the acceptance environment"

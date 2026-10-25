@@ -257,7 +257,7 @@ export class MdpEngine {
    * AIOS 第八阶段：允许独立应用注册自己的模板目录，
    * 通过 prefix 前缀隔离避免与主 Agent 模板键冲突。
    * 例如社交应用注册 prefix="apps/social" 后，
-   * 其 `decisions/foo.md` 的键为 `apps/social/decisions/foo`。
+   * 其 `abilities/sticker_expression.md` 的键为 `apps/social/abilities/sticker_expression`。
    */
   private additionalRoots: Array<{ dir: string; prefix?: string }> = []
 
@@ -317,7 +317,7 @@ export class MdpEngine {
    *
    * @param dir    模板目录绝对路径
    * @param prefix 键前缀（如 "apps/social"），注册后该目录下
-   *                `decisions/foo.md` 的键为 `apps/social/decisions/foo`
+   *                `abilities/sticker_expression.md` 的键为 `apps/social/abilities/sticker_expression`
    *
    * 注意：带前缀的模板不会注册 basename 别名，避免污染全局短名空间。
    * reloadAll() 会自动重新扫描已注册的额外根目录。
@@ -672,7 +672,7 @@ export class MdpEngine {
       const relPath = path.relative(baseDir, filePath).replace(/\\/g, '/')
       let key = relPath.replace(/\.(md|txt)$/, '')
 
-      // 带前缀的模板：键 = prefix/relativePath（如 apps/social/decisions/foo）
+      // 带前缀的模板：键 = prefix/relativePath（如 apps/social/abilities/sticker_expression）
       if (prefix) {
         key = `${prefix}/${key}`
       }

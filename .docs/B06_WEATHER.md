@@ -9,7 +9,7 @@
 ## 数据与生命周期
 
 - 来源为 wttr.in，无需 API Key。服务端使用 j1 的逐小时数据计算每日最高降水概率，向前端返回精简结构。
-- 默认地点和最后成功快照存于现有 configs 表的 `weather.default`，无需新增数据库表或迁移。
+- 默认地点和最后成功快照存于现有 configs 表的 `weather.default`，作为配置与缓存保存，不创建独立天气实体。
 - 启动先读取缓存，再异步更新；默认每 30 分钟刷新。相同地点的并发请求合并，失败后等待 5 分钟重试，单次上游请求限时 12 秒。
 - 临时地点缓存最多 24 项，并发上游查询最多 8 项。临时查询不修改默认地点。关闭服务时清理定时器并取消网络请求。
 - 前端多个卡片共用状态和缓存读取轮询，页面隐藏时暂停轮询；关闭最后一个卡片时释放轮询。
@@ -21,12 +21,10 @@
 - `PUT /api/system/weather/location`：`{ "location": "上海" }`；空字符串清除默认地点。
 - 天气由后台自动获取并注入上下文，不提供模型查询工具。
 
-## 提示词
+## 上下文与排障
 
-复用现有状态注入和 `800_pet_state.md` 中的 `<Current_Status>`，在时间下方添加「当前地区」「当前天气」。`buildStateSection` 读取服务内缓存，不调用天气网络接口；未配置地点时省略两行，天气不可用或缓存超过两小时时省略天气行。
+主 ContextCompiler 的 `buildStateSection` 读取 WeatherService 内存快照，产生 weather_location / weather_info，不在编译提示词时访问网络。`services/mdp/prompts/slots/800_pet_state.md` 将其置于 `<Current_Status>`；未配置地点时省略相关字段，不可用或超过两小时的天气不注入。
 
-天气信息注明获取时间、来源和预报日期，不进入长期记忆。沿用既有频道的状态注入开关，不改变社交或群聊的状态注入策略。
+天气注明获取时间、来源和预报日期，不进入长期记忆。是否存在状态字段取决于调用方传入的变量，不能因共享模板就认为社交 Compiler 自动读取桌面天气或角色状态。社交编排见 [B21](./B21_SOCIAL_CAPABILITIES.md)。
 
-## 验证范围
-
-本轮仅执行静态类型检查、Vue 模板语法检查和源码审阅，没有运行构建、测试套件或应用界面的交互验证，不能等同于本轮功能的端到端验证。
+服务入口为 `packages/backend/src/services/weather/weatherService.ts`，卡片为 `packages/frontend/src/components/weather/WeatherCard.vue`，注入入口为 `packages/backend/src/services/context/contextCompiler.ts`。排查“卡片有数据但模型没有天气”时，依次检查快照时效、编译变量和当前生效模板；不要为此在编译热路径增加网络请求。

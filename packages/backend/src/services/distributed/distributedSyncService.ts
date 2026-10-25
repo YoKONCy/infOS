@@ -1,7 +1,11 @@
 import { createCipheriv, createDecipheriv, createHash, randomBytes, randomUUID } from 'node:crypto'
 import { existsSync } from 'node:fs'
-import { mkdir, readFile, readdir, rename, rm, writeFile, copyFile, cp } from 'node:fs/promises'
+import { mkdir, readFile, readdir, rm, writeFile, copyFile, cp } from 'node:fs/promises'
 import path from 'node:path'
+import { BACKUP_STATE, installBackupTree, snapshotOfflineTree } from '../backup/backupStorage'
+import { BackupService } from '../backup/backupService'
+import { safeBackupPath } from '../backup/backupArchive'
+import { prepareRestoredDatabase } from '../backup/backupRecords'
 import type { DrizzleDb } from '../../database'
 import type { MemoryStoreRegistry } from '../../repositories/storeRegistry'
 import {
@@ -32,6 +36,7 @@ const MACHINE_PATHS = new Set([
   'electron-node-id.txt',
 ])
 const EXCLUDED_ROOTS = new Set([
+  BACKUP_STATE,
   'resource-versions',
   'logs',
   'temp',
@@ -104,8 +109,9 @@ export class DistributedSyncService {
     private readonly db: DrizzleDb,
     private readonly localServerId: string,
     private readonly stores?: Pick<MemoryStoreRegistry, 'captureSnapshot'>,
+    private readonly capture?: (destination: string) => void,
   ) {
-    this.syncRoot = path.join(path.dirname(dataDir), '.infos-sync')
+    this.syncRoot = path.join(dataDir, BACKUP_STATE, 'sync')
     this.serversFile = path.join(dataDir, 'distributed', 'servers.json')
     this.keyFile = path.join(dataDir, 'distributed', 'server-credentials.key')
   }
@@ -213,6 +219,7 @@ export class DistributedSyncService {
     transferKeyBase64: string,
     expectedSourceServerId?: string,
   ): Promise<FullSyncManifest> {
+    if (existsSync(path.join(this.dataDir, BACKUP_STATE, 'pending.json')) || await this.pending() || existsSync(path.join(this.syncRoot, 'rollback.json'))) throw new Error('BACKUP_PENDING_IMPORT')
     const transferKey = Buffer.from(transferKeyBase64, 'base64')
     if (transferKey.length !== 32) throw new Error('SYNC_TRANSFER_KEY_INVALID')
     const bundle = JSON.parse(
@@ -277,11 +284,13 @@ export class DistributedSyncService {
   }
 
   async stageRollback(): Promise<boolean> {
+    if (existsSync(path.join(this.dataDir, BACKUP_STATE, 'pending.json')) || await this.pending()) throw new Error('BACKUP_PENDING_IMPORT')
     const lastSync = await this.lastSync()
     if (!lastSync?.backupPath) return false
     const backupPath = path.resolve(lastSync.backupPath)
     const relative = path.relative(path.resolve(this.syncRoot), backupPath)
-    if (relative.startsWith('..') || path.isAbsolute(relative) || !existsSync(backupPath)) {
+    const legacyRelative = path.relative(path.join(path.dirname(this.dataDir), '.infos-sync'), backupPath)
+    if (((relative.startsWith('..') || path.isAbsolute(relative)) && (legacyRelative.startsWith('..') || path.isAbsolute(legacyRelative))) || !existsSync(backupPath)) {
       throw new Error('SYNC_BACKUP_INVALID')
     }
     await mkdir(this.syncRoot, { recursive: true })
@@ -295,7 +304,7 @@ export class DistributedSyncService {
 
   private async createBundle(): Promise<FullSyncBundle> {
     const snapshotId = randomUUID()
-    const snapshotRoot = path.join(this.syncRoot, `export-${snapshotId}`)
+    const snapshotRoot = path.join(this.dataDir, BACKUP_STATE, 'work', `export-${snapshotId}`)
     const databaseSnapshot = path.join(snapshotRoot, 'infos.db')
     await mkdir(snapshotRoot, { recursive: true })
     try {
@@ -307,7 +316,8 @@ export class DistributedSyncService {
           }
         }
       ).$client
-      if (this.stores) {
+      if (this.capture) this.capture(snapshotRoot)
+      else if (this.stores) {
         const prepare = client?.prepare?.bind(client)
         if (!prepare) throw new Error('同步快照缺少同步数据库备份入口')
         this.stores.captureSnapshot(snapshotRoot, () => {
@@ -337,7 +347,7 @@ export class DistributedSyncService {
         totalBytes += bytes.length
       }
       await this.walkData(snapshotRoot, '', add)
-      await this.walkData(this.dataDir, '', async (relativePath, physicalPath) => {
+      if (!this.capture) await this.walkData(this.dataDir, '', async (relativePath, physicalPath) => {
         if (relativePath === 'infos.db') return
         if (managedStoreBase(relativePath)) {
           if (!this.stores) throw new Error('存在向量数据库，必须通过 Store 快照协调器导出')
@@ -377,7 +387,8 @@ export class DistributedSyncService {
       if (!relative && EXCLUDED_ROOTS.has(entry.name)) continue
       if (!relative && entry.name.startsWith('.resource-')) continue
       // 重建暂存区不是业务数据，不能将回滚用的旧正文带进同步快照。
-      if (/^agent_[\w-]+$/.test(relative) && /^\.index-[a-f0-9-]+$/i.test(entry.name)) continue
+      if ((/^agent_[\w-]+$/.test(relative) || relative === 'knowledge') &&
+        /^\.index-[a-f0-9-]+$/i.test(entry.name)) continue
       if (entry.name.endsWith('-wal') || entry.name.endsWith('-shm') || entry.isSymbolicLink())
         continue
       if (entry.isDirectory()) await this.walkData(root, normalized, visit)
@@ -422,16 +433,8 @@ export class DistributedSyncService {
   }
 
   private safeRelative(value: string): string {
-    const normalized = value.replaceAll('\\', '/')
-    if (
-      !normalized ||
-      normalized.startsWith('/') ||
-      normalized.includes('../') ||
-      path.isAbsolute(normalized)
-    ) {
-      throw new Error(`SYNC_PATH_INVALID: ${value}`)
-    }
-    return normalized
+    try { return safeBackupPath(value.replaceAll('\\', '/')) }
+    catch { throw new Error(`SYNC_PATH_INVALID: ${value}`) }
   }
 
   private normalizeEndpoint(value: string): string {
@@ -494,34 +497,34 @@ export class DistributedSyncService {
 
   /** 数据库打开前应用暂存包，保留当前机器身份并生成完整回滚目录。 */
   static async applyPending(dataDir: string): Promise<boolean> {
-    const syncRoot = path.join(path.dirname(dataDir), '.infos-sync')
+    const currentRoot = path.join(dataDir, BACKUP_STATE, 'sync')
+    const legacyRoot = path.join(path.dirname(dataDir), '.infos-sync')
+    const syncRoot = ['pending.bundle', 'rollback.json'].some((file) => existsSync(path.join(currentRoot, file)))
+      ? currentRoot
+      : ['pending.bundle', 'rollback.json'].some((file) => existsSync(path.join(legacyRoot, file))) ? legacyRoot : currentRoot
     const rollbackInfo = path.join(syncRoot, 'rollback.json')
     if (existsSync(rollbackInfo)) {
       const rollback = JSON.parse(await readFile(rollbackInfo, 'utf8')) as { backupPath?: string }
       const backupPath = rollback.backupPath ? path.resolve(rollback.backupPath) : ''
       const relative = backupPath ? path.relative(path.resolve(syncRoot), backupPath) : '..'
+      const legacyRelative = backupPath ? path.relative(path.resolve(legacyRoot), backupPath) : '..'
       if (
         !backupPath ||
-        relative.startsWith('..') ||
-        path.isAbsolute(relative) ||
+        ((relative.startsWith('..') || path.isAbsolute(relative)) && (legacyRelative.startsWith('..') || path.isAbsolute(legacyRelative))) ||
         !existsSync(backupPath)
       ) {
         throw new Error('SYNC_BACKUP_INVALID')
       }
-      const replaced = path.join(
-        syncRoot,
-        `replaced-${new Date().toISOString().replaceAll(':', '-')}`,
-      )
-      if (existsSync(dataDir)) await rename(dataDir, replaced)
-      try {
-        await rename(backupPath, dataDir)
-        await rm(rollbackInfo, { force: true })
-        return true
-      } catch (error) {
-        if (existsSync(dataDir)) await rename(dataDir, backupPath)
-        if (existsSync(replaced)) await rename(replaced, dataDir)
-        throw error
-      }
+      const incoming = path.join(dataDir, BACKUP_STATE, 'sync', `rollback-${randomUUID()}`)
+      const before = path.join(dataDir, BACKUP_STATE, 'sync', `before-rollback-${randomUUID()}`)
+      await snapshotOfflineTree(dataDir, before)
+      await BackupService.createRecoveryPoint(dataDir, before)
+      await cp(backupPath, incoming, { recursive: true, dereference: false })
+      prepareRestoredDatabase(path.join(incoming, 'infos.db'), path.join(before, 'infos.db'))
+      await installBackupTree(dataDir, incoming)
+      await rm(rollbackInfo, { force: true })
+      await rm(before, { recursive: true, force: true })
+      return true
     }
     const pendingBundle = path.join(syncRoot, 'pending.bundle')
     const pendingInfo = path.join(syncRoot, 'pending.json')
@@ -539,12 +542,12 @@ export class DistributedSyncService {
 
     validateStorageVersion(bundle.manifest)
 
-    const incoming = path.join(syncRoot, `incoming-${bundle.manifest.snapshotId}`)
-    const backup = path.join(syncRoot, `backup-${new Date().toISOString().replaceAll(':', '-')}`)
+    const incoming = path.join(currentRoot, `incoming-${bundle.manifest.snapshotId}`)
+    const backup = path.join(currentRoot, `backup-${randomUUID()}`)
     await rm(incoming, { recursive: true, force: true })
     await mkdir(incoming, { recursive: true })
     for (const descriptor of bundle.manifest.files) {
-      const normalized = descriptor.path.replaceAll('\\', '/')
+      const normalized = safeBackupPath(descriptor.path.replaceAll('\\', '/'))
       // 资源恢复记录属于本机，不能导入远端的启动标记、锁或待执行操作。
       if (
         normalized.split('/')[0] === 'resource-versions' ||
@@ -583,9 +586,11 @@ export class DistributedSyncService {
         filter: (file) => path.basename(file) !== 'state.lock',
       })
     await mkdir(path.dirname(backup), { recursive: true })
-    if (existsSync(dataDir)) await rename(dataDir, backup)
-    try {
-      await rename(incoming, dataDir)
+    await snapshotOfflineTree(dataDir, backup)
+    await BackupService.createRecoveryPoint(dataDir, backup)
+    prepareRestoredDatabase(path.join(incoming, 'infos.db'), path.join(backup, 'infos.db'))
+    {
+      await installBackupTree(dataDir, incoming)
       await rm(pendingBundle, { force: true })
       await rm(pendingInfo, { force: true })
       await mkdir(path.join(dataDir, 'distributed'), { recursive: true })
@@ -595,10 +600,6 @@ export class DistributedSyncService {
         'utf8',
       )
       return true
-    } catch (error) {
-      if (existsSync(dataDir)) await rm(dataDir, { recursive: true, force: true })
-      if (existsSync(backup)) await rename(backup, dataDir)
-      throw error
     }
   }
 }

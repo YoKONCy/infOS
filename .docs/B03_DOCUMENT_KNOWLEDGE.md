@@ -71,3 +71,9 @@ BM25、摘要向量与正则分别召回，按 RRF 合并排名、去重，过�
 ## API
 
 详细端点见 [S02_API_SPEC](./S02_API_SPEC.md#11-文档知识库)。HTTP 检索与 Agent 工具调用复用同一个服务；HTTP 接口使用 camelCase，工具参数使用 manifest 中的 snake_case。
+
+## 调用链与维护入口
+
+管理 API 将原件交给 `packages/backend/src/services/knowledge/knowledgeService.ts`，由调度任务整理、校验完整分段并发布可检索版本。手动检索、search_knowledge 和自动召回复用领域服务；ContextCompiler 只消费已发布资料，不承担整理写入。
+
+排查未查库时分别检查资料是否可检索、工具引导是否因空库省略、召回开关、实际查询命中和生效提示词。开关关闭不等于禁用主动查询，索引失败也不等于原文丢失。修改发布流程时保护删除/更新后的版本守卫；修改召回时保护 knowledge、facts 与事件记忆三个独立区域及其预算。

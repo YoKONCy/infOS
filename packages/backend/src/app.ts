@@ -4,6 +4,7 @@ import { createResourceVersionsRouter } from './routers/resourceVersions.router'
 import { ResourceVersions } from '@infos/shared/resource-versions'
 import { createPackagesRouter } from './routers/packages.router'
 import { createUserAvatarRouter } from './routers/userAvatar.router'
+import { createBackupRouter, isBackupDownloadRequest } from './routers/backup.router'
 /**
  * Hono 应用入口
  *
@@ -100,6 +101,7 @@ export function createApp(ctx: AppContext) {
         path === '/api/health/' ||
         path === '/api/client-access' ||
         path.startsWith('/api/client-access/') ||
+        isBackupDownloadRequest(c.req.method, path) ||
         (!path.startsWith('/api/') && !path.startsWith('/ws') && path !== '/metrics')
       const identity = publicPath ? undefined : ctx.clientAccess.authenticate(c.req.raw)
       if (!publicPath && !identity)
@@ -163,22 +165,27 @@ export function createApp(ctx: AppContext) {
     })
     app.route('/api/client-access', createClientAccessRouter(ctx.clientAccess))
   } else {
-    app.use(
-      '*',
-      createAuthMiddleware({
-        token: apiToken,
-        publicPaths: [
-          ...DEFAULT_PUBLIC_PATHS,
-          '/applications/arca',
-          '/applications/pictoria',
-          '/html-previews',
-        ],
-      }),
-    )
+    const legacyAuth = createAuthMiddleware({
+      token: apiToken,
+      publicPaths: [
+        ...DEFAULT_PUBLIC_PATHS,
+        '/applications/arca',
+        '/applications/pictoria',
+        '/html-previews',
+      ],
+    })
+    app.use('*', (c, next) => isBackupDownloadRequest(c.req.method, c.req.path) ? next() : legacyAuth(c, next))
   }
 
   // ── 全局错误处理 ──
   app.onError(errorHandler)
+  app.use('/api/*', async (c, next) => {
+    const path = c.req.path
+    const readOnly = ['GET', 'HEAD', 'OPTIONS'].includes(c.req.method)
+    const backupControl = path === '/api/backups' || path.startsWith('/api/backups/') || path === '/api/distributed/snapshot'
+    const release = !readOnly && !backupControl ? ctx.backupService?.beginWrite() : undefined
+    try { await next() } finally { release?.() }
+  })
 
   // ── 健康检查 (白名单，无需鉴权) ──
   app.route('/api/health', createHealthRouter(ctx.logQueryService))
@@ -224,6 +231,7 @@ export function createApp(ctx: AppContext) {
     createPackagesRouter(ctx.packageManagement, ctx.packageUi, ctx.packageAssets),
   )
   app.route('/api/distributed', createDistributedRouter(ctx))
+  if (ctx.backupService) app.route('/api/backups', createBackupRouter(ctx.backupService))
   app.route('/api/agents', createAgentRouter(ctx))
   app.route('/api/runtime', createRuntimeRouter(ctx))
   app.route('/api/runtime-debug', createRuntimeDebugRouter(ctx.runtimeDebug))

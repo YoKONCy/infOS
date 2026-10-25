@@ -55,8 +55,6 @@ const TEMPLATE_LABELS: Record<string, string> = {
   'apps/social/social_rules': '社交规则',
   'apps/social/abilities/sticker_expression': '收藏表情',
   'apps/social/tasks/social_segment_summarizer': '社交记忆',
-  'apps/social/social_instructions': '社交交互说明',
-  'apps/social/decisions/friend_request_decision': '好友请求判断',
   'group/butler/persona': '管家人设',
   'group/butler/narrate_and_maintain': '管家叙述',
   'group/environment_display': '据点环境',

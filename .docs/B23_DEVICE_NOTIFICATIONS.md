@@ -129,6 +129,8 @@ Content-Type: application/json
 
 服务被系统停止、手机断网或 infOS 未运行时，实时连接不能投递；服务恢复连接后再补收。Android 的后台存活和系统通知权限由移动端实现。
 
-## 验证状态
+## 维护入口与协议验证
 
-新增数据库迁移、设备隔离、补收分页、重复回执、通知连接隔离、前台状态过期及原生配对的回归用例源码。本次仅人工审阅，未运行测试、构建、类型检查或 ESLint，未进行手机端联调。
+服务端通知持久化入口为 `packages/backend/src/repositories/durableNotification.repo.ts`，设备目标筛选位于 `services/gateway/notificationTargetFilter.ts`；Web 客户端补收逻辑为 `packages/frontend/src/composables/main/useRemoteNotifications.ts`。迁移 `0022_device_notifications.sql` 定义对应持久结构。
+
+修改协议时围绕设备隔离、游标分页、重复回执、失效连接、前台状态过期与配对撤销建立回归；服务端模拟不能代替移动端对系统后台存活和通知权限的验证。故障定位依次检查持久通知、目标设备、补收游标和 received/displayed/read 回执，不能将服务端已生成当作手机已展示。

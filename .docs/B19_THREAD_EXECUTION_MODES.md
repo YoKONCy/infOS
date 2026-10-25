@@ -34,6 +34,8 @@
 
 状态栏显示“正在自动审批……”，工具记录保留结论、理由、异常原因和审批模型。自动审批模式不进入人工审批 HUD；手动审批与自动执行模式继续保留原有人工确认规则。NIT 内部调用同样传递模式与审批上下文，审批／工具等待不占用脚本自身的 30 秒执行预算。
 
-## 验证状态
+## 维护入口与关键边界
 
-已补充执行模式、审批来源、后台异常不挂起、超时及脚本读取不足的回归用例源码。本次仅人工审阅，未运行测试、构建、类型检查或其他静态检查。
+执行模式与工具菜单模式独立，菜单准入见 [B09](./B09_THREAD_INTERACTION_MODE.md)。审批实现位于 `packages/backend/src/services/execution/approvalService.ts` 和 `automaticApprovalService.ts`，持久化与 UI 见 [B01](./B01_PRODUCTIVITY_RUNTIME.md)。
+
+修改模式时重点保护任务继承、权限收窄、自动审批超时/失败和 NIT 内部调用；审批模型异常不能静默允许，也不能把后台任务永久挂在无人可处理的等待态。相关行为入口为 `packages/backend/tests/unit/services/execution/automaticApproval.test.ts`。

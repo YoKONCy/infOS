@@ -1233,11 +1233,15 @@ export class EventMemoryService {
     }
     guard()
     const vectors = new Map<string, number[]>()
+    const vectorTexts = new Map<string, string>()
     if (offline) {
       const previous = this.stores.getAgentStore(agentId, 'main')
       for (const id of previous.allNodeIds()) {
         const node = previous.get<TdbMemoryPayload>(id)
-        if (node?.payload.id) vectors.set(node.payload.id, Array.from(node.vector))
+        if (node?.payload.id) {
+          vectors.set(node.payload.id, Array.from(node.vector))
+          if ('narrative' in node.payload && typeof node.payload.narrative === 'string') vectorTexts.set(node.payload.id, node.payload.narrative)
+        }
       }
     }
     const query = {
@@ -1252,7 +1256,7 @@ export class EventMemoryService {
     const vectorFor = async (id: string, text: string) => {
       guard()
       const vector = offline
-        ? (vectors.get(id) ?? Array(dimension).fill(0))
+        ? ((vectorTexts.get(id) === text ? vectors.get(id) : undefined) ?? Array(dimension).fill(0))
         : await this.safeVector(text, signal)
       guard()
       if (vector.length !== dimension) throw new Error('记忆向量维度与当前配置不一致')
@@ -1335,15 +1339,17 @@ export class EventMemoryService {
           })
       }
     }
-    const current = await this.repo.list(agentId, query)
-    guard()
-    if (JSON.stringify(current) !== JSON.stringify(notes))
-      throw new Error('重建期间记忆发生变化，请稍后重试')
-    this.stores.replaceAgentStore(agentId, 'main', (store) => {
-      if (insertOperations.length) store.commitTransaction(insertOperations)
-      if (edgeOperations.length) store.commitTransaction(edgeOperations)
-      for (const [id, text] of texts) store.indexText(id, text)
-    })
+    await this.stores.withMaintenance(this.stores.resolveAgentStorePath(agentId, 'main'), async () => {
+      const current = await this.repo.list(agentId, query)
+      guard()
+      if (JSON.stringify(current) !== JSON.stringify(notes))
+        throw new Error('重建期间记忆发生变化，请稍后重试')
+      this.stores.replaceAgentStore(agentId, 'main', (store) => {
+        if (insertOperations.length) store.commitTransaction(insertOperations)
+        if (edgeOperations.length) store.commitTransaction(edgeOperations)
+        for (const [id, text] of texts) store.indexText(id, text)
+      })
+    }, signal)
     this.invalidateForDeletion()
   }
 

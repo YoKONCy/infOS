@@ -25,11 +25,13 @@ import {
   writeFileSync,
   readdirSync,
   rmdirSync,
-  renameSync,
   statSync,
   copyFileSync,
+  renameSync,
 } from 'node:fs'
+import { AsyncLocalStorage } from 'node:async_hooks'
 import { randomUUID } from 'node:crypto'
+import { StoreOperationError, storeDiagnostic, type StoreDiagnostic } from '../lib/storeDiagnostics'
 import { createRequire } from 'node:module'
 const _require = createRequire(import.meta.url)
 // triviumdb 是 NAPI CJS 模块 (module.exports = { TriviumDB })，ESM 只能通过 require 加载
@@ -75,16 +77,96 @@ export class MemoryStoreRegistry {
     string,
     { key: string; value: { exists: boolean; dimension: number; nodeCount: number } }
   >()
+  private readonly warnings = new Map<string, StoreDiagnostic[]>()
+  private readonly maintenance = new Map<string, symbol>()
+  private readonly maintenanceScope = new AsyncLocalStorage<symbol>()
+  private readonly activeCalls = new Map<string, Set<Promise<unknown>>>()
 
   constructor(
     private pathResolver: PathResolver,
     private dim: number = DEFAULT_DIM,
   ) {}
 
+  private assertAvailable(target: string): void {
+    const owner = this.maintenance.get(target)
+    if (owner && owner !== this.maintenanceScope.getStore())
+      throw new StoreOperationError({ code: 'STORE_MAINTENANCE', phase: 'drain', path: target,
+        message: __t('server.index-maintenance', '数据库正在维护，请稍后重试') })
+  }
+
+  private assertNoActiveCalls(target: string): void {
+    if (this.activeCalls.get(target)?.size)
+      throw new StoreOperationError({ code: 'STORE_MAINTENANCE', phase: 'drain', path: target,
+        message: __t('server.index-maintenance', '数据库仍有操作未结束，已保留原索引') })
+  }
+
+  /** 停止新访问并等待已进入的异步原生调用；同步重建和文件替换仍沿用现有流程。 */
+  async withMaintenance<T>(target: string, operation: () => T | Promise<T>, signal?: AbortSignal): Promise<T> {
+    this.assertManagedStorePath(target)
+    signal?.throwIfAborted()
+    this.assertAvailable(target)
+    if (this.maintenance.has(target)) return operation()
+    const owner = Symbol('store-maintenance')
+    this.maintenance.set(target, owner)
+    let timer: ReturnType<typeof setTimeout> | undefined
+    let abort: (() => void) | undefined
+    try {
+      signal?.throwIfAborted()
+      const interrupted = new Promise<never>((_, reject) => {
+        timer = setTimeout(() => reject(new StoreOperationError({ code: 'STORE_DRAIN_TIMEOUT', phase: 'drain', path: target,
+          message: __t('server.index-maintenance', '数据库仍有操作未结束，已保留原索引') })), 5000)
+        abort = () => reject(signal?.reason ?? new Error('Aborted'))
+        signal?.addEventListener('abort', abort, { once: true })
+      })
+      await Promise.race([Promise.allSettled([...(this.activeCalls.get(target) ?? [])]), interrupted])
+      signal?.throwIfAborted()
+      return await this.maintenanceScope.run(owner, operation)
+    } finally {
+      if (timer) clearTimeout(timer)
+      if (abort) signal?.removeEventListener('abort', abort)
+      this.maintenance.delete(target)
+    }
+  }
+
+  private guardedStore(target: string, native: TriviumDBType): TriviumDBType {
+    const calls = new Set<Promise<unknown>>()
+    this.activeCalls.set(target, calls)
+    const view: TriviumDBType = new Proxy(native, {
+      get: (store, property) => {
+        const check = () => {
+          this.assertAvailable(target)
+          if (this.stores.get(target) !== view)
+            throw new StoreOperationError({ code: 'STORE_STALE_HANDLE', phase: 'access', path: target,
+              message: __t('server.index-maintenance', '数据库索引已切换，旧访问已取消，请重新读取') })
+        }
+        check()
+        const value = Reflect.get(store, property, store)
+        if (typeof value !== 'function') return value
+        return (...args: unknown[]) => {
+          check()
+          const result: unknown = Reflect.apply(value, store, args)
+          if (result && typeof result === 'object' && typeof (result as PromiseLike<unknown>).then === 'function') {
+            const pending = Promise.resolve(result)
+            calls.add(pending)
+            void pending.then(() => calls.delete(pending), () => calls.delete(pending))
+          }
+          return result === native ? view : result
+        }
+      },
+    })
+    return view
+  }
+
+  storeDiagnostics(target: string): StoreDiagnostic[] { return this.warnings.get(target) ?? [] }
+  private warnStore(target: string, error: unknown, phase: string): void {
+    this.warnings.set(target, [...this.storeDiagnostics(target).slice(-7), storeDiagnostic(error, phase)])
+  }
+  isMaintaining(target: string): boolean { return this.maintenance.has(target) }
+
   /**
    * Agent 专属事件记忆 Store (物理隔离)
    *
-   * @example getAgentStore('pero', 'main') → data/agent_pero/main.tdb
+   * @example getAgentStore('pero', 'main') → data/agent_pero/memory.tdb
    */
   getAgentStore(agentId: string, mode: StoreMode = 'main'): TriviumDBType {
     const tdbPath = this.resolveAgentStorePath(agentId, mode)
@@ -162,11 +244,16 @@ export class MemoryStoreRegistry {
   /** 关闭并删除所有旧维度Store，切换后由调用方从SQLite重建索引。 */
   resetAllForDimension(dimension: number): void {
     if (!Number.isInteger(dimension) || dimension <= 0) throw new Error('Embedding维度必须为正整数')
+    for (const target of new Set([...this.maintenance.keys(), ...this.stores.keys()])) {
+      this.assertAvailable(target)
+      this.assertNoActiveCalls(target)
+    }
     // 社交图谱是长记忆主存，必须保留节点与边后迁移，不能当成可丢弃索引删除。
     for (const agentId of this.listStoredAgentIds()) this.rebuildSocialStore(agentId, dimension)
     for (const store of this.stores.values()) store.close()
     this.stores.clear()
     this.textIndexDirty.clear()
+    this.activeCalls.clear()
     const dataRoot = this.pathResolver.resolve('@data')
     if (existsSync(dataRoot)) this.removeStoresRecursively(dataRoot, false)
     this.dim = dimension
@@ -185,6 +272,7 @@ export class MemoryStoreRegistry {
     }
     this.stores.clear()
     this.textIndexDirty.clear()
+    this.activeCalls.clear()
   }
 
   /** Store旁保存维度元数据，用于升级时识别旧索引。 */
@@ -251,6 +339,7 @@ export class MemoryStoreRegistry {
   /** 永久删除与重建不能留下包含旧正文的升级副本。 */
   discardUpgradeBackup(tdbPath: string, preserveStaging?: string): void {
     this.assertManagedStorePath(tdbPath)
+    this.assertAvailable(tdbPath)
     const root = this.pathResolver.resolve('@data')
     for (const backupRoot of upgradeBackupRoots(root)) {
       const backup = path.join(backupRoot, managedRelative(root, tdbPath))
@@ -287,15 +376,20 @@ export class MemoryStoreRegistry {
 
   /** 在同步边界内冻结写入和自动压实，SQLite 与各 Store 的复制之间不让出事件循环。 */
   captureSnapshot(destination: string, captureSqlite: () => void): void {
+    if (this.maintenance.size || [...this.activeCalls.values()].some((calls) => calls.size))
+      throw new StoreOperationError({ code: 'STORE_MAINTENANCE', phase: 'snapshot',
+        message: __t('server.index-maintenance', '数据库正在维护，请稍后重试') })
     const root = this.pathResolver.resolve('@data')
     const relativeDestination = path.relative(path.resolve(root), path.resolve(destination))
+    const backupWork = path.relative(path.join(path.resolve(root), '.backup-state', 'work'), path.resolve(destination))
+    const privateBackup = Boolean(backupWork && !backupWork.startsWith('..') && !path.isAbsolute(backupWork))
     if (
       !relativeDestination ||
       (!relativeDestination.startsWith(`..${path.sep}`) &&
         relativeDestination !== '..' &&
-        !path.isAbsolute(relativeDestination))
+        !path.isAbsolute(relativeDestination) && !privateBackup)
     )
-      throw new Error('数据库快照必须写入数据目录外的独立暂存目录')
+      throw new Error('数据库快照必须写入独立暂存目录或备份专用工作目录')
     const paths = new Set<string>(this.stores.keys())
     for (const entry of existsSync(root) ? readdirSync(root, { withFileTypes: true }) : []) {
       if (
@@ -382,13 +476,20 @@ export class MemoryStoreRegistry {
     nodeCount: number | null
   } {
     this.assertManagedStorePath(tdbPath)
+    this.assertAvailable(tdbPath)
     const store = this.stores.get(tdbPath)
     if (store) return { exists: true, dimension: store.dim(), nodeCount: store.nodeCount() }
-    if (!existsSync(tdbPath)) {
+    const stat = (() => {
+      try { return statSync(tdbPath) }
+      catch (error) {
+        if ((error as NodeJS.ErrnoException).code === 'ENOENT') return null
+        throw error
+      }
+    })()
+    if (!stat) {
       this.descriptions.delete(tdbPath)
       return { exists: false, dimension: null, nodeCount: 0 }
     }
-    const stat = statSync(tdbPath)
     const key = `${stat.mtimeMs}:${stat.size}`
     const cached = this.descriptions.get(tdbPath)
     if (cached?.key === key) return cached.value
@@ -416,6 +517,8 @@ export class MemoryStoreRegistry {
   ): void {
     const target = this.resolveAgentStorePath(agentId, mode)
     this.assertManagedStorePath(target)
+    this.assertAvailable(target)
+    this.assertNoActiveCalls(target)
     mkdirSync(path.dirname(target), { recursive: true })
     const staging = path.join(path.dirname(target), `.index-${randomUUID()}`)
     mkdirSync(staging)
@@ -425,6 +528,8 @@ export class MemoryStoreRegistry {
     const movedOld: string[] = []
     const movedNew: string[] = []
     let preserveStaging = false
+    let phase = 'build'
+    let operationPath = temporary
     try {
       replacement = new TriviumDB(temporary, {
         dim: dimension,
@@ -436,26 +541,37 @@ export class MemoryStoreRegistry {
       populate(replacement)
       replacement.buildTextIndex()
       replacement.flush()
+      phase = 'close-candidate'
       replacement.close()
       replacement = undefined
       writeFileSync(`${temporary}.dimension`, String(dimension), 'utf8')
       const cached = this.stores.get(target)
-      cached?.close()
-      this.stores.delete(target)
-      this.textIndexDirty.delete(target)
-      this.descriptions.delete(target)
+      phase = 'close-active'
+      operationPath = target
+      try { cached?.close() }
+      finally {
+        this.stores.delete(target)
+        this.activeCalls.delete(target)
+        this.textIndexDirty.delete(target)
+        this.descriptions.delete(target)
+      }
       mkdirSync(previous)
       try {
+        phase = 'publish'
         // 旧文件组先移入同盘回滚区，新库发布并验证成功后才删除。
         for (const file of triviumFiles(target)) {
+          operationPath = file
           renameSync(file, path.join(previous, path.basename(file)))
           movedOld.push(file)
         }
         for (const file of triviumFiles(temporary)) {
+          operationPath = file
           const published = path.join(path.dirname(target), path.basename(file))
           renameSync(file, published)
           movedNew.push(published)
         }
+        phase = 'validate'
+        operationPath = target
         const reader = new TriviumDB(target, {
           dim: dimension,
           accessMode: 'readOnly',
@@ -468,6 +584,7 @@ export class MemoryStoreRegistry {
         } finally {
           reader.close()
         }
+        phase = 'cleanup'
         this.discardUpgradeBackup(target, staging)
       } catch (error) {
         try {
@@ -475,27 +592,102 @@ export class MemoryStoreRegistry {
           for (const file of movedOld) renameSync(path.join(previous, path.basename(file)), file)
         } catch (rollbackError) {
           preserveStaging = true
-          throw new AggregateError(
-            [error, rollbackError],
-            `数据库发布与回滚失败，恢复文件已保留：${staging}`,
-          )
+          throw new StoreOperationError({
+            code: 'STORE_ROLLBACK_FAILED', phase: 'rollback', path: staging,
+            message: __t('server.index-maintenance', '数据库维护未完成，阶段：{0}，路径：{1}', ['rollback', staging]),
+            causes: [storeDiagnostic(error, phase), storeDiagnostic(rollbackError, 'rollback')],
+          }, new AggregateError([error, rollbackError]))
         }
         throw error
       }
+    } catch (error) {
+      if (error instanceof StoreOperationError) throw error
+      throw new StoreOperationError({
+        code: 'STORE_REBUILD_FAILED', phase, path: operationPath,
+        message: __t('server.index-maintenance', '数据库维护未完成，阶段：{0}，路径：{1}', [phase, operationPath]),
+        causes: [storeDiagnostic(error, phase)],
+      }, error)
     } finally {
-      try {
-        replacement?.close()
-      } finally {
-        if (!preserveStaging && path.dirname(staging) === path.dirname(target))
-          rmSync(staging, { recursive: true, force: true })
+      // 附带关闭、暂存清理的错误单独保留，避免覆盖最初的发布或回滚错误。
+      try { replacement?.close() }
+      catch (error) { this.warnStore(target, error, 'close-candidate') }
+      if (!preserveStaging && path.dirname(staging) === path.dirname(target)) {
+        try { rmSync(staging, { recursive: true, force: true }) }
+        catch (error) { this.warnStore(target, error, 'cleanup') }
       }
     }
+  }
+
+  /** 社交节点不做 Embedding，保留全部摘要、关键词与关系，只重建零向量和索引。 */
+  exportSocialBackup(agentId: string): Array<{ id: number; agent_id: string; payload_json: string; edges_json: string }> {
+    const target = this.resolveAgentStorePath(agentId, 'social')
+    if (!existsSync(target) && !this.stores.has(target)) return []
+    const store = this.getAgentStore(agentId, 'social')
+    const ids = new Set(store.allNodeIds())
+    return [...ids].flatMap((id) => {
+      const node = store.get(id)
+      return node ? [{ id, agent_id: agentId, payload_json: JSON.stringify(node.payload), edges_json: JSON.stringify(node.edges.filter((edge) => ids.has(edge.targetId))) }] : []
+    })
+  }
+
+  /** 社交摘要只存在于 TDB；逻辑导入保留特征哈希 ID，并对摘要与关系同步重映射。 */
+  importSocialBackup(agentId: string, rows: Array<{ id: number; payload_json: string; edges_json: string }>, mode: 'skip' | 'replace' | 'duplicate', importId: string): void {
+    type Edge = { targetId: number; label: string; weight: number }
+    type Payload = Record<string, unknown> & { type?: string; content?: string }
+    const old = mode === 'replace' ? [] : this.exportSocialBackup(agentId)
+    const nodes = new Map<number, { payload: Payload; edges: Edge[] }>(old.map((row) => [row.id, { payload: JSON.parse(row.payload_json), edges: JSON.parse(row.edges_json) }]))
+    const remap = new Map<number, number>()
+    // 新摘要使用 u32 区间外的 ID，避免与社交 Scorer 的时间 ID 和特征哈希碰撞。
+    let next = 2 ** 32
+    for (const id of nodes.keys()) next = Math.max(next, id)
+    const clean = (payload: Payload) => JSON.stringify(Object.fromEntries(Object.entries(payload).filter(([key]) => !key.startsWith('_backup'))))
+    const existing = new Map<string, number>([...nodes].map(([id, node]) => [clean(node.payload), id]))
+    const retried = new Map<number, number>()
+    for (const [id, node] of nodes) if (node.payload._backupImportId === importId && typeof node.payload._backupSourceNodeId === 'number') retried.set(node.payload._backupSourceNodeId, id)
+    const incoming = rows.map((row) => ({ ...row, payload: JSON.parse(row.payload_json) as Payload, edges: JSON.parse(row.edges_json) as Edge[] }))
+    for (const row of incoming) {
+      row.payload.agentId = agentId
+      if (row.payload.type === 'feature') {
+        delete row.payload.agentId
+        const previous = nodes.get(row.id)
+        if (previous && (previous.payload.type !== 'feature' || previous.payload.content !== row.payload.content)) throw new Error('BACKUP_SOCIAL_FEATURE_CONFLICT')
+        remap.set(row.id, row.id)
+        if (!previous) nodes.set(row.id, { payload: row.payload, edges: [] })
+        continue
+      }
+      const retry = retried.get(row.id)
+      const duplicate = mode === 'skip' ? existing.get(clean(row.payload)) : undefined
+      const id = retry ?? duplicate ?? ++next
+      if (!Number.isSafeInteger(id)) throw new Error('BACKUP_RECORD_LIMIT')
+      remap.set(row.id, id)
+      if (!nodes.has(id)) nodes.set(id, { payload: { ...row.payload, _backupImportId: importId, _backupSourceNodeId: row.id }, edges: [] })
+    }
+    for (const row of incoming) {
+      const node = nodes.get(remap.get(row.id)!)!
+      for (const edge of row.edges) {
+        const targetId = remap.get(edge.targetId)
+        if (targetId !== undefined && !node.edges.some((item) => item.targetId === targetId && item.label === edge.label)) node.edges.push({ ...edge, targetId })
+      }
+    }
+    this.replaceAgentStore(agentId, 'social', (store) => {
+      const vector = new Array(this.dim).fill(0)
+      for (const [id, node] of nodes) {
+        store.insertWithId(id, vector, node.payload)
+        if (typeof node.payload.content === 'string') {
+          if (node.payload.type === 'feature') store.indexKeyword(id, node.payload.content)
+          else store.indexText(id, node.payload.content)
+        }
+      }
+      for (const [id, node] of nodes) for (const edge of node.edges) if (nodes.has(edge.targetId)) store.link(id, edge.targetId, edge.label, edge.weight)
+    })
   }
 
   /** 社交节点不做 Embedding，保留全部摘要、关键词与关系，只重建零向量和索引。 */
   rebuildSocialStore(agentId: string, dimension = this.dim): number {
     const target = this.resolveAgentStorePath(agentId, 'social')
     this.assertManagedStorePath(target)
+    this.assertAvailable(target)
+    this.assertNoActiveCalls(target)
     if (!existsSync(target) && !this.stores.has(target)) return 0
     const cached = this.stores.get(target)
     if (!cached) this.prepareLegacyStore(target)
@@ -665,11 +857,16 @@ export class MemoryStoreRegistry {
   resetAgentStore(agentId: string, mode: StoreMode): void {
     const tdbPath = this.resolveAgentStorePath(agentId, mode)
     this.assertManagedStorePath(tdbPath)
+    this.assertAvailable(tdbPath)
+    this.assertNoActiveCalls(tdbPath)
     this.descriptions.delete(tdbPath)
     const store = this.stores.get(tdbPath)
     if (store) {
-      store.close()
-      this.stores.delete(tdbPath)
+      try { store.close() }
+      finally {
+        this.stores.delete(tdbPath)
+        this.activeCalls.delete(tdbPath)
+      }
     }
     this.textIndexDirty.delete(tdbPath)
     this.removeStoreFiles(tdbPath)
@@ -682,11 +879,16 @@ export class MemoryStoreRegistry {
   resetSharedStore(kind: SharedStoreKind): void {
     const tdbPath = this.resolveSharedStorePath(kind)
     this.assertManagedStorePath(tdbPath)
+    this.assertAvailable(tdbPath)
+    this.assertNoActiveCalls(tdbPath)
     this.descriptions.delete(tdbPath)
     const store = this.stores.get(tdbPath)
     if (store) {
-      store.close()
-      this.stores.delete(tdbPath)
+      try { store.close() }
+      finally {
+        this.stores.delete(tdbPath)
+        this.activeCalls.delete(tdbPath)
+      }
     }
     this.textIndexDirty.delete(tdbPath)
     this.removeStoreFiles(tdbPath)
@@ -695,6 +897,7 @@ export class MemoryStoreRegistry {
 
   /** 获取或创建 TriviumDB 实例 */
   private getOrCreate(tdbPath: string): TriviumDBType {
+    this.assertAvailable(tdbPath)
     let store = this.stores.get(tdbPath)
     if (store) return store
     this.assertManagedStorePath(tdbPath)
@@ -749,10 +952,13 @@ export class MemoryStoreRegistry {
 
       // 定时压缩仍由引擎托管；内存预算已在打开前传入，避免初始化峰值越界。
       store.enableAutoCompaction(300) // 每 5 分钟自动压缩落盘
-      this.stores.set(tdbPath, store)
-      return store
+      const view = this.guardedStore(tdbPath, store)
+      this.stores.set(tdbPath, view)
+      return view
     } catch (error) {
       // 新版文本预热会传播损坏与预算错误；初始化失败仍需释放原生句柄和 Writer 锁。
+      this.stores.delete(tdbPath)
+      this.activeCalls.delete(tdbPath)
       try {
         store.close()
       } catch (closeError) {

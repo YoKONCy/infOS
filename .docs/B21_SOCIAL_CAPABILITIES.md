@@ -1,21 +1,46 @@
-# 社交能力与工具契约
+# 社交应用：编排、账号与交付
 
-社交业务统一为 `social`、`social_group`、`social_account`。参数使用 `{ action, input, account_id? }`，每种操作有独立输入结构；共享契约和参数校验位于 `packages/shared/src/socialTools.ts`；通用本地操作位于 `runtime/socialCommonOperations.ts`，QQ 业务目录位于 `adapters/napcat/napcatActions.ts`。平台提供者由同一目录生成工具说明并执行参数与权限校验。
+社交应用把同一人格在不同平台的账号映射到独立会话，负责入站持久化、参与决策、消息发送及恢复。宿主提供收窄的能力端口；平台差异留在适配器，通用运行时不解释 OneBot、Telegram 或 Discord 原始字段。
 
-不支持 anyOf 的模型传输层合并各分支的可选字段，并保留各操作的参数说明；执行层仍以所选 action 的原始结构验证，不能把传输兼容处理当作权限或参数放宽。
+## 模型入口与业务能力
 
-## 已接入范围
+模型只调用 `social_act`。普通生成文字不发送，也不作为角色发言入库。日常回复使用 `{"reply":"正文"}`；查询与复杂工作通过 steps 编排，call 步骤调用当前目录里的能力。`social`、`social_group`、`social_account` 是目录中的业务能力，参数为 `{action,input,account_id?}`，不是与 social_act 并列的模型 FC 工具。
+
+```json
+{
+  "steps": [
+    { "op": "call", "tool": "social_group", "args": { "action": "state_get", "input": {} } }
+  ]
+}
+```
+
+每种 action 有独立输入结构，业务定义与校验在 `packages/shared/src/socialTools.ts`、`runtime/socialCommonOperations.ts` 和各适配器操作表中。`socialActDefinition.ts` 将当前授权目录嵌入入口参数，`socialOrchestration.ts` 执行步骤、引用、依赖和恢复。兼容执行器名称只供内部路由，不能据其存在认定仍向模型暴露独立工具。
+
+不支持 anyOf 的模型传输层可合并分支的可选字段，但须保留 action 参数说明；执行层仍用原始结构校验。参数兼容不放宽身份、操作范围或权限。
+
+## 参与行为与执行生命周期
+
+- `pass` 结束不参与；`wait` 等待补充；`observe` 关注指定事件至到期；`defer` 保存稍后重新判断的意图。它们属于同一入口，不能绕过发送控制。
+- steps 的 call/send/wait/observe/if/parallel/yield 由编排器解释。parallel 仅并行独立只读调用，条件使用真实结果；需要理解内容或组织措辞时交回模型。
+- `messages[].delay_ms` 从前一步完成后起算，表示已决定内容的延迟发送；`after` 表示发送后继续关注，两者不等同于 defer。
+- 结果引用使用 `{"$ref":"步骤ID.data.字段"}`，成功依赖须声明 depends_on。默认普通发送结束，查询返回模型；显式 next 控制继续或结束。
+- 步骤结果与已发送部分分别保存。后续失败不能抹除已确认发送；相关新消息可取消剩余发送并重新判断，其他会话不能任意打断。
+- reason/intention 记录简短行为理由和后续关注点，不作为平台正文，也不记录逐字内部思考。停止、切换角色或清理会话须取消未执行部分。
+
+入口 Schema 负责精确参数，`prompts/social_rules.md` 维护跨操作的行为指导，适配器提供当前平台变量和能力差异。维护时避免重复大段规则，更不能向模型塞入存储、调度器或迁移过程。
+
+## 平台提供的业务范围
 
 - 日常社交：联系人与资料、备注、好友申请和删除、历史消息与转发、图片与资源、收藏表情、资料卡点赞、戳一戳、消息回应与撤回、已读、联系人记忆、主人私聊模式和状态卡片。
 - 群事务：群资料与成员、名片、群名与头像、禁言和成员管理、入群申请、公告与精华、群文件与目录、相册查询上传和互动。
 - 账号与空间：资料、签名、头像、在线状态；文字与多图说说、可见范围、发布记录和删除；好友动态、说说列表与详情、点赞、评论和转发。
-- 等待、延后、任务控制、私有心流与宿主通信保持独立流程工具。
+- 等待、延后由 social_act 行为参数处理；任务控制、私有心流与宿主通信按当前身份加入 call 能力目录。上列业务是适配器能力的并集，不表示所有平台都支持全部操作。
 
 ## 平台边界与调用链
 
 ### 同一人格、账号与任务闭环
 
-桌面与社交使用同一个 `agentId`。`AgentAccountIdentity` 区分人格、平台和账号，`AgentConversationIdentity` 再区分私聊、群聊和会话。各入口共享人格与已授权工作状态，历史、心流和发送权限仍按会话隔离。主人在任一已绑定平台的私聊中可通过 `manage_task` 查询同一人格的任务；结果仍按创建时的原始来源投递，不因查询入口改变而转发。
+桌面与社交使用同一个 `agentId`。`AgentAccountIdentity` 区分人格、平台和账号，`AgentConversationIdentity` 再区分私聊、群聊和会话。各入口共享人格与已授权工作状态，历史、心流和发送权限仍按会话隔离。主人在任一已绑定平台的私聊中可通过 `social_act` 的 call 步骤调用 `manage_task` 查询同一人格的任务；结果仍按创建时的原始来源投递，不因查询入口改变而转发。
 
 宿主通过收窄的 `SocialHostCapabilityPort` 提供当前工作摘要和浏览器工具，每次调用重新核验平台、已连接账号和主人身份。仅已绑定主人私聊获得该端口的浏览器能力，普通联系人与群聊不继承主机权限。工具复用主应用的 RegistryToolExecutor、策略检查、审批、取消与回执；不提供通用终端或直接读取 Cookie 的接口。视觉关闭时不提供截图工具，客户端浏览器离线时不生成工具定义。
 
@@ -31,7 +56,7 @@
 
 - 适配器负责连接、规范化消息、私聊目标解析、附件准备、历史分页和可选能力。原始 OneBot 字段、数字 QQ 号、`message_seq`、QQ 表情与空间访问全部留在 `adapters/napcat/`。
 - `SocialOperations` 按可信现场的平台路由业务；`SocialCommonOperations` 提供本地群状态机与机器人标记。其他平台无需实现 QQ 业务即可使用这些通用操作。平台业务只暴露自身支持的动作。
-- 模型工具仍使用 `{action,input,account_id?}`。平台由所在回合绑定；多平台场景缺少选择时失败，不能默认落到第一个适配器。普通联系人不能切换账号。群状态配置即使在主人回合也只能修改当前账号、当前群。
+- call 中的业务能力使用 `{action,input,account_id?}`。平台由所在回合绑定；多平台场景缺少选择时失败，不能默认落到第一个适配器。普通联系人不能切换账号。群状态配置即使在主人回合也只能修改当前账号、当前群。
 - 宿主通过应用清单的 `chat_in_group` 委派社交任务，参数包含 `group_id`、`intent` 和可选 `platform`、`account_id`；有多个候选时必须明确选择。宿主任务控制与创作投递通过社交应用注册的端口核验身份，不解释 QQ 配置；私聊会话标识不要求等于主人用户标识。
 - 动作权限元数据由提供者声明，宿主策略执行器据此审批，不再导入 QQ 动作表。内部权限元数据不发送给模型；未知社交动作采用保守审批策略，平台执行器再次校验权限。
 
@@ -59,7 +84,7 @@
 
 入站消息在适配器边界转换为 `messageId`、`accountId`、`timestampMs`、`isMentioned`、附件与引用等规范字段。原始事件保留诊断信息，恢复时由对应适配器解释旧格式；通用核心不读取原始 OneBot 字段。历史游标是不透明字符串，分页解释由适配器承担。
 
-迁移 `0023_social_platform_scope.sql` 为回合和删除屏障补充平台范围，重建消息唯一索引与待处理队列；旧回合按已保存的规范事件回填，缺少历史身份时兼容归属 QQ。迁移随正常数据库启动执行，不能跳过迁移直接使用新代码。开发验证只在内存数据库执行迁移，没有修改实际用户数据库。
+迁移 `0023_social_platform_scope.sql` 为回合和删除屏障补充平台范围，重建消息唯一索引与待处理队列；旧回合按已保存的规范事件回填，缺少历史身份时兼容归属 QQ。迁移随正常数据库启动执行，不能跳过迁移直接使用新代码。迁移的旧数据兼容分支应通过独立夹具验证，不能把当前用户库当作试验数据。
 
 前端通用连接列表、主人设置、状态与数据管理按平台工作；NapCat 安装、登录、进程和终端设置独立在 `components/social/platforms/NapcatSettings.vue`，由前端平台注册表装配。收藏表情按平台和账号选择，未实现该能力的平台不提供收藏入口。
 
@@ -94,7 +119,7 @@ QQ、微信、Telegram、Discord 是固定的一级入口，未启用的平台�
 
 普通历史会话不再恢复为无账号的空观察会话；未完成回合与明确请求按原账号恢复。旧聊天历史不会仅因重启而被重新当作新话题发送。发送仍必须通过 `social_act` 提交，群策略配置不代替发言，也不解除互聊保护。
 
-回归用例覆盖多群独立调度、20 条门槛、策略范围、工具会话边界、持久化失败、即时同步和跨平台同标识隔离。
+修改调度时重点保护多群独立推进、消息门槛、当前群作用域、配置持久化失败与即时同步，以及跨平台同标识隔离。
 
 ## 空间实现
 
@@ -112,18 +137,14 @@ QQ、微信、Telegram、Discord 是固定的一级入口，未启用的平台�
 
 主人可用 social_account.operations 查看记录，核对实际结果后通过 operation_resolve 标记 completed 或 not_sent。未确认的日志不随普通历史截断丢弃。说说发布记录独立保留最近 500 条。
 
-## 验证范围
-
-定向单元用例覆盖账号绑定、群友越权、未知参数、业务错误、说说发布记录、防重复提交、生命周期、JSONP、凭据隔离、跨平台范围、迁移与离线任务投递。具体类型检查和单测结果以本次交付说明为准；未构建、打包或接入真实账号。
-
 ## 收藏表情
 
-> 以下内容并入自原 `SOCIAL_ACCOUNT_STICKERS.md`。
+收藏属于平台账号资源，不能从角色资源包或另一个平台推导收藏权限。
 
 ### 使用方式
 
 - 表情归属 QQ 账号，由 NapCat 的收藏管理接口读写。角色资源包不再提供预设表情，旧 `use_stickers` 配置读取时忽略。
-- 社交 Agent 使用一个 `social_sticker` 工具：`list`、`search`、`read`、`collect`、`describe`、`delete`。
+- 模型经 social_act 调用 social 的 `sticker_list`、`sticker_search`、`sticker_read`、`sticker_collect`、`sticker_describe`、`sticker_delete`。内部 legacy 执行器 social_sticker 不作为单独 FC 入口。
 - 回复使用 `[sticker:查询返回的ID]`，桥接层按原有位置交错发送文字与表情。发送前重新核验账号收藏；失效标记不泄露给用户，也不记为发送成功。
 - 工具仅接入社交回合，不注册到主 Agent 工具库。账号由可信入站消息绑定，模型不能指定其他账号。
 - `collect` 接受当前会话来源 `message_id` 与从 1 开始的 `image_index`；可同时提供最多 200 字的描述。下载在 NapCat 主机上执行，兼容分机部署。
@@ -143,9 +164,9 @@ QQ、微信、Telegram、Discord 是固定的一级入口，未启用的平台�
 - 收藏列表缓存 30 秒。一次最多拉取 4096 条，达到上限时返回 `truncated`；工具默认每页 20 条，前端每页 30 条。
 - 图片预览限制 20 MB、15 秒，仅接受实际 PNG、JPEG、GIF、WebP 数据，不代理模型任意传入的 URL。
 
-### 验证范围
+### 错误恢复边界
 
-相关定向用例覆盖账号隔离、无效标记过滤、删除结果确认和收藏部分成功。没有运行应用构建或真实 QQ 接口调试。
+账号隔离、失效引用过滤、删除后重新核验和收藏部分成功均属于协议行为。缓存列表不能证明写入已经送达；核验收藏使用刷新后的平台结果，结果未知时先同步再决定是否重试。
 
 ## 微信、Telegram 与 Discord 接入
 
@@ -171,14 +192,48 @@ QQ、微信、Telegram、Discord 是固定的一级入口，未启用的平台�
 
 使用 `telegram-bot`，通过 BotFather 创建 Bot 并在管理页添加 Token。采用 grammY API 客户端与自行控制确认顺序的长轮询。存在远端 Webhook 时拒绝启用，不擅自删除旧部署；409 消费冲突要求检查其他部署。账号、chat ID、主题 ID 和发送者分别映射；主题包含在不透明会话标识内。SDK 的更新游标在规范消息持久接收后推进。
 
-群主动观察需在管理页确认完整群消息读取，同时在 Telegram 关闭隐私模式或授予相应管理员权限。未开启此项仍可处理可见的命令、提及与私聊。原生 `is_bot` 身份进入互聊保护。首期不声明任意远程历史、好友目录或完整成员枚举能力；群状态工具仍可使用。文字默认纯文本，结构化提及单独转换为实体。
+群主动观察需在管理页确认完整群消息读取，同时在 Telegram 关闭隐私模式或授予相应管理员权限。未开启此项仍可处理可见的命令、提及与私聊。原生 `is_bot` 身份进入互聊保护。当前不声明任意远程历史、好友目录或完整成员枚举能力；群状态工具仍可使用。文字默认纯文本，结构化提及单独转换为实体。
 
 ### Discord
 
 使用 `discord-bot`，在开发者后台创建 Bot，通过安装链接加入服务器并添加 Token。采用 discord.js Gateway 和 REST；启用完整群观察前需在开发者后台配置 Message Content Intent，并授予目标频道的查看、历史读取和发送权限。仅声明必要 Intent，不申请在线状态与全部成员权限。私聊频道、文字频道、帖子线程分别维护会话；不把整个服务器合并为一个群。
 
-支持文字、附件、引用读取和按不透明消息游标分页补拉已有频道历史。结构化提及使用明确用户白名单，默认不允许 everyone、角色或隐式回复提及。SDK 的 POST 自动重试关闭，避免结果不明时直接重复发送；断开销毁 Gateway 并停止收件箱任务。首期没有语音频道、屏幕共享和平台管理写操作。
+支持文字、附件、引用读取和按不透明消息游标分页补拉已有频道历史。结构化提及使用明确用户白名单，默认不允许 everyone、角色或隐式回复提及。SDK 的 POST 自动重试关闭，避免结果不明时直接重复发送；断开销毁 Gateway 并停止收件箱任务。当前不提供语音频道、屏幕共享和平台管理写操作。
 
-### 验证与发行边界
+### 发行与外部平台边界
 
-本轮只执行类型检查和使用模拟服务的定向单元测试。没有构建、打包、登录真实账号或修改现有用户数据库。生产依赖与锁文件已声明 grammY 和 discord.js，现有依赖收集脚本会递归处理 Social 包的生产依赖；实际安装包仍需在允许构建后验收。
+grammY、discord.js 等属于 Social 的生产依赖，由现有依赖收集器递归处理。开发目录可运行不代表发行目录包含全部协议依赖；目标产物应核对实际解析版本、适配器加载和媒体资源路径。平台真实账号权限、服务端限流、二维码有效期与设备兼容不能由模拟服务证明。
+
+## 上下文、记忆与提示词归属
+
+SocialAppCompiler 独立于主 ContextCompiler。人格通过当前授权读取同一角色资源；历史、社交记忆、联系人印象和私有心流由社交运行时提供，不能用桌面会话状态补齐。
+
+| 材料 | 来源与作用域 | 默认编排位置 |
+| --- | --- | --- |
+| 人格及称呼 | Persona Grant、角色配置；owner_appellation 只控制表达，不改变身份 | 稳定人格和规则区 |
+| 长期社交记忆 | 应用自己的 social.tdb，由 SocialScorer 维护；受记忆读取授权控制 | 动态区的 long_term_memory |
+| 原生对话历史 | 当前角色、平台、账号、私聊/群聊范围的持久消息 | 原生 user/assistant 历史 |
+| 联系人印象 | 当前触发者的持久印象，内容是资料，不是授权 | social_context 中的 contact_context |
+| 跨会话私聊 | 群场景按触发者读取最近私聊，最多 10 条；存储包装器注入平台/账号范围 | social_context 中的 cross_session_private_chat |
+| 当前身份与平台现场 | 可信入站消息、绑定账号和适配器 | social_session；当前输入附加 current_social_turn |
+| 私有心流 | Realm × 平台/账号/会话类型/会话标识 × Agent | 动态 flow_state；独立能力组件说明更新协议 |
+
+社交长记忆使用自身 BM25/关键词检索，不访问主应用 CanonicalMemory / MemoryProvider。跨会话记录由 `scopedSocialStorage` 在查询 LIMIT 之前限制平台和账号；不能在编译器里用事后过滤替代存储隔离。补充读取失败可缺省该材料，不应阻断当前群聊。
+
+受管理框架由 prepareManagedFramework 取得生效快照，按变量生成历史与靠近输入的 turn_context；没有管理框架时使用编译器的回退编排。共享 XML 组件只规定结构，不拥有数据。主应用的角色 mood/vibe/mind 不传给 Social Compiler，模板也按 channel 排除社交三状态；社交心流仍是自身 Realm 会话状态，不是主对话心流。
+
+预览中的“示例变量未提供”表示示例 JSON 缺少某变量，不表示运行时没有加载该材料。排查时区分预览、实际生效框架、Compiler 变量和最终请求，不能为了消除预览警告注入错误作用域的数据。主提示词工作区见 [B17](./B17_PROMPT_WORKSPACE.md)。
+
+## 源码导航与扩展约束
+
+| 修改目标 | 入口 |
+| --- | --- |
+| 入站装配、授权与能力目录 | `packages/apps/social/runtime/index.ts` |
+| 入口参数与编排执行 | `runtime/socialActDefinition.ts`、`runtime/socialOrchestration.ts` |
+| 当前变量、记忆和历史投影 | `runtime/compiler.ts`、`runtime/socialScorer.ts` |
+| 存储作用域与数据库实现 | `runtime/socialStorageScope.ts`、`packages/backend/src/applications/sqliteSocialStoragePort.ts` |
+| 通用本地操作与平台业务路由 | `runtime/socialCommonOperations.ts`、`runtime/socialOperations.ts` |
+| 适配器装配及 QQ 操作 | `adapters/registry.ts`、`adapters/napcat/napcatActions.ts` |
+| 提示词正文 | `prompts/social_rules.md`、`prompts/abilities/sticker_expression.md`、`prompts/tasks/social_segment_summarizer.md` |
+
+上述 runtime/adapters/prompts 路径均相对于 `packages/apps/social/`。新增平台须实现规范消息、身份范围、取消、投递回执与可选能力声明，不给通用核心增加平台字段分支。新增操作同时维护参数、权限元数据、执行与结果未知恢复；不能只添加模型说明。维护回归聚焦越权、重复提交、部分发送、取消重启和离线交付，真实平台权限与登录另行验证。

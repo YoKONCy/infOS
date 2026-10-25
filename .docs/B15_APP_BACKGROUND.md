@@ -38,3 +38,9 @@
 存储继续使用 `ui.chatBackground.settings`、`ui.chatBackground.mime` 和 `/api/system/chat-background`，已有图片与自定义参数无需迁移或重新上传。首次使用默认采用均衡参数；已有自定义参数不会被覆盖，可手动选择预设重新调整。Web 端图片请求复用资源查询参数鉴权。
 
 图片支持 PNG、JPEG、WebP，最大 15MB。后台继续校验实际图片格式。设置加载合并并发请求，打开设置页不会覆盖尚未保存的预览调整；持久化和样式投影会限制数值范围。
+
+## 维护入口
+
+背景配置与文件由 `packages/backend/src/services/system/chatBackgroundService.ts` 管理；前端 `composables/ui/useAppBackground.ts` 处理应用生命周期，`assets/app-background.css` 提供统一材质变量。新增页面应消费这些变量，而不是另建透明度或毛玻璃配置。
+
+排查背景切换不同步时核对服务端配置、前端对象 URL 与页面激活状态；切换和卸载须回收旧资源。深浅主题与可读性要求见 [S06](./S06_UI_UX_DESIGN_SPEC.md)。

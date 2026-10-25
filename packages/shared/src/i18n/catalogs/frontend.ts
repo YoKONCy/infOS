@@ -1,3 +1,10 @@
+import indexMaintenanceCn from '../locales/zh-CN/ui/index-maintenance.json'
+import indexMaintenanceTw from '../locales/zh-TW/ui/index-maintenance.json'
+import indexMaintenanceEn from '../locales/en-US/ui/index-maintenance.json'
+import { registerCatalog as registerIndexMaintenanceCatalog } from '../index'
+registerIndexMaintenanceCatalog('ui.index-maintenance', 'zh-CN', indexMaintenanceCn)
+registerIndexMaintenanceCatalog('ui.index-maintenance', 'zh-TW', indexMaintenanceTw)
+registerIndexMaintenanceCatalog('ui.index-maintenance', 'en-US', indexMaintenanceEn)
 import audioInputCn from '../locales/zh-CN/ui/audio-input.json'
 import knowledgeRecallCn from '../locales/zh-CN/ui/knowledge-recall.json'
 import knowledgeRecallTw from '../locales/zh-TW/ui/knowledge-recall.json'
@@ -21,6 +28,12 @@ import packagesZhTw from '../locales/zh-TW/ui/packages.json'
 import packagesEnUs from '../locales/en-US/ui/packages.json'
 // 按模块、语言分别维护词库；此入口只装配当前运行端需要的资源。
 import { registerCatalog } from '../index'
+import backupCn from '../locales/zh-CN/ui/backup.json'
+import backupTw from '../locales/zh-TW/ui/backup.json'
+import backupEn from '../locales/en-US/ui/backup.json'
+registerCatalog('ui.backup', 'zh-CN', backupCn)
+registerCatalog('ui.backup', 'zh-TW', backupTw)
+registerCatalog('ui.backup', 'en-US', backupEn)
 import userAvatarUiZhCn from '../locales/zh-CN/ui/user-avatar.json'
 import userAvatarUiZhTw from '../locales/zh-TW/ui/user-avatar.json'
 import userAvatarUiEnUs from '../locales/en-US/ui/user-avatar.json'

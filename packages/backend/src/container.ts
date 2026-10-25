@@ -266,6 +266,7 @@ import { RealtimeSessionManager } from './services/voice/realtimeSessionManager'
 import { LogQueryService } from './services/system/logQueryService'
 import { DatabaseSnapshotService } from './services/system/databaseSnapshotService'
 import { DistributedSyncService } from './services/distributed/distributedSyncService'
+import { BackupService } from './services/backup/backupService'
 import { SystemService } from './services/system/systemService'
 import { WeatherService } from './services/weather/weatherService'
 import { ResourceService } from './services/attachment/resourceService'
@@ -478,6 +479,7 @@ export interface AppContext {
   tokenCounter: typeof tokenCounter
   databaseSnapshotService: DatabaseSnapshotService
   distributedSyncService: DistributedSyncService
+  backupService: BackupService
   logQueryService: LogQueryService
 
   // ── AIOS 第八阶段：Agent 应用层（系统 + 独立应用） ──
@@ -2181,11 +2183,21 @@ export async function createAppContext(config: AppConfig): Promise<AppContext> {
   })
 
   const databaseSnapshotService = new DatabaseSnapshotService(db)
+  const backupService = new BackupService({
+    dataDir: config.dataDir, db, stores: storeRegistry, agents: agentManager,
+    sourceServerId: localNodeId,
+    assertIdle: (applications) => {
+      if (kernelScheduler.list().some((execution) => execution.descriptor.class !== 'resident' && !['queued', 'completed', 'failed', 'cancelled', 'timed_out', 'interrupted'].includes(execution.state))) throw new Error('BACKUP_ACTIVE_EXECUTIONS')
+      if (applications && [arcaApplication, pictoria.controller].some((controller) => controller.status().ownership !== 'offline')) throw new Error('BACKUP_ACTIVE_APPLICATIONS')
+    },
+  })
+  await backupService.initialize()
   const distributedSyncService = new DistributedSyncService(
     config.dataDir,
     db,
     localNodeId,
     storeRegistry,
+    (destination) => backupService.captureForSync(destination),
   )
   const logQueryService = new LogQueryService()
   const conversationQueue = new ConversationQueueService(
@@ -2348,6 +2360,7 @@ export async function createAppContext(config: AppConfig): Promise<AppContext> {
     tokenCounter,
     databaseSnapshotService,
     distributedSyncService,
+    backupService,
     logQueryService,
 
     // ── AIOS第八阶段：Application Realm层 ──
