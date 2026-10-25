@@ -51,9 +51,13 @@ export class ApplicationCapabilityRuntime {
     this.unsubscribe?.()
     this.unsubscribe = undefined
     await this.synchronizing?.catch(() => undefined)
-    await this.tools.offlineAll()
-    for (const binding of this.bindings.values()) await binding.scope.dispose()
-    this.bindings.clear()
+    try {
+      await this.tools.offlineAll()
+    } finally {
+      // 工具注销失败也要释放能力绑定与 Handle。
+      for (const binding of this.bindings.values()) await binding.scope.dispose()
+      this.bindings.clear()
+    }
   }
   available(): boolean {
     return this.bindings.size > 0

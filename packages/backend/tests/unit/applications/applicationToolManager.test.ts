@@ -9,9 +9,13 @@ import { CapabilityGate } from '../../../src/capabilities/capabilityGate'
 import type { SkillLoader } from '../../../src/capabilities/skillLoader'
 import { ToolRegistry } from '../../../src/services/agent/toolRegistry'
 
-vi.mock('../../../src/lib/logger', () => ({
-  createLogger: () => ({ debug: vi.fn(), info: vi.fn(), warn: vi.fn(), error: vi.fn() }),
+const logger = vi.hoisted(() => ({
+  debug: vi.fn(),
+  info: vi.fn(),
+  warn: vi.fn(),
+  error: vi.fn(),
 }))
+vi.mock('../../../src/lib/logger', () => ({ createLogger: () => logger }))
 
 function projection(
   name: string,
@@ -116,6 +120,37 @@ describe('ApplicationToolManager', () => {
     expect(tools.getHandler('web_search')).toBe(builtin)
   })
 
+  it('重名导致的上线失败只记一次日志', () => {
+    const { tools, manager, realm } = setup()
+    tools.register({ name: 'clash', description: '', parameters: {} }, handler)
+    const demo = manager.declare(realm('demo'), manifest('demo', [projection('clash')]))
+    logger.warn.mockClear()
+    demo.online('clash', handler)
+    demo.online('clash', handler)
+    demo.online('clash', handler)
+    expect(logger.warn).toHaveBeenCalledTimes(1)
+  })
+
+  it('下线全部工具时单个失败不影响其余工具下线', async () => {
+    const { tools, manager, realm } = setup()
+    const demo = realm('demo')
+    const declaration = manager.declare(
+      demo,
+      manifest('demo', [projection('demo_a'), projection('demo_b')]),
+    )
+    declaration.online('demo_a', handler)
+    declaration.online('demo_b', handler)
+    const original = demo.unregisterTool.bind(demo)
+    vi.spyOn(demo, 'unregisterTool').mockImplementation(async (name) => {
+      if (name === 'demo_a') throw new Error('boom')
+      return original(name)
+    })
+    await expect(declaration.offlineAll()).rejects.toThrow('boom')
+    expect(tools.has('demo_b')).toBe(false)
+    // 注销失败的工具仍记为在线，下次同步可重试。
+    expect(manager.has('demo_a')).toBe(true)
+  })
+
   it('只能上下线本子应用声明过的工具', async () => {
     const { tools, manager, realm } = setup()
     const a = manager.declare(realm('a'), manifest('a', [projection('a_tool')]))
@@ -177,5 +212,41 @@ describe('ApplicationToolManager', () => {
 
     await declaration.offline('demo_run')
     expect(gate.isToolAllowed('open', 'desktop', 'demo_run')).toBe(false)
+  })
+
+  it('application:* 放行全部在线子应用工具，mcp:* 放行 MCP 工具，均只在默认作用域生效', () => {
+    const { tools, manager, realm } = setup()
+    const root = join(tmpdir(), `infos-app-wildcard-${Date.now()}-${Math.random()}`)
+    dirs.push(root)
+    mkdirSync(join(root, 'pero'), { recursive: true })
+    writeFileSync(
+      join(root, 'pero', 'capabilities.yaml'),
+      [
+        'agent: pero',
+        'channels:',
+        '  desktop:',
+        '    tools:',
+        '      - read_file',
+        '      - application:*',
+        '      - mcp:*',
+        '    skills: []',
+        '    prompt_fragments: []',
+        '',
+      ].join('\n'),
+      'utf-8',
+    )
+    for (const name of ['read_file', 'web_search', 'mcp_demo_echo'])
+      tools.register({ name, description: '', parameters: {} }, handler)
+    const skills = { getManifest: vi.fn(), getAllManifests: vi.fn(() => []) }
+    const gate = new CapabilityGate([root], skills as unknown as SkillLoader, tools)
+    manager
+      .declare(realm('demo'), manifest('demo', [projection('demo_run')]))
+      .online('demo_run', handler)
+
+    const allowed = gate.resolve('pero', 'desktop').allowedTools
+    expect([...allowed].sort()).toEqual(['demo_run', 'mcp_demo_echo', 'read_file'])
+    expect(allowed.has('application:*')).toBe(false)
+    expect(gate.isToolAllowed('pero', 'desktop', 'demo_run', undefined, 'ambient')).toBe(false)
+    expect(gate.isToolAllowed('pero', 'desktop', 'mcp_demo_echo', undefined, 'ambient')).toBe(false)
   })
 })

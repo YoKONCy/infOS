@@ -8,6 +8,7 @@ import { t as __t } from '../../../i18n/index'
  * 副作用在组件生命周期内建立并清理，避免跨页面残留监听器或异步状态。
  */
 import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
+import { isRoleToolEnabled, toggleRoleTool } from '../../../lib/roleToolSelection'
 import { PButton, PCheckbox, PDialog, PEmpty, PInput, PTextarea, PixelIcon } from '../../pixel'
 import {
   agentApi,
@@ -620,21 +621,12 @@ function removeArrayItem(pathValue: string, index: number): void {
 }
 
 function isToolEnabled(tool: AgentTool): boolean {
-  return (
-    Boolean(tool.locked) ||
-    activeCapability.value.tools.includes('*') ||
-    activeCapability.value.tools.includes(tool.name)
-  )
+  return Boolean(tool.locked) || isRoleToolEnabled(activeCapability.value.tools, tool)
 }
 function setToolEnabled(tool: AgentTool, enabled: boolean): void {
   if (tool.locked) return
   const target = getOrCreateChannelCapability(activeChannel.value)
-  const currentTools = target.tools.includes('*')
-    ? activeCompatibleTools.value.map((item) => item.name)
-    : target.tools
-  target.tools = enabled
-    ? [...new Set([...currentTools, tool.name])]
-    : currentTools.filter((name) => name !== tool.name)
+  target.tools = toggleRoleTool(target.tools, activeCompatibleTools.value, tool, enabled)
 }
 function toggleSkill(skillId: string, enabled: boolean): void {
   const target = getOrCreateChannelCapability(activeChannel.value)

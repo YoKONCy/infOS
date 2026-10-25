@@ -38,6 +38,9 @@ const logger = createLogger('CapabilityGate')
 
 const DEPRECATED_ROLE_FRAGMENTS = new Set(['components/abilities/vision'])
 
+/** 角色能力配置中代表“全部在线子应用工具”的通配符。 */
+export const APPLICATION_TOOL_WILDCARD = 'application:*'
+
 /** 空能力 (所有字段为空) */
 const EMPTY_CAPABILITY: ResolvedCapability = {
   allowedTools: new Set(),
@@ -242,9 +245,8 @@ export class CapabilityGate {
 
     const roleToolFilter = new Set(channelConfig.tools)
     const allowUpstreamTools = roleToolFilter.delete('*')
-    const channelTools = new Set(
-      this.toolRegistry.getDefinitions(channel).map((definition) => definition.name),
-    )
+    const channelDefinitions = this.toolRegistry.getDefinitions(channel)
+    const channelTools = new Set(channelDefinitions.map((definition) => definition.name))
     const allowedTools = new Set<string>()
     if (allowUpstreamTools) {
       for (const tool of channelTools) allowedTools.add(tool)
@@ -253,10 +255,17 @@ export class CapabilityGate {
       if (channelTools.has(tool)) allowedTools.add(tool)
     }
 
-    const allowAllMcpTools = allowedTools.delete('mcp:*')
-    if (allowAllMcpTools && scope === 'default') {
+    // 通配符不是真实工具名，上面按 channelTools 求交集时不会进入 allowedTools，须直接读角色配置。
+    if (roleToolFilter.has('mcp:*') && scope === 'default') {
       for (const tool of channelTools) {
         if (tool.startsWith('mcp_')) allowedTools.add(tool)
+      }
+    }
+    // 子应用工具在子应用启动后才动态注册；application:* 放行当前在线的全部子应用工具，
+    // 角色勾选在子应用离线时也不会丢失。
+    if (roleToolFilter.has(APPLICATION_TOOL_WILDCARD) && scope === 'default') {
+      for (const definition of channelDefinitions) {
+        if (definition.packageId?.startsWith('application:')) allowedTools.add(definition.name)
       }
     }
 

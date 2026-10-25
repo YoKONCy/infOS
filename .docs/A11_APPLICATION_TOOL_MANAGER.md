@@ -59,6 +59,16 @@ source?: { kind: 'application'; appId: string; appName: string }
 
 角色配置页会把这些工具单独归入排在最后的“子应用”分组，并显示所属子应用的名称。
 
+### 角色勾选与 `application:*`
+
+子应用工具不常驻列表，所以不能靠“逐个列出工具名”来记住角色的授权：子应用离线时修改别的开关，前端只能看到在线工具，逐个展开会把离线子应用的工具丢掉。为此沿用 `mcp:*` 的做法：
+
+- 角色能力配置里写 `application:*`，表示“放行当前在线的全部子应用工具”，判定依据是工具 `packageId` 以 `application:` 开头。和 `mcp:*` 一样，只在默认作用域生效，ambient / follow_up 作用域不受影响。
+- 前端从 `*` 展开为显式列表时，普通工具逐个列出，子应用工具统一写成 `application:*`。
+- 在通配符状态下关闭某个子应用工具时，改为逐个列出其余在线的子应用工具。
+
+修复说明：通配符不是真实工具名，原实现在按通道工具求交集时就已经把它过滤掉了，`mcp:*` 因此从未生效。现在两个通配符都直接从角色配置中读取。
+
 ## 6. 接入新的子应用
 
 1. 在子应用 manifest 中声明 `endpoints`、`offeredCapabilities` 和 `toolProjections`。`ApplicationIntegrationService` 会校验每个投影是否绑定了已声明、并且已发布的 Operation。

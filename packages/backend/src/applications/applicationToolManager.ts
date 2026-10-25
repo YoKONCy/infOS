@@ -37,6 +37,8 @@ interface OnlineTool {
 export class ApplicationToolManager {
   private readonly online = new Map<string, OnlineTool>()
   private readonly apps = new Set<string>()
+  /** 上线失败的工具；同步会反复重试，只在首次失败时记日志，避免刷屏。 */
+  private readonly failed = new Set<string>()
 
   /**
    * infOS 侧适配器装配时接入，得到只能上下线本子应用工具的凭据。
@@ -63,7 +65,7 @@ export class ApplicationToolManager {
     }
     this.apps.add(appId)
     // Realm 释放时一并撤销接入记录与在线工具。
-    realm.scope.defer(() => this.forget(appId))
+    realm.scope.defer(() => this.forget(appId, [...accepted.keys()]))
     return new ApplicationToolDeclaration(this, realm, manifest.name, accepted)
   }
 
@@ -105,14 +107,18 @@ export class ApplicationToolManager {
       // 实际注册仍经 Realm，保留宿主投影与私有工具的隔离判定；重名由 Realm 拒绝。
       realm.registerTool(definition, handler, { hostProjection: true })
     } catch (error) {
-      logger.warn(
-        __t('logs.applications', '子应用工具 {0} 上线失败: {1}', [
-          projection.name,
-          error instanceof Error ? error.message : String(error),
-        ]),
-      )
+      if (!this.failed.has(projection.name)) {
+        this.failed.add(projection.name)
+        logger.warn(
+          __t('logs.applications', '子应用工具 {0} 上线失败: {1}', [
+            projection.name,
+            error instanceof Error ? error.message : String(error),
+          ]),
+        )
+      }
       return false
     }
+    this.failed.delete(projection.name)
     this.online.set(projection.name, {
       realm,
       entry: { name: projection.name, appId, appName, definition },
@@ -125,13 +131,15 @@ export class ApplicationToolManager {
   async unregister(realm: ApplicationRealm, name: string): Promise<void> {
     const tool = this.online.get(name)
     if (!tool || tool.realm !== realm) return
-    this.online.delete(name)
+    // 先注销再移出目录：注销失败时仍记为在线，下次同步可以重试，状态不与注册表脱节。
     await realm.unregisterTool(name)
+    this.online.delete(name)
     logger.info(__t('logs.applications', '子应用工具已下线: {0} ({1})', [name, tool.entry.appId]))
   }
 
-  private forget(appId: string): void {
+  private forget(appId: string, names: readonly string[]): void {
     this.apps.delete(appId)
+    for (const name of names) this.failed.delete(name)
     for (const [name, tool] of this.online) {
       if (tool.entry.appId === appId) this.online.delete(name)
     }
@@ -175,8 +183,10 @@ export class ApplicationToolDeclaration {
     return this.manager.unregister(this.realm, name)
   }
 
-  /** 子应用停止时注销全部工具。 */
+  /** 子应用停止时注销全部工具；单个失败不影响其余工具下线，最后汇总抛出。 */
   async offlineAll(): Promise<void> {
-    for (const name of this.names) await this.offline(name)
+    const results = await Promise.allSettled(this.names.map((name) => this.offline(name)))
+    const failure = results.find((result) => result.status === 'rejected')
+    if (failure) throw failure.reason
   }
 }
