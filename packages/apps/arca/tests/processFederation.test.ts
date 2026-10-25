@@ -28,6 +28,7 @@ afterEach(async () => {
 })
 
 describe('Arca 跨进程联邦 A6', () => {
+  // 子进程启动本身允许等待 10 秒，整体预算还需覆盖握手、两次文档调用及关闭。
   it('独立应用进程应发布 Hello/Offer 并完成 Document Invocation', async () => {
     const dataPath = mkdtempSync(join(tmpdir(), 'infos-arca-process-'))
     directories.push(dataPath)
@@ -95,7 +96,7 @@ describe('Arca 跨进程联邦 A6', () => {
     )
     expect(projection.output).toEqual(expect.objectContaining({ content: '# 跨进程标题\n\n正文' }))
     await transport.close()
-  })
+  }, 30_000)
 })
 
 function invoke(
