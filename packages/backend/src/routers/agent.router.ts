@@ -17,7 +17,7 @@ import { t as __t } from '../lib/i18n'
  */
 
 import { Hono } from 'hono'
-import { DEFAULT_CHARACTER_STATE } from '@infos/shared'
+import { DEFAULT_CHARACTER_STATE, WORLDBOOK_FILE_NAME } from '@infos/shared'
 import { validate as zValidator } from '../lib/validation'
 import { z } from 'zod'
 import { AppError } from '../lib/appError'
@@ -151,10 +151,16 @@ export function createAgentRouter(ctx: AppContext) {
   router.get('/:id/export', (c) => {
     const id = c.req.param('id')
     try {
+      const exported = ctx.agentManager.exportAgentPackage(id)
+      // 角色目录中的世界书可能是导入时的旧副本；导出时以书库中当前绑定的主要世界书为准。
+      const worldbook = ctx.worldbookService.exportAgentBundle(id)
+      exported.files = exported.files.filter((file) => file.path !== WORLDBOOK_FILE_NAME)
+      if (worldbook) exported.files.push(worldbook)
+      exported.files.sort((left, right) => left.path.localeCompare(right.path))
       return c.json({
         code: 'OK',
         message: __t('server.routers', '角色包已生成'),
-        data: ctx.agentManager.exportAgentPackage(id),
+        data: exported,
       })
     } catch (error) {
       throw new AppError('AGENT_NOT_FOUND', {

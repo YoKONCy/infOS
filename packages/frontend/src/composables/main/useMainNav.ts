@@ -280,6 +280,16 @@ const navGroups: MainNavGroup[] = [
 
 // ── 方法 ──
 
+/** 离开当前页面前的确认；返回 false 时取消切换（例如有未保存修改且用户选择留下）。 */
+export type TabLeaveGuard = () => boolean | Promise<boolean>
+const tabLeaveGuards = new Set<TabLeaveGuard>()
+
+/** 页面挂载时注册、卸载时调用返回的函数注销。 */
+export function registerTabLeaveGuard(guard: TabLeaveGuard): () => void {
+  tabLeaveGuards.add(guard)
+  return () => tabLeaveGuards.delete(guard)
+}
+
 /** 切换 Tab：首次进入先完成模块下载和解析，再原子提交，旧页面始终保持可见。 */
 let tabRequestSequence = 0
 async function setTab(id: string): Promise<void> {
@@ -291,6 +301,11 @@ async function setTab(id: string): Promise<void> {
     return
   }
   const sequence = ++tabRequestSequence
+  for (const guard of [...tabLeaveGuards]) {
+    if (!(await guard())) return
+    // 确认期间又发起了新的切换时，以最后一次为准。
+    if (sequence !== tabRequestSequence) return
+  }
   const order = navGroups.flatMap((group) => group.items).map((entry) => entry.id)
   tabDirection.value = order.indexOf(id) >= order.indexOf(currentTab.value) ? 1 : -1
   pendingTab.value = id

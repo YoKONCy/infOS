@@ -125,7 +125,7 @@ infOS 的通用 Provider 兼容层只保证开头的 system。为避免静默移
 ### 本版边界
 
 - 不支持 Text Completion 的 instruct/context 模板导入。
-- 不实现世界书激活引擎、酒馆扩展脚本、STScript 或完整酒馆运行时。未支持宏会显示兼容错误，启用时不能发布；不要把它当成完整酒馆环境。
+- 世界书见 [B29_WORLDBOOK](./B29_WORLDBOOK.md)：激活结果统一放在当前输入之前，不经过「世界信息（前/后）」标记。不实现酒馆扩展脚本、STScript 或完整酒馆运行时。未支持宏会显示兼容错误，启用时不能发布；不要把它当成完整酒馆环境。
 - 本轮宏状态、随机结果和装配结果由整个 ReAct 复用；不在每个工具调用后重新计算。`pick` 在相同编译种子下稳定，不模拟酒馆完整聊天位置与 reroll 状态。
 - 普通对话自动使用 `normal`，现有重新发送入口传 `regenerate`，后台任务使用 `quiet`。其他类型可在预览中选择，调用端也可显式传入 `generationType`；已接入对应辅助提示词，但不实现酒馆续写拼接、代写用户或 swipe 的完整产品交互。
 - 「系统设定」在健全模式旁提供独立的「预填充模式」，默认关闭。回答开头最多 8000 字符，留空不生效。`system.assistantPrefill` 原子保存开关、正文与 `mode`：`once` 仅首轮模型请求，`continuous` 每次 ReAct 请求均追加；旧配置按 `once` 迁移。PromptWorkspace 在编译时读取配置，产出 `requestPlan` 和预览段；ContextCompiler 与社交编译器传递这份计划，统一的 `requestCompiler.compileModelRequest` 在请求末尾生成带 `assistant_prefill` 标记的 assistant 段。执行器不再直接读取全局配置；整轮重试沿用编译时策略。

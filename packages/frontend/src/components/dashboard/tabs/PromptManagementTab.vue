@@ -1,9 +1,14 @@
+<script lang="ts">
+/** 已切换过分区的世界书跳转序号；页面重新挂载时不重复切换。 */
+let handledWorldbookNavigation = 0
+</script>
+
 <script setup lang="ts">
 import { t as __t } from '../../../i18n/index'
 
 import { copyClientText } from '../../../lib/clientPlatform'
 
-import { computed, reactive, ref } from 'vue'
+import { computed, reactive, ref, watch } from 'vue'
 import type { PromptRole, PromptFormat, PromptFramework } from '@infos/shared'
 import { PROMPT_FORMATS, PROMPT_GENERATION_TYPES, promptFormat } from '@infos/shared'
 import { PButton, PInput, PSelect, PSwitch, PDialog, PixelIcon } from '../../pixel'
@@ -14,6 +19,8 @@ import {
 import { useAgentStore } from '../../../stores/useAgentStore'
 import { useNotificationStore } from '../../../stores/useNotificationStore'
 import SillyTavernFrameworkEditor from './SillyTavernFrameworkEditor.vue'
+import PromptWorldbookPanel from './PromptWorldbookPanel.vue'
+import { useWorldbookNavigation } from '../../../composables/main/useWorldbookNavigation'
 
 const store = useAgentStore()
 const notifications = useNotificationStore()
@@ -194,6 +201,28 @@ function submitActivation() {
   if (assignSelectedFramework(activation.agentId, activation.channel)) activationOpen.value = false
 }
 previewAgent.value = store.activeAgentId
+// 世界书独立保存、不进入提示词草稿，因此用单独状态表示，不写入草稿的分区缓存。
+const worldbookOpen = ref(false)
+const worldbookPanel = ref<InstanceType<typeof PromptWorldbookPanel> | null>(null)
+const worldbookNavigation = useWorldbookNavigation()
+function openSection(id: PromptSection) {
+  const leave = () => {
+    worldbookOpen.value = false
+    if (section.value !== id) setSection(id)
+  }
+  if (worldbookOpen.value && worldbookPanel.value) worldbookPanel.value.guard(leave)
+  else leave()
+}
+// 角色档案的世界书按钮：切换到世界书分区，具体打开哪本书由面板处理。
+watch(
+  worldbookNavigation,
+  (target) => {
+    if (!target || target.revision <= handledWorldbookNavigation) return
+    handledWorldbookNavigation = target.revision
+    worldbookOpen.value = true
+  },
+  { immediate: true },
+)
 const sections: Array<{ id: PromptSection; label: string; icon: string }> = [
   {
     id: 'framework',
@@ -414,13 +443,17 @@ function addFrameworkOverride() {
         <h2>
           <PixelIcon name="edit" />
           {{ __t('ui.settings', '提示词') }}
-          <span class="status-chip" :class="{ changed: dirty }">
+          <span v-if="!worldbookOpen" class="status-chip" :class="{ changed: dirty }">
             {{ dirty ? __t('ui.settings', '未保存') : __t('ui.settings', '草稿') }}
           </span>
         </h2>
         <span class="eyebrow">PROMPT WORKSPACE</span>
       </div>
-      <div class="actions">
+      <p v-if="worldbookOpen" class="worldbook-hint">
+        <PixelIcon name="info" size="xs" />
+        {{ __t('ui.worldbook', '世界书独立保存，保存后立即生效，不需要发布。') }}
+      </p>
+      <div v-else class="actions">
         <PButton variant="secondary" size="sm" :disabled="busy || !view" @click="openIndependent">
           {{ __t('ui.settings', '＋ 新建框架') }}
         </PButton>
@@ -456,26 +489,33 @@ function addFrameworkOverride() {
       <button
         v-for="tab in sections"
         :key="tab.id"
-        :class="{ active: section === tab.id }"
-        @click="setSection(tab.id)"
+        :class="{ active: !worldbookOpen && section === tab.id }"
+        @click="openSection(tab.id)"
       >
         <PixelIcon :name="tab.icon" size="sm" />
         {{ tab.label }}
       </button>
-      <span class="release-label" :title="view?.activeReleaseId">
+      <button :class="{ active: worldbookOpen }" @click="worldbookOpen = true">
+        <PixelIcon name="globe" size="sm" />
+        {{ __t('ui.worldbook', '世界书') }}
+      </button>
+      <span v-if="!worldbookOpen" class="release-label" :title="view?.activeReleaseId">
         {{ __t('ui.settings', '已发布') }}
         {{ activeVersion ? new Date(activeVersion.createdAt).toLocaleString() : '—' }}
       </span>
     </nav>
-    <div v-if="error" class="error-banner" role="alert">
+    <div v-if="error && !worldbookOpen" class="error-banner" role="alert">
       {{ error }}
       <PButton size="sm" variant="ghost" :disabled="busy" @click="load">
         {{ __t('ui.settings', '重新载入') }}
       </PButton>
     </div>
-    <div v-if="view?.recoveryError" class="error-banner" role="alert">{{ view.recoveryError }}</div>
+    <div v-if="view?.recoveryError && !worldbookOpen" class="error-banner" role="alert">
+      {{ view.recoveryError }}
+    </div>
 
-    <div v-if="view" class="prompt-body" :inert="busy">
+    <PromptWorldbookPanel v-if="worldbookOpen" ref="worldbookPanel" />
+    <div v-else-if="view" class="prompt-body" :inert="busy">
       <template v-if="!['assignments', 'versions'].includes(section)">
         <aside class="resource-rail surface">
           <PInput v-model="search" :placeholder="__t('ui.settings', '搜索名称 / ID')" size="sm" />
@@ -1100,7 +1140,7 @@ function addFrameworkOverride() {
     </div>
     <p v-else-if="busy" class="empty">{{ __t('ui.settings', '正在载入……') }}</p>
     <section
-      v-if="issues.length"
+      v-if="issues.length && !worldbookOpen"
       class="validation-panel"
       :aria-label="__t('ui.settings', '校验结果')"
     >
@@ -1513,3 +1553,13 @@ function addFrameworkOverride() {
 </template>
 
 <style scoped src="./promptManagement.css"></style>
+<style scoped>
+.worldbook-hint {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin: 0;
+  font-size: 13px;
+  color: var(--ui-text-tertiary);
+}
+</style>

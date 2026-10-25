@@ -202,6 +202,26 @@ export class AgentManager {
     this.petStateService = service
   }
 
+  /** 角色目录加载完成后的回调，用于导入角色资源包内嵌的世界书。 */
+  private agentsLoadedListener?: (agents: Array<{ id: string; directory: string }>) => void
+
+  /** 注册后立即以当前角色执行一次，此后每次重载角色目录都会再次通知。 */
+  setAgentsLoadedListener(
+    listener: (agents: Array<{ id: string; directory: string }>) => void,
+  ): void {
+    this.agentsLoadedListener = listener
+    this.notifyAgentsLoaded()
+  }
+
+  private notifyAgentsLoaded(): void {
+    this.agentsLoadedListener?.(
+      [...this.agents.values()].map((profile) => ({
+        id: profile.id,
+        directory: path.dirname(profile.configPath),
+      })),
+    )
+  }
+
   /** 扫描并加载所有 Agent 配置 */
   reloadAgents(): void {
     this.agents.clear()
@@ -250,6 +270,7 @@ export class AgentManager {
     }
 
     logger.info(__t('logs.agent', '已加载 {0} 个 Agent', [this.agents.size]))
+    this.notifyAgentsLoaded()
   }
 
   /** 将当前生效的官方或用户角色导出为客户端可落盘的版本化资源包。 */

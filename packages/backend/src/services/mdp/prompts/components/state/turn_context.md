@@ -9,6 +9,9 @@
 {% if facts_context %}<facts_context>
 {{ facts_context }}
 </facts_context>{% endif %}
+{% if world_info %}<world_info>
+{{ world_info }}
+</world_info>{% endif %}
 {{ component('slots/800_pet_state') }}
 {% if flow_state %}<flow_state>
 <current_goal>{{ (flow_state.currentGoal or '暂无明确的持续目标。') | escape }}</current_goal>

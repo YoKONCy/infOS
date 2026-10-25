@@ -926,7 +926,7 @@
   "深度 0 在最新消息后，深度 1 在最新消息前。同一位置按顺序数排列。": "Depth 0 after the latest news, depth 1 before the latest news. The same position is arranged in sequence.",
   "支持条件、宏和变量。聊天变量仅用于当前会话，全局变量共享；预览不保存修改。": "supports conditions, macros and variables. Chat variables are only used in the current session, global variables are shared; changes are not saved in preview.",
   "original 引用原提示词；“禁止角色覆盖”保留原正文。示例对话使用 START 分组和 user / char 标记。": "original quotes the original prompt words; \"Prohibit character overwriting\" retains the original text. The example conversation uses START grouping and user / char tags.",
-  "暂不支持扩展脚本与世界书激活。": "currently does not support expansion script and world book activation.",
+  "暂不支持扩展脚本；世界书内容统一放在当前输入之前，不经过世界信息标记。": "Extension scripts are not supported yet. Worldbook content is placed right before the current input and does not use the World Info markers.",
   "全局变量": "global variable",
   "会话": "session",
   "持久变量": "persistent variable",
