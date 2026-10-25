@@ -1,9 +1,0 @@
-{
-  "extends": "../../packages/backend/tsconfig.json",
-  "compilerOptions": {
-    "noEmit": true,
-    "types": ["node", "vitest/globals"]
-  },
-  "include": ["../../packages/backend/tests/unit/services/task/taskPlanLifecycle.test.ts"],
-  "exclude": ["../../node_modules"]
-}

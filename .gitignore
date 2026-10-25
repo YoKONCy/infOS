@@ -57,3 +57,7 @@ __pycache__/
 # 临时目录
 /TEMP/
 /build/installer/generated/
+
+# 仅保留在本地的归档与待办文档
+/.docs/archived/
+/.docs/TODO-LIST/
