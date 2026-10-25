@@ -1,6 +1,6 @@
 import { createRequire } from 'node:module'
 import { pathToFileURL } from 'node:url'
-import { describe, expect, it, vi } from 'vitest'
+import { beforeAll, describe, expect, it, vi } from 'vitest'
 
 const require = createRequire(import.meta.url)
 const {
@@ -19,6 +19,15 @@ const sqliteDependencies = createRequire(backendRequire.resolve('better-sqlite3'
 const prebuildDependencies = createRequire(sqliteDependencies.resolve('prebuild-install'))
 
 describe('运行时安全发布边界', () => {
+  let expectedElectronAbi = '149'
+  // 真实进程探测已有 20 秒上限；仅初始化一次，并为 Windows 首次加载留出预算。
+  beforeAll(() => {
+    if (process.platform === 'win32') {
+      expectedElectronAbi = probeElectron(
+        createRequire(require.resolve('../../../electron/package.json'))('electron'),
+      ).modules
+    }
+  }, 30_000)
   it.each([
     ['独立重编译', createRequire(require.resolve('@electron/rebuild'))],
     [
@@ -26,17 +35,14 @@ describe('运行时安全发布边界', () => {
       createRequire(builderDependencies.resolve('@electron/rebuild')),
     ],
     ['预编译安装器', prebuildDependencies],
-  ])('%s 的 ABI 表与目标稳定 Electron 一致', async (_name, consumer) => {
-    const { getAbi } = await import(pathToFileURL(consumer.resolve('node-abi')).href)
-    // Windows 同时核对官方二进制；其他平台以已核验的当前稳定版本 ABI 为基准。
-    const expected =
-      process.platform === 'win32'
-        ? probeElectron(
-            createRequire(require.resolve('../../../electron/package.json'))('electron'),
-          ).modules
-        : '149'
-    expect(getAbi(configuredElectron(), 'electron')).toBe(expected)
-  })
+  ])(
+    '%s 的 ABI 表与目标稳定 Electron 一致',
+    async (_name, consumer) => {
+      const { getAbi } = await import(pathToFileURL(consumer.resolve('node-abi')).href)
+      expect(getAbi(configuredElectron(), 'electron')).toBe(expectedElectronAbi)
+    },
+    30_000,
+  )
   it.each(['22.23.4', '24.22.1', '26.12.1', '24.22.2'])(
     '允许已经达到补丁基线的 Node %s',
     (version) => {

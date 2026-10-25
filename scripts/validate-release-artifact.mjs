@@ -251,7 +251,7 @@ try {
     connectionRelative.startsWith('..') ||
     path.isAbsolute(connectionRelative)
   )
-    throw new Error('验收连接配置目录越界')
+    throw new Error(__t('scripts.validate-release-artifact', '验收连接配置目录越界'))
   await fsp.mkdir(connectionDirectory, { recursive: true })
   summary.connectionProfile = path.join(connectionDirectory, 'client-connection.json')
   await fsp.writeFile(summary.connectionProfile, JSON.stringify({ version: 1, mode: 'local' }), {
