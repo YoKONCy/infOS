@@ -8,6 +8,7 @@ import { t as __t } from '../../../i18n/index'
  * 副作用在组件生命周期内建立并清理，避免跨页面残留监听器或异步状态。
  */
 import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
+import { isRoleToolEnabled, toggleRoleTool } from '../../../lib/roleToolSelection'
 import { PButton, PCheckbox, PDialog, PEmpty, PInput, PTextarea, PixelIcon } from '../../pixel'
 import {
   agentApi,
@@ -214,16 +215,19 @@ const fragmentCatalog = [
     },
   },
 ]
-const categoryOrder = [
-  '文件读取',
-  '文件编辑',
-  '终端执行',
-  '视觉交互',
-  '网页访问',
-  '系统操作',
-  '提醒记忆',
-  '其他',
-]
+// 分组名与 classifyTool 的返回值同为当前语言译文，切换繁中/英文时两者仍能对上。
+const categoryOrder = computed(() => [
+  __t('ui.settings', '文件读取'),
+  __t('ui.settings', '文件编辑'),
+  __t('ui.settings', '终端执行'),
+  __t('ui.settings', '视觉交互'),
+  __t('ui.settings', '网页访问'),
+  __t('ui.settings', '系统操作'),
+  __t('ui.settings', '提醒记忆'),
+  __t('ui.settings', '其他'),
+  // 子应用工具随子应用启动动态出现，固定排在最后。
+  __t('ui.settings', '子应用'),
+])
 
 const avatarSrc = computed(() => {
   if (!form.value?.avatarUrl) return ''
@@ -467,7 +471,7 @@ const activeCompatibleTools = computed(() =>
 /** 后端 Registry 标记为 locked 的工具即当前权威系统执行协议，不在前端维护静态副本。 */
 const systemProtocolTools = computed(() => tools.value.filter((tool) => tool.locked))
 const groupedTools = computed(() => {
-  const groups = Object.fromEntries(categoryOrder.map((name) => [name, [] as AgentTool[]]))
+  const groups = Object.fromEntries(categoryOrder.value.map((name) => [name, [] as AgentTool[]]))
   for (const tool of activeCompatibleTools.value) groups[classifyTool(tool)]!.push(tool)
   return groups
 })
@@ -493,6 +497,8 @@ function serializeState(): string {
 }
 
 function classifyTool(tool: AgentTool): string {
+  // 子应用工具由子应用工具管理层标明来源，单独成组，不参与关键字归类。
+  if (tool.source?.kind === 'application') return __t('ui.settings', '子应用')
   const value = `${tool.name} ${tool.description} ${tool.display?.style ?? ''}`.toLowerCase()
   if (/read|search|glob|list|info|读取|搜索|查找|目录/.test(value))
     return __t('ui.settings', '文件读取')
@@ -615,21 +621,12 @@ function removeArrayItem(pathValue: string, index: number): void {
 }
 
 function isToolEnabled(tool: AgentTool): boolean {
-  return (
-    Boolean(tool.locked) ||
-    activeCapability.value.tools.includes('*') ||
-    activeCapability.value.tools.includes(tool.name)
-  )
+  return Boolean(tool.locked) || isRoleToolEnabled(activeCapability.value.tools, tool)
 }
 function setToolEnabled(tool: AgentTool, enabled: boolean): void {
   if (tool.locked) return
   const target = getOrCreateChannelCapability(activeChannel.value)
-  const currentTools = target.tools.includes('*')
-    ? activeCompatibleTools.value.map((item) => item.name)
-    : target.tools
-  target.tools = enabled
-    ? [...new Set([...currentTools, tool.name])]
-    : currentTools.filter((name) => name !== tool.name)
+  target.tools = toggleRoleTool(target.tools, activeCompatibleTools.value, tool, enabled)
 }
 function toggleSkill(skillId: string, enabled: boolean): void {
   const target = getOrCreateChannelCapability(activeChannel.value)
@@ -1291,7 +1288,10 @@ onBeforeUnmount(() => {
                     @update:model-value="setToolEnabled(tool, $event)"
                   />
                   <span>
-                    <b>{{ tool.display?.label }}</b>
+                    <b>
+                      {{ tool.display?.label }}
+                      <em v-if="tool.source" class="tool-source">{{ tool.source.appName }}</em>
+                    </b>
                     <small>{{ tool.description }}</small>
                   </span>
                   <i>{{ isToolEnabled(tool) ? 'ON' : 'OFF' }}</i>
@@ -2461,6 +2461,13 @@ onBeforeUnmount(() => {
   font-size: 8px;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+.tool-table .tool-source {
+  margin-left: 4px;
+  color: var(--ui-text-tertiary);
+  font-size: 8px;
+  font-style: normal;
+  font-weight: 400;
 }
 .tool-table label > i {
   color: var(--ui-text-disabled);

@@ -219,6 +219,8 @@ Operation → 主 Agent：toolProjections（可选）
 
 Application 断线、Offer 撤销、协议不兼容或 Endpoint 不再 ready 时，相关 Tool Projection 必须立即从主 Agent 可见工具集合注销；不得保留“离线占位工具”等到调用时才失败。Application Realm 私有工具也不得进入主 Thread 的 Char Ops 工具管理。
 
+子应用声明的工具在子应用启动后动态注册到子应用工具管理层，再交由 CapabilityGate 管理，见 [A11_APPLICATION_TOOL_MANAGER](./A11_APPLICATION_TOOL_MANAGER.md)。
+
 反向能力由 `requestedCapabilities` 声明。常规机器支持通过 Bound Port 直接调用 Kernel；只有需要主 Agent判断的咨询、确认、补充资源、报告或澄清才使用显式 Host Collaboration Capability。Kernel 不根据 Application 是否含 Agent 推导能力，也不自动授予主 Agent派活入口。
 
 ---

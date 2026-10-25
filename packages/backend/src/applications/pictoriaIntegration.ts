@@ -19,7 +19,7 @@ import {
 } from '@infos/pictoria'
 import type { KernelNodeId, TaskOrigin, ApplicationCreativePort } from '@infos/shared'
 import type { AppContext } from '../container'
-import type { ApplicationRealm } from './applicationRealm'
+import type { ApplicationToolDeclaration } from './applicationToolManager'
 import type { CapabilityDirectory } from '../kernel/capabilityDirectory'
 import type { CapabilityHandleRegistry } from '../kernel/capabilityHandleRegistry'
 import type { NodeRegistry } from '../kernel/nodeRegistry'
@@ -89,7 +89,7 @@ export class PictoriaIntegration {
     directory: CapabilityDirectory,
     handles: CapabilityHandleRegistry,
     nodes: NodeRegistry,
-    realm: ApplicationRealm,
+    applicationTools: ApplicationToolDeclaration,
     localNodeId: KernelNodeId,
   ) {
     this.key = bridgeKey(paths.dataPath)
@@ -125,7 +125,7 @@ export class PictoriaIntegration {
     this.runtime = new ApplicationCapabilityRuntime(
       directory,
       handles,
-      realm,
+      applicationTools,
       localNodeId,
       pictoriaManifest,
       {

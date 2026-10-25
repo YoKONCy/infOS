@@ -124,15 +124,26 @@ export function createAgentRouter(ctx: AppContext) {
       .getDefinitions()
       .filter((definition) => !ctx.applicationRealms.isPrivateTool(definition.name))
       .filter((definition) => includeAdvanced || !isAdvancedTool(definition.name))
-      .map((d) => ({
-        name: d.name,
-        description: resolveToolUserDescription(d.name, d.display?.description, d.description),
-        channels: channelNames.filter((channel) =>
-          ctx.toolRegistry.getDefinitions(channel).some((item) => item.name === d.name),
-        ),
-        locked: isSystemProtocolTool(d.name),
-        display: { ...d.display, label: resolveToolUserLabel(d.name, d.display?.label) },
-      }))
+      .map((d) => {
+        // 子应用工具只在子应用启动后动态注册，这里只会出现在线的那些；附带来源供界面分组。
+        const application = ctx.applicationTools.get(d.name)
+        return {
+          name: d.name,
+          description: resolveToolUserDescription(d.name, d.display?.description, d.description),
+          channels: channelNames.filter((channel) =>
+            ctx.toolRegistry.getDefinitions(channel).some((item) => item.name === d.name),
+          ),
+          locked: isSystemProtocolTool(d.name),
+          display: { ...d.display, label: resolveToolUserLabel(d.name, d.display?.label) },
+          ...(application && {
+            source: {
+              kind: 'application' as const,
+              appId: application.appId,
+              appName: application.appName,
+            },
+          }),
+        }
+      })
     return c.json({ code: 'OK', message: __t('server.routers', '获取成功'), data: tools })
   })
 

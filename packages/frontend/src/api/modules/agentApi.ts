@@ -69,6 +69,8 @@ export interface AgentTool {
   channels?: AgentChannel[]
   locked?: boolean
   display?: AgentToolDisplay
+  /** 子应用工具的来源；仅子应用启动后动态注册的工具携带。 */
+  source?: { kind: 'application'; appId: string; appName: string }
 }
 
 export interface AgentSkillOption {

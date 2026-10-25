@@ -29,6 +29,7 @@ import { spokenReplyToolDefinition } from './tools/spokenReplyCapability'
 import path from 'node:path'
 import os from 'node:os'
 import { arcaManifest } from '@infos/arca'
+import { pictoriaManifest } from '@infos/pictoria'
 import { createDrizzleConnection, type DrizzleDb } from './database'
 import { MigrationManager, dataMigrations } from './migrations'
 import { PathResolver, AssetRegistry, PromptTemplateLoader, type RuntimeEnv } from './core'
@@ -280,6 +281,8 @@ import { tokenCounter } from './services/tokenizer/tokenCounter'
 
 // ── AIOS 第八阶段：Agent 应用层（系统 + 独立应用） ──
 import { ApplicationRealmManager } from './applications/applicationRealm'
+import { ApplicationToolManager } from './applications/applicationToolManager'
+import { setDynamicToolPredicate } from './services/agent/toolOrder'
 import { SqliteGrantRegistry, type GrantRegistry } from './applications/grantRegistry'
 import { AppManagerImpl, type AppManager } from './applications/appManager'
 import { ApplicationResourceAccessService } from './applications/applicationResourceAccessService'
@@ -484,6 +487,8 @@ export interface AppContext {
 
   // ── AIOS 第八阶段：Agent 应用层（系统 + 独立应用） ──
   applicationRealms: ApplicationRealmManager
+  /** 子应用工具管理层：全部子应用声明工具的目录与在线状态。 */
+  applicationTools: ApplicationToolManager
   /** 资源授权注册表：管理主 Agent 对应用/会话的资源访问授权 */
   grantRegistry: GrantRegistry
   /** 自治Application经Grant与Capability Handle访问内核资源的统一入口。 */
@@ -1078,6 +1083,10 @@ export async function createAppContext(config: AppConfig): Promise<AppContext> {
 
   const applicationRealms = new ApplicationRealmManager(toolRegistry)
   kernelLifecycle.defer(() => applicationRealms.shutdown())
+  // 子应用工具管理层：各子应用 infOS 侧适配器声明的工具统一在此登记，再交 CapabilityGate 管理。
+  const applicationTools = new ApplicationToolManager()
+  // 在线子应用工具属于动态工具，排在工具列表末尾。
+  kernelLifecycle.defer(setDynamicToolPredicate((name) => applicationTools.has(name)))
   const arcaRealm = applicationRealms.register({
     realmId: 'infos.arca',
     appId: 'infos.arca',
@@ -1089,7 +1098,7 @@ export async function createAppContext(config: AppConfig): Promise<AppContext> {
   const arcaTools = new ArcaCapabilityRuntime(
     capabilityDirectory,
     capabilityHandles,
-    arcaRealm,
+    applicationTools.declare(arcaRealm, arcaManifest),
     localNodeId,
     arcaManifest,
     {
@@ -1775,7 +1784,7 @@ export async function createAppContext(config: AppConfig): Promise<AppContext> {
     capabilityDirectory,
     capabilityHandles,
     nodeRegistry,
-    pictoriaRealm,
+    applicationTools.declare(pictoriaRealm, pictoriaManifest),
     localNodeId,
   )
   kernelLifecycle.defer(() => pictoria.shutdown())
@@ -2365,6 +2374,7 @@ export async function createAppContext(config: AppConfig): Promise<AppContext> {
 
     // ── AIOS第八阶段：Application Realm层 ──
     applicationRealms,
+    applicationTools,
     grantRegistry,
     applicationResourceAccess,
     applicationIntegration,
