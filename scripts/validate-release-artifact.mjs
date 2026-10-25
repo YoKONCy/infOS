@@ -234,17 +234,26 @@ try {
     await fsp.mkdir(extractDirectory, { recursive: true })
     const asciiArchive = path.join(runRoot, 'portable.zip')
     await fsp.copyFile(archive, asciiArchive)
-    run('tar.exe', ['-xf', asciiArchive, '-C', extractDirectory], { timeout: 180_000 })
+    const extractor = path.join(process.env.ProgramFiles || 'C:\\Program Files', '7-Zip', '7z.exe')
+    if (!fs.existsSync(extractor))
+      throw new Error(__t('scripts.validate-release-artifact', '验收环境缺少 7-Zip 解压工具'))
+    // Windows 自带 tar 对归档中的部分中文名称转换失败；7-Zip 解压时保留名称并校验 CRC。
+    run(extractor, ['x', '-y', '-sccUTF-8', `-o${extractDirectory}`, asciiArchive], {
+      timeout: 180_000,
+    })
     executable = await findDesktopExecutable(extractDirectory, true)
   }
 
   summary.executable = executable
   // 产物烟测显式选择本地模式；只写入本次隔离目录，正常用户仍显示首次连接选择。
-  const metadata = JSON.parse(
-    await fsp.readFile(new URL('../package.json', import.meta.url), 'utf8'),
-  )
   const connectionDirectory =
-    mode === 'portable' ? path.dirname(executable) : path.join(appData, metadata.productName)
+    mode === 'portable'
+      ? path.dirname(executable)
+      : path.join(
+          appData,
+          JSON.parse(await fsp.readFile(new URL('../package.json', import.meta.url), 'utf8'))
+            .productName,
+        )
   const connectionRelative = path.relative(runRoot, connectionDirectory)
   if (
     !connectionRelative ||
