@@ -42,5 +42,9 @@
   "未知错误": "unknown error",
   "绘图结果同步失败": "Drawing result synchronization failed",
   "桌面连接已断开，正在回收托管 Pictoria": "Desktop connection has been disconnected and hosting is being recycled Pictoria",
-  "托管 Pictoria 回收失败": "Hosted Pictoria recycling failed"
+  "托管 Pictoria 回收失败": "Hosted Pictoria recycling failed",
+  "子应用工具 {0} 使用尚未支持的调用语义 {1}，已跳过": "Sub-application tool {0} uses unsupported invocation {1}; skipped",
+  "子应用工具 {0} 上线失败: {1}": "Failed to bring sub-application tool {0} online: {1}",
+  "子应用工具已上线: {0} ({1})": "Sub-application tool online: {0} ({1})",
+  "子应用工具已下线: {0} ({1})": "Sub-application tool offline: {0} ({1})"
 }

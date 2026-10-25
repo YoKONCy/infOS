@@ -6,6 +6,8 @@ import { createMcpRouter } from '@infos/backend/routers/mcp.router'
 import { createVoiceRouter as rawcreateVoiceRouter } from '@infos/backend/routers/voice.router'
 import { createSchedulerRouter } from '@infos/backend/routers/scheduler.router'
 import { ApplicationRealmManager } from '@infos/backend/applications/applicationRealm'
+import { ApplicationToolManager } from '@infos/backend/applications/applicationToolManager'
+import type { ApplicationAdapterManifest } from '@infos/shared'
 import { ToolRegistry } from '@infos/backend/services/agent/toolRegistry'
 
 afterEach(() => vi.useRealTimers())
@@ -46,7 +48,11 @@ describe('AgentRouter', () => {
       realm.registerTool(definition('social_public_entry'), async () => '公开入口', {
         hostProjection: true,
       })
-      const router = createAgentRouter({ toolRegistry, applicationRealms } as never)
+      const router = createAgentRouter({
+        toolRegistry,
+        applicationRealms,
+        applicationTools: new ApplicationToolManager(),
+      } as never)
       try {
         const response = await router.request(`http://test/tools${query}`)
         expect(response.status).toBe(200)
@@ -63,6 +69,59 @@ describe('AgentRouter', () => {
       }
     },
   )
+
+  it('子应用工具标明来源与在线状态，离线声明仍列出供提前配置', async () => {
+    const toolRegistry = new ToolRegistry()
+    const applicationRealms = new ApplicationRealmManager(toolRegistry)
+    const applicationTools = new ApplicationToolManager()
+    const realm = applicationRealms.register({
+      realmId: 'demo',
+      appId: 'demo',
+      principalId: 'application:demo',
+      instanceId: 'test',
+    })
+    const projection = (name: string) => ({
+      name,
+      endpointId: 'main',
+      operation: 'do',
+      audience: 'host_agent' as const,
+      availability: 'while_ready' as const,
+      invocation: 'invoke' as const,
+      description: '子应用工具',
+      parameters: { type: 'object', properties: {} },
+      display: { label: name },
+    })
+    const declaration = applicationTools.declare(realm, {
+      id: 'demo',
+      name: 'Demo',
+      toolProjections: [projection('demo_online'), projection('demo_offline')],
+    } as unknown as ApplicationAdapterManifest)
+    declaration.online('demo_online', async () => 'ok')
+    const router = createAgentRouter({ toolRegistry, applicationRealms, applicationTools } as never)
+    try {
+      const response = await router.request('http://test/tools')
+      const body = (await response.json()) as {
+        data: Array<{ name: string; channels: string[]; available?: boolean; source?: unknown }>
+      }
+      const source = { kind: 'application', appId: 'demo', appName: 'Demo' }
+      expect(body.data).toEqual([
+        expect.objectContaining({
+          name: 'demo_online',
+          available: true,
+          source,
+          channels: ['desktop'],
+        }),
+        expect.objectContaining({
+          name: 'demo_offline',
+          available: false,
+          source,
+          channels: ['desktop'],
+        }),
+      ])
+    } finally {
+      await realm.dispose()
+    }
+  })
 
   function createCtx() {
     const agent = createAgent()

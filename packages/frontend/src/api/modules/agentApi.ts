@@ -69,6 +69,10 @@ export interface AgentTool {
   channels?: AgentChannel[]
   locked?: boolean
   display?: AgentToolDisplay
+  /** 子应用工具的来源；仅子应用工具管理层登记的工具携带。 */
+  source?: { kind: 'application'; appId: string; appName: string }
+  /** 子应用工具当前是否在线；离线时只可提前配置，主 Agent 不可调用。 */
+  available?: boolean
 }
 
 export interface AgentSkillOption {

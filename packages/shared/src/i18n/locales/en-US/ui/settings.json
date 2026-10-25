@@ -1455,5 +1455,6 @@
   "此轮请求过大，未保存重复正文": "This request is too large to retain its repeated content",
   "预填充": "Prefill",
   "切换即时保存，每次提交整页修改。": "Switches save immediately. Every save includes all changes on this page.",
-  "设置尚未读取完成，请重试": "Settings have not finished loading. Please retry."
+  "设置尚未读取完成，请重试": "Settings have not finished loading. Please retry.",
+  "子应用": "Sub-applications"
 }

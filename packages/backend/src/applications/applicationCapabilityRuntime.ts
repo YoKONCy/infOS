@@ -4,7 +4,7 @@ import type {
   KernelCallContext,
   KernelNodeId,
 } from '@infos/shared'
-import type { ApplicationRealm } from './applicationRealm'
+import type { ApplicationToolDeclaration } from './applicationToolManager'
 import type { CapabilityDirectory, BoundCapabilityPort } from '../kernel/capabilityDirectory'
 import type { CapabilityHandleRegistry } from '../kernel/capabilityHandleRegistry'
 import { LifecycleScope } from '../kernel/lifecycleScope'
@@ -29,7 +29,6 @@ export class ApplicationCapabilityRuntime {
     string,
     { scope: LifecycleScope; port: BoundCapabilityPort }
   >()
-  private readonly tools = new Set<string>()
   private unsubscribe?: () => void
   private synchronizing?: Promise<void>
   private changed = false
@@ -37,7 +36,7 @@ export class ApplicationCapabilityRuntime {
   constructor(
     private readonly directory: CapabilityDirectory,
     private readonly handles: CapabilityHandleRegistry,
-    private readonly realm: ApplicationRealm,
+    private readonly tools: ApplicationToolDeclaration,
     private readonly localNodeId: KernelNodeId,
     private readonly manifest: ApplicationAdapterManifest,
     private readonly options: ApplicationRuntimeOptions = {},
@@ -52,8 +51,7 @@ export class ApplicationCapabilityRuntime {
     this.unsubscribe?.()
     this.unsubscribe = undefined
     await this.synchronizing?.catch(() => undefined)
-    for (const tool of this.tools) await this.realm.unregisterTool(tool)
-    this.tools.clear()
+    await this.tools.offlineAll()
     for (const binding of this.bindings.values()) await binding.scope.dispose()
     this.bindings.clear()
   }
@@ -155,52 +153,41 @@ export class ApplicationCapabilityRuntime {
           }
         }
       }
+      // 只同步子应用工具管理层已接受的声明；不支持的调用语义在登记时已被跳过。
       for (const projection of this.manifest.toolProjections ?? []) {
+        if (!this.tools.has(projection.name)) continue
         const ready =
           !this.stopped &&
           this.options.enabled?.() !== false &&
           this.bindings.has(projection.endpointId)
-        if (!ready && this.tools.has(projection.name)) {
-          await this.realm.unregisterTool(projection.name)
-          this.tools.delete(projection.name)
-        } else if (ready && !this.tools.has(projection.name)) {
-          if (projection.invocation === 'open_session')
-            throw new Error('APPLICATION_SESSION_PROJECTION_UNSUPPORTED: 会话工具尚未实现')
-          this.realm.registerTool(
-            {
-              name: projection.name,
-              description: projection.description,
-              parameters: projection.parameters,
-              display: projection.display,
-              requiresApproval: projection.requiresApproval,
-            },
-            async (args, context) => {
-              if (this.options.toolInvocation)
-                return this.options.toolInvocation(
-                  projection,
-                  args,
-                  context,
-                  (operation, value, caller) => this.invoke(operation, value, caller),
-                )
-              try {
-                const result = await this.invoke(projection.operation, args, {
-                  principalId: context.agentId,
-                  correlationId: context.toolCallId ?? `${this.manifest.id}:${Date.now()}`,
-                  executionId: context.executionId,
-                  processId: context.processId,
-                  deadline: context.deadline,
-                  idempotencyKey: context.toolCallId,
-                })
-                return JSON.stringify({ success: true, result })
-              } catch (error) {
-                return JSON.stringify({
-                  error: error instanceof Error ? error.message : '应用调用失败',
-                })
-              }
-            },
-            { hostProjection: true },
-          )
-          this.tools.add(projection.name)
+        const online = this.tools.isOnline(projection.name)
+        if (!ready && online) {
+          await this.tools.offline(projection.name)
+        } else if (ready && !online) {
+          this.tools.online(projection.name, async (args, context) => {
+            if (this.options.toolInvocation)
+              return this.options.toolInvocation(
+                projection,
+                args,
+                context,
+                (operation, value, caller) => this.invoke(operation, value, caller),
+              )
+            try {
+              const result = await this.invoke(projection.operation, args, {
+                principalId: context.agentId,
+                correlationId: context.toolCallId ?? `${this.manifest.id}:${Date.now()}`,
+                executionId: context.executionId,
+                processId: context.processId,
+                deadline: context.deadline,
+                idempotencyKey: context.toolCallId,
+              })
+              return JSON.stringify({ success: true, result })
+            } catch (error) {
+              return JSON.stringify({
+                error: error instanceof Error ? error.message : '应用调用失败',
+              })
+            }
+          })
         }
       }
     } while (this.changed && !this.stopped)

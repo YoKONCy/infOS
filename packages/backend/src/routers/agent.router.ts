@@ -23,9 +23,10 @@ import { z } from 'zod'
 import { AppError } from '../lib/appError'
 import { disposeExecutionOwner } from '../tools/productivityRuntimeHolder'
 import type { AppContext } from '../container'
+import type { ToolDefinition } from '../services/pipeline/types'
 import { resolveToolUserDescription, resolveToolUserLabel } from '../tools/toolUserLabels'
 import { isAdvancedTool } from '../tools/advancedTools'
-import { isSystemProtocolTool } from '../tools/systemProtocolTools'
+import { isStrongholdChannelTool, isSystemProtocolTool } from '../tools/systemProtocolTools'
 
 // ─────────────────────────────────────────────
 // Zod Schema
@@ -120,19 +121,49 @@ export function createAgentRouter(ctx: AppContext) {
     const channelNames = ['desktop', 'group'] as const
     // 轨迹展示包含高级工具元数据；能力配置列表仍默认隐藏高级工具。
     const includeAdvanced = c.req.query('includeAdvanced') === 'true'
-    const tools = ctx.toolRegistry
+    const applicationTools = new Map(
+      ctx.applicationTools.list().map((entry) => [entry.name, entry]),
+    )
+    const describe = (d: ToolDefinition, channels: (typeof channelNames)[number][]) => {
+      const entry = applicationTools.get(d.name)
+      return {
+        name: d.name,
+        description: resolveToolUserDescription(d.name, d.display?.description, d.description),
+        channels,
+        locked: isSystemProtocolTool(d.name),
+        display: { ...d.display, label: resolveToolUserLabel(d.name, d.display?.label) },
+        // 子应用工具标明来源与在线状态；离线条目仅供提前配置，不代表当前可调用。
+        ...(entry && {
+          source: { kind: 'application' as const, appId: entry.appId, appName: entry.appName },
+          available: ctx.toolRegistry.has(d.name),
+        }),
+      }
+    }
+    const registered = ctx.toolRegistry
       .getDefinitions()
       .filter((definition) => !ctx.applicationRealms.isPrivateTool(definition.name))
       .filter((definition) => includeAdvanced || !isAdvancedTool(definition.name))
-      .map((d) => ({
-        name: d.name,
-        description: resolveToolUserDescription(d.name, d.display?.description, d.description),
-        channels: channelNames.filter((channel) =>
-          ctx.toolRegistry.getDefinitions(channel).some((item) => item.name === d.name),
+    const tools = [
+      ...registered.map((d) =>
+        describe(
+          d,
+          channelNames.filter((channel) =>
+            ctx.toolRegistry.getDefinitions(channel).some((item) => item.name === d.name),
+          ),
         ),
-        locked: isSystemProtocolTool(d.name),
-        display: { ...d.display, label: resolveToolUserLabel(d.name, d.display?.label) },
-      }))
+      ),
+      // 离线子应用工具按上线后的通道规则推算：宿主投影不限 source，group 仍受据点白名单约束。
+      ...[...applicationTools.values()]
+        .filter((entry) => !ctx.toolRegistry.has(entry.name))
+        .map((entry) =>
+          describe(
+            entry.definition,
+            channelNames.filter(
+              (channel) => channel !== 'group' || isStrongholdChannelTool(entry.name),
+            ),
+          ),
+        ),
+    ]
     return c.json({ code: 'OK', message: __t('server.routers', '获取成功'), data: tools })
   })
 

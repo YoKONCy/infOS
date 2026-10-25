@@ -2,6 +2,7 @@ import { describe, expect, it, vi } from 'vitest'
 import type { KernelCapabilityOffer, KernelNodeId, KernelObjectId } from '@infos/shared'
 import { arcaManifest } from '@infos/arca'
 import { ApplicationRealmManager } from '../../../src/applications/applicationRealm'
+import { ApplicationToolManager } from '../../../src/applications/applicationToolManager'
 import { ArcaCapabilityRuntime } from '../../../src/capabilities/arcaCapabilityRuntime'
 import { CapabilityDirectory } from '../../../src/kernel/capabilityDirectory'
 import { CapabilityHandleRegistry } from '../../../src/kernel/capabilityHandleRegistry'
@@ -43,7 +44,14 @@ describe('ArcaCapabilityRuntime', () => {
       principalId: 'application:infos.arca',
       instanceId: 'managed',
     })
-    const runtime = new ArcaCapabilityRuntime(directory, handles, realm, localNodeId, arcaManifest)
+    const applicationTools = new ApplicationToolManager()
+    const runtime = new ArcaCapabilityRuntime(
+      directory,
+      handles,
+      applicationTools.declare(realm, arcaManifest),
+      localNodeId,
+      arcaManifest,
+    )
 
     await runtime.start()
     expect(tools.has('arca_document_inspect')).toBe(false)
@@ -84,6 +92,7 @@ describe('ArcaCapabilityRuntime', () => {
     expect(realms.isHostProjection('arca_document_inspect')).toBe(true)
     expect(realms.isPrivateTool('arca_document_inspect')).toBe(false)
     expect(tools.getDefinition('arca_changeset_propose')?.requiresApproval).toBe(true)
+    expect(applicationTools.get('arca_document_inspect')?.available).toBe(true)
 
     remove()
     await vi.waitFor(() => expect(tools.has('arca_document_inspect')).toBe(false))
@@ -91,6 +100,8 @@ describe('ArcaCapabilityRuntime', () => {
     expect(runtime.available()).toBe(false)
     expect(tools.has('arca_document_inspect')).toBe(false)
     expect(realms.ownsTool('arca_document_inspect')).toBe(false)
+    // 下线后目录仍保留声明，供能力配置界面继续展示。
+    expect(applicationTools.get('arca_document_inspect')?.available).toBe(false)
 
     await runtime.stop()
     await realms.shutdown()
