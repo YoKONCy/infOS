@@ -1,6 +1,5 @@
 import { mkdirSync, rmSync, writeFileSync } from 'node:fs'
-import { join } from 'node:path'
-import { tmpdir } from 'node:os'
+import { join, resolve } from 'node:path'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import type { ApplicationAdapterManifest, ApplicationToolProjection } from '@infos/shared'
 import { ApplicationRealmManager } from '../../../src/applications/applicationRealm'
@@ -170,6 +169,14 @@ describe('ApplicationToolManager', () => {
     )
   })
 
+  it('拒绝把其他应用的声明登记到当前 Realm', () => {
+    const { manager, realm } = setup()
+    expect(() => manager.declare(realm('a'), manifest('b', [projection('b_tool')]))).toThrow(
+      'APPLICATION_TOOLS_ID_MISMATCH',
+    )
+    expect(manager.list()).toEqual([])
+  })
+
   it('Realm 释放后在线工具一并撤销，可重新接入', async () => {
     const { tools, manager, realm } = setup()
     const demo = realm('demo')
@@ -182,9 +189,60 @@ describe('ApplicationToolManager', () => {
     ).not.toThrow()
   })
 
+  it('旧声明在 Realm 释放后不能重新上线或操作同一应用的新实例', async () => {
+    const { tools, manager, realm } = setup()
+    const oldRealm = realm('demo')
+    const old = manager.declare(oldRealm, manifest('demo', [projection('demo_run')]))
+    old.online('demo_run', handler)
+    await oldRealm.dispose()
+    const current = manager.declare(realm('demo'), manifest('demo', [projection('demo_run')]))
+    current.online('demo_run', handler)
+
+    expect(old.isOnline('demo_run')).toBe(false)
+    expect(() => old.online('demo_run', handler)).toThrow('APPLICATION_TOOLS_REALM_CLOSED')
+    await old.offline('demo_run')
+    expect(tools.has('demo_run')).toBe(true)
+    expect(current.isOnline('demo_run')).toBe(true)
+  })
+
+  it('旧实例注销的迟到结果不能移除新实例的工具目录', async () => {
+    const { tools, manager, realm } = setup()
+    const oldRealm = realm('demo')
+    const old = manager.declare(oldRealm, manifest('demo', [projection('demo_run')]))
+    old.online('demo_run', handler)
+    let release!: () => void
+    let entered!: () => void
+    const wait = new Promise<void>((resolve) => {
+      release = resolve
+    })
+    const started = new Promise<void>((resolve) => {
+      entered = resolve
+    })
+    const unregister = oldRealm.unregisterTool.bind(oldRealm)
+    vi.spyOn(oldRealm, 'unregisterTool').mockImplementationOnce(async (name) => {
+      const removed = await unregister(name)
+      entered()
+      await wait
+      return removed
+    })
+    const pending = old.offline('demo_run')
+    await started
+    try {
+      await oldRealm.dispose()
+      const current = manager.declare(realm('demo'), manifest('demo', [projection('demo_run')]))
+      current.online('demo_run', handler)
+      release()
+      await pending
+      expect(current.isOnline('demo_run')).toBe(true)
+      expect(tools.has('demo_run')).toBe(true)
+    } finally {
+      release()
+    }
+  })
+
   it('在线子应用工具与普通工具一样受 CapabilityGate 角色白名单约束', async () => {
     const { tools, manager, realm } = setup()
-    const root = join(tmpdir(), `infos-app-tools-${Date.now()}-${Math.random()}`)
+    const root = join(resolve('TEMP'), `infos-app-tools-${Date.now()}-${Math.random()}`)
     dirs.push(root)
     for (const [agent, list] of [
       ['open', ['"*"']],
@@ -216,7 +274,7 @@ describe('ApplicationToolManager', () => {
 
   it('application:* 放行全部在线子应用工具，mcp:* 放行 MCP 工具，均只在默认作用域生效', () => {
     const { tools, manager, realm } = setup()
-    const root = join(tmpdir(), `infos-app-wildcard-${Date.now()}-${Math.random()}`)
+    const root = join(resolve('TEMP'), `infos-app-wildcard-${Date.now()}-${Math.random()}`)
     dirs.push(root)
     mkdirSync(join(root, 'pero'), { recursive: true })
     writeFileSync(

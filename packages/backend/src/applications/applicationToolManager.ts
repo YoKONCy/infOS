@@ -36,9 +36,9 @@ interface OnlineTool {
 
 export class ApplicationToolManager {
   private readonly online = new Map<string, OnlineTool>()
-  private readonly apps = new Set<string>()
+  private readonly apps = new Map<string, ApplicationRealm>()
   /** 上线失败的工具；同步会反复重试，只在首次失败时记日志，避免刷屏。 */
-  private readonly failed = new Set<string>()
+  private readonly failed = new Map<ApplicationRealm, Set<string>>()
 
   /**
    * infOS 侧适配器装配时接入，得到只能上下线本子应用工具的凭据。
@@ -49,6 +49,8 @@ export class ApplicationToolManager {
     manifest: ApplicationAdapterManifest,
   ): ApplicationToolDeclaration {
     const appId = realm.descriptor.appId
+    if (realm.scope.isClosed) throw new Error(`APPLICATION_TOOLS_REALM_CLOSED: ${appId}`)
+    if (manifest.id !== appId) throw new Error(`APPLICATION_TOOLS_ID_MISMATCH: ${appId}`)
     if (this.apps.has(appId)) throw new Error(`APPLICATION_TOOLS_ALREADY_DECLARED: ${appId}`)
     const accepted = new Map<string, ApplicationToolProjection>()
     for (const projection of manifest.toolProjections ?? []) {
@@ -63,9 +65,9 @@ export class ApplicationToolManager {
       }
       accepted.set(projection.name, projection)
     }
-    this.apps.add(appId)
+    this.apps.set(appId, realm)
     // Realm 释放时一并撤销接入记录与在线工具。
-    realm.scope.defer(() => this.forget(appId, [...accepted.keys()]))
+    realm.scope.defer(() => this.forget(realm))
     return new ApplicationToolDeclaration(this, realm, manifest.name, accepted)
   }
 
@@ -84,7 +86,12 @@ export class ApplicationToolManager {
     return this.online.has(name)
   }
 
-  /** @internal 由 ApplicationToolDeclaration 调用；同步完成，保证同一次同步中的工具同时可见。 */
+  /** @internal 在线状态按 Realm 实例核对，旧声明不能冒充同一应用的新实例。 */
+  isOnline(realm: ApplicationRealm, name: string): boolean {
+    return !realm.scope.isClosed && this.online.get(name)?.realm === realm
+  }
+
+  /** @internal 单个工具的注册与在线目录登记在同一同步调用内完成。 */
   register(
     realm: ApplicationRealm,
     appName: string,
@@ -92,8 +99,10 @@ export class ApplicationToolManager {
     handler: ToolHandler,
   ): boolean {
     const appId = realm.descriptor.appId
+    if (realm.scope.isClosed || this.apps.get(appId) !== realm)
+      throw new Error(`APPLICATION_TOOLS_REALM_CLOSED: ${appId}`)
     const current = this.online.get(projection.name)
-    if (current) return current.realm === realm
+    if (current?.realm === realm) return true
     const definition: ToolDefinition = {
       name: projection.name,
       // 同一子应用的工具在会话工具菜单中按包相邻展示。
@@ -104,11 +113,14 @@ export class ApplicationToolManager {
       requiresApproval: projection.requiresApproval,
     }
     try {
+      if (current) throw new Error(`APPLICATION_REALM_TOOL_CONFLICT: ${projection.name}`)
       // 实际注册仍经 Realm，保留宿主投影与私有工具的隔离判定；重名由 Realm 拒绝。
       realm.registerTool(definition, handler, { hostProjection: true })
     } catch (error) {
-      if (!this.failed.has(projection.name)) {
-        this.failed.add(projection.name)
+      const failed = this.failed.get(realm) ?? new Set<string>()
+      this.failed.set(realm, failed)
+      if (!failed.has(projection.name)) {
+        failed.add(projection.name)
         logger.warn(
           __t('logs.applications', '子应用工具 {0} 上线失败: {1}', [
             projection.name,
@@ -118,7 +130,7 @@ export class ApplicationToolManager {
       }
       return false
     }
-    this.failed.delete(projection.name)
+    this.failed.get(realm)?.delete(projection.name)
     this.online.set(projection.name, {
       realm,
       entry: { name: projection.name, appId, appName, definition },
@@ -133,15 +145,18 @@ export class ApplicationToolManager {
     if (!tool || tool.realm !== realm) return
     // 先注销再移出目录：注销失败时仍记为在线，下次同步可以重试，状态不与注册表脱节。
     await realm.unregisterTool(name)
+    // 注销等待期间可能已释放旧 Realm 并接入新实例，迟到完成不得移除新工具。
+    if (this.online.get(name) !== tool) return
     this.online.delete(name)
     logger.info(__t('logs.applications', '子应用工具已下线: {0} ({1})', [name, tool.entry.appId]))
   }
 
-  private forget(appId: string, names: readonly string[]): void {
-    this.apps.delete(appId)
-    for (const name of names) this.failed.delete(name)
+  private forget(realm: ApplicationRealm): void {
+    const appId = realm.descriptor.appId
+    if (this.apps.get(appId) === realm) this.apps.delete(appId)
+    this.failed.delete(realm)
     for (const [name, tool] of this.online) {
-      if (tool.entry.appId === appId) this.online.delete(name)
+      if (tool.realm === realm) this.online.delete(name)
     }
   }
 }
@@ -169,7 +184,7 @@ export class ApplicationToolDeclaration {
   }
 
   isOnline(name: string): boolean {
-    return this.manager.get(name)?.appId === this.appId
+    return this.manager.isOnline(this.realm, name)
   }
 
   /** 子应用启动且 Endpoint 就绪后调用，动态注册该工具。 */

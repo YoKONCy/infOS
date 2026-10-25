@@ -1,13 +1,20 @@
 /** 与后端 CapabilityGate 约定：放行全部在线子应用工具。 */
 export const APPLICATION_TOOL_WILDCARD = 'application:*'
+export const MCP_TOOL_WILDCARD = 'mcp:*'
+const DYNAMIC_TOOL_WILDCARDS = [APPLICATION_TOOL_WILDCARD, MCP_TOOL_WILDCARD] as const
 
 interface SelectableTool {
   name: string
   source?: { kind: 'application' }
 }
 
-function isApplicationTool(tool: SelectableTool): boolean {
-  return tool.source?.kind === 'application'
+function matchesWildcard(
+  tool: SelectableTool,
+  wildcard: (typeof DYNAMIC_TOOL_WILDCARDS)[number],
+): boolean {
+  return wildcard === APPLICATION_TOOL_WILDCARD
+    ? tool.source?.kind === 'application'
+    : tool.name.startsWith('mcp_')
 }
 
 /** 角色当前通道配置下该工具是否启用。 */
@@ -15,13 +22,16 @@ export function isRoleToolEnabled(configured: readonly string[], tool: Selectabl
   return (
     configured.includes('*') ||
     configured.includes(tool.name) ||
-    (isApplicationTool(tool) && configured.includes(APPLICATION_TOOL_WILDCARD))
+    DYNAMIC_TOOL_WILDCARDS.some(
+      (wildcard) => configured.includes(wildcard) && matchesWildcard(tool, wildcard),
+    )
   )
 }
 
 /**
  * 切换单个工具后的角色工具列表。
- * 展开 '*' 时子应用工具用通配符保留：离线子应用此刻不在可见列表里，逐个展开会把它们丢掉。
+ * 展开 '*' 时保留子应用和 MCP 通配符，避免编辑其他开关时丢失离线工具的授权。
+ * 关闭某个动态工具会把覆盖它的通配符转成显式白名单，之后新上线的同类工具需另行授权。
  */
 export function toggleRoleTool(
   configured: readonly string[],
@@ -31,18 +41,24 @@ export function toggleRoleTool(
 ): string[] {
   let current = configured.includes('*')
     ? [
-        ...visible.filter((item) => !isApplicationTool(item)).map((item) => item.name),
-        APPLICATION_TOOL_WILDCARD,
+        ...visible
+          .filter(
+            (item) => !DYNAMIC_TOOL_WILDCARDS.some((wildcard) => matchesWildcard(item, wildcard)),
+          )
+          .map((item) => item.name),
+        ...DYNAMIC_TOOL_WILDCARDS,
       ]
     : [...configured]
-  // 在通配符下关闭某个子应用工具时，改为逐个列出其余在线子应用工具。
-  if (!enabled && isApplicationTool(tool) && current.includes(APPLICATION_TOOL_WILDCARD)) {
-    current = [
-      ...current.filter((name) => name !== APPLICATION_TOOL_WILDCARD),
-      ...visible.filter(isApplicationTool).map((item) => item.name),
-    ]
+  // 所有覆盖目标的动态通配符都需展开，否则界面关掉后后端仍可能放行。
+  if (!enabled) {
+    for (const wildcard of DYNAMIC_TOOL_WILDCARDS) {
+      if (!current.includes(wildcard) || !matchesWildcard(tool, wildcard)) continue
+      current = [
+        ...current.filter((name) => name !== wildcard),
+        ...visible.filter((item) => matchesWildcard(item, wildcard)).map((item) => item.name),
+      ]
+    }
   }
-  return enabled
-    ? [...new Set([...current, tool.name])]
-    : current.filter((name) => name !== tool.name)
+  const next = enabled ? [...current, tool.name] : current.filter((name) => name !== tool.name)
+  return [...new Set(next)]
 }

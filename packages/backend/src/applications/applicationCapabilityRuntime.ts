@@ -51,13 +51,20 @@ export class ApplicationCapabilityRuntime {
     this.unsubscribe?.()
     this.unsubscribe = undefined
     await this.synchronizing?.catch(() => undefined)
+    const errors: unknown[] = []
     try {
       await this.tools.offlineAll()
-    } finally {
-      // 工具注销失败也要释放能力绑定与 Handle。
-      for (const binding of this.bindings.values()) await binding.scope.dispose()
-      this.bindings.clear()
+    } catch (error) {
+      errors.push(error)
     }
+    // 每个绑定都独立清理，单个释放失败不能阻止其他 Capability Handle 的撤销。
+    const bindings = [...this.bindings.values()]
+    this.bindings.clear()
+    const released = await Promise.allSettled(bindings.map((binding) => binding.scope.dispose()))
+    for (const result of released) {
+      if (result.status === 'rejected') errors.push(result.reason)
+    }
+    if (errors.length) throw new AggregateError(errors, 'APPLICATION_RUNTIME_STOP_FAILED')
   }
   available(): boolean {
     return this.bindings.size > 0
