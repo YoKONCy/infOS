@@ -128,6 +128,7 @@ import { isSystemProtocolTool } from './tools/systemProtocolTools'
 import { RuntimeStateService } from './services/runtime/runtimeStateService'
 import { MdpEngine } from './services/prompt/mdpEngine'
 import { PromptWorkspace } from './services/prompt/promptWorkspace'
+import { WorldbookService } from './services/worldbook/worldbookService'
 import { ClientAccessRepository } from './repositories/clientAccess.repo'
 import { ClientAccessService } from './services/system/clientAccessService'
 import { WebFrontendService } from './services/system/webFrontendService'
@@ -353,6 +354,8 @@ export interface AppContext {
   embeddingService: EmbeddingService
   llmService: LlmService
   promptWorkspace: PromptWorkspace
+  /** 世界书书库、全局激活设置与角色绑定。 */
+  worldbookService: WorldbookService
   tokenUsageService: TokenUsageService
   eventMemoryService: EventMemoryService
   /** 危险区域重置服务（清空对话/记忆/恢复出厂）。 */
@@ -773,6 +776,13 @@ export async function createAppContext(config: AppConfig): Promise<AppContext> {
     factsRepo,
   )
   const agentManager = new AgentManager(pathResolver, configRepo)
+  const worldbookService = new WorldbookService(pathResolver.resolve('@data/worldbooks'))
+  worldbookService.initialize()
+  // 角色目录内嵌的世界书（导入的角色资源包或内置角色）在每次加载角色后补入书库。
+  agentManager.setAgentsLoadedListener((agents) => {
+    for (const agent of agents) worldbookService.importAgentBundle(agent.id, agent.directory)
+  })
+  promptWorkspace.setWorldbookService(worldbookService)
 
   // ── 7. Service — Agent 域 ──
   const gatewayHub = new GatewayHub(
@@ -2238,6 +2248,7 @@ export async function createAppContext(config: AppConfig): Promise<AppContext> {
     embeddingService,
     llmService,
     promptWorkspace,
+    worldbookService,
     eventMemoryService,
     tokenUsageService,
     resetService,
@@ -2247,6 +2258,8 @@ export async function createAppContext(config: AppConfig): Promise<AppContext> {
     agentManager,
     async cleanupDeletedAgent(agentId: string): Promise<void> {
       memoryAgents.invalidate(agentId)
+      // 书库中的世界书保留，只移除该角色的绑定。
+      worldbookService.removeAgent(agentId)
       await Promise.all([
         backgroundTaskRepo.deleteResidentsForAgent(agentId),
         eventNoteRepo.retireAgentBackgroundWork(agentId),

@@ -418,6 +418,7 @@ export * from './socialStateMachine'
 export * from './socialTurnClassification'
 export * from './types/promptWorkspace.types'
 export * from './promptFormats'
+export * from './worldbook'
 export type {
   TarotSuit,
   TarotCard,

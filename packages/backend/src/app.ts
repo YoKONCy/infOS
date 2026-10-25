@@ -68,6 +68,7 @@ import {
 } from './routers'
 import { createPictoriaRouter } from './routers/pictoria.router'
 import { createPromptRouter } from './routers/prompt.router'
+import { createWorldbookRouter } from './routers/worldbook.router'
 import { createTarotRouter } from './routers/tarot.router'
 import { createClientAccessRouter } from './routers/clientAccess.router'
 
@@ -242,6 +243,7 @@ export function createApp(ctx: AppContext) {
   app.route('/api/scheduler', createSchedulerRouter(ctx))
   app.route('/api/assets', createAssetRouter(ctx))
   app.route('/api/prompts', createPromptRouter(ctx))
+  app.route('/api/worldbooks', createWorldbookRouter(ctx))
   app.route('/api/maintenance', createMaintenanceRouter(ctx))
   // 危险区域重置（清空对话/记忆/恢复出厂，均需确认短语）
   app.route('/api/reset', createResetRouter(ctx))

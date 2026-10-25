@@ -367,6 +367,25 @@ export function assembleSillyTavern(
     if (block.position === 'in_chat') injections.push({ block, segments: results, index })
     else rendered.set(block.id, results)
   }
+  // 世界书统一放在当前输入之前（深度 1，排在同深度预设条目之后），不进入系统提示词，避免破坏提示词缓存。
+  const worldInfo = typeof input.world_info === 'string' ? input.world_info.trim() : ''
+  if (worldInfo) {
+    const id = 'st.worldbook'
+    injections.push({
+      block: {
+        id,
+        name: id,
+        kind: 'template',
+        role: 'system',
+        enabled: true,
+        position: 'in_chat',
+        depth: 1,
+        order: Number.MAX_SAFE_INTEGER,
+      },
+      segments: [segment(id, 'world_info', 'system', `<world_info>\n${worldInfo}\n</world_info>`)],
+      index: framework.blocks.length,
+    })
+  }
   const buckets = new Map<number, typeof injections>()
   for (const injection of injections) {
     const index = Math.max(0, history.length - (injection.block.depth ?? 4))

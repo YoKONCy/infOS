@@ -29,6 +29,8 @@ import { builtinBodyHash, synchronizeBuiltinDocument } from './builtinPromptMigr
 import { createLogger } from '../../lib/logger'
 import { assembleSillyTavern, sillyTavernIssues } from './sillyTavernFramework'
 import { SillyTavernVariableStore } from './sillyTavernVariables'
+import type { WorldbookService } from '../worldbook/worldbookService'
+import { WORLDBOOK_VAR, activateWorldbookForPrompt } from '../worldbook/worldbookPrompt'
 import type { PromptVariableState, PromptVariableCommit, StUtilityKey } from '@infos/shared'
 
 const logger = createLogger('PromptWorkspace')
@@ -279,6 +281,7 @@ export const PROMPT_VARIABLES = [
   ['memory_context', '记忆'],
   ['knowledge_context', '文档知识召回'],
   ['facts_context', '事实召回'],
+  ['world_info', '世界书'],
   ['conversation_history', '历史文本'],
   ['tools_description', '工具说明'],
   ['skill_menu', '技能目录'],
@@ -328,6 +331,12 @@ export class PromptWorkspace {
   private recoveryError = ''
   private state!: StoredWorkspace
   private queue: Promise<unknown> = Promise.resolve()
+  private worldbook?: WorldbookService
+
+  /** 注入世界书书库；未注入时装配不含世界书内容。 */
+  setWorldbookService(service: WorldbookService): void {
+    this.worldbook = service
+  }
 
   readonly variableStore: SillyTavernVariableStore
   constructor(
@@ -954,6 +963,8 @@ export class PromptWorkspace {
       agent_id: agentId,
       __framework_id: selected,
     }
+    // 世界书按本轮消息激活，只放在末尾的本轮动态上下文，不影响系统提示词与历史的缓存。
+    vars[WORLDBOOK_VAR] = activateWorldbookForPrompt(this.worldbook, channel, agentId, vars).content
     if (promptFormat(framework) === 'sillytavern')
       return this.withGlobalPolicies(
         {

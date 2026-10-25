@@ -604,6 +604,19 @@ export class ContextCompiler {
         (options.appendThreadMessages === false || !currentMessage
           ? undefined
           : this.assembleMessages({ slotMessages: [], messages: [currentMessage] })[0]),
+      // 世界书只扫描真实对话正文，不含时间标记、任务结果与图片档案。
+      worldbook_scan: [
+        ...(options.appendThreadMessages === false
+          ? []
+          : historyMessages
+              .filter((message) => message.role === 'user' || message.role === 'assistant')
+              .map((message) => ({ role: message.role, content: message.content }))),
+        ...(options.currentInput
+          ? [options.currentInput]
+          : options.appendThreadMessages === false || !currentMessage
+            ? []
+            : [{ role: 'user', content: currentMessage.content }]),
+      ],
       generation_type: options.generationType ?? (options.realmExecution ? 'quiet' : 'normal'),
       prompt_seed: `${threadId}:${currentMessage?.id ?? randomUUID()}:${promptSnapshot?.id ?? 'default'}`,
       model: options.modelName ?? '',

@@ -593,7 +593,14 @@ function addVariable() {
           )
         }}
       </p>
-      <p>{{ __t('ui.settings', '暂不支持扩展脚本与世界书激活。') }}</p>
+      <p>
+        {{
+          __t(
+            'ui.settings',
+            '暂不支持扩展脚本；世界书内容统一放在当前输入之前，不经过世界信息标记。',
+          )
+        }}
+      </p>
     </details>
   </div>
 </template>

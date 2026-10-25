@@ -547,6 +547,11 @@ export class SocialAppCompiler {
             : message.content,
       })),
       current_message: { role: 'user', content: userContent },
+      // 世界书只扫描消息正文，避免平台账号、身份与时间标记误触发关键词。
+      worldbook_scan: [
+        ...history.map((message) => ({ role: message.role, content: message.content })),
+        { role: 'user', content: params.triggerMessageContent || userMessage },
+      ],
       generation_type: 'normal',
       flow_state: params.flowState,
       stickers_available: Boolean(params.stickersAvailable),

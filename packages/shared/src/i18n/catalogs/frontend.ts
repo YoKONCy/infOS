@@ -2,6 +2,12 @@ import audioInputCn from '../locales/zh-CN/ui/audio-input.json'
 import knowledgeRecallCn from '../locales/zh-CN/ui/knowledge-recall.json'
 import knowledgeRecallTw from '../locales/zh-TW/ui/knowledge-recall.json'
 import knowledgeRecallEn from '../locales/en-US/ui/knowledge-recall.json'
+import worldbookCn from '../locales/zh-CN/ui/worldbook.json'
+import worldbookTw from '../locales/zh-TW/ui/worldbook.json'
+import worldbookEn from '../locales/en-US/ui/worldbook.json'
+import worldbookBindingCn from '../locales/zh-CN/ui/worldbook-binding.json'
+import worldbookBindingTw from '../locales/zh-TW/ui/worldbook-binding.json'
+import worldbookBindingEn from '../locales/en-US/ui/worldbook-binding.json'
 import audioInputTw from '../locales/zh-TW/ui/audio-input.json'
 import audioInputEn from '../locales/en-US/ui/audio-input.json'
 import tts0 from '../locales/zh-CN/ui/tts.json'
@@ -471,3 +477,9 @@ registerCatalog('ui.knowledge-recall', 'zh-TW', knowledgeRecallTw)
 registerCatalog('ui.knowledge-recall', 'en-US', knowledgeRecallEn)
 registerCatalog('ui.audio-input', 'zh-TW', audioInputTw)
 registerCatalog('ui.audio-input', 'en-US', audioInputEn)
+registerCatalog('ui.worldbook', 'zh-CN', worldbookCn)
+registerCatalog('ui.worldbook', 'zh-TW', worldbookTw)
+registerCatalog('ui.worldbook', 'en-US', worldbookEn)
+registerCatalog('ui.worldbook-binding', 'zh-CN', worldbookBindingCn)
+registerCatalog('ui.worldbook-binding', 'zh-TW', worldbookBindingTw)
+registerCatalog('ui.worldbook-binding', 'en-US', worldbookBindingEn)

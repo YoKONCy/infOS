@@ -1,0 +1,13 @@
+{
+  "世界书不存在: {0}": "Worldbook not found: {0}",
+  "世界书名称不能为空": "Worldbook name cannot be empty",
+  "已存在同名世界书: {0}": "A worldbook with this name already exists: {0}",
+  "世界书数量已达上限 {0}": "Worldbook limit reached ({0})",
+  "世界书已在其他位置被修改，请刷新后再保存": "This worldbook was changed elsewhere. Refresh before saving.",
+  "世界书数据格式无效": "Invalid worldbook data",
+  "世界书数据过大": "Worldbook data is too large",
+  "世界书已保存": "Worldbook saved",
+  "世界书已创建": "Worldbook created",
+  "世界书已删除": "Worldbook deleted",
+  "角色的世界书绑定已在其他位置被修改": "This character's worldbook binding was changed elsewhere"
+}

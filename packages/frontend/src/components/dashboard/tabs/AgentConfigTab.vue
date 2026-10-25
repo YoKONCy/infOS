@@ -21,6 +21,7 @@ import { getApiBaseUrl } from '../../../api/transport'
 import { invoke, isElectron } from '../../../utils/ipcAdapter'
 import { useNotificationStore } from '../../../stores'
 import { systemApi } from '../../../api/modules/systemApi'
+import AgentWorldbookBinding from './AgentWorldbookBinding.vue'
 
 /** 角色图鉴采用用户能理解的五区协议，不暴露底层文件结构。 */
 type AtlasSection = 'identity' | 'persona' | 'reactions' | 'capability' | 'runtime'
@@ -941,7 +942,10 @@ onBeforeUnmount(() => {
           </div>
           <div class="profile-identity">
             <span class="eyebrow">CHARACTER / {{ form.id.toUpperCase() }}</span>
-            <h1>{{ form.name }}</h1>
+            <div class="profile-name">
+              <h1>{{ form.name }}</h1>
+              <AgentWorldbookBinding :agent-id="form.id" :agent-name="form.name" />
+            </div>
             <p>{{ form.description || __t('ui.settings', '尚未记录角色简介。') }}</p>
             <div class="profile-signals">
               <span>
@@ -1923,6 +1927,18 @@ onBeforeUnmount(() => {
   margin: 7px 0 6px;
   font-size: 28px;
   line-height: 1;
+}
+.profile-name {
+  display: flex;
+  min-width: 0;
+  align-items: center;
+  gap: 10px;
+  margin: 7px 0 6px;
+}
+.profile-name h1 {
+  min-width: 0;
+  margin: 0;
+  overflow-wrap: anywhere;
 }
 .profile-identity > p {
   max-width: 680px;

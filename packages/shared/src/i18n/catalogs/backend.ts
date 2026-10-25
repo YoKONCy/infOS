@@ -2,6 +2,12 @@ import audioInputCn from '../locales/zh-CN/server/audio-input.json'
 import knowledgeRecallCn from '../locales/zh-CN/logs/knowledge-recall.json'
 import knowledgeRecallTw from '../locales/zh-TW/logs/knowledge-recall.json'
 import knowledgeRecallEn from '../locales/en-US/logs/knowledge-recall.json'
+import worldbookServerCn from '../locales/zh-CN/server/worldbook.json'
+import worldbookServerTw from '../locales/zh-TW/server/worldbook.json'
+import worldbookServerEn from '../locales/en-US/server/worldbook.json'
+import worldbookLogsCn from '../locales/zh-CN/logs/worldbook.json'
+import worldbookLogsTw from '../locales/zh-TW/logs/worldbook.json'
+import worldbookLogsEn from '../locales/en-US/logs/worldbook.json'
 import audioInputTw from '../locales/zh-TW/server/audio-input.json'
 import audioInputEn from '../locales/en-US/server/audio-input.json'
 import tts0 from '../locales/zh-CN/server/tts.json'
@@ -489,3 +495,9 @@ registerCatalog('logs.knowledge-recall', 'zh-TW', knowledgeRecallTw)
 registerCatalog('logs.knowledge-recall', 'en-US', knowledgeRecallEn)
 registerCatalog('server.audio-input', 'zh-TW', audioInputTw)
 registerCatalog('server.audio-input', 'en-US', audioInputEn)
+registerCatalog('server.worldbook', 'zh-CN', worldbookServerCn)
+registerCatalog('server.worldbook', 'zh-TW', worldbookServerTw)
+registerCatalog('server.worldbook', 'en-US', worldbookServerEn)
+registerCatalog('logs.worldbook', 'zh-CN', worldbookLogsCn)
+registerCatalog('logs.worldbook', 'zh-TW', worldbookLogsTw)
+registerCatalog('logs.worldbook', 'en-US', worldbookLogsEn)

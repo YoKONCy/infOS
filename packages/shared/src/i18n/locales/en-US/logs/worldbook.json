@@ -1,0 +1,6 @@
+{
+  "世界书文件无法读取，已跳过: {0} — {1}": "Skipped unreadable worldbook file: {0} — {1}",
+  "世界书配置无法读取，已使用默认值: {0} — {1}": "Worldbook config unreadable, using defaults: {0} — {1}",
+  "已导入角色内嵌世界书: {0} → {1}": "Imported embedded character worldbook: {0} → {1}",
+  "角色内嵌世界书导入失败: {0} — {1}": "Failed to import embedded character worldbook: {0} — {1}"
+}

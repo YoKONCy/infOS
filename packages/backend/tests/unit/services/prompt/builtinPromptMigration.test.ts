@@ -53,8 +53,9 @@ describe('内置提示词正文升级', () => {
     )
       .replaceAll('\r\n', '\n')
       .trim()
+    // 该旧版本早于资料 XML 与世界书区块，两段均需去掉。
     const oldBody = body.replace(
-      '{% if knowledge_context %}<knowledge_context>\n{{ knowledge_context }}\n</knowledge_context>{% endif %}\n{% if facts_context %}<facts_context>\n{{ facts_context }}\n</facts_context>{% endif %}\n',
+      '{% if knowledge_context %}<knowledge_context>\n{{ knowledge_context }}\n</knowledge_context>{% endif %}\n{% if facts_context %}<facts_context>\n{{ facts_context }}\n</facts_context>{% endif %}\n{% if world_info %}<world_info>\n{{ world_info }}\n</world_info>{% endif %}\n',
       '',
     )
     // 已核对的旧发行指纹保证测试原文确实属于已知内置版本。
