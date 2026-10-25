@@ -123,7 +123,11 @@ export class KnowledgeIndex {
     return current?.status === 'ready' && current.revision === entry.document.revision
   }
 
-  async search(input: KnowledgeSearchInput, signal?: AbortSignal): Promise<KnowledgeSearchResult> {
+  async search(
+    input: KnowledgeSearchInput,
+    signal?: AbortSignal,
+    options: { minVectorScore?: number; vector?: boolean } = {},
+  ): Promise<KnowledgeSearchResult> {
     if (!this.available || this.key !== knowledgeEmbeddingKey(this.embedding)) this.rebuild()
     signal?.throwIfAborted()
     const version = this.repo.generation()
@@ -168,7 +172,11 @@ export class KnowledgeIndex {
         .searchHybrid(Array(this.stores.getDimension()).fill(0), query, recall, 0, -1, 0)
         .filter((hit) => hit.score > 0)
         .forEach((hit, i) => add(hit.id, 'bm25', i + 1))
-      if (this.embedding.isAvailable && [...entries.values()].some((entry) => entry.hasVector)) {
+      if (
+        options.vector !== false &&
+        this.embedding.isAvailable &&
+        [...entries.values()].some((entry) => entry.hasVector)
+      ) {
         const key = this.key
         try {
           const vector = await this.embedding.embedOne(query, signal)
@@ -178,7 +186,7 @@ export class KnowledgeIndex {
           else if (validKnowledgeVector(vector, this.stores.getDimension())) {
             this.stores
               .getSharedStore('knowledge')
-              .search(vector, recall, 0, 0.2)
+              .search(vector, recall, 0, options.minVectorScore ?? 0.2)
               .filter((hit) => hit.payload?.hasVector)
               .forEach((hit, i) => add(hit.id, 'vector', i + 1))
           } else warnings.push('向量返回无效，本次使用文本检索')

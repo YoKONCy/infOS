@@ -5,6 +5,8 @@ export interface QueuedConversationInput {
   content: string
   attachmentIds?: string[]
   imageMode?: 'auto' | 'native' | 'relay'
+  /** 仅宿主内部填写；HTTP 消息结构不接受该字段。 */
+  taskResultEvent?: { deliveryId: string; taskId: string }
   workspaceContext?: {
     filePath?: string
     fileHash?: string

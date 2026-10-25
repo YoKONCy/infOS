@@ -1,6 +1,6 @@
 {
   "name": "@infos/shared",
-  "version": "0.9.5-hotfix1",
+  "version": "0.9.6",
   "private": true,
   "type": "module",
   "main": "./src/index.ts",
@@ -8,6 +8,7 @@
   "exports": {
     ".": "./src/index.ts",
     "./i18n": "./src/i18n/index.ts",
+    "./resource-versions": "./src/node/resourceVersions.ts",
     "./i18n/catalogs/*": "./src/i18n/catalogs/*.ts"
   },
   "scripts": {

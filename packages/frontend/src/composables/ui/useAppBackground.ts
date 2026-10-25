@@ -262,6 +262,20 @@ export function useAppBackground() {
     })
   }
 
+  /** 整页保存固定点击当时的背景参数，排队期间不读取后续草稿。 */
+  function captureSave(): () => Promise<void> {
+    const id = selectedPreset.value
+    const snapshot = normalize(settings.value)
+    return () =>
+      mutate(async () => {
+        if (id !== 'default') {
+          await configApi.set(presetKey(id, 'settings'), JSON.stringify(snapshot))
+          savedPresets.value[id].settings = snapshot
+        }
+        await configApi.set(selectionKey, id)
+      })
+  }
+
   function selectPreset(id: string): Promise<void> {
     return mutate(async () => {
       await load()
@@ -322,6 +336,7 @@ export function useAppBackground() {
     applyPreset,
     load,
     save,
+    captureSave,
     upload,
     remove,
   }

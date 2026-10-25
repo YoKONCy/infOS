@@ -25,13 +25,14 @@ import { NAPCAT_INSTALLATION_MARKER } from './napcatInstallation'
 let directory = ''
 let configDir = ''
 beforeEach(() => {
-  directory = mkdtempSync(join(tmpdir(), 'infos-napcat-'))
+  directory = mkdtempSync(join(process.env.INFOS_TEST_TEMP_ROOT ?? tmpdir(), 'infos-napcat-'))
   paths.data = directory
   configDir = join(directory, 'tools', 'NapCat', 'napcat', 'config')
 })
 afterEach(() => {
   vi.restoreAllMocks()
-  if (dirname(directory) === tmpdir()) rmSync(directory, { recursive: true, force: true })
+  if (dirname(directory) === (process.env.INFOS_TEST_TEMP_ROOT ?? tmpdir()))
+    rmSync(directory, { recursive: true, force: true })
 })
 
 describe('NapCat 首次登录配置', () => {
@@ -42,7 +43,7 @@ describe('NapCat 首次登录配置', () => {
       expect.objectContaining({
         name: 'infOS',
         enable: true,
-        url: expect.stringMatching(/\/api\/social\/ws$/),
+        url: expect.stringMatching(/\/api\/social\/ws\?platform=qq$/),
       }),
     ])
     const saved = readFileSync(join(configDir, 'onebot11.json'), 'utf8')

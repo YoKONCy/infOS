@@ -264,7 +264,7 @@ export function toOneBotSegments(content: string, attachments?: Attachment[]): O
         // 自定义表情使用 NapCat 的图片子类型，字段必须是下划线形式。
         const file = att.localPath
           ? `file:///${att.localPath.replace(/\\/g, '/')}`
-          : (att.url ?? '')
+          : (att.url?.replace(/^data:[^;]+;base64,/, 'base64://') ?? '')
         segments.push({
           type: 'image',
           data: {
@@ -274,12 +274,14 @@ export function toOneBotSegments(content: string, attachments?: Attachment[]): O
           },
         })
       } else if (att.type === 'image') {
-        const file = att.localPath ? `file:///${att.localPath}` : (att.url ?? '')
+        const file = att.localPath
+          ? `file:///${att.localPath}`
+          : (att.url?.replace(/^data:[^;]+;base64,/, 'base64://') ?? '')
         segments.push({ type: 'image', data: { file } })
       } else if (att.type === 'audio' || att.type === 'video') {
         const file = att.localPath
           ? `file:///${att.localPath.replaceAll('\\', '/')}`
-          : (att.url ?? '')
+          : (att.url?.replace(/^data:[^;]+;base64,/, 'base64://') ?? '')
         if (!file) throw new Error('媒体附件缺少来源')
         segments.push({ type: att.type === 'audio' ? 'record' : 'video', data: { file } })
       } else if (att.type !== 'file') {

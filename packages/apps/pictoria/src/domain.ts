@@ -2,7 +2,7 @@ import { t as __t } from './i18n'
 import { z } from 'zod'
 
 export const identifier = z.string().regex(/^[a-zA-Z0-9][a-zA-Z0-9_.:-]{0,127}$/)
-const record = z.record(z.unknown())
+const record = z.record(z.string(), z.unknown())
 export const schemaObject = record.refine((s) => s.type === 'object', '根 schema 必须是 object')
 export const stepSchema = z
   .object({
@@ -49,7 +49,7 @@ const bindingPath = z
     ]),
   )
   .max(16)
-const recursiveBinding: z.ZodType<Binding, z.ZodTypeDef, unknown> = z.lazy(() =>
+const recursiveBinding: z.ZodType<Binding> = z.lazy(() =>
   z
     .union([
       z.object({ input: identifier, path: bindingPath.optional() }).strict(),
@@ -98,13 +98,13 @@ export const workflowSchema = z
             id: identifier,
             stepId: identifier,
             stepRevision: z.number().int().positive(),
-            inputs: z.record(bindingSchema),
+            inputs: z.record(z.string(), bindingSchema),
           })
           .strict(),
       )
       .min(1)
       .max(64),
-    outputs: z.record(bindingSchema),
+    outputs: z.record(z.string(), bindingSchema),
   })
   .strict()
 export type Workflow = z.infer<typeof workflowSchema> & { revision: number; published?: boolean }
@@ -116,6 +116,7 @@ export const endpointSchema = z
     body: record.default({}),
     fields: z
       .record(
+        z.string(),
         z
           .object({
             from: z.string().min(1),
@@ -127,6 +128,7 @@ export const endpointSchema = z
     taskIdField: z.string().optional(),
     outputs: z
       .record(
+        z.string(),
         z
           .object({
             path: z.string(),
@@ -148,7 +150,7 @@ export const serviceSchema = z
     credentialId: identifier.optional(),
     credentialSourceId: identifier.optional(),
     headers: z
-      .record(z.string())
+      .record(z.string(), z.string())
       .default({})
       .refine(
         (headers) =>

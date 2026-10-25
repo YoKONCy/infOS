@@ -84,6 +84,7 @@ const showUpdateCenter = ref(false)
 const { isMobile } = useMobileLayout()
 const mobileNavOpen = ref(false)
 const desktopGuideActive = ref(false)
+const desktopEntryComplete = ref(!isElectron())
 provide('infos:onboarding-active', desktopGuideActive)
 function closeMobileNav(event: KeyboardEvent) {
   if (event.key === 'Escape') mobileNavOpen.value = false
@@ -615,6 +616,82 @@ function initParticles() {
   }))
 }
 
+// 仅对首次桌面文档交接；后续 TAB 切换、角色切换和网络重连均不重播。
+let entryObserver: MutationObserver | undefined
+let entryFrame = 0
+let entryAnnounced = false
+const desktopEntryReady = computed(
+  () =>
+    desktopEnabled &&
+    windowVisible.value &&
+    isBackendOnline.value &&
+    !isRefreshing.value &&
+    !agentStore.isLoading &&
+    desktopState.value.revision >= 0 &&
+    (desktopIsHome.value
+      ? !pendingTab.value && !threadStore.isLoadingHistory
+      : !desktopOpening.value &&
+        (!desktopActiveTab.value.loading || !!desktopActiveTab.value.error)),
+)
+function inspectDesktopEntry(): void {
+  if (entryAnnounced || !desktopEntryReady.value) return
+  const page = document.querySelector<HTMLElement>(
+    desktopIsHome.value ? '[data-onboarding-tab]' : '.main-view-root',
+  )
+  if (
+    !page ||
+    (desktopIsHome.value &&
+      (page.matches('.main-tab-loading') || page.querySelector('.main-tab-loading')))
+  )
+    return
+  const surface = desktopIsHome.value ? page.closest('.surface-transition') : null
+  if (surface && !surface.classList.contains('is-idle')) return
+  if (!page.getBoundingClientRect().width) return
+  entryAnnounced = true
+  entryObserver?.disconnect()
+  document.documentElement.dataset.desktopEntryReady = 'true'
+}
+function scheduleDesktopEntry(): void {
+  if (entryAnnounced || entryFrame) return
+  entryFrame = requestAnimationFrame(() => {
+    entryFrame = 0
+    inspectDesktopEntry()
+  })
+}
+function desktopEntryFinished(): void {
+  desktopEntryComplete.value = true
+}
+watch(desktopEntryReady, scheduleDesktopEntry, { flush: 'post' })
+watch(
+  motionLevel,
+  (level) => {
+    if (desktopEnabled) document.documentElement.dataset.desktopEntryMotion = level
+  },
+  { immediate: true },
+)
+onMounted(() => {
+  if (!desktopEnabled) return
+  if (!document.getElementById('infos-desktop-entry')) {
+    desktopEntryComplete.value = true
+    entryAnnounced = true
+    return
+  }
+  window.addEventListener('infos:desktop-entry-finished', desktopEntryFinished)
+  entryObserver = new MutationObserver(scheduleDesktopEntry)
+  entryObserver.observe(document.querySelector('.main-view-root')!, {
+    childList: true,
+    subtree: true,
+    attributes: true,
+    attributeFilter: ['class'],
+  })
+  scheduleDesktopEntry()
+})
+onUnmounted(() => {
+  entryObserver?.disconnect()
+  cancelAnimationFrame(entryFrame)
+  window.removeEventListener('infos:desktop-entry-finished', desktopEntryFinished)
+})
+
 let stopWarmup: (() => void) | undefined
 let stopPerformance: (() => void) | undefined
 onUnmounted(() => {
@@ -627,6 +704,7 @@ onMounted(() => {
     ['workspace', 'stronghold'],
     () =>
       mainSurfaceVisible.value &&
+      desktopEntryComplete.value &&
       !agentStore.isLoading &&
       !threadStore.isLoadingHistory &&
       !threadStore.isGenerating,
@@ -652,7 +730,7 @@ onMounted(() => {
   >
     <DesktopOnboarding
       v-if="desktopEnabled"
-      :ready="desktopGuideReady"
+      :ready="desktopGuideReady && desktopEntryComplete"
       :current-tab="currentTab"
       :navigate="openHomeSection"
       @active="desktopGuideActive = $event"

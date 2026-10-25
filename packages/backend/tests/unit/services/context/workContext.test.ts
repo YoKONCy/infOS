@@ -72,6 +72,25 @@ function fixture() {
 }
 
 describe('持久工作上下文', () => {
+  it('恢复历史工作输入时保留时间标记，原始输入哈希与本轮输入保持原样', () => {
+    const { user, assistant, record, compiled } = fixture()
+    record.input = { role: 'user', content: '读取文件\n【工作区选择】a.ts' }
+    assistant.metadataJson = JSON.stringify({ workContext: record })
+    const before = JSON.stringify([user, assistant, compiled])
+    const anchor = '【对话记录时间：2026-10-25 07:02】'
+    const restored = projectWorkHistory(
+      compiled,
+      [user, assistant],
+      scope,
+      new Map([[user.id, anchor]]),
+    )
+    expect(restored.find((message) => message.cacheControl?.historyMessageId === 1)?.content).toBe(
+      `${anchor}\n读取文件\n【工作区选择】a.ts`,
+    )
+    expect(restored.some((message) => message.toolCallId === 'read')).toBe(true)
+    expect(restored.at(-1)?.content).toBe('继续')
+    expect(JSON.stringify([user, assistant, compiled])).toBe(before)
+  })
   it('主动回合不需要伪造用户消息，仍能恢复输入与工具原件', () => {
     const { assistant, record, compiled } = fixture()
     record.inputKind = 'proactive'

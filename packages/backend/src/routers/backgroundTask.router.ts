@@ -77,6 +77,8 @@ const inputSchema = z.object({
 
 /** 分页查询参数 */
 const querySchema = z.object({
+  parentTaskId: z.string().min(1).max(160).optional(),
+  view: z.enum(['history']).optional(),
   category: z.enum(['agent_task', 'resident']).optional(),
   agentId: z.string().optional(),
   status: statusEnum.optional(),
@@ -185,8 +187,21 @@ export function createBackgroundTaskRouter(ctx: AppContext) {
 
   /** GET /api/background-tasks — 分页查询 */
   router.get('/', zValidator('query', querySchema), async (c) => {
-    const params = c.req.valid('query')
-    const page = await service.query(params)
+    const { view, ...params } = c.req.valid('query')
+    const historyStatuses = ['completed', 'failed', 'cancelled'] as const
+    if (
+      view === 'history' &&
+      params.status &&
+      !historyStatuses.some((status) => status === params.status)
+    )
+      return c.json({
+        code: 'OK',
+        data: { items: [], total: 0, page: params.page ?? 1, pageSize: params.pageSize ?? 20 },
+      })
+    const page = await service.query({
+      ...params,
+      ...(view === 'history' ? { status: params.status ?? [...historyStatuses] } : {}),
+    })
     return c.json({ code: 'OK', data: page })
   })
 

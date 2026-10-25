@@ -8,16 +8,19 @@
 import { spawn } from 'node:child_process'
 import { createReadStream, existsSync } from 'node:fs'
 import { createRequire } from 'node:module'
-import { readdir, stat } from 'node:fs/promises'
+import { open, readFile, readdir, stat } from 'node:fs/promises'
+import ignore from 'ignore'
 import path from 'node:path'
 import readline from 'node:readline'
+import { t } from '../../lib/i18n'
 import type { BuiltinTool } from '../index'
 import { getProductivityRuntime, resolveExecutionSession } from '../productivityRuntimeHolder'
 import { toolSuccess } from '../../services/execution/toolResult'
+import { retainToolObservation } from '../../services/execution/toolObservation'
 
 const MAX_RESULTS = 50
 const SEARCH_TIMEOUT_MS = 15_000
-const MAX_FILE_BYTES = 2 * 1024 * 1024
+const MAX_FILE_BYTES = 10 * 1024 * 1024
 const require = createRequire(import.meta.url)
 
 /** 单条匹配：文件路径 + 行号 + 列号（1-based）+ 该行内容 */
@@ -28,6 +31,16 @@ export interface CodeMatch {
   content: string
 }
 
+interface SearchInput {
+  query: string
+  isRegex: boolean
+  fileType?: string
+  searchPath: string
+  respectGitIgnore?: boolean
+  includeHidden?: boolean
+  signal?: AbortSignal
+}
+
 export const codeSearcherTool: BuiltinTool = {
   name: 'code_search',
 
@@ -36,6 +49,8 @@ export const codeSearcherTool: BuiltinTool = {
     if (!query) throw new Error('query 不能为空')
     const isRegex = Boolean(args.is_regex)
     const fileType = args.file_type ? String(args.file_type) : undefined
+    const respectGitIgnore = args.respect_gitignore !== false
+    const includeHidden = args.include_hidden === true
     const session = await resolveExecutionSession(ctx)
     const searchPath = await getProductivityRuntime().virtualWorkspace.resolveReadablePath(
       session,
@@ -43,11 +58,18 @@ export const codeSearcherTool: BuiltinTool = {
       ctx.deviceReadScope,
     )
 
-    const rg = await searchWithRipgrep({ query, isRegex, fileType, searchPath, signal: ctx.signal })
+    const options = {
+      query,
+      isRegex,
+      fileType,
+      searchPath,
+      respectGitIgnore,
+      includeHidden,
+      signal: ctx.signal,
+    }
+    const rg = await searchWithRipgrep(options)
     // Node fallback 仅在 rg 不可用时执行
-    const node = rg.available
-      ? null
-      : await searchWithNode({ query, isRegex, fileType, searchPath, signal: ctx.signal })
+    const node = rg.available ? null : await searchWithNode(options)
     const result = rg.available
       ? {
           matches: rg.matches,
@@ -63,13 +85,42 @@ export const codeSearcherTool: BuiltinTool = {
         }
     result.total = result.matches.length
     const fileCount = new Set(result.matches.map((match) => match.file)).size
-    return toolSuccess(JSON.stringify({ ...result, fileCount }), {
-      engine: result.engine,
-      fileCount,
-      total: result.total,
-      truncated: result.truncated,
-      searchRoot: searchPath,
-    })
+    // 只保留已命中的真实路径作为只读打开凭据，不扩大工作区编辑边界。
+    const resultRef = result.matches.length
+      ? retainToolObservation(
+          JSON.stringify({
+            kind: 'code_search_files',
+            files: [...new Set(result.matches.map((match) => match.file))],
+          }),
+          ctx,
+        )
+      : undefined
+    const navigation =
+      resultRef && !ctx.realmId
+        ? {
+            resultRef,
+            agentId: ctx.agentId,
+            threadId: ctx.threadId,
+            taskId: ctx.taskId,
+          }
+        : undefined
+    return toolSuccess(
+      JSON.stringify({
+        ...result,
+        fileCount,
+        searchRoot: searchPath,
+        respectGitIgnore,
+        includeHidden,
+        navigation,
+      }),
+      {
+        engine: result.engine,
+        fileCount,
+        total: result.total,
+        truncated: result.truncated,
+        searchRoot: searchPath,
+      },
+    )
   },
 }
 
@@ -95,31 +146,48 @@ export function resolveRipgrepPath(): string {
   return 'rg'
 }
 
-async function searchWithRipgrep(input: {
-  query: string
-  isRegex: boolean
-  fileType?: string
-  searchPath: string
-  signal?: AbortSignal
-}): Promise<{ available: boolean; matches: CodeMatch[]; truncated: boolean }> {
+async function searchWithRipgrep(
+  input: SearchInput,
+): Promise<{ available: boolean; matches: CodeMatch[]; truncated: boolean }> {
+  input.signal?.throwIfAborted()
+  const rootInfo = await stat(input.searchPath)
   return new Promise((resolve, reject) => {
-    const rgArgs = ['--json', '-n', '-I', '--max-columns', '300']
+    const rgArgs = [
+      '--no-config',
+      '--json',
+      '-n',
+      '--no-require-git',
+      '--max-filesize',
+      String(MAX_FILE_BYTES),
+      '--glob',
+      '!**/.git/**',
+    ]
+    if (input.respectGitIgnore === false) rgArgs.push('--no-ignore-vcs')
+    if (input.includeHidden) rgArgs.push('--hidden')
     if (!input.isRegex) rgArgs.push('-F')
-    if (input.fileType) rgArgs.push('-t', input.fileType)
+    for (const extension of fileTypeExtensions(input.fileType) ?? [])
+      rgArgs.push('--iglob', `*${extension}`)
     rgArgs.push('--', input.query, input.searchPath)
     const rgCommand = resolveRipgrepPath()
     const child = spawn(rgCommand, rgArgs, {
+      cwd: rootInfo.isDirectory() ? input.searchPath : path.dirname(input.searchPath),
       shell: false,
       windowsHide: true,
       stdio: ['ignore', 'pipe', 'pipe'],
     })
+    child.stdout.setEncoding('utf8')
+    child.stderr.setEncoding('utf8')
     const matches: CodeMatch[] = []
     let stdout = ''
     let stderr = ''
     let unavailable = false
     // 达到结果上限被截断时标记，避免 Agent 误以为已拿到全量结果
     let truncated = false
-    const timer = setTimeout(() => child.kill(), SEARCH_TIMEOUT_MS)
+    let timedOut = false
+    const timer = setTimeout(() => {
+      timedOut = true
+      child.kill()
+    }, SEARCH_TIMEOUT_MS)
     const abort = () => child.kill()
     input.signal?.addEventListener('abort', abort, { once: true })
 
@@ -127,8 +195,8 @@ async function searchWithRipgrep(input: {
       if (error.code === 'ENOENT') unavailable = true
       else reject(error)
     })
-    child.stdout.on('data', (chunk: Buffer) => {
-      stdout += chunk.toString('utf8')
+    child.stdout.on('data', (chunk: string) => {
+      stdout += chunk
       let newline = stdout.indexOf('\n')
       while (newline >= 0) {
         parseRgLine(stdout.slice(0, newline), matches)
@@ -140,8 +208,8 @@ async function searchWithRipgrep(input: {
         newline = stdout.indexOf('\n')
       }
     })
-    child.stderr.on('data', (chunk: Buffer) => {
-      stderr += chunk.toString('utf8')
+    child.stderr.on('data', (chunk: string) => {
+      stderr = (stderr + chunk).slice(0, 8000)
     })
     child.once('close', (code) => {
       clearTimeout(timer)
@@ -152,6 +220,10 @@ async function searchWithRipgrep(input: {
       }
       if (input.signal?.aborted) {
         reject(new Error('代码搜索已取消'))
+        return
+      }
+      if (timedOut) {
+        reject(new Error(t('server.tools', '代码搜索超时，请缩小搜索范围')))
         return
       }
       parseRgLine(stdout, matches)
@@ -183,10 +255,10 @@ function parseRgLine(line: string, matches: CodeMatch[]): void {
       matches.push({
         file: event.data?.path?.text ?? '',
         line: event.data?.line_number ?? 0,
-        // rg 的 start 为 1-based 字节偏移，转为 UTF-8 字符列号
+        // rg 的 start 为 0-based 字节偏移，界面使用 1-based UTF-16 列号。
         column:
           submatch?.start !== undefined ? byteOffsetToColumn(rawLine, submatch.start) : undefined,
-        content: rawLine.trimEnd(),
+        content: rawLine.trimEnd().slice(0, 300),
       })
     }
   } catch {
@@ -194,67 +266,136 @@ function parseRgLine(line: string, matches: CodeMatch[]): void {
   }
 }
 
-/** 把 rg 输出的 1-based 字节偏移转成该行的 UTF-8 字符列号（1-based） */
+/** 把 rg 的字节偏移转成与编辑器一致的列号。 */
 function byteOffsetToColumn(line: string, byteStart: number): number {
   const bytes = Buffer.from(line, 'utf8')
-  const prefix = bytes.subarray(0, Math.max(0, byteStart - 1)).toString('utf8')
-  return Array.from(prefix).length + 1
+  const prefix = bytes.subarray(0, Math.max(0, byteStart)).toString('utf8')
+  return prefix.length + 1
 }
 
-async function searchWithNode(input: {
-  query: string
-  isRegex: boolean
-  fileType?: string
-  searchPath: string
-  signal?: AbortSignal
-}): Promise<{ matches: CodeMatch[]; truncated: boolean }> {
+async function searchWithNode(
+  input: SearchInput,
+): Promise<{ matches: CodeMatch[]; truncated: boolean }> {
   const matches: CodeMatch[] = []
   const matcher = createMatcher(input.query, input.isRegex)
   const extensions = fileTypeExtensions(input.fileType)
+  const deadline = Date.now() + SEARCH_TIMEOUT_MS
+  const check = () => {
+    input.signal?.throwIfAborted()
+    if (Date.now() > deadline) throw new Error(t('server.tools', '代码搜索超时，请缩小搜索范围'))
+  }
+  const rootInfo = await stat(input.searchPath)
+  type Rules = { root: string; matcher: ReturnType<typeof ignore> }
+  const readRules = async (directory: string): Promise<Rules[]> => {
+    const matcher = ignore()
+    for (const name of [
+      ...(input.respectGitIgnore === false ? [] : ['.git/info/exclude', '.gitignore']),
+      '.ignore',
+      '.rgignore',
+    ]) {
+      try {
+        matcher.add(await readFile(path.join(directory, name), 'utf8'))
+      } catch (error) {
+        if (!['ENOENT', 'ENOTDIR'].includes((error as NodeJS.ErrnoException).code ?? ''))
+          throw error
+      }
+    }
+    const relativeRoot = path.relative(directory, input.searchPath).replaceAll('\\', '/')
+    // 显式搜索根可位于被父目录忽略的运行时目录，根内规则仍照常生效。
+    if (
+      rootInfo.isDirectory() &&
+      relativeRoot &&
+      relativeRoot !== '..' &&
+      !relativeRoot.startsWith('../') &&
+      !path.isAbsolute(relativeRoot) &&
+      matcher.ignores(`${relativeRoot}/`)
+    )
+      return []
+    return [{ root: directory, matcher }]
+  }
+  const ancestors: string[] = []
+  let ancestor = rootInfo.isDirectory()
+    ? path.dirname(input.searchPath)
+    : path.dirname(path.dirname(input.searchPath))
+  while (!existsSync(path.join(input.searchPath, '.git'))) {
+    ancestors.unshift(ancestor)
+    if (existsSync(path.join(ancestor, '.git')) || path.dirname(ancestor) === ancestor) break
+    ancestor = path.dirname(ancestor)
+  }
+  const inherited = (await Promise.all(ancestors.map(readRules))).flat()
+  const searchOne = async (absolute: string) => {
+    check()
+    if (
+      extensions &&
+      ![...extensions].some((extension) => absolute.toLowerCase().endsWith(extension))
+    )
+      return
+    const info = await stat(absolute)
+    if (!info.isFile() || info.size > MAX_FILE_BYTES) return
+    const handle = await open(absolute, 'r')
+    try {
+      const header = Buffer.alloc(Math.min(info.size, 8192))
+      const { bytesRead } = await handle.read(header, 0, header.length, 0)
+      if (header.subarray(0, bytesRead).includes(0)) return
+    } finally {
+      await handle.close()
+    }
+    await searchFile(absolute, matcher, matches, input.signal, check)
+  }
 
-  const walk = async (directory: string): Promise<void> => {
+  const walk = async (directory: string, parents: Rules[]): Promise<void> => {
     if (matches.length >= MAX_RESULTS) return
-    if (input.signal?.aborted) throw new Error('代码搜索已取消')
+    check()
+    const rules = [...parents, ...(await readRules(directory))]
     const entries = await readdir(directory, { withFileTypes: true })
     for (const entry of entries) {
       if (matches.length >= MAX_RESULTS) return
-      if (entry.name === 'node_modules' || entry.name === '.git' || entry.name.startsWith('.'))
-        continue
+      if (entry.name === '.git' || (!input.includeHidden && entry.name.startsWith('.'))) continue
       const absolute = path.join(directory, entry.name)
+      let ignored = false
+      for (const scope of rules) {
+        const relative =
+          path.relative(scope.root, absolute).replaceAll('\\', '/') +
+          (entry.isDirectory() ? '/' : '')
+        const decision = scope.matcher.test(relative)
+        if (decision.ignored) ignored = true
+        else if (decision.unignored) ignored = false
+      }
+      if (ignored) continue
       if (entry.isDirectory()) {
-        await walk(absolute)
+        await walk(absolute, rules)
         continue
       }
       if (!entry.isFile()) continue
-      if (extensions && !extensions.has(path.extname(entry.name).toLowerCase())) continue
-      const info = await stat(absolute)
-      if (info.size > MAX_FILE_BYTES) continue
-      await searchFile(absolute, input.searchPath, matcher, matches, input.signal)
+      await searchOne(absolute)
     }
   }
-  await walk(input.searchPath)
+  if (rootInfo.isDirectory()) await walk(input.searchPath, inherited)
+  else await searchOne(input.searchPath)
   return { matches, truncated: matches.length >= MAX_RESULTS }
 }
 
 async function searchFile(
   filePath: string,
-  root: string,
   matcher: (line: string) => number | null,
   output: CodeMatch[],
   signal?: AbortSignal,
+  check?: () => void,
 ): Promise<void> {
   const stream = createReadStream(filePath, { encoding: 'utf8' })
   const lines = readline.createInterface({ input: stream, crlfDelay: Infinity })
   let lineNumber = 0
   try {
-    for await (const line of lines) {
+    for await (const raw of lines) {
       if (signal?.aborted) throw new Error('代码搜索已取消')
+      check?.()
       lineNumber += 1
+      const line = lineNumber === 1 ? raw.replace(/^\uFEFF/, '') : raw
       // matcher 返回首个匹配的 0-based 字符索引，null 表示本行无匹配
       const matchIndex = matcher(line)
       if (matchIndex !== null) {
         output.push({
-          file: path.relative(root, filePath),
+          file: path.resolve(filePath),
           line: lineNumber,
           column: matchIndex + 1,
           content: line.slice(0, 300),
@@ -311,5 +452,13 @@ function fileTypeExtensions(fileType?: string): Set<string> | null {
     markdown: ['.md'],
     html: ['.html', '.htm'],
   }
-  return new Set(map[fileType.toLowerCase()] ?? [`.${fileType.toLowerCase()}`])
+  const normalized = fileType.toLowerCase().replace(/^\*?\./, '')
+  const aliases: Record<string, string> = {
+    typescript: 'ts',
+    javascript: 'js',
+    python: 'py',
+    rs: 'rust',
+    md: 'markdown',
+  }
+  return new Set(map[aliases[normalized] ?? normalized] ?? [`.${normalized}`])
 }

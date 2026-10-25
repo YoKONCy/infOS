@@ -88,7 +88,7 @@ const emptySettings = (): StoredSettings => ({
     pdf: { enabled: false, selectedSourceId: null, sources: [] },
   },
 })
-const record = z.record(z.unknown())
+const record = z.record(z.string(), z.unknown())
 const short = (value: unknown, max = 1600): string =>
   typeof value === 'string' ? value.slice(0, max) : ''
 const resultUrl = (value: unknown): string => {

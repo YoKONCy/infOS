@@ -1,3 +1,20 @@
 {
-  "[任务] {0}": "[Task] {0}"
+  "[任务] {0}": "[Task] {0}",
+  "后台任务只能读取自身或管理自己派发的子任务": "Background tasks may only read themselves or manage their own subtasks.",
+  "父任务执行已失效，不能继续派发": "The parent execution is no longer valid; delegation stopped.",
+  "任务委派已达到最大深度": "The task delegation depth limit has been reached.",
+  "父任务已达到子任务数量上限": "The parent task has reached its subtask limit.",
+  "父任务剩余预算不足以委派": "The parent task has insufficient budget for delegation.",
+  "任务交付事件不能改写为用户消息，只能取消本次唤醒": "Task delivery events cannot be edited into user messages; this wake-up can only be cancelled.",
+  "社交委派的原操作不能改写，请取消后重新派发": "An existing social operation cannot be rewritten. Cancel it and delegate a new task.",
+  "原社交委派记录已丢失或暂不可读取；已停止重新派发，请先核验实际发送结果。": "The original social task record is missing or unavailable. Automatic resubmission stopped; verify the actual delivery first.",
+  "社交委派 · {0} {1}": "Social task · {0} {1}",
+  "社交工作已持久化派发；通过 manage_task 查询结果，父任务可等待该任务。": "The social task was durably accepted. Use manage_task to read its result; a parent task can wait for it.",
+  "任务完成": "Task completed",
+  "需要你的决定": "Your decision is needed",
+  "任务需要处理": "Task needs attention",
+  "任务已取消": "Task cancelled",
+  "任务失败": "Task failed",
+  "{0}\n{1}\n任务：{2}\n修订：{3}\n产出引用：{4}": "{0}\n{1}\nTask: {2}\nRevision: {3}\nArtifacts: {4}",
+  "委派尚未确认停止，请稍后再删除任务记录": "The delegation has not confirmed stopping. Wait before deleting its task record."
 }

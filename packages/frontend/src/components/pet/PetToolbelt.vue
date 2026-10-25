@@ -9,6 +9,10 @@ import type BedrockAvatar from '../avatar/BedrockAvatar.vue'
 import PetHudIcon from './PetHudIcon.vue'
 import PetAppearancePanel from './PetAppearancePanel.vue'
 import PetConversationPicker from './PetConversationPicker.vue'
+import UserAvatar from '../user/UserAvatar.vue'
+import { useUserAvatar } from '../../composables/ui/useUserAvatar'
+
+const userAvatar = useUserAvatar()
 
 const props = defineProps<{
   panel: PetPanel
@@ -112,7 +116,12 @@ watch(
   { flush: 'post' },
 )
 function focusInput() {
-  if (props.panel === 'chat') inputElement.value?.focus()
+  if (props.panel !== 'chat') return
+  // 光点展开后退出交互区域；输入暂不可用时把焦点交给面板内的可用按钮。
+  const target = inputElement.value?.disabled
+    ? content.value?.querySelector<HTMLButtonElement>('button:not(:disabled)')
+    : inputElement.value
+  target?.focus({ preventScroll: true })
 }
 function sendOnEnter(event: KeyboardEvent) {
   if (event.isComposing || event.keyCode === 229) return
@@ -198,6 +207,10 @@ onMounted(() => {
                 @focus-input="nextTick(focusInput)"
               />
               <p class="muted">{{ __t('ui.pet', '完整回复与历史记录在主应用中阅读') }}</p>
+              <div class="pet-user-identity">
+                <UserAvatar :size="24" />
+                <span>{{ userAvatar.name.value }}</span>
+              </div>
               <textarea
                 ref="inputElement"
                 :value="message"

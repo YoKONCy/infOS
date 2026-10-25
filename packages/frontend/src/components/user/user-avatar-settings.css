@@ -1,0 +1,186 @@
+.user-avatar-settings {
+  display: flex;
+  align-items: center;
+  gap: 20px;
+  padding: 0 0 20px;
+  margin: 0 0 20px;
+  border-bottom: 1px solid var(--ui-border-subtle);
+}
+.user-avatar-settings__actions {
+  min-width: 0;
+}
+.user-avatar-settings__actions > label {
+  font-size: 12px;
+  font-weight: 700;
+  color: var(--ui-text-secondary);
+}
+.user-avatar-settings__actions > p {
+  margin: 5px 0 10px;
+  font-size: 10px;
+  color: var(--ui-text-tertiary);
+}
+.user-avatar-settings__actions > div {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+.user-avatar-settings__sizes {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  margin-left: auto;
+  font-size: 10px;
+  color: var(--ui-text-tertiary);
+}
+.user-avatar-settings input[hidden] {
+  display: none;
+}
+.is-drag-over {
+  outline: 2px dashed var(--ui-accent-sky);
+  outline-offset: -4px;
+  background: var(--ui-accent-sky-soft);
+}
+.user-avatar-feedback {
+  font-size: 12px;
+  color: var(--ui-text-secondary);
+  margin: 8px 0 14px;
+}
+.user-avatar-feedback--error {
+  color: var(--ui-danger);
+}
+.user-avatar-crop__body {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 145px;
+  gap: 24px;
+}
+.user-avatar-crop__stage {
+  height: 320px;
+  position: relative;
+  display: grid;
+  place-items: center;
+  overflow: hidden;
+  background: var(--dash-panel-soft);
+  border: 2px solid var(--ui-border-default);
+  cursor: grab;
+  touch-action: none;
+  user-select: none;
+}
+.user-avatar-crop__stage.is-dragging {
+  cursor: grabbing;
+}
+.user-avatar-crop__stage:focus-visible {
+  outline: 2px solid var(--ui-accent-sky);
+  outline-offset: 2px;
+}
+.user-avatar-crop__viewport {
+  width: 260px;
+  height: 260px;
+  position: relative;
+}
+.user-avatar-crop__viewport img,
+.user-avatar-crop__preview img {
+  position: absolute;
+  max-width: none;
+  transform: translate(-50%, -50%);
+  pointer-events: none;
+  user-select: none;
+  -webkit-user-drag: none;
+}
+.user-avatar-crop__mask {
+  position: absolute;
+  width: 260px;
+  height: 260px;
+  border: 2px solid var(--ui-accent-sky);
+  box-shadow: 0 0 0 500px rgba(0, 0, 0, 0.3);
+  pointer-events: none;
+}
+.user-avatar-crop__drop {
+  position: absolute;
+  padding: 8px 12px;
+  border: 1px solid var(--ui-accent-sky);
+  background: var(--dash-panel-bg);
+  color: var(--ui-text-primary);
+  font: 12px var(--font-pixel);
+  pointer-events: none;
+}
+.user-avatar-crop__zoom {
+  display: flex;
+  gap: 12px;
+  align-items: center;
+  margin: 16px 0;
+}
+.user-avatar-crop__zoom :deep(.p-slider-wrapper) {
+  flex: 1;
+  min-width: 0;
+}
+.user-avatar-crop__hint {
+  font-size: 11px;
+  color: var(--ui-text-tertiary);
+  margin: 0;
+}
+.user-avatar-crop__tools {
+  display: flex;
+  justify-content: space-between;
+  margin-top: 8px;
+}
+.user-avatar-crop__samples h3 {
+  font: 700 12px var(--font-pixel);
+  margin: 0 0 16px;
+  color: var(--ui-text-secondary);
+}
+.user-avatar-crop__samples > div {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  margin-bottom: 20px;
+}
+.user-avatar-crop__samples small {
+  font: 10px var(--ui-font-mono);
+  color: var(--ui-text-tertiary);
+}
+.user-avatar-crop__preview {
+  display: inline-block;
+  position: relative;
+  overflow: hidden;
+  width: var(--preview-size);
+  height: var(--preview-size);
+  flex: 0 0 var(--preview-size);
+  outline: 2px solid var(--ui-border-strong);
+  box-shadow: 3px 3px 0 var(--ui-border-default);
+}
+@media (max-width: 900px) {
+  .user-avatar-settings__sizes {
+    display: none;
+  }
+}
+@media (max-width: 600px) {
+  .user-avatar-settings {
+    gap: 14px;
+    align-items: flex-start;
+  }
+  .user-avatar-crop__body {
+    grid-template-columns: minmax(0, 1fr);
+    gap: 16px;
+  }
+  .user-avatar-crop__stage {
+    height: 290px;
+  }
+  .user-avatar-crop__samples {
+    display: flex;
+    gap: 14px;
+    align-items: center;
+  }
+  .user-avatar-crop__samples h3 {
+    display: none;
+  }
+  .user-avatar-crop__samples > div {
+    margin: 0;
+    gap: 8px;
+  }
+  .user-avatar-crop__viewport,
+  .user-avatar-crop__mask {
+    width: 240px;
+    height: 240px;
+  }
+}

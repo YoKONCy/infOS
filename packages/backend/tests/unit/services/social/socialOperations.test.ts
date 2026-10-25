@@ -1,14 +1,17 @@
+import { SocialCommonOperations } from '@infos/social/runtime/socialCommonOperations'
+import type { SocialOperationDependencies } from '@infos/social/runtime/socialOperations'
 import { describe, expect, it, vi } from 'vitest'
 import {
-  SocialOperations,
+  NapcatOperations as SocialOperations,
   unwrapNapcatResponse,
   type SocialOperationScope,
-} from '@infos/social/runtime/socialOperations'
+} from '@infos/social/adapters/napcat/napcatOperations'
 import type { NapcatAdapter } from '@infos/social/adapters/napcat'
 import type { SocialStoragePort } from '@infos/shared'
 
 const accountId = '123456789'
 const scope: SocialOperationScope = {
+  platform: 'qq',
   agentId: 'pero',
   accountId,
   channelId: '987654321',
@@ -16,7 +19,11 @@ const scope: SocialOperationScope = {
   owner: true,
   callId: 'turn:call',
 }
-function fixture(overrides: Partial<ConstructorParameters<typeof SocialOperations>[0]> = {}) {
+function fixture(
+  overrides: Partial<
+    ConstructorParameters<typeof SocialOperations>[0] & SocialOperationDependencies
+  > = {},
+) {
   const values = new Map<string, string>()
   const callApi = vi.fn(async (action: string) => ({
     status: 'ok',
@@ -34,7 +41,7 @@ function fixture(overrides: Partial<ConstructorParameters<typeof SocialOperation
     sendMessage: vi.fn(),
   } as unknown as NapcatAdapter
   const storage = { getByMsgId: vi.fn(async () => null) } as unknown as SocialStoragePort
-  const service = new SocialOperations({
+  const deps = {
     adapter: () => adapter,
     active: () => true,
     config: {
@@ -46,7 +53,12 @@ function fixture(overrides: Partial<ConstructorParameters<typeof SocialOperation
     storage,
     prepareImage: vi.fn(async () => 'base64://aW1hZ2U='),
     ...overrides,
-  })
+  } satisfies ConstructorParameters<typeof SocialOperations>[0]
+  const service = new SocialCommonOperations(
+    deps as SocialOperationDependencies,
+    () => adapter.getConnectedAccountIds(),
+    new SocialOperations(deps),
+  )
   return { service, callApi, values, storage }
 }
 

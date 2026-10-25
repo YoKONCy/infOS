@@ -12,16 +12,23 @@ import { threadsApi } from '../../api/modules/threadsApi'
 import { useNotificationStore } from '../../stores/useNotificationStore'
 import { resolveModelBrand } from '../../lib/modelBrands'
 import BrandIcon from '../brands/BrandIcon.vue'
-import PSelect from '../pixel/PSelect.vue'
+import InputBarFoldout from './InputBarFoldout.vue'
 import PixelIcon from '../pixel/PixelIcon.vue'
+import ReasoningEffortGlyph from './ReasoningEffortGlyph.vue'
 
-const props = defineProps<{ threadId: string; disabled?: boolean }>()
-const emit = defineEmits<{ changed: [settings: ThreadModelSettings]; busy: [value: boolean] }>()
+const props = defineProps<{ threadId: string; disabled?: boolean; compact?: boolean }>()
+const emit = defineEmits<{
+  changed: [settings: ThreadModelSettings]
+  busy: [value: boolean]
+  open: []
+}>()
 const notify = useNotificationStore()
 const settings = ref<ThreadModelSettings | null>(null)
 const loading = ref(false)
 const saving = ref(false)
 const error = ref(false)
+const modelMenu = ref<InstanceType<typeof InputBarFoldout> | null>(null)
+const effortMenu = ref<InstanceType<typeof InputBarFoldout> | null>(null)
 let sequence = 0
 const blocked = computed(() => props.disabled || loading.value || saving.value || !settings.value)
 const modelValue = computed(() => settings.value?.modelConfigId?.toString() ?? '')
@@ -32,20 +39,66 @@ const modelOptions = computed(() => [
       return __t('ui.chat', '全局主模型')
     },
     brand: modelValue.value ? undefined : resolveModelBrand(settings.value?.effective.modelId),
+    detail: modelValue.value ? '' : settings.value?.effective.modelId,
   },
   ...(settings.value?.models ?? []).map((model) => ({
     value: String(model.id),
     label: model.name,
     brand: resolveModelBrand(model.modelId),
+    detail: model.modelId,
   })),
 ])
-const modelBrands = computed(
-  () => new Map(modelOptions.value.map((option) => [option.value, option.brand])),
-)
+// 说明描述思考预算的用途，不把更高档位表述成回答质量保证。
+const effortPresentation = computed(() => ({
+  off: {
+    label: __t('ui.input-controls', '关闭'),
+    detail: __t('ui.input-controls', '不额外请求思考预算'),
+    accent: 'var(--ui-text-secondary)',
+  },
+  low: {
+    label: __t('ui.input-controls', '轻量'),
+    detail: __t('ui.input-controls', '日常问答，轻量思考'),
+    accent: 'var(--ui-accent-sky)',
+  },
+  medium: {
+    label: __t('ui.input-controls', '均衡'),
+    detail: __t('ui.input-controls', '常规分析，适中思考'),
+    accent: 'var(--ui-accent-purple)',
+  },
+  high: {
+    label: __t('ui.input-controls', '深入'),
+    detail: __t('ui.input-controls', '复杂问题，深入推敲'),
+    accent: 'var(--ui-accent-purple)',
+  },
+  xhigh: {
+    label: __t('ui.input-controls', '深研'),
+    detail: __t('ui.input-controls', '多步任务，更多推演'),
+    accent: 'var(--ui-accent-primary)',
+  },
+  max: {
+    label: __t('ui.input-controls', '极致'),
+    detail: __t('ui.input-controls', '使用模型支持的最高思考档位'),
+    accent: 'var(--ui-accent-primary)',
+  },
+}))
+const effectiveEffortLabel = computed(() => {
+  const effort = settings.value?.effective.reasoningEffort
+  return effort ? effortPresentation.value[effort].label : __t('ui.chat', '服务商默认')
+})
 const efforts = computed(() =>
-  reasoningEffortOptions(settings.value?.effective.modelId ?? '', __t('ui.chat', '跟随模型')).map(
-    (option) => ({ ...option, label: __t('common.interface', option.label) }),
-  ),
+  reasoningEffortOptions(settings.value?.effective.modelId ?? '').map((option) => {
+    const effort = option.value as ReasoningEffort | ''
+    return {
+      value: effort,
+      ...(effort
+        ? effortPresentation.value[effort]
+        : {
+            label: __t('ui.chat', '跟随模型'),
+            detail: __t('ui.input-controls', '当前生效：{0}', [effectiveEffortLabel.value]),
+            accent: 'var(--ui-accent-purple)',
+          }),
+    }
+  }),
 )
 const rank = computed(() => {
   const effort = settings.value?.effective.reasoningEffort
@@ -55,7 +108,7 @@ const effortLabel = computed(() =>
   settings.value?.reasoningEffort
     ? (efforts.value.find((option) => option.value === settings.value?.reasoningEffort)?.label ??
       __t('ui.chat', '默认'))
-    : __t('ui.chat', '默认'),
+    : __t('ui.input-controls', '跟随'),
 )
 const modelTitle = computed(() =>
   __t('ui.chat', '本会话模型：{0} · {1}', [
@@ -64,9 +117,7 @@ const modelTitle = computed(() =>
   ]),
 )
 const effortTitle = computed(() =>
-  __t('ui.chat', '本会话思考强度：{0}', [
-    settings.value?.effective.reasoningEffort ?? __t('ui.chat', '服务商默认'),
-  ]),
+  __t('ui.chat', '本会话思考强度：{0}', [effectiveEffortLabel.value]),
 )
 
 async function load(): Promise<void> {
@@ -120,6 +171,7 @@ async function save(modelConfigId: number | null, effort: ReasoningEffort | null
   }
 }
 function selectModel(value: string | number): void {
+  modelMenu.value?.close(true)
   const id = value === '' ? null : Number(value)
   if (id === settings.value?.modelConfigId) return
   const model = settings.value?.models.find((item) => item.id === id)
@@ -130,6 +182,8 @@ function selectModel(value: string | number): void {
   void save(id, effort)
 }
 function selectEffort(value: string | number): void {
+  effortMenu.value?.close(true)
+  if (value === (settings.value?.reasoningEffort ?? '')) return
   void save(settings.value?.modelConfigId ?? null, value ? (value as ReasoningEffort) : null)
 }
 function refresh(): void {
@@ -164,70 +218,115 @@ onBeforeUnmount(() => {
 <template>
   <div
     class="thread-model-controls"
+    :class="{ 'is-compact': compact }"
     :aria-busy="saving || loading"
     :data-effort="rank"
-    :style="{
-      '--effort-distance': `${rank * 0.6}px`,
-      '--effort-period': `${4.8 - rank * 0.55}s`,
-      '--effort-glow': `${rank * 2}px`,
-    }"
   >
-    <div class="thread-model-picker" :title="modelTitle">
-      <PSelect
-        :model-value="modelValue"
-        :options="modelOptions"
-        :disabled="blocked"
-        teleport
-        size="sm"
-        :aria-label="__t('ui.chat', '本会话模型')"
-        @change="selectModel"
-      >
-        <template #selected>
-          <span class="thread-model-line">
-            <BrandIcon :brand="resolveModelBrand(settings?.effective.modelId)" size="xs" />
-            <span>{{ modelValue ? settings?.effective.name : __t('ui.chat', '主模型') }}</span>
-          </span>
-        </template>
-        <template #option="{ option }">
-          <span
-            class="thread-model-line"
-            :title="
-              settings?.models.find((model) => String(model.id) === String(option.value))
-                ?.modelId || __t('ui.chat', '全局主模型')
-            "
-          >
-            <BrandIcon :brand="modelBrands.get(String(option.value))" size="xs" />
-            <span>{{ option.label }}</span>
-          </span>
-        </template>
-      </PSelect>
-    </div>
-    <PSelect
-      class="thread-effort-picker"
-      :model-value="settings?.reasoningEffort ?? ''"
-      :options="efforts"
+    <InputBarFoldout
+      ref="modelMenu"
+      class="thread-model-picker"
+      :label="
+        (modelValue ? settings?.effective.name : __t('ui.chat', '主模型')) ||
+        __t('ui.chat', '未配置')
+      "
+      :title="__t('ui.chat', '本会话模型')"
+      icon="cpu"
       :disabled="blocked"
-      teleport
-      size="sm"
-      :title="effortTitle"
-      :aria-label="__t('ui.chat', '本会话思考强度')"
-      @change="selectEffort"
+      :busy="loading || saving"
+      :compact="compact"
+      :scope-key="threadId"
+      :width="340"
+      @open="emit('open')"
     >
-      <template #selected>
-        <span class="thread-effort-label">
-          <span class="thread-effort-orbit" aria-hidden="true">
+      <template #icon>
+        <BrandIcon :brand="resolveModelBrand(settings?.effective.modelId)" size="xs" />
+      </template>
+      <div class="input-choice-list" role="group" :aria-label="modelTitle">
+        <button
+          v-for="option in modelOptions"
+          :key="option.value"
+          type="button"
+          class="input-choice thread-config-option"
+          :class="{ 'is-selected': modelValue === option.value }"
+          :data-model-value="option.value"
+          :aria-pressed="modelValue === option.value"
+          :disabled="blocked"
+          :title="option.detail || option.label"
+          @click="selectModel(option.value)"
+        >
+          <span class="input-choice__icon" aria-hidden="true">
+            <BrandIcon :brand="option.brand" size="xs" />
+          </span>
+          <span class="input-choice__copy">
+            <strong>{{ option.label }}</strong>
+            <small v-if="option.detail">{{ option.detail }}</small>
+          </span>
+          <span class="input-choice__check" aria-hidden="true">
+            <PixelIcon v-if="modelValue === option.value" name="check" size="xs" />
+          </span>
+        </button>
+      </div>
+    </InputBarFoldout>
+    <InputBarFoldout
+      ref="effortMenu"
+      class="thread-effort-picker"
+      :label="effortLabel"
+      :summary="settings && !settings.reasoningEffort ? effectiveEffortLabel : undefined"
+      :title="__t('ui.chat', '本会话思考强度')"
+      icon="brain"
+      :accent="
+        settings?.effective.reasoningEffort
+          ? effortPresentation[settings.effective.reasoningEffort].accent
+          : 'var(--ui-accent-purple)'
+      "
+      :disabled="blocked"
+      :busy="loading || saving"
+      :compact="compact"
+      :scope-key="threadId"
+      :width="296"
+      @open="emit('open')"
+    >
+      <template #icon>
+        <ReasoningEffortGlyph :effort="settings?.effective.reasoningEffort" />
+      </template>
+      <div class="input-choice-list thread-effort-list" role="group" :aria-label="effortTitle">
+        <button
+          v-for="option in efforts"
+          :key="option.value"
+          type="button"
+          class="input-choice thread-config-option thread-effort-option"
+          :style="{ '--choice-accent': option.accent }"
+          :class="{ 'is-selected': (settings?.reasoningEffort ?? '') === option.value }"
+          :data-effort-value="option.value"
+          :aria-pressed="(settings?.reasoningEffort ?? '') === option.value"
+          :disabled="blocked"
+          @click="selectEffort(option.value)"
+        >
+          <span class="input-choice__icon" aria-hidden="true">
+            <ReasoningEffortGlyph :effort="option.value || null" />
+          </span>
+          <span class="input-choice__copy">
+            <strong>
+              {{ option.label }}
+              <span v-if="option.value" class="thread-effort-code">
+                {{ option.value.toUpperCase() }}
+              </span>
+            </strong>
+            <small>{{ option.detail }}</small>
+          </span>
+          <span class="input-choice__check" aria-hidden="true">
             <PixelIcon
-              :name="saving ? 'refresh' : 'brain'"
-              :animation="saving ? 'spin' : undefined"
+              v-if="(settings?.reasoningEffort ?? '') === option.value"
+              name="check"
               size="xs"
             />
-            <i />
-            <i />
           </span>
-          <span>{{ effortLabel }}</span>
-        </span>
-      </template>
-    </PSelect>
+        </button>
+      </div>
+      <p class="thread-effort-hint">
+        {{ __t('ui.input-controls', '较高档位可能增加响应时间与用量') }}
+      </p>
+    </InputBarFoldout>
     <button
       v-if="error"
       class="thread-model-retry"
@@ -241,86 +340,75 @@ onBeforeUnmount(() => {
   </div>
 </template>
 
+<style scoped src="./input-bar-choices.css"></style>
+
 <style scoped>
 .thread-model-controls {
   display: inline-flex;
   align-items: center;
   gap: 5px;
   flex: 0 0 auto;
+  max-width: 100%;
   color: var(--ui-text-secondary);
 }
-.thread-model-picker {
-  width: 150px;
-  flex: 0 0 150px;
+.thread-model-controls.is-compact {
+  flex-wrap: wrap;
 }
-.thread-model-line {
-  display: flex;
-  align-items: center;
-  gap: 6px;
-  min-width: 0;
-}
-.thread-model-line > span:last-child {
+.thread-model-picker :deep(.input-foldout__label) {
+  max-width: 140px;
   overflow: hidden;
-  white-space: nowrap;
   text-overflow: ellipsis;
 }
-.thread-model-controls > .thread-effort-picker {
-  width: 108px;
-  flex: 0 0 108px;
+.is-compact .thread-model-picker :deep(.input-foldout__label) {
+  max-width: 90px;
 }
-.thread-model-controls :deep(.p-select-trigger) {
-  min-height: 31px;
-  border-width: 1px;
-  background: transparent;
+.thread-config-option {
+  --choice-accent: var(--foldout-accent);
+}
+.thread-config-option .input-choice__copy strong,
+.thread-config-option .input-choice__copy small {
+  overflow-wrap: anywhere;
+}
+.thread-effort-list {
+  gap: 2px;
+}
+.thread-effort-option {
+  min-height: 52px;
+  padding: 7px 9px;
+}
+.thread-effort-option:nth-child(2) {
+  margin-top: 5px;
+}
+.thread-effort-option .input-choice__icon {
+  flex-basis: 30px;
+  height: 30px;
+  color: var(--choice-accent);
+  border-color: color-mix(in srgb, var(--choice-accent) 20%, var(--ui-border-subtle));
   box-shadow: none;
-  font-size: 11px;
 }
-.thread-effort-label {
-  display: flex;
-  align-items: center;
-  gap: 8px;
+.thread-effort-option .input-choice__copy {
+  gap: 3px;
 }
-.thread-effort-orbit {
-  position: relative;
-  display: inline-flex;
-  color: var(--ui-accent-purple);
+.thread-effort-option .input-choice__copy small {
+  color: var(--ui-text-secondary);
 }
-.thread-effort-orbit i {
-  position: absolute;
-  width: 2px;
-  height: 2px;
-  background: currentColor;
-  opacity: 0;
-  pointer-events: none;
+.thread-effort-code {
+  color: var(--ui-text-tertiary);
+  font: 9px/1.4 var(--ui-font-mono, monospace);
+  letter-spacing: 0.04em;
 }
-.thread-effort-orbit i:first-of-type {
-  left: -4px;
-  top: 0;
+.thread-effort-option .input-choice__check {
+  border-color: transparent;
 }
-.thread-effort-orbit i:last-of-type {
-  right: -4px;
-  bottom: 0;
-  animation-delay: -0.8s;
+.thread-effort-option.is-selected .input-choice__check {
+  border-color: var(--choice-accent);
 }
-.thread-model-controls:not([data-effort='0']) .thread-effort-orbit {
-  animation: effort-float var(--effort-period) ease-in-out infinite;
-}
-.thread-model-controls[data-effort='3'] .thread-effort-orbit,
-.thread-model-controls[data-effort='4'] .thread-effort-orbit,
-.thread-model-controls[data-effort='5'] .thread-effort-orbit {
-  filter: drop-shadow(
-    0 0 var(--effort-glow) color-mix(in srgb, var(--ui-accent-purple) 50%, transparent)
-  );
-}
-.thread-model-controls[data-effort='4'] .thread-effort-orbit i,
-.thread-model-controls[data-effort='5'] .thread-effort-orbit i {
-  animation: effort-spark var(--effort-period) ease-in-out infinite;
-}
-.thread-model-controls .thread-effort-orbit i:last-of-type {
-  animation-delay: -0.8s;
-}
-.thread-model-controls[data-effort='5'] .thread-effort-orbit {
-  color: var(--ui-accent-primary);
+.thread-effort-hint {
+  margin: 7px 2px 0;
+  padding: 8px 7px 2px;
+  border-top: 1px solid var(--ui-border-subtle);
+  color: var(--ui-text-secondary);
+  font: 10px/1.6 var(--ui-font-sans);
 }
 .thread-model-retry {
   color: var(--ui-text-secondary);
@@ -328,51 +416,9 @@ onBeforeUnmount(() => {
   border: 0;
   cursor: pointer;
 }
-@keyframes effort-float {
-  0%,
-  100% {
-    transform: translateY(0) rotate(0);
-  }
-  35% {
-    transform: translateY(calc(-1 * var(--effort-distance))) rotate(-6deg);
-  }
-  70% {
-    transform: translateY(calc(var(--effort-distance) * 0.4)) rotate(6deg);
-  }
-}
-@keyframes effort-spark {
-  0%,
-  100% {
-    opacity: 0;
-    transform: scale(0.5);
-  }
-  45% {
-    opacity: 0.85;
-    transform: scale(1.3);
-  }
-}
-:global([data-motion='reduced'] .thread-effort-orbit),
-:global([data-motion='off'] .thread-effort-orbit),
-:global([data-motion='reduced'] .thread-effort-orbit i),
-:global([data-motion='off'] .thread-effort-orbit i) {
-  animation: none !important;
-  filter: none !important;
-}
-@media (prefers-reduced-motion: reduce) {
-  .thread-effort-orbit,
-  .thread-effort-orbit i {
-    animation: none !important;
-    filter: none !important;
-  }
-}
 @media (max-width: 640px) {
-  .thread-model-picker {
-    width: 124px;
-    flex-basis: 124px;
-  }
-  .thread-model-controls > .thread-effort-picker {
-    width: 96px;
-    flex-basis: 96px;
+  .thread-model-picker :deep(.input-foldout__label) {
+    max-width: 90px;
   }
 }
 </style>

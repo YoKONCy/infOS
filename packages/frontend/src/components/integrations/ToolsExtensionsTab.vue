@@ -8,12 +8,28 @@ import McpTab from '../dashboard/tabs/McpTab.vue'
 import ExtensionToolsPane from './ExtensionToolsPane.vue'
 import FeatureSourcesPage from './FeatureSourcesPage.vue'
 import IntegrationBrand from './IntegrationBrand.vue'
+import PackageManagerPane from './PackageManagerPane.vue'
+import ResourceVersionsPane from './ResourceVersionsPane.vue'
 import { useIntegrations } from '../../composables/tools/useIntegrations'
 
 const { state, error } = useIntegrations()
-const tab = ref<'extensions' | 'features' | 'mcp' | 'skills'>('extensions')
+const tab = ref<'extensions' | 'features' | 'mcp' | 'skills' | 'packages' | 'versions'>(
+  'extensions',
+)
 const page = ref<IntegrationFeature | null>(null)
 const tabs = [
+  {
+    id: 'versions',
+    get label() {
+      return __t('ui.resource-versions', '资源版本')
+    },
+  },
+  {
+    id: 'packages',
+    get label() {
+      return __t('ui.packages', '插件')
+    },
+  },
   {
     id: 'extensions',
     get label() {
@@ -74,6 +90,8 @@ const pdfLogo = computed(() => {
     <p v-if="error" class="integration-error" role="status">{{ error }}</p>
     <div class="integration-content">
       <ExtensionToolsPane v-if="tab === 'extensions'" />
+      <PackageManagerPane v-else-if="tab === 'packages'" />
+      <ResourceVersionsPane v-else-if="tab === 'versions'" />
       <template v-else-if="tab === 'features'">
         <FeatureSourcesPage v-if="page" :key="page" :kind="page" @back="page = null" />
         <section v-else>

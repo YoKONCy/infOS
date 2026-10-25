@@ -484,6 +484,7 @@ const statBadges = computed(() => [
             :checked-ids="checkedIds"
             @toggle="toggleChecked"
             @select="onSelectNote"
+            @restore="restoreNote"
             @page="archive.goToPage"
           />
           <MemoryGraphView

@@ -30,6 +30,30 @@ const snapshot: ConversationQueueSnapshot = {
   ],
 }
 describe('待发送消息队列交互', () => {
+  it('后台结果显示用途，不展示内部提示词或提供改写与插队入口', async () => {
+    const item = {
+      ...snapshot.items[0]!,
+      input: {
+        threadId: 't',
+        content: '内部执行指令不应显示',
+        taskResultEvent: { taskId: 'task', deliveryId: 'delivery' },
+      },
+    }
+    const wrapper = mount(ConversationQueue, {
+      props: { snapshot: { ...snapshot, items: [item] }, busy: false, unavailable: false },
+      global: { stubs: { PixelIcon: true } },
+    })
+    try {
+      expect(wrapper.text()).toContain('后台任务结果已到达')
+      expect(wrapper.text()).not.toContain('内部执行指令不应显示')
+      expect(wrapper.find('.queue-return').exists()).toBe(false)
+      expect(wrapper.find('.queue-immediate').exists()).toBe(false)
+      await wrapper.get('[aria-label="取消自动处理"]').trigger('click')
+      expect(wrapper.emitted('change')?.[0]).toEqual([item, 'cancel'])
+    } finally {
+      wrapper.unmount()
+    }
+  })
   it('立即提交、删除、调序与退回输入栏均携带指定条目身份', async () => {
     const wrapper = mount(ConversationQueue, {
       props: { snapshot, busy: false, unavailable: false },

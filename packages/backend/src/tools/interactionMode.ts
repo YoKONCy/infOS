@@ -27,6 +27,7 @@ export const MINIMAL_TOOLS = new Set([
 
 /** 聊天保留日常助理和文本处理能力；扩展通过注册元数据声明准入。 */
 const CHAT_TOOLS = new Set([
+  'manage_task',
   'ask_user',
   'run_script',
   'send_file',
@@ -64,7 +65,8 @@ export function isToolAllowedInInteractionMode(
   mode: InteractionMode,
   registry: ToolRegistry,
 ): boolean {
-  if (name === 'document') return mode === 'work'
+  if (name === 'document' || name === 'runtime_debug' || registry.isRuntimeScoped(name))
+    return mode === 'work'
   if (mode === 'minimal') return MINIMAL_TOOLS.has(name)
   if (mode === 'chat' && (WORK_CONTROL_TOOLS.has(name) || isAdvancedTool(name))) return false
   return mode === 'work' || CHAT_TOOLS.has(name) || registry.isChatEnabled(name)

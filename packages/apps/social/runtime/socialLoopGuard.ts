@@ -3,10 +3,16 @@ import { createHash, randomUUID } from 'node:crypto'
 import { createLogger } from '@infos/backend/applicationHostAbi'
 import type { SocialBotMark, SocialTurnRecord } from '@infos/shared'
 import type { InboundMessage } from './types'
+import { currentSocialScope } from './socialStorageScope'
 import { socialTriggerMessage } from './socialMessageContext'
 import { socialDelay } from './socialRecovery'
 
 const logger = createLogger('SocialLoopGuard')
+const validId = (id: unknown): id is string =>
+  // eslint-disable-next-line no-control-regex -- 显式拦截控制字符，防止标识或路径混入不可见内容。
+  typeof id === 'string' && !!id.trim() && id.length <= 400 && !/[\u0000-\u001f]/.test(id)
+export const socialIdentityKey = (platform: string | undefined, id: string) =>
+  platform ? `${platform}:${id}` : id
 interface ConfigPort {
   get(key: string): Promise<string | undefined>
   set(key: string, value: string): Promise<void>
@@ -33,7 +39,10 @@ export const DEFAULT_LOOP_POLICY: LoopPolicy = {
   maxSends: 16,
   cooldownSeconds: 600,
 }
-export function normalizeLoopPolicy(input: Partial<LoopPolicy>): LoopPolicy {
+export function normalizeLoopPolicy(
+  input: Partial<LoopPolicy>,
+  legacyPlatform?: string,
+): LoopPolicy {
   const bounded = (key: keyof LoopPolicy, min: number, max: number) => {
     const value = Number(input[key] ?? DEFAULT_LOOP_POLICY[key])
     return Number.isFinite(value)
@@ -42,18 +51,28 @@ export function normalizeLoopPolicy(input: Partial<LoopPolicy>): LoopPolicy {
   }
   const ids = (value: unknown) =>
     Array.isArray(value)
-      ? [...new Set(value.map(String).filter((id) => /^[1-9]\d{4,19}$/.test(id)))].slice(0, 200)
+      ? [
+          ...new Set(
+            value
+              .map(String)
+              .filter((id) => validId(id))
+              .map((id) =>
+                legacyPlatform && !id.includes(':') ? socialIdentityKey(legacyPlatform, id) : id,
+              ),
+          ),
+        ].slice(0, 200)
       : []
   const trustedHumanIds = ids(input.trustedHumanIds)
   const knownBotIds = ids(input.knownBotIds).filter((id) => !trustedHumanIds.includes(id))
   const marked = new Set<string>()
   const botMarks: SocialBotMark[] = []
   for (const value of Array.isArray(input.botMarks) ? input.botMarks : []) {
+    const platform = value?.platform ?? legacyPlatform
     if (
       !value ||
       typeof value !== 'object' ||
-      !knownBotIds.includes(value.userId) ||
-      marked.has(value.userId)
+      !knownBotIds.includes(socialIdentityKey(platform, value.userId)) ||
+      marked.has(socialIdentityKey(platform, value.userId))
     )
       continue
     if (
@@ -62,9 +81,9 @@ export function normalizeLoopPolicy(input: Partial<LoopPolicy>): LoopPolicy {
       typeof value.agentId !== 'string' ||
       !value.agentId ||
       typeof value.accountId !== 'string' ||
-      !/^[1-9]\d{4,19}$/.test(value.accountId) ||
+      !validId(value.accountId) ||
       typeof value.channelId !== 'string' ||
-      !/^[1-9]\d{4,19}$/.test(value.channelId) ||
+      !validId(value.channelId) ||
       !['private', 'group'].includes(value.channelType) ||
       (value.messageId !== undefined &&
         (typeof value.messageId !== 'string' || !value.messageId.trim())) ||
@@ -72,8 +91,9 @@ export function normalizeLoopPolicy(input: Partial<LoopPolicy>): LoopPolicy {
       !Number.isFinite(Date.parse(value.createdAt))
     )
       continue
-    marked.add(value.userId)
+    marked.add(socialIdentityKey(platform, value.userId))
     botMarks.push({
+      platform,
       userId: value.userId,
       reason: value.reason.trim().slice(0, 500),
       agentId: value.agentId.slice(0, 200),
@@ -96,7 +116,10 @@ export function normalizeLoopPolicy(input: Partial<LoopPolicy>): LoopPolicy {
     cooldownSeconds: bounded('cooldownSeconds', 30, 86400),
   }
 }
-type Scope = Pick<SocialTurnRecord, 'agentId' | 'accountId' | 'channelType' | 'channelId'>
+type Scope = Pick<
+  SocialTurnRecord,
+  'platform' | 'agentId' | 'accountId' | 'channelType' | 'channelId'
+>
 type UsageKind = 'turns' | 'requests' | 'sends'
 interface UsageEntry {
   id: string
@@ -137,9 +160,10 @@ export class SocialLoopGuard {
   constructor(
     private config: ConfigPort,
     private policy: () => LoopPolicy,
-    private accounts: () => string[],
-    private owner: () => string | undefined,
+    private accounts: (platform?: string) => string[],
+    private owner: (platform?: string) => string | undefined,
     private updatePolicy?: (change: (current: LoopPolicy) => LoopPolicy) => Promise<LoopPolicy>,
+    private legacyPlatform: () => string | undefined = () => undefined,
   ) {}
 
   /** 按账号保存全局标记；会话字段仅供审计，可选消息由业务工具核验。 */
@@ -150,7 +174,7 @@ export class SocialLoopGuard {
     if (!this.updatePolicy) throw new Error('机器人标记持久化服务尚未就绪')
     const reason = input.reason.trim()
     if (
-      !/^[1-9]\d{4,19}$/.test(input.userId) ||
+      !validId(input.userId) ||
       (input.messageId !== undefined &&
         (!input.messageId.trim() || input.messageId.length > 200)) ||
       !reason ||
@@ -161,19 +185,26 @@ export class SocialLoopGuard {
     const policy = await this.updatePolicy((current) => {
       scope.signal?.throwIfAborted()
       // 在配置写入队列内再次检查，避免覆盖用户刚登记的真人身份。
-      if (input.userId === this.owner() || current.trustedHumanIds.includes(input.userId))
+      if (
+        input.userId === this.owner(scope.platform) ||
+        this.includes(current.trustedHumanIds, input.userId, scope.platform)
+      )
         throw new Error('不能给主人或用户登记的可信真人添加机器人标记')
-      if (this.accounts().includes(input.userId) || current.knownBotIds.includes(input.userId))
+      if (
+        this.accounts(scope.platform).includes(input.userId) ||
+        this.includes(current.knownBotIds, input.userId, scope.platform)
+      )
         return current
       if (current.knownBotIds.length >= 200)
         throw new Error('机器人名单已满，请用户在社交设置中整理')
       added = true
       return normalizeLoopPolicy({
         ...current,
-        knownBotIds: [...current.knownBotIds, input.userId],
+        knownBotIds: [...current.knownBotIds, socialIdentityKey(scope.platform, input.userId)],
         botMarks: [
           ...current.botMarks,
           {
+            platform: scope.platform,
             agentId: scope.agentId,
             accountId: scope.accountId,
             channelType: scope.channelType,
@@ -199,7 +230,9 @@ export class SocialLoopGuard {
       user_id: input.userId,
       kind: 'bot',
       added,
-      mark: policy.botMarks.find((item) => item.userId === input.userId),
+      mark: policy.botMarks.find(
+        (item) => item.userId === input.userId && item.platform === scope.platform,
+      ),
       hint: __t(
         'apps.social.ui',
         '账号标记已全局生效，适用于所有群聊和私聊；连续互聊预算保持不变，用户可在社交设置中纠正',
@@ -209,7 +242,15 @@ export class SocialLoopGuard {
 
   private key(scope: Scope) {
     return `social.loopGuard.${createHash('sha256')
-      .update(JSON.stringify([scope.agentId, scope.accountId, scope.channelType, scope.channelId]))
+      .update(
+        JSON.stringify([
+          scope.platform,
+          scope.agentId,
+          scope.accountId,
+          scope.channelType,
+          scope.channelId,
+        ]),
+      )
       .digest('hex')}`
   }
   private fresh(seen: string[] = []): GuardState {
@@ -231,7 +272,15 @@ export class SocialLoopGuard {
     const pending = (this.queues.get(key) ?? Promise.resolve())
       .catch(() => {})
       .then(async () => {
-        const raw = await this.config.get(key)
+        let raw = await this.config.get(key)
+        if (!raw && scope.platform && scope.platform === this.legacyPlatform()) {
+          const oldKey = `social.loopGuard.${createHash('sha256')
+            .update(
+              JSON.stringify([scope.agentId, scope.accountId, scope.channelType, scope.channelId]),
+            )
+            .digest('hex')}`
+          raw = await this.config.get(oldKey)
+        }
         let state: GuardState
         let parsed: unknown
         try {
@@ -313,30 +362,52 @@ export class SocialLoopGuard {
       if (this.queues.get(key) === pending) this.queues.delete(key)
     }
   }
+  private includes(ids: string[], userId: string, platform?: string) {
+    return (
+      ids.includes(socialIdentityKey(platform, userId)) ||
+      (platform === this.legacyPlatform() && ids.includes(userId))
+    )
+  }
+  botIds(platform?: string): string[] {
+    const prefix = platform ? `${platform}:` : ''
+    return [
+      ...new Set([
+        ...this.accounts(platform),
+        ...this.policy().knownBotIds.flatMap((id) =>
+          prefix && id.startsWith(prefix)
+            ? [id.slice(prefix.length)]
+            : platform === this.legacyPlatform() && !id.includes(':')
+              ? [id]
+              : [],
+        ),
+      ]),
+    ].filter((id) => this.isBotAccount(id, platform))
+  }
   classify(message: InboundMessage): 'human' | 'bot' | 'unknown' {
     if (
-      message.senderId === this.owner() ||
-      this.policy().trustedHumanIds.includes(message.senderId)
+      message.senderId === this.owner(message.platform) ||
+      this.includes(this.policy().trustedHumanIds, message.senderId, message.platform)
     )
       return 'human'
-    if (this.isBotAccount(message.senderId)) return 'bot'
-    return 'unknown'
+    return message.platformBot === true || this.isBotAccount(message.senderId, message.platform)
+      ? 'bot'
+      : 'unknown'
   }
-  isBotAccount(userId: string): boolean {
+  isBotAccount(userId: string, platform = currentSocialScope()?.platform): boolean {
     return (
-      userId !== this.owner() &&
-      !this.policy().trustedHumanIds.includes(userId) &&
-      (this.accounts().includes(userId) || this.policy().knownBotIds.includes(userId))
+      userId !== this.owner(platform) &&
+      !this.includes(this.policy().trustedHumanIds, userId, platform) &&
+      (this.accounts(platform).includes(userId) ||
+        this.includes(this.policy().knownBotIds, userId, platform))
     )
   }
   async observe(message: InboundMessage): Promise<void> {
     message.senderKind = this.classify(message)
     // 普通群友无需登记真人名单；未知身份不会被当成机器人，也不能重置其他机器人的计数。
     if (message.senderKind !== 'human') return
-    const raw = message.rawEvent as Record<string, unknown> | undefined
-    const scope = { ...message, accountId: String(raw?.self_id ?? '') }
+    const scope = { ...message, accountId: message.accountId ?? '' }
     await this.locked(scope, (state) => {
-      const id = String(raw?.message_id ?? '')
+      const id = message.messageId ?? ''
       if (!id || state.seen.includes(id)) return
       state.seen = [...state.seen, id].slice(-200)
       for (const [id, peer] of Object.entries(state.bots)) {

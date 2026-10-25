@@ -1,6 +1,5 @@
 import { mkdirSync, rmSync } from 'node:fs'
-import { join } from 'node:path'
-import { tmpdir } from 'node:os'
+import { join, resolve } from 'node:path'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { createDrizzleConnection, closeDrizzleConnection } from '@infos/backend/database'
 import { EventNoteRepository } from '@infos/backend/repositories/eventNote.repo'
@@ -10,6 +9,7 @@ import { EventMemoryService } from '@infos/backend/services/memory/eventMemorySe
 import { ContextRnnRuntime } from '@infos/backend/services/retrieval/contextRnnRuntime'
 import { EventReflectionService } from '@infos/backend/services/memory/eventReflectionService'
 import { DailyNotesService } from '@infos/backend/services/memory/dailyNotesService'
+import { MemoryAgentScope } from '@infos/backend/services/memory/memoryAgentScope'
 import { ThreadService } from '@infos/backend/services/thread/threadService'
 import { createMemoryRouter } from '@infos/backend/routers/memory.router'
 
@@ -22,7 +22,10 @@ afterEach(() => {
 })
 
 function createFixture() {
-  const root = join(tmpdir(), `infos-event-memory-${Date.now()}-${Math.random()}`)
+  const root = join(
+    resolve('TEMP/plugin-infrastructure'),
+    `infos-event-memory-${Date.now()}-${Math.random()}`,
+  )
   roots.push(root)
   mkdirSync(root, { recursive: true })
   const db = createDrizzleConnection(join(root, 'infos.db'))
@@ -74,6 +77,103 @@ const draft = {
     channel: 'desktop',
   },
 }
+
+describe('已删除角色的后台记忆边界', () => {
+  it('日记模型迟到返回时不写文件、不完成账本，也不登记失败重试', async () => {
+    const { repo, service } = createFixture()
+    await service.create(draft, 'deleted-agent-diary-event')
+    let exists = true
+    const agents = new MemoryAgentScope(() => exists)
+    const write = vi.fn()
+    const fail = vi.spyOn(repo, 'failDailyNoteTask')
+    const complete = vi.spyOn(repo, 'completeDailyNoteTask')
+    const chatText = vi.fn(async () => {
+      exists = false
+      agents.invalidate('pero')
+      return '迟到的日记正文'
+    })
+    const daily = new DailyNotesService(
+      service,
+      { getAgent: () => null } as never,
+      { write } as never,
+      { resolve: () => 'Z:/不存在/system_prompt.md' } as never,
+      { chatText } as never,
+      async () => ({}) as never,
+      repo,
+    )
+    daily.setAgentScope(agents)
+    expect(await daily.generate('pero', '2026-08-27')).toEqual([])
+    expect(chatText).toHaveBeenCalledOnce()
+    expect(write).not.toHaveBeenCalled()
+    expect(fail).not.toHaveBeenCalled()
+    expect(complete).not.toHaveBeenCalled()
+    const ensure = vi.spyOn(repo, 'ensureDailyNoteTask')
+    expect(await daily.generate('pero', '2026-08-28')).toEqual([])
+    expect(ensure).not.toHaveBeenCalled()
+  })
+
+  it('每日回填不为已删除角色重新排队，保留其原有记忆', async () => {
+    const { repo, service } = createFixture()
+    const alive = await service.create(draft, 'alive-event')
+    const deleted = await service.create({ ...draft, agentId: 'lin' }, 'deleted-event')
+    expect(await repo.enqueueMissingReflectionTasks((id) => id === 'pero')).toBe(1)
+    expect(await repo.pendingReflectionTasks()).toEqual([
+      expect.objectContaining({ agentId: 'pero', eventId: alive.id }),
+    ])
+    expect(await repo.findById(deleted.id)).toBeDefined()
+  })
+
+  it('启动重放跳过已删除角色的未完成写入，不重新打开该角色存储', async () => {
+    const { repo, service, stores } = createFixture()
+    await repo.createOperation('background:create:lin', 'lin', 'create', {
+      note: {
+        ...draft,
+        id: 'orphan-note',
+        agentId: 'lin',
+        status: 'active',
+        createdAt: new Date().toISOString(),
+      },
+      tdbId: 1,
+    })
+    const open = vi.spyOn(stores, 'getAgentStore')
+    await service.replayPending((id) => id === 'pero')
+    expect(open).not.toHaveBeenCalled()
+    expect(await repo.findById('orphan-note')).toBeUndefined()
+    expect(await repo.pendingOperations()).toHaveLength(1)
+  })
+})
+
+describe('归档记忆还原', () => {
+  it('恢复同一条目并保留向量、时间和来源，重新参与索引', async () => {
+    const { repo, service, stores, embeddings } = createFixture()
+    const original = await service.create(draft)
+    await service.archive(original.id)
+    const stored = (await repo.findById(original.id))!
+    const store = stores.getAgentStore('pero', 'main')
+    const vector = Array.from(store.get(stored.tdbId)!.vector)
+    const embed = vi.spyOn(embeddings, 'embedOne')
+    await service.restore(original.id)
+    expect(await repo.findById(original.id)).toMatchObject({ ...original, status: 'active' })
+    expect(store.get(stored.tdbId)?.payload).toMatchObject({ status: 'active' })
+    expect(Array.from(store.get(stored.tdbId)!.vector)).toEqual(vector)
+    expect(embed).not.toHaveBeenCalled()
+  })
+
+  it('旧修订版本与缺失记录不能还原', async () => {
+    const { repo, service } = createFixture()
+    const old = await service.create(draft)
+    await service.edit(old.id, {
+      ...draft,
+      narrative: '我确认了新内容。',
+      expectedStatus: 'active',
+      regenerateVector: false,
+      operationId: 'restore-protection-edit',
+    })
+    await expect(service.restore(old.id)).rejects.toThrow('ARCHIVE_RESTORE_CONFLICT')
+    await expect(service.restore('deleted-note')).rejects.toThrow('ARCHIVE_RESTORE_NOT_FOUND')
+    expect((await repo.findById(old.id))?.replacedBy).toBeTruthy()
+  })
+})
 
 describe('记忆的人工修订', () => {
   it('保留归档与来源、复用向量、重建实体边，且不触发覆盖与后台反思', async () => {

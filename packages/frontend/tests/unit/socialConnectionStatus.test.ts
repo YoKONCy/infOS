@@ -10,7 +10,7 @@ vi.mock('../../src/api/modules/socialApi', () => ({ socialApi: api }))
 const wrappers: Array<{ unmount: () => void }> = []
 const response = (connected: boolean) => ({ data: { adapters: [{ platform: 'qq', connected }] } })
 const Status = {
-  setup: useSocialConnectionStatus,
+  setup: () => useSocialConnectionStatus(() => 'qq'),
   template:
     '<div>{{ connected ? "已连接" : "未连接" }}<p v-if="error" role="alert">{{ error }}</p></div>',
 }

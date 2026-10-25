@@ -19,6 +19,30 @@ permissions:
   contents: read
 
 jobs:
+  security:
+    name: Runtime & Dependency Security
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v6
+      - uses: pnpm/action-setup@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version-file: .node-version
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile --ignore-scripts
+      - name: 核对安全基线与开发发行版本一致性
+        run: pnpm security:runtime
+      - name: 审计全部依赖的高危与严重漏洞
+        run: pnpm security:audit
+      - name: 保存原始审计与本地回补证据
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: dependency-security-evidence
+          path: TEMP/security-audit/
+          if-no-files-found: ignore
+
   # ── 阶段 1: 代码规范检查（仅提示，不阻断测试、构建与发布）──
   lint:
     name: Lint & Format (Non-blocking)
@@ -31,7 +55,7 @@ jobs:
 
       - uses: actions/setup-node@v4
         with:
-          node-version: 22
+          node-version-file: .node-version
           cache: pnpm
 
       - run: pnpm install --frozen-lockfile
@@ -60,7 +84,7 @@ jobs:
 
       - uses: actions/setup-node@v4
         with:
-          node-version: 22
+          node-version-file: .node-version
           cache: pnpm
 
       - run: pnpm install --frozen-lockfile
@@ -80,7 +104,7 @@ jobs:
 
       - uses: actions/setup-node@v4
         with:
-          node-version: 22
+          node-version-file: .node-version
           cache: pnpm
 
       - run: pnpm install --frozen-lockfile
@@ -112,7 +136,7 @@ jobs:
 
       - uses: actions/setup-node@v4
         with:
-          node-version: 22
+          node-version-file: .node-version
           cache: pnpm
 
       - run: pnpm install --frozen-lockfile

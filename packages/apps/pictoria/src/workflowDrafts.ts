@@ -34,7 +34,7 @@ export const workflowDraftSchema = z
             ),
             stepId: identifier.optional(),
             stepRevision: z.number().int().positive().optional(),
-            inputs: z.record(bindingSchema).default({}),
+            inputs: z.record(z.string(), bindingSchema).default({}),
             x: z.number().finite().default(0),
             y: z.number().finite().default(0),
             comment: z.string().max(2000).default(''),
@@ -69,9 +69,9 @@ export const workflowDraftSchema = z
       )
       .max(128)
       .default([]),
-    outputs: z.record(bindingSchema).default({}),
+    outputs: z.record(z.string(), bindingSchema).default({}),
     testInputs: z
-      .record(z.unknown())
+      .record(z.string(), z.unknown())
       .refine((value) => JSON.stringify(value).length <= 128_000, '试运行参数超过大小限制')
       .optional(),
     io: z
@@ -83,6 +83,7 @@ export const workflowDraftSchema = z
       .default(() => ({ input: { x: -380, y: 0 }, output: { x: 650, y: 0 } })),
     routes: z
       .record(
+        z.string(),
         z
           .object({ sourcePort: z.enum(['right', 'bottom']), targetPort: z.enum(['left', 'top']) })
           .strict(),

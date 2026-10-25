@@ -9,10 +9,12 @@ export interface WorkspacePreviewState {
   position: number
   volume: number
   muted: boolean
+  pdfLayout?: 'continuous' | 'single'
+  pdfScrollTop?: number
 }
 
 export function createPreviewState(): WorkspacePreviewState {
-  return { zoom: 0, page: 1, position: 0, volume: 1, muted: false }
+  return { zoom: 0, page: 1, position: 0, volume: 1, muted: false, pdfLayout: 'continuous' }
 }
 
 export function workspaceFileIconKind(name: string): WorkspacePreviewKind {

@@ -443,7 +443,7 @@ export const backgroundTasks = sqliteTable(
     toolCallCount: integer('tool_call_count').default(0).notNull(),
     /** 优先级 1-10（越小越优先，默认 5） */
     priority: integer('priority').default(5).notNull(),
-    /** 父任务 ID（子任务关系，首版暂不使用） */
+    /** 父任务 ID；受限委派、结果交接和取消沿此关系传递。 */
     parentTaskId: text('parent_task_id'),
     /** 任务来源：user / agent / scheduler / runtime */
     requestedBy: text('requested_by').default('user').notNull(),
@@ -992,6 +992,8 @@ export const socialMessages = sqliteTable(
       table.agentId,
       table.platform,
       table.accountId,
+      table.channelType,
+      table.channelId,
       table.msgId,
     ),
   ],

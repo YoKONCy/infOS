@@ -181,6 +181,9 @@ Repository 层 (repositories/)
 - **Manifest V2**（`@infos/shared/src/types/package.types.ts`）: `manifestVersion: 2`、`trust: official|signed|user|generated`、`contributions`、`requires`、`permissions`
 - **铁律**: **安装 ≠ 激活 ≠ 授权**；任何 Contribution 不得因被发现、安装或加载而隐式扩权
 - 用户 Package 物理安装根: `@data/packages`
+- 统一调试入口 `runtime_debug` 仅由普通桌面工作会话按钮开启，默认关闭，按 Thread/Agent 门控；实际路径在 tools 文档动态注入。临时贡献复用宿主扩展点，关闭撤销，记录写入 `@data/debug`；任意 Node 代码仍走执行审批，不能称为 OS 沙箱。详见 [B28_RUNTIME_DEBUG.md](../.docs/B28_RUNTIME_DEBUG.md)。
+- 用户插件由 `PackageManagementService` 管理 ZIP 上传、内容授权、独立依赖、启停、版本回退与代际重载；写入 `@data/packages/.managed`，运行数据写入 `@data/package-data`，不得修改发行 ASAR/镜像源码。
+- `runtime:execute` 是显式的本机代码信任授权，不能自称 OS 沙箱；用户清单不能自称 `official` 获得信任。Context、Agent Flow、Presenter 与 Asset 贡献复用现有内核边界，停用须撤销注册。
 - 旧 Extension Loader / ExtensionManager / ServiceRunner / HookRegistry 已**完全删除**
 
 → 详见 [A06_EXTENSION_SYSTEM.md](../.docs/A06_EXTENSION_SYSTEM.md)
@@ -228,7 +231,7 @@ NIT 解释器封装为标准 FC 工具 `run_script`，LLM 通过 Function Callin
 - **代码标准**: 文件大小参考上限（单文件 ≤ 500 行 / Vue ≤ 400）、三层约束、路径规范 → [S05_CODE_STANDARDS.md](../.docs/S05_CODE_STANDARDS.md)
 - **UI/UX**: 设计基线，像素品牌资产 + 现代工作站空间结构 → [S06_UI_UX_DESIGN_SPEC.md](../.docs/S06_UI_UX_DESIGN_SPEC.md)
 - **Steam**: Electron 专属, Workshop/Cloud → [M04_STEAM_INTEGRATION.md](../.docs/M04_STEAM_INTEGRATION.md)
-- **B 系列（B01–B21）**: 具体功能的实现规范（后台任务、社交、桌面自动化、提示词、Pictoria、任务计划等）
+- **B 系列（B01–B28）**: 具体功能的实现规范（后台任务、社交、桌面自动化、提示词、Pictoria、任务计划等）；新增文档前确认编号未被占用。
 
 ---
 

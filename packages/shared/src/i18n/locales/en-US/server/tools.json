@@ -1,4 +1,12 @@
 {
+  "代码搜索超时，请缩小搜索范围": "Code search timed out. Narrow the search scope.",
+  "搜索结果与会话不匹配": "The search result does not belong to this conversation.",
+  "文件不属于本次搜索结果": "The file is not part of this search result.",
+  "搜索文件路径已变化，请重新搜索": "The search file path has changed. Search again.",
+  "搜索文件暂不可预览，请重新搜索": "The search file cannot be previewed. Search again.",
+  "请提供窗口名称": "Please provide a window name",
+  "窗口切换能力不可用，请连接支持窗口操作的客户端": "Window activation is unavailable. Connect a client that supports window operations.",
+  "切换窗口失败: {0}": "Failed to activate the window: {0}",
   "浏览器操作": "browser operation",
   "打开网站或预览工作区 HTML/Three.js 页面、截图检查渲染效果、填写表单和管理网页；不抢占用户桌面输入": "Open the website or preview the workspace HTML/Three.js page, take screenshots to check the rendering effect, fill in the form and manage the web page; do not seize the user's desktop input",
   "桌面操作": "desktop operation",

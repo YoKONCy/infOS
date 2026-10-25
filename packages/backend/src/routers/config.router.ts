@@ -17,7 +17,11 @@ import { t as __t } from '../lib/i18n'
 
 import { Hono } from 'hono'
 import { validate as zValidator } from '../lib/validation'
-import { setConfigSchema, batchGetConfigSchema } from '../schemas/config.schema'
+import {
+  setConfigSchema,
+  batchGetConfigSchema,
+  validAssistantPrefillSetting,
+} from '../schemas/config.schema'
 import { z } from 'zod'
 import type { AppContext } from '../container'
 import { createLogger, setLogLevel, parseLogLevel } from '../lib/logger'
@@ -29,6 +33,7 @@ import {
   EMBEDDING_ENABLED_KEY,
   MEMORY_BACKGROUND_ENABLED_KEY,
   WHOLESOME_MODE_KEY,
+  ASSISTANT_PREFILL_KEY,
 } from '@infos/shared'
 import {
   MEMORY_RUNTIME_CONFIG_KEY,
@@ -98,7 +103,7 @@ const activateEmbeddingSchema = z.object({
 
 const importConfigSchema = z.object({
   data: z
-    .record(z.string())
+    .record(z.string(), z.string())
     .refine(
       (data) =>
         [EMBEDDING_ENABLED_KEY, MEMORY_BACKGROUND_ENABLED_KEY, WHOLESOME_MODE_KEY].every(
@@ -111,6 +116,12 @@ const importConfigSchema = z.object({
         data[LANGUAGE_CONFIG_KEY] === undefined ||
         (SUPPORTED_LOCALES as readonly string[]).includes(data[LANGUAGE_CONFIG_KEY]!),
       { message: '仅支持简体中文、繁體中文和 English' },
+    )
+    .refine(
+      (data) =>
+        data[ASSISTANT_PREFILL_KEY] === undefined ||
+        validAssistantPrefillSetting(data[ASSISTANT_PREFILL_KEY]!),
+      { message: '预填充配置无效，正文最多 8000 个字符' },
     ),
   /** 是否覆盖已有 key (默认 true) */
   overwrite: z.boolean().default(true),

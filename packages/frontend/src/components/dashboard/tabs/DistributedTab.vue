@@ -12,7 +12,7 @@ import {
   type SavedServer,
   type ServerProbe,
 } from '../../../api/modules/distributedApi'
-import { isElectron } from '../../../utils/ipcAdapter'
+import { isElectron, invoke } from '../../../utils/ipcAdapter'
 import { setWebServerOrigin } from '../../../api/transport'
 import { useNotificationStore } from '../../../stores'
 
@@ -31,6 +31,7 @@ const pendingSync = ref<{ snapshotId: string; sourceServerId: string } | null>(n
 const lastSync = ref<(FullSyncManifest & { backupPath: string }) | null>(null)
 
 const isElectronBound = computed(() => isElectron())
+const isElectronRemote = computed(() => window.electron?.connectionMode?.() === 'remote')
 const activeSessions = computed(() =>
   capabilities.value.sessions.filter((session) => session.health !== 'offline'),
 )
@@ -238,8 +239,12 @@ onMounted(() => void refresh())
         <h1>{{ __t('ui.settings', '分布式') }}</h1>
         <p>{{ __t('ui.settings', '管理设备、服务器与数据同步') }}</p>
       </div>
-      <span class="mode-badge" :class="{ local: isElectronBound }">
-        {{ isElectronBound ? __t('ui.settings', '本机服务') : __t('ui.settings', '远程连接') }}
+      <span class="mode-badge" :class="{ local: isElectronBound && !isElectronRemote }">
+        {{
+          isElectronBound && !isElectronRemote
+            ? __t('ui.settings', '本机服务')
+            : __t('ui.settings', '远程连接')
+        }}
       </span>
     </header>
 
@@ -270,7 +275,7 @@ onMounted(() => void refresh())
           <span>{{ __t('ui.settings', '入口规则') }}</span>
           <strong>
             {{
-              isElectronBound
+              isElectronBound && !isElectronRemote
                 ? __t('ui.settings', '使用本机服务')
                 : __t('ui.settings', '可切换服务器')
             }}
@@ -278,7 +283,10 @@ onMounted(() => void refresh())
         </div>
       </div>
       <div v-if="isElectronBound" class="soft-note">
-        {{ __t('ui.settings', '桌面客户端连接本机服务，可从远程服务器同步数据。') }}
+        <PButton size="sm" @click="invoke('client-connection:configure')">
+          {{ __t('ui.connection', '选择运行方式') }}
+        </PButton>
+        {{ __t('ui.connection', '在开屏中切换本地或远程模式，重启客户端后生效。') }}
       </div>
       <div v-if="pendingSync" class="sync-state pending-state">
         <PixelIcon name="clock" size="sm" />

@@ -10,7 +10,18 @@ import {
   EMBEDDING_ENABLED_KEY,
   MEMORY_BACKGROUND_ENABLED_KEY,
   WHOLESOME_MODE_KEY,
+  ASSISTANT_PREFILL_KEY,
+  isAssistantPrefillConfig,
 } from '@infos/shared'
+
+/** 单项设置、批量设置和整份配置导入共用同一份预填充校验。 */
+export function validAssistantPrefillSetting(value: string): boolean {
+  try {
+    return isAssistantPrefillConfig(JSON.parse(value))
+  } catch {
+    return false
+  }
+}
 
 /** 获取配置 */
 export const getConfigSchema = z.object({
@@ -34,6 +45,10 @@ export const setConfigSchema = z
       value === 'true' ||
       value === 'false',
     { message: '开关配置必须为 true 或 false' },
+  )
+  .refine(
+    ({ key, value }) => key !== ASSISTANT_PREFILL_KEY || validAssistantPrefillSetting(value),
+    { message: '预填充配置无效，正文最多 8000 个字符' },
   )
 
 /** 批量获取配置 */

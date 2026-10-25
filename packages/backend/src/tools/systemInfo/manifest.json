@@ -30,7 +30,7 @@
     },
     {
       "name": "open_application",
-      "description": "在用户电脑按应用名称启动已安装的软件，优先激活已有窗口；歧义时返回候选。这会操作用户桌面，用户接管时暂停。打开网站或预览生成的 HTML 应先直接调用 expand_advanced_tools，再使用 browser_open_url；不要把 HTML 文件名当应用名。",
+      "description": "启动已安装的电脑应用或激活已有窗口，名称有歧义时返回候选；用户接管桌面时暂停。网页和 HTML 预览使用 browser_open_url，菜单缺少该工具时先调用 expand_advanced_tools。",
       "display": { "label": "打开应用", "icon": "desktop", "color": "purple", "style": "system" },
       "parameters": {
         "type": "object",

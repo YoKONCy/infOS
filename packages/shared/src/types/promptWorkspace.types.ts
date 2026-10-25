@@ -118,6 +118,16 @@ export interface PromptBundle {
   assignments: PromptAssignment[]
 }
 
+/** 可独立分享的框架预设；只携带依赖正文，不携带本机角色与频道指派。 */
+export interface PromptPreset {
+  format: 'infos-prompt-preset'
+  version: 1
+  name: string
+  exportedAt: string
+  framework: PromptFramework
+  documents: PromptDocument[]
+}
+
 export interface PromptRelease {
   id: string
   createdAt: string
@@ -141,6 +151,7 @@ export interface PromptPreviewSegment {
 }
 
 export interface PromptPreview {
+  requestPlan?: import('../contentMode').CompiledPromptPlan
   frameworkId: string
   revision: string
   segments: PromptPreviewSegment[]

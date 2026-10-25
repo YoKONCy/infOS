@@ -153,28 +153,26 @@ export function socialActDefinition(catalog: ToolDefinition[]): ToolDefinition {
       description:
         __t(
           'apps.social.ui',
-          '统一社交入口与编排工具。日常回复用 {"reply":"正文"}，送达并逐条入库后自动结束；',
+          '社交回复与步骤编排入口。用 {"reply":"正文"} 发送回复，送达并逐条入库后结束；',
         ) +
         __t(
           'apps.social.ui',
-          '普通 assistant 文字不会发送。查询用 steps 的 call，结果返回当前 ReAct，再决定下一步；',
+          '普通 assistant 文字不会发送。查询使用 steps 中的 call，结果交回当前模型；',
         ) +
         __t(
           'apps.social.ui',
-          '入口本身不强制终结。支持分段、延迟发送、PASS、等待补充、观察、延后重考虑、条件分支及只读并发。',
+          '支持分段、延迟发送、PASS、等待、观察、延后重考虑、条件分支与只读并发。',
         ) +
         __t(
           'apps.social.ui',
-          'next=end 明确结束，continue 返回模型，auto 按实际操作决定。on_new_message 仅针对相关发送者或提及，',
+          'next=end 结束，continue 返回模型，auto 按操作决定。相关发送者的新消息或提及触发 on_new_message：',
         ) +
         __t(
           'apps.social.ui',
-          '默认 reconsider；keep 保留计划，cancel 取消未执行部分。每步失败均返回结构化结果，不能把失败当成功；',
+          '默认 reconsider 重新判断；keep 保留计划，cancel 取消未执行步骤。每步返回结构化结果，失败须如实说明；',
         ) +
-        __t(
-          'apps.social.ui',
-          '结果未知的写操作禁止重发。智能判断使用 yield 返回当前模型，不会暗中启动第二个 Agent。\n',
-        ) +
+        __t('apps.social.ui', '结果未知的写操作禁止重发。yield 将判断交回当前模型。') +
+        '\n' +
         catalog.map((tool) => `${tool.function.name}：${tool.function.description}`).join('\n'),
       parameters: {
         type: 'object',

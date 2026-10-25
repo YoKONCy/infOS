@@ -13,6 +13,7 @@ import tailwindcss from '@tailwindcss/vite'
 import { resolve } from 'node:path'
 import { readFileSync } from 'node:fs'
 import { pdfAssetsPlugin } from './scripts/pdfAssetsPlugin'
+import { browserDependencyOptions } from './scripts/vite-browser-compat'
 
 // 从根 package.json 读取版本号
 const rootPkg = JSON.parse(readFileSync(resolve(__dirname, 'package.json'), 'utf8'))
@@ -59,6 +60,7 @@ export default defineConfig({
     root: resolve(__dirname, 'packages/frontend'),
     publicDir: resolve(__dirname, 'public'),
     plugins: [vue(), tailwindcss(), pdfAssetsPlugin(resolve(__dirname, 'packages/frontend'))],
+    optimizeDeps: browserDependencyOptions,
     define: {
       __APP_VERSION__: JSON.stringify(APP_VERSION),
     },

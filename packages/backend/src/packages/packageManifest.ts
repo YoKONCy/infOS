@@ -44,11 +44,66 @@ const TOOL_CAPABILITY_MAP: Record<string, { capabilityType: string; operation: s
 }
 
 export function validatePackageManifest(manifest: PackageManifest): void {
+  if (
+    !manifest ||
+    typeof manifest !== 'object' ||
+    typeof manifest.packageId !== 'string' ||
+    typeof manifest.version !== 'string' ||
+    typeof manifest.name !== 'string' ||
+    !manifest.name.trim() ||
+    !Array.isArray(manifest.contributions) ||
+    manifest.contributions.length > 100 ||
+    !['official', 'signed', 'user', 'generated'].includes(manifest.trust)
+  )
+    throw new Error('PACKAGE_MANIFEST_INVALID')
   if (manifest.manifestVersion !== 2) throw new Error('仅支持 Package Manifest V2')
   if (!/^[a-z0-9][a-z0-9._-]+$/i.test(manifest.packageId)) throw new Error('Package ID 无效')
   if (!manifest.version.trim()) throw new Error('Package 版本不能为空')
+  if (
+    manifest.packageId.length > 160 ||
+    manifest.version.length > 80 ||
+    manifest.name.length > 200 ||
+    (manifest.description && manifest.description.length > 8000)
+  )
+    throw new Error('PACKAGE_MANIFEST_INVALID')
+  const permissions = [
+    'runtime:execute',
+    'filesystem:read',
+    'filesystem:write',
+    'network:local',
+    'network:internet',
+    'process:spawn',
+    'database:read',
+    'database:write',
+    'system:info',
+  ]
+  if (
+    manifest.permissions &&
+    (!Array.isArray(manifest.permissions) ||
+      manifest.permissions.some((value) => !permissions.includes(value)))
+  )
+    throw new Error('PACKAGE_MANIFEST_INVALID')
   const ids = new Set<string>()
   for (const contribution of manifest.contributions) {
+    if (
+      !contribution ||
+      ![
+        'application',
+        'service',
+        'capability-provider',
+        'runtime-adapter',
+        'tool',
+        'skill',
+        'policy',
+        'event-subscriber',
+        'presenter',
+        'asset',
+        'context-provider',
+        'agent-flow',
+      ].includes(contribution.kind) ||
+      (contribution.entry !== undefined && typeof contribution.entry !== 'string')
+    )
+      throw new Error('PACKAGE_MANIFEST_INVALID')
     if (!contribution.id || ids.has(contribution.id)) {
       throw new Error(`Package Contribution ID 重复或为空: ${contribution.id}`)
     }

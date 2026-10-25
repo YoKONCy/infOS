@@ -1,5 +1,5 @@
 <script setup lang="ts">
-/** PSwitch — 细描边滑轨与微立体滑块，保留轻量像素轮廓。 */
+/** PSwitch — 平涂细轨道、方形滑块与像素小心，保持轻巧的主题反馈。 */
 
 interface Props {
   modelValue: boolean
@@ -51,9 +51,10 @@ function toggle() {
   --switch-inset: 3px;
   --switch-travel: calc(var(--switch-width) - var(--switch-thumb) - var(--switch-inset) * 2 - 2px);
   --switch-accent: var(--ui-accent-sky);
-  --switch-thumb-top: #ffffff;
-  --switch-thumb-bottom: #edf0f6;
-  --switch-highlight: rgba(255, 255, 255, 0.6);
+  --switch-offset: 0px;
+  --switch-hover-y: -1px;
+  --switch-press-scale: 0.92;
+  --switch-duration: 140ms;
   --ui-focus-color: var(--switch-accent);
   position: relative;
   display: inline-flex;
@@ -67,7 +68,7 @@ function toggle() {
   margin: 0;
   padding: 0;
   border: 0;
-  border-radius: 7px;
+  border-radius: 2px;
   background: transparent;
   color: var(--ui-text-secondary);
   font-family: inherit;
@@ -97,28 +98,30 @@ function toggle() {
   width: var(--switch-width);
   height: var(--switch-height);
   border: 1px solid var(--ui-border-strong);
-  border-radius: 7px;
-  background: color-mix(in srgb, var(--ui-text-primary) 8%, var(--ui-bg-surface-soft));
-  box-shadow:
-    inset 0 1px 2px rgba(0, 0, 0, 0.1),
-    0 1px 0 var(--switch-highlight);
+  border-radius: 2px;
+  background: var(--ui-bg-surface-soft);
   transition:
-    background-color 180ms ease,
-    border-color 180ms ease,
-    box-shadow 180ms ease;
+    background-color var(--switch-duration) ease,
+    border-color var(--switch-duration) ease;
 }
 .p-switch-track::before {
   position: absolute;
-  inset: 0;
-  border-radius: inherit;
-  background: linear-gradient(180deg, var(--switch-highlight), transparent 60%);
-  opacity: 0.22;
+  top: calc(50% - 1px);
+  left: calc(var(--switch-inset) + var(--switch-thumb) / 2 - 1px);
+  width: 2px;
+  height: 2px;
+  background: var(--switch-accent);
+  opacity: 0;
+  transition: opacity var(--switch-duration) ease;
   content: '';
   pointer-events: none;
 }
 .p-switch-on {
-  border-color: color-mix(in srgb, var(--switch-accent) 76%, var(--ui-border-default));
-  background: color-mix(in srgb, var(--switch-accent) 70%, var(--ui-bg-surface));
+  border-color: color-mix(in srgb, var(--switch-accent) 68%, var(--ui-border-strong));
+  background: color-mix(in srgb, var(--switch-accent) 12%, var(--ui-bg-surface-soft));
+}
+.p-switch-on::before {
+  opacity: 1;
 }
 .p-switch-thumb {
   position: absolute;
@@ -129,46 +132,62 @@ function toggle() {
   box-sizing: border-box;
   width: var(--switch-thumb);
   height: var(--switch-thumb);
-  border: 1px solid rgba(255, 255, 255, 0.48);
-  border-radius: 4px;
-  background: linear-gradient(180deg, var(--switch-thumb-top), var(--switch-thumb-bottom));
-  box-shadow:
-    0 1px 3px rgba(15, 23, 42, 0.24),
-    inset 0 1px 0 rgba(255, 255, 255, 0.65);
+  border: 1px solid var(--ui-border-strong);
+  border-radius: 1px;
+  background: var(--ui-bg-elevated);
+  color: var(--ui-text-inverse);
+  box-shadow: 1px 1px 0 var(--ui-border-subtle);
+  transform: translateX(var(--switch-offset));
   transition:
-    transform 240ms cubic-bezier(0.22, 1, 0.36, 1),
-    width 140ms ease,
-    box-shadow 180ms ease;
+    transform var(--switch-duration) cubic-bezier(0.22, 1, 0.36, 1),
+    background-color var(--switch-duration) ease,
+    border-color var(--switch-duration) ease;
 }
 .p-switch-thumb::after {
-  width: calc(var(--switch-thumb) * 0.25);
-  height: calc(var(--switch-thumb) * 0.43);
-  margin-top: -2px;
-  border-right: 1.5px solid var(--switch-accent);
-  border-bottom: 1.5px solid var(--switch-accent);
+  width: 8px;
+  height: 6px;
+  background: currentColor;
+  /* 阶梯轮廓保持像素边缘，避免小尺寸图标变成圆润高光。 */
+  clip-path: polygon(
+    0 1px,
+    1px 1px,
+    1px 0,
+    3px 0,
+    3px 1px,
+    5px 1px,
+    5px 0,
+    7px 0,
+    7px 1px,
+    8px 1px,
+    8px 3px,
+    7px 3px,
+    7px 4px,
+    6px 4px,
+    6px 5px,
+    5px 5px,
+    5px 6px,
+    3px 6px,
+    3px 5px,
+    2px 5px,
+    2px 4px,
+    1px 4px,
+    1px 3px,
+    0 3px
+  );
   opacity: 0;
-  transform: rotate(45deg) scale(0.6);
-  transition:
-    opacity 140ms ease,
-    transform 180ms cubic-bezier(0.22, 1, 0.36, 1);
+  transition: opacity var(--switch-duration) ease;
   content: '';
 }
 .p-switch-thumb-on {
-  transform: translateX(var(--switch-travel));
-  background: linear-gradient(180deg, #ffffff, #edf7ff);
+  --switch-offset: var(--switch-travel);
+  border-color: var(--switch-accent);
+  background: var(--switch-accent);
 }
 .p-switch-thumb-on::after {
   opacity: 1;
-  transform: rotate(45deg) scale(1);
-}
-.p-switch-sm .p-switch-track {
-  border-radius: 6px;
-}
-.p-switch-sm .p-switch-thumb {
-  border-radius: 3px;
 }
 .p-switch-label {
-  transition: color 180ms ease;
+  transition: color var(--switch-duration) ease;
 }
 .p-switch-wrapper:focus-visible {
   outline: none;
@@ -185,49 +204,29 @@ function toggle() {
     color: var(--ui-text-primary);
   }
   .p-switch-wrapper:not(:disabled):hover .p-switch-thumb {
-    box-shadow:
-      0 2px 4px rgba(15, 23, 42, 0.3),
-      inset 0 1px 0 rgba(255, 255, 255, 0.8);
+    border-color: var(--switch-accent);
+    transform: translate(var(--switch-offset), var(--switch-hover-y));
   }
 }
 .p-switch-wrapper:not(:disabled):active .p-switch-thumb {
-  width: calc(var(--switch-thumb) + 2px);
-}
-.p-switch-wrapper:not(:disabled):active .p-switch-thumb-on {
-  transform: translateX(calc(var(--switch-travel) - 2px));
+  transform: translateX(var(--switch-offset)) scale(var(--switch-press-scale));
 }
 .p-switch-disabled {
   opacity: 0.45;
   cursor: not-allowed;
 }
-:global([data-theme='dark']) .p-switch-wrapper {
-  --switch-thumb-top: #d9deea;
-  --switch-thumb-bottom: #adb6c9;
-  --switch-highlight: rgba(255, 255, 255, 0.12);
-}
-:global([data-motion='reduced']) .p-switch-thumb {
-  transition: transform 100ms ease;
-}
-:global([data-motion='reduced']) .p-switch-wrapper:active .p-switch-thumb,
-:global([data-motion='off']) .p-switch-wrapper:active .p-switch-thumb {
-  width: var(--switch-thumb);
-}
-:global([data-motion='reduced']) .p-switch-wrapper:active .p-switch-thumb-on,
-:global([data-motion='off']) .p-switch-wrapper:active .p-switch-thumb-on {
-  transform: translateX(var(--switch-travel));
+/* 减少动效时只切换状态，关闭悬浮上抬和按压缩放。 */
+:global([data-motion='reduced'] .p-switch-wrapper),
+:global([data-motion='off'] .p-switch-wrapper) {
+  --switch-hover-y: 0px;
+  --switch-press-scale: 1;
+  --switch-duration: 0ms;
 }
 @media (prefers-reduced-motion: reduce) {
-  .p-switch-track,
-  .p-switch-thumb,
-  .p-switch-thumb::after,
-  .p-switch-label {
-    transition: none;
-  }
-  .p-switch-wrapper:not(:disabled):active .p-switch-thumb {
-    width: var(--switch-thumb);
-  }
-  .p-switch-wrapper:not(:disabled):active .p-switch-thumb-on {
-    transform: translateX(var(--switch-travel));
+  .p-switch-wrapper {
+    --switch-hover-y: 0px;
+    --switch-press-scale: 1;
+    --switch-duration: 0ms;
   }
 }
 </style>

@@ -2,7 +2,7 @@ import { afterEach, describe, expect, it } from 'vitest'
 import { mkdtempSync, mkdirSync, readFileSync, writeFileSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import path from 'node:path'
-import { WHOLESOME_MODE_KEY, type PromptBundle } from '@infos/shared'
+import { ASSISTANT_PREFILL_KEY, WHOLESOME_MODE_KEY, type PromptBundle } from '@infos/shared'
 import type { ConfigRepository } from '../../../../src/repositories/config.repo'
 import { MdpEngine } from '../../../../src/services/prompt/mdpEngine'
 import { PromptWorkspace } from '../../../../src/services/prompt/promptWorkspace'
@@ -73,6 +73,36 @@ async function setup() {
   }
   return { workspace, bundle, repository, values, engine }
 }
+
+describe('预填充进入提示词编译结果', () => {
+  it('全局配置只在编译读取，预览可见且不混入正常历史消息', async () => {
+    const { workspace, bundle, values } = await setup()
+    values.set(
+      ASSISTANT_PREFILL_KEY,
+      JSON.stringify({ enabled: true, content: '我先确认。', mode: 'continuous' }),
+    )
+    const result = await workspace.prepare({ id: 'prefill-test', bundle }, 'desktop', 'pero', {
+      assistant_prefill_config: '{"enabled":false,"content":""}',
+    })
+    expect(result.preview.requestPlan?.assistantPrefill).toEqual({
+      content: '我先确认。',
+      mode: 'continuous',
+      source: ASSISTANT_PREFILL_KEY,
+    })
+    expect(result.preview.segments.at(-1)).toMatchObject({
+      id: 'assistant_prefill',
+      role: 'assistant',
+      content: '我先确认。',
+    })
+    expect(result.messages.some((message) => message.content === '我先确认。')).toBe(false)
+    values.set(ASSISTANT_PREFILL_KEY, '{"enabled":false,"content":"我先确认。"}')
+    expect(
+      (await workspace.prepare({ id: 'prefill-next', bundle }, 'social', 'pero', {})).preview
+        .requestPlan,
+    ).toEqual({})
+    expect(result.preview.requestPlan?.assistantPrefill?.mode).toBe('continuous')
+  })
+})
 
 describe('全局健全模式', () => {
   async function wholesomeSetup(useCore: boolean) {

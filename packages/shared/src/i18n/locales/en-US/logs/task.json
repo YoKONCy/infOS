@@ -10,5 +10,7 @@
   "后台任务执行会话清理失败: id={0}, 原因={1}": "background task execution session cleanup failed: id={0}, reason={1}",
   "后台任务已删除: id={0}": "background task deleted: id={0}",
   "任务结果投递失败: {0}, {1}": "task result delivery failed: {0}, {1}",
-  "计划已保存，刷新通知失败: {0}": "Plan has been saved, refresh notification failed: {0}"
+  "计划已保存，刷新通知失败: {0}": "Plan has been saved, refresh notification failed: {0}",
+  "社交通道离线，等待重连": "Social connection offline; waiting for reconnection",
+  "委派取消尚未完成，将在后台重试：{0}": "Delegation cancellation is pending and will retry in the background: {0}"
 }

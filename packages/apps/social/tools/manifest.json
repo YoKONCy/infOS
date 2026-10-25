@@ -11,10 +11,10 @@
   "tools": [
     {
       "name": "manage_task",
-      "description": "创建、查询或调整任务；操作已有任务前，先用 list/get 确认目标与版本。",
+      "description": "创建、查询和管理持久任务。修改任务时携带当前 revision，可通过 list/get 查询；get 支持 resultOffset/resultLimit 分页读取完整结果。后台任务可创建受限子任务、读取自身，仅管理自己的子任务；使用 finish_task 的 task_result.waitForTaskId 等待子任务交付。",
       "display": {
         "label": "管理任务",
-        "description": "安排任务，查看进展或调整执行。",
+        "description": "安排后台任务、查看结果，或暂停、恢复、取消任务及处理问答。聊天与工作模式可用。",
         "icon": "list",
         "color": "purple"
       },
@@ -123,6 +123,17 @@
               "required": ["questionId"],
               "additionalProperties": false
             }
+          },
+          "resultOffset": {
+            "type": "integer",
+            "minimum": 0,
+            "description": "get 操作的结果字符偏移，默认 0"
+          },
+          "resultLimit": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 32000,
+            "description": "get 操作每页结果字符数，默认 12000"
           }
         },
         "required": ["action"],

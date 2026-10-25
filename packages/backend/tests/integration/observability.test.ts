@@ -11,6 +11,7 @@ import { createApp } from '@infos/backend/app'
 /** 创建最小 AppContext；本测试只访问 health 与日志格式化，不需要真实业务服务 */
 function createAppContext() {
   return {
+    pathResolver: { getRoot: () => process.env.INFOS_TEST_TEMP_ROOT! },
     ttsService: {},
     asrService: {},
     gatewayHub: { connectedCount: 0 },

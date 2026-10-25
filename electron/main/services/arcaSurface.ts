@@ -1,4 +1,5 @@
 import { getClientCredential } from '../utils/clientCredential'
+import { getBackendOrigin } from './clientConnection'
 import { ipcMain } from 'electron'
 import { desktopTabs } from '../windows/desktopTabs'
 
@@ -26,7 +27,7 @@ export function registerArcaSurface(): void {
       method = 'POST'
     } else throw new Error('协作操作未开放')
     if (body && body.length > 32000) throw new Error('协作请求过大')
-    const origin = `http://127.0.0.1:${Number(process.env.PERO_PORT ?? 9120)}`
+    const origin = getBackendOrigin()
     const token = getClientCredential()
     const headers = {
       'content-type': 'application/json',

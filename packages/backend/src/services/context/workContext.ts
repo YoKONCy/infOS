@@ -3,6 +3,7 @@ import type { ModelConfig } from '../llm/llmService'
 import type { ThreadMessageInfo } from '../thread/threadService'
 import { promptFingerprint } from '../llm/promptCache'
 import { stripBase64DataUris } from '../llm/sanitize'
+import { prependConversationTime } from './conversationTime'
 
 /** 单轮原始执行记录；不包含系统提示词，也不重复保存前序轮次。 */
 export interface WorkContextRecord {
@@ -218,6 +219,7 @@ export function projectWorkHistory(
   compiled: ChatMessage[],
   history: ThreadMessageInfo[],
   scope: WorkContextScope,
+  timeAnchors?: ReadonlyMap<number, string>,
 ): ChatMessage[] {
   const users = new Map(
     history
@@ -265,10 +267,12 @@ export function projectWorkHistory(
     const id = cacheControl?.historyMessageId
     if (!id || !cacheControl) return [message]
     const input = inputRecords.get(id)?.input
-    if (message.role === 'user' && input)
+    if (message.role === 'user' && input) {
+      const restoredInput = persistentWorkMessage(input)
       return [
         {
-          ...persistentWorkMessage(input),
+          ...restoredInput,
+          content: prependConversationTime(restoredInput.content, timeAnchors?.get(id)),
           cacheControl: {
             ...cacheControl,
             historySourceKey: cacheControl.key,
@@ -276,6 +280,7 @@ export function projectWorkHistory(
           },
         },
       ]
+    }
     const record = records.get(id)
     if (!record?.messages.length) return [message]
     const items =

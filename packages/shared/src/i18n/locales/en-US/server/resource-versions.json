@@ -1,0 +1,8 @@
+{
+  "请先创建资源候选并编辑候选目录，再由用户应用。调试模式可用 debug.resources.checkout，也可从资源版本页创建。": "Create a resource candidate and edit its directory, then let the user apply it. Use debug.resources.checkout in debug mode or create one from Resource versions.",
+  "原资源或候选已变更，请刷新并重新创建候选版本。": "The source or candidate has changed. Refresh and create a new candidate.",
+  "同类资源已有待执行操作，请先取消或重启。": "This resource category already has a pending change. Cancel it or restart first.",
+  "请先回退同类资源最近应用的版本。": "Roll back the most recently applied version of this resource category first.",
+  "资源版本操作失败，请刷新并检查候选版本。": "Resource version operation failed. Refresh and check the candidate.",
+  "资源恢复操作失败：{0}": "Resource recovery failed: {0}"
+}

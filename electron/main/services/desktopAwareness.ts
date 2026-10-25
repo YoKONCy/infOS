@@ -13,7 +13,7 @@ import { t as __t } from '../utils/i18n'
  * @module electron/main/services/desktopAwareness
  */
 
-import { desktopCapturer, clipboard, nativeImage, screen } from 'electron'
+import { desktopCapturer, clipboard, ClipboardItem, nativeImage, screen } from 'electron'
 import { exec } from 'node:child_process'
 import { logger } from '../utils/logger'
 import type { DesktopRect } from './desktopCoordinates'
@@ -135,30 +135,47 @@ export interface ClipboardContent {
 }
 
 /** 读取剪贴板内容 */
-export function readClipboard(): ClipboardContent {
+export async function readClipboard(): Promise<ClipboardContent> {
+  const items = await clipboard.read()
+  const formats = [...new Set(items.flatMap((item) => item.types))]
+  const textItem = items.find((item) => item.types.includes('text/plain'))
   return {
-    text: clipboard.readText(),
-    hasImage: !clipboard.readImage().isEmpty(),
-    formats: clipboard.availableFormats(),
+    text: textItem ? await (await textItem.getType('text/plain')).text() : '',
+    hasImage: formats.some((type) => type.startsWith('image/')),
+    formats,
   }
 }
 
 /** 写入文本到剪贴板 */
-export function writeClipboard(text: string): void {
-  clipboard.writeText(text)
+export async function writeClipboard(text: string): Promise<void> {
+  await clipboard.writeText(text)
 }
 
 /** 读取剪贴板图片 (Base64) */
-export function readClipboardImage(): string | null {
-  const img = clipboard.readImage()
+export async function readClipboardImage(): Promise<string | null> {
+  const items = await clipboard.read()
+  const item =
+    items.find((entry) => entry.types.includes('image/png')) ??
+    items.find((entry) => entry.types.some((type) => type.startsWith('image/')))
+  if (!item) return null
+  const type = item.types.includes('image/png')
+    ? 'image/png'
+    : item.types.find((type) => type.startsWith('image/'))!
+  const blob = await item.getType(type)
+  if (!('arrayBuffer' in blob)) return null
+  const img = nativeImage.createFromBuffer(Buffer.from(await blob.arrayBuffer()))
   if (img.isEmpty()) return null
   return img.toDataURL()
 }
 
 /** 写入图片到剪贴板 */
-export function writeClipboardImage(dataUrl: string): void {
+export async function writeClipboardImage(dataUrl: string): Promise<void> {
   const img = nativeImage.createFromDataURL(dataUrl)
-  clipboard.writeImage(img)
+  await clipboard.write([
+    new ClipboardItem({
+      'image/png': new Blob([Uint8Array.from(img.toPNG())], { type: 'image/png' }),
+    }),
+  ])
 }
 
 // ── 前台窗口识别 ──

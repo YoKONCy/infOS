@@ -13,8 +13,6 @@
 
 export interface SocialHistoryMessageRecord {
   msgId: string
-  /** NapCat 会话内递增序号，用于向更早消息分页。 */
-  messageSeq?: number
   accountId: string
   channelId: string
   channelType: 'private' | 'group'
@@ -27,9 +25,15 @@ export interface SocialHistoryMessageRecord {
 
 /** 统一入站消息 */
 export interface InboundMessage {
+  /** 规范化消息身份由平台适配器在发出事件前填充。 */
+  messageId?: string
+  accountId?: string
+  connectionId?: string
+  /** 平台事件发生时间，统一为毫秒。 */
+  timestampMs?: number
   /** 消息来源平台 */
   platform: string
-  /** 会话标识 (平台侧的唯一 ID) */
+  /** 适配器提供的不透明会话标识，须包含主题等子会话范围。 */
   channelId: string
   /** 会话类型 */
   channelType: 'private' | 'group'
@@ -48,7 +52,7 @@ export interface InboundMessage {
   /**
    * 该消息发送者是否为"主人"（owner）
    *
-   * 由适配器层根据配置的 ownerQq 与 senderId 比对后填充。
+   * 由适配器层根据所属平台的主人身份与 senderId 比对后填充。
    * 用于权限控制：只有主人能执行敏感操作（删好友、改设置等）。
    * 未知/未配置主人时为 false。
    */
@@ -56,12 +60,14 @@ export interface InboundMessage {
   /**
    * 该消息是否提及（@）了 Bot
    *
-   * 群聊场景下由适配器层解析 CQ 码填充。
+   * 群聊场景下由适配器层解析平台提及信息后填充。
    * 用于图片收集优先级判断：@消息的图片优先级最高。
    */
   isMentioned?: boolean
   /** 由宿主按已连接账号或明确登记的机器人名单识别，昵称不能作为依据。 */
   senderKind?: 'human' | 'bot' | 'unknown'
+  /** 平台协议提供的机器人身份，与可撤销的本地判断分开保存。 */
+  platformBot?: boolean
   /** 原始平台事件 (调试用, 可选) */
   rawEvent?: unknown
   /**
@@ -88,6 +94,9 @@ export interface InboundMessage {
 
 /** 统一出站消息 */
 export interface OutboundMessage {
+  /** 由可信发送账本生成的关联标识，模型不能自行指定。 */
+  deliveryId?: string
+  connectionId?: string
   /** 指定发送账号，避免多账号时落到默认连接。 */
   accountId?: string
   /** 目标会话 ID */
@@ -105,6 +114,8 @@ export interface OutboundMessage {
 }
 
 export interface SocialDeliveryReceipt {
+  /** 平台接受请求不等于对端已读；无服务端消息号时不伪造回执。 */
+  acknowledgement?: 'accepted' | 'confirmed'
   messageId?: string
   sentAt: number
   /** 部分平台的文件上传接口不返回消息 ID。 */
@@ -116,11 +127,8 @@ export interface Attachment {
   type: 'image' | 'file' | 'audio' | 'video' | 'sticker' | 'forward' | 'native_emoji'
   /** 平台原生表情元数据只在服务端流转，模型使用来源引用。 */
   nativeEmoji?: {
-    kind: 'face' | 'market'
-    faceId?: string
-    packageId?: string
-    emojiId?: string
-    key?: string
+    kind: string
+    [key: string]: string | undefined
   }
   /** 远程 URL */
   url?: string
@@ -130,7 +138,7 @@ export interface Attachment {
   name?: string
   /** MIME 类型 */
   mimeType?: string
-  /** 转发消息 ID（type='forward' 时有值，用于调用 get_forward_msg API 读取内容） */
+  /** 平台转发资源标识，由所属适配器读取内容。 */
   forwardId?: string
 }
 
@@ -140,6 +148,7 @@ export interface Attachment {
 
 /** 平台事件 */
 export interface InboundEvent {
+  connectionId?: string
   platform: string
   eventType: string
   data: Record<string, unknown>
@@ -152,6 +161,13 @@ export interface InboundEvent {
 
 /** 适配器连接状态 */
 export interface AdapterStatus {
+  accounts?: Array<{
+    id: string
+    name: string
+    connected: boolean
+    error?: string
+    fullGroupMessages?: boolean
+  }>
   /** 是否已连接 */
   connected: boolean
   /** 平台名称 */
@@ -172,7 +188,7 @@ export interface SocialBinding {
   enabled: boolean
   /** 适配器类型 */
   adapter: string
-  /** 平台侧账号 ID (如 QQ 号) */
+  /** 平台侧的不透明账号 ID */
   accountId: string
   /** 适配器特有配置 */
   config?: Record<string, unknown>

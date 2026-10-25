@@ -6,7 +6,7 @@ import TaskDetailModal from '../../src/components/taskCenter/TaskDetailModal.vue
 import type { BackgroundTaskInfo } from '../../src/api/modules/backgroundTasksApi'
 import type { SurfaceDescriptor } from '@infos/shared'
 
-const api = vi.hoisted(() => ({ projection: vi.fn(), submitInput: vi.fn() }))
+const api = vi.hoisted(() => ({ projection: vi.fn(), submitInput: vi.fn(), list: vi.fn() }))
 const store = vi.hoisted(() => ({
   surfaces: new Map(),
   disposeScope: vi.fn(),
@@ -17,7 +17,7 @@ vi.mock('../../src/stores', () => ({ useCompositorStore: () => store }))
 vi.mock('../../src/components/pixel', () => ({
   PButton: { template: '<button><slot /></button>' },
 }))
-vi.mock('../../src/components/pixel/PDialog.vue', () => ({
+vi.mock('../../src/components/pixel/PDrawer.vue', () => ({
   default: { template: '<div><slot /></div>' },
 }))
 vi.mock('../../src/components/taskCenter/TaskLifecyclePanel.vue', () => ({
@@ -115,9 +115,51 @@ beforeEach(() => {
     for (const value of surfaces) store.surfaces.set(value.surfaceId, { ...value, scopeId })
   })
   api.projection.mockResolvedValue({ data: { surfaces: [surface] } })
+  api.list.mockResolvedValue({ data: { items: [] } })
 })
 
 describe('等待输入的任务详情', () => {
+  it('结果只显示一次，父子任务入口与运行信息页签可用', async () => {
+    api.list.mockResolvedValue({ data: { items: [{ ...task, id: 'child', title: '子任务报告' }] } })
+    api.projection.mockResolvedValue({
+      data: {
+        surfaces: [
+          {
+            ...surface,
+            nodes: [
+              {
+                ...surface.nodes[2],
+                nodeId: 'background-task:waiting-task:summary',
+                props: { source: '重复的标题与目标' },
+              },
+              {
+                ...surface.nodes[2],
+                nodeId: 'background-task:waiting-task:result',
+                props: { source: '## 结果\n\n已整理完成' },
+              },
+            ],
+          },
+        ],
+      },
+    })
+    const wrapper = mount(TaskDetailModal, {
+      props: {
+        task: { ...task, parentTaskId: 'parent', result: '已整理完成', status: 'completed' },
+      },
+    })
+    await flushPromises()
+    expect(wrapper.text()).not.toContain('重复的标题与目标')
+    expect(wrapper.text().match(/已整理完成/g)).toHaveLength(1)
+    const links = wrapper.findAll('.detail-related')
+    await links[0]!.trigger('click')
+    await links[1]!.trigger('click')
+    expect(wrapper.emitted('openTask')).toEqual([['parent'], ['child']])
+    await wrapper.get('#task-runtime-tab').trigger('click')
+    expect(wrapper.get('#task-runtime-tab').attributes('aria-selected')).toBe('true')
+    expect((wrapper.get('#task-overview-panel').element as HTMLElement).style.display).toBe('none')
+    wrapper.unmount()
+    expect(store.disposeScope).toHaveBeenCalledWith('background-task:waiting-task')
+  })
   it('将问答与批准统一交给置顶面板，正文不重复渲染，也不复制批准表单', async () => {
     const wrapper = mount(TaskDetailModal, { props: { task } })
     await flushPromises()

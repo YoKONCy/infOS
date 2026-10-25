@@ -29,6 +29,7 @@ export type BackgroundTaskStatus =
 export interface BackgroundTaskInfo {
   plan?: import('@infos/shared').TaskPlan | null
   id: string
+  parentTaskId?: string | null
   revision?: number
   lifecycle?: TaskLifecycle
   agentId: string
@@ -85,6 +86,8 @@ export interface DispatchTaskRequest {
 
 /** 分页查询参数 */
 export interface BackgroundTaskQueryParams {
+  parentTaskId?: string
+  view?: 'history'
   category?: 'agent_task' | 'resident'
   agentId?: string
   status?: BackgroundTaskStatus
@@ -142,6 +145,8 @@ export const backgroundTasksApi = {
   /** 分页查询任务 */
   list: (params: BackgroundTaskQueryParams = {}) => {
     const query = new URLSearchParams()
+    if (params.parentTaskId) query.set('parentTaskId', params.parentTaskId)
+    if (params.view) query.set('view', params.view)
     if (params.category) query.set('category', params.category)
     if (params.agentId) query.set('agentId', params.agentId)
     if (params.status) query.set('status', params.status)

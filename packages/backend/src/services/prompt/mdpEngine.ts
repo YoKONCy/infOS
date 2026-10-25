@@ -237,6 +237,7 @@ export class MdpEngine {
     sessionId?: string,
   ) => Promise<{
     messages: RenderedMessage[]
+    preview?: import('@infos/shared').PromptPreview
     variableCommit?: import('@infos/shared').PromptVariableCommit
   }>
   commitPromptVariables?: (change: import('@infos/shared').PromptVariableCommit) => Promise<void>

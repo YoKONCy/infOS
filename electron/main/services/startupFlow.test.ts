@@ -27,11 +27,31 @@ function setup(overrides: Partial<StartupFlowSteps> = {}) {
 }
 
 describe('Electron 开屏启动门控', () => {
+  it('连接方式尚未选定之前不进入后端阶段，退出后迟到的选择也不能启动后端', async () => {
+    const selection = deferred<void>(),
+      entered = deferred<void>()
+    const { flow, steps } = setup({
+      prepare: () => {
+        entered.resolve()
+        return selection.promise
+      },
+    })
+    const pending = flow.start()
+    await entered.promise
+    expect(steps.backend).not.toHaveBeenCalled()
+    flow.cancel()
+    selection.resolve()
+    await pending
+    expect(steps.backend).not.toHaveBeenCalled()
+    expect(steps.launcher).not.toHaveBeenCalled()
+  })
   it('重复启动请求共用后端启动链，成功只显窗一次', async () => {
     const backend = deferred<boolean>()
     const check = vi.fn(() => backend.promise)
     const { flow, steps } = setup({ backend: check })
+    expect(flow.running).toBe(false)
     const first = flow.start()
+    expect(flow.running).toBe(true)
     expect(flow.start()).toBe(first)
     expect(steps.reveal).not.toHaveBeenCalled()
     backend.resolve(true)
@@ -40,6 +60,7 @@ describe('Electron 开屏启动门控', () => {
     expect(check).toHaveBeenCalledTimes(1)
     expect(steps.reveal).toHaveBeenCalledTimes(1)
     expect(flow.completed).toBe(true)
+    expect(flow.running).toBe(false)
   })
 
   it('后端未就绪时留在开屏，不创建启动器', async () => {
@@ -49,6 +70,7 @@ describe('Electron 开屏启动门控', () => {
     expect(steps.reveal).not.toHaveBeenCalled()
     expect(steps.close).not.toHaveBeenCalled()
     expect(steps.failed).toHaveBeenCalledWith('backend', expect.any(Error))
+    expect(flow.running).toBe(false)
   })
 
   it('首帧未完成之前不能显窗', async () => {

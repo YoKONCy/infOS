@@ -4,12 +4,16 @@ import { t as __t } from '../../i18n/index'
 import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import type { WorkspacePreviewState } from './workspacePreview'
 import './workspace-file-preview.css'
-const props = defineProps<{
-  src: string
-  name: string
-  state: WorkspacePreviewState
-  active: boolean
-}>()
+const props = withDefaults(
+  defineProps<{
+    src: string
+    name: string
+    state: WorkspacePreviewState
+    active: boolean
+    allowExpand?: boolean
+  }>(),
+  { allowExpand: true },
+)
 const emit = defineEmits<{
   error: [message: string]
   state: [patch: Partial<WorkspacePreviewState>]
@@ -296,7 +300,12 @@ onBeforeUnmount(() => {
           {{ __t('ui.workspace', '透明底') }}
         </button>
         <button type="button" @click="reset()">{{ __t('ui.workspace', '复位') }}</button>
-        <button type="button" :aria-pressed="expanded" @click="expanded = !expanded">
+        <button
+          v-if="allowExpand !== false"
+          type="button"
+          :aria-pressed="expanded"
+          @click="expanded = !expanded"
+        >
           {{ expanded ? __t('ui.workspace', '退出全屏') : __t('ui.workspace', '全屏观察') }}
         </button>
         <span class="file-view-spacer" />

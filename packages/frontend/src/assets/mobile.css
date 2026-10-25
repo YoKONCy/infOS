@@ -185,6 +185,7 @@ html[data-mobile] .msg-avatar {
   width: 26px;
   height: 26px;
   flex: 0 0 26px;
+  padding: 0;
 }
 html[data-mobile] .msg-assistant-container {
   width: calc(100% - 32px);

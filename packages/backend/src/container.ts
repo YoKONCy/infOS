@@ -1,4 +1,11 @@
 import { t as __t } from './lib/i18n'
+import { RuntimeDebugService } from './services/debug/runtimeDebugService'
+import { setRuntimeDebugService } from './tools/runtimeDebug'
+import { PackageManagementService } from './packages/packageManagementService'
+import { PackageDependencies } from './packages/packageDependencies'
+import { PackageUiRegistry } from './packages/packageUiRegistry'
+import { PackageAssets } from './packages/packageAssets'
+import { registerExtensionActivators } from './packages/packageExtensionActivators'
 /**
  * 依赖注入容器
  *
@@ -76,6 +83,7 @@ import { KnowledgeRepository } from './repositories/knowledge.repo'
 import { AutomaticApprovalService } from './services/execution/automaticApprovalService'
 import { CompletionAlertService } from './services/conversation/completionAlertService'
 import { KnowledgeService } from './services/knowledge/knowledgeService'
+import { KnowledgeRecallService } from './services/knowledge/knowledgeRecallService'
 import { KnowledgeIndex } from './services/knowledge/knowledgeIndex'
 import { setKnowledgeToolDeps } from './tools/knowledge'
 
@@ -96,6 +104,7 @@ import { EventNoteDraftCommitter } from './services/memory/eventNoteDraftCommitt
 import { EventMemoryFallbackService } from './services/memory/eventMemoryFallbackService'
 import { memoryPersonaResolver } from './services/memory/memoryPersona'
 import { MemoryBackgroundControl } from './services/memory/memoryBackgroundControl'
+import { MemoryAgentScope } from './services/memory/memoryAgentScope'
 import { EMBEDDING_ENABLED_KEY, MEMORY_BACKGROUND_ENABLED_KEY } from '@infos/shared'
 import { LlmBackgroundEventExtractor } from './services/memory/llmBackgroundEventExtractor'
 import { EventReflectionService } from './services/memory/eventReflectionService'
@@ -157,6 +166,8 @@ import { PictoriaIntegration } from './applications/pictoriaIntegration'
 import { ArcaFederationConnector } from './capabilities/arcaFederationConnector'
 import { CapabilityBridge } from './capabilities/capabilityBridge'
 import { BrowserToolRuntime } from './capabilities/browserToolRuntime'
+import { createSocialHostCapabilities } from './applications/socialHostCapabilities'
+import { createSocialTaskExecutor } from './applications/socialTaskExecutor'
 import { DocumentPdfCapabilityRuntime } from './capabilities/documentPdfCapabilityRuntime'
 import { DocumentService } from './services/document/documentService'
 import { setDocumentService } from './tools/document'
@@ -233,7 +244,7 @@ import { GroupChatService } from './services/stronghold/groupChatService'
 import { GroupChatDispatcher } from './services/stronghold/groupChatDispatcher'
 import { createEnvelope } from './services/gateway/types'
 import { SqliteSocialStoragePort } from './applications/sqliteSocialStoragePort'
-// 注意：社交系统（SocialBridge/ImageCacheManager/StickerService/NapcatAdapter/SocialMessageRepository）
+// 注意：社交系统（SocialBridge/ImageCacheManager/StickerService/平台适配器/SocialMessageRepository）
 // 已迁移到 packages/apps/social/，由 SocialAppRuntime 独立管理
 
 import { setSkillResourceLoader } from './tools/skillResources'
@@ -246,6 +257,7 @@ import { PetStateService } from './services/agent/petStateService'
 
 // ── Service (Voice 域) ──
 import { TtsService } from './services/voice/ttsService'
+import { createTtsCapabilityInvoke } from './services/voice/ttsCapability'
 import { AudioDeliveryService } from './services/voice/audioDeliveryService'
 import { AsrService } from './services/voice/asrService'
 import { RealtimeSessionManager } from './services/voice/realtimeSessionManager'
@@ -262,6 +274,7 @@ import { setImageReadResourceService } from './tools/fileOps'
 import { IntegrationService } from './services/integrations/integrationService'
 import { PdfParserService } from './services/integrations/pdfParserService'
 import { ChatBackgroundService } from './services/system/chatBackgroundService'
+import { UserAvatarService } from './services/system/userAvatarService'
 import { tokenCounter } from './services/tokenizer/tokenCounter'
 
 // ── AIOS 第八阶段：Agent 应用层（系统 + 独立应用） ──
@@ -334,6 +347,7 @@ export interface AppContext {
   eventNoteRepo: EventNoteRepository
   factsRepo: FactsRepository
   knowledgeService: KnowledgeService
+  knowledgeRecallService: KnowledgeRecallService
 
   // ── Service (Memory 域) ──
   embeddingService: EmbeddingService
@@ -349,6 +363,8 @@ export interface AppContext {
 
   // ── Service (Agent 域) ──
   agentManager: AgentManager
+  /** 删除成功后撤销该角色的记忆后台工作并清理常驻投影。 */
+  cleanupDeletedAgent(agentId: string): Promise<void>
   petStateService: PetStateService
   agentService: AgentService
   // AIOS: promptService 已移除（死代码，零调用方）
@@ -392,6 +408,7 @@ export interface AppContext {
   documentService: DocumentService
   htmlPreviewService: HtmlPreviewService
   chatBackgroundService: ChatBackgroundService
+  userAvatarService: UserAvatarService
   /** M05: 统一任务中心（派发/队列/状态机/恢复） */
   backgroundTaskService: BackgroundScheduler
   taskControlService: TaskControlService
@@ -421,6 +438,10 @@ export interface AppContext {
   // ── Package Runtime ──
   packageRegistry: PackageRegistry
   packageInstaller: PackageInstaller
+  packageManagement: PackageManagementService
+  packageUi: PackageUiRegistry
+  runtimeDebug: RuntimeDebugService
+  packageAssets: import('./packages/packageAssets').PackageAssets
   packageRuntime: PackageRuntime
 
   // ── MCP ──
@@ -745,6 +766,12 @@ export async function createAppContext(config: AppConfig): Promise<AppContext> {
   setKnowledgeToolDeps(knowledgeService)
   kernelLifecycle.defer(() => knowledgeService.dispose())
   await knowledgeService.initialize()
+  const knowledgeRecallService = new KnowledgeRecallService(
+    configRepo,
+    knowledgeRepo,
+    knowledgeIndex,
+    factsRepo,
+  )
   const agentManager = new AgentManager(pathResolver, configRepo)
 
   // ── 7. Service — Agent 域 ──
@@ -843,6 +870,9 @@ export async function createAppContext(config: AppConfig): Promise<AppContext> {
     skillLoader,
     toolRegistry,
   )
+  capabilityGate.setToolDescriptionResolver((name, description) =>
+    knowledgeRecallService.description(name, description),
+  )
   // 第六阶段 #7: 注入 CapabilityGate 到共享持有器（run_script 用于 ResourceScope 校验）
   setCapabilityGate(capabilityGate)
 
@@ -877,6 +907,7 @@ export async function createAppContext(config: AppConfig): Promise<AppContext> {
     contextRegionRegistry,
   )
   contextCompiler.setToolContextService(toolContextService)
+  contextCompiler.setKnowledgeRecallService(knowledgeRecallService)
   contextCompiler.setPromptWorkspace(promptWorkspace)
   threadService.setPromptVariableCleanup((threadId) =>
     promptWorkspace.variableStore.removeThread(threadId),
@@ -894,7 +925,11 @@ export async function createAppContext(config: AppConfig): Promise<AppContext> {
     path.join(config.dataDir, 'kernel', 'package-security.json'),
   )
   const packageInstaller = new PackageInstaller(packageRegistry, packageSecurity)
-  const packageRuntime = new PackageRuntime(packageRegistry, packageSecurity)
+  const packageRuntime = new PackageRuntime(
+    packageRegistry,
+    packageSecurity,
+    pathResolver.resolve('@data/package-data'),
+  )
   const integrationService = new IntegrationService(
     configRepo,
     toolRegistry,
@@ -919,6 +954,23 @@ export async function createAppContext(config: AppConfig): Promise<AppContext> {
   )
   const packageProcesses = new PackageProcessSupervisor(kernelScheduler)
   const packageHookBus = new PackageHookBus()
+  const packageUi = new PackageUiRegistry()
+  const packageAssets = new PackageAssets()
+  const packageManagement = new PackageManagementService(
+    pathResolver.resolve('@data/packages'),
+    packageRegistry,
+    packageRuntime,
+    packageSecurity,
+    new PackageDependencies(pathResolver.resolve('@data/package-cache')),
+  )
+  await packageManagement.initialize()
+  registerExtensionActivators({
+    runtime: packageRuntime,
+    contexts: contextRegionRegistry,
+    hooks: packageHookBus,
+    ui: packageUi,
+    assets: packageAssets,
+  })
   registerStandardContributionActivators({
     runtime: packageRuntime,
     tools: toolRegistry,
@@ -933,6 +985,59 @@ export async function createAppContext(config: AppConfig): Promise<AppContext> {
     capabilities: capabilityDirectory,
   })
   kernelLifecycle.defer(() => packageRuntime.shutdown())
+  const runtimeDebug = new RuntimeDebugService({
+    root: pathResolver.resolve('@data/debug'),
+    appRoot: pathResolver.getRoot('@app')!,
+    dataRoot: config.dataDir,
+    logsRoot: path.join(config.dataDir, 'logs'),
+    runtime: packageRuntime,
+    getThread: (id) => threadService.getThread(id),
+    agentWorkspace: (agentId) => pathResolver.getWorkspaceRoot(agentId),
+    snapshot: (threadId) => ({
+      tasks: runtimeStateService.listActiveTasks().filter((task) => task.threadId === threadId),
+      executions: kernelScheduler
+        .list()
+        .filter((execution) => execution.descriptor.threadId === threadId),
+      hookFailures: packageHookBus.failures.slice(-10),
+      packages: packageRegistry.list().map((entry) => ({
+        id: entry.manifest.packageId,
+        version: entry.manifest.version,
+        state: entry.state,
+      })),
+    }),
+    electron: async (threadId, agentId, signal) =>
+      desktopCapabilities.invoke(
+        'runtimeDiagnostics',
+        {},
+        {
+          principalId: `agent:${agentId}`,
+          correlationId: threadId,
+          deadline: new Date(Date.now() + 10000).toISOString(),
+        },
+        signal,
+      ),
+  })
+  setRuntimeDebugService(runtimeDebug)
+  capabilityGate.setSessionThreadResolver((sessionId) =>
+    sessionId
+      ? (executionRuntime.get(sessionId as import('@infos/shared').KernelExecutionId)?.threadId ??
+        sessionId)
+      : undefined,
+  )
+  kernelLifecycle.defer(async () => {
+    setRuntimeDebugService(undefined)
+    await runtimeDebug.shutdown()
+  })
+  kernelLifecycle.defer(
+    capabilityGate.registerSessionTool('runtime_debug', (agentId, channel, sessionId) => {
+      if (channel !== 'desktop' || !sessionId) return false
+      const threadId =
+        executionRuntime.get(sessionId as import('@infos/shared').KernelExecutionId)?.threadId ??
+        sessionId
+      return runtimeDebug.allowed(threadId, agentId)
+    }),
+  )
+  // 工具定义保持稳定；具体目录、会话及运行现场由 runtime_debug 的空参数调用返回。
 
   const arcaDiscoveryPath =
     process.env.INFOS_ARCA_DISCOVERY_PATH ??
@@ -1023,7 +1128,7 @@ export async function createAppContext(config: AppConfig): Promise<AppContext> {
     pathResolver.resolve('@data/extensions'),
     userPackagesDir,
   )
-  packageInstaller.discover(userPackagesDir)
+  if (process.env.INFOS_RESOURCE_SAFE_MODE !== '1') packageInstaller.discover(userPackagesDir)
 
   const toolExecutor = new RegistryToolExecutor(
     toolRegistry,
@@ -1060,6 +1165,7 @@ export async function createAppContext(config: AppConfig): Promise<AppContext> {
 
   const imageUnderstandingService = new ImageUnderstandingService(configRepo, modelRepo, llmService)
   const eventMemoryService = new EventMemoryService(eventNoteRepo, storeRegistry, embeddingService)
+  eventMemoryService.setPackageHooks(packageHookBus)
   eventMemoryService.setBackgroundPolicy(memoryBackground)
   eventMemoryService.setPrivacyPolicy(privacyPolicy)
   const contextRnn = new ContextRnnRuntime(
@@ -1074,7 +1180,9 @@ export async function createAppContext(config: AppConfig): Promise<AppContext> {
     threadRepo,
   )
   setEventMemoryToolDeps(eventMemoryService)
-  await eventMemoryService.replayPending()
+  const memoryAgents = new MemoryAgentScope((id) => Boolean(agentManager.getAgent(id)))
+  await eventNoteRepo.retireOrphanBackgroundWork(agentManager.listAgents().map((agent) => agent.id))
+  await eventMemoryService.replayPending((id) => memoryAgents.isAvailable(id))
   const scorerModel = modelRoles.bind('scorer')
   const resolveMemoryPersona = memoryPersonaResolver(agentManager, configRepo)
   const eventMemoryFallback = new EventMemoryFallbackService(
@@ -1082,14 +1190,18 @@ export async function createAppContext(config: AppConfig): Promise<AppContext> {
     threadRepo,
     eventMemoryService,
     new LlmBackgroundEventExtractor(llmService, scorerModel, resolveMemoryPersona),
-    { getModelConfig: scorerModel, background: memoryBackground },
+    { getModelConfig: scorerModel, background: memoryBackground, agents: memoryAgents },
   )
   const eventReflection = new EventReflectionService(
     eventMemoryService,
     storeRegistry,
     new LlmEventReflectionModel(llmService, modelRoles.bind('reflection'), resolveMemoryPersona),
     eventNoteRepo,
-    { background: memoryBackground, canMaintain: () => !privacyPolicy.isBusy('memory') },
+    {
+      background: memoryBackground,
+      canMaintain: () => !privacyPolicy.isBusy('memory'),
+      agents: memoryAgents,
+    },
   )
   eventMemoryService.setCommitListener((note) => eventReflection.enqueue(note.agentId, note.id))
   const dailyNotes = new DailyNotesService(
@@ -1103,6 +1215,7 @@ export async function createAppContext(config: AppConfig): Promise<AppContext> {
     threadRepo,
   )
   dailyNotes.setBackgroundPolicy(memoryBackground)
+  dailyNotes.setAgentScope(memoryAgents)
   const privacyDeletionService: PrivacyDeletionService = new PrivacyDeletionService({
     db: sqlite,
     policy: privacyPolicy,
@@ -1126,6 +1239,7 @@ export async function createAppContext(config: AppConfig): Promise<AppContext> {
 
   // AIOS: AgentService — 新版接线（仅依赖新服务）
   const agentService = new AgentService({
+    packageHooks: packageHookBus,
     llmService,
     configRepo,
     agentManager,
@@ -1162,8 +1276,8 @@ export async function createAppContext(config: AppConfig): Promise<AppContext> {
           ...applicationRealms.toolDefinitions(realmId),
         ].filter((tool) => !disabledTools.includes(tool.name))
       }
-      const registryTools = toolRegistry
-        .getDefinitions(channel)
+      const registryTools = knowledgeRecallService
+        .tools(toolRegistry.getDefinitions(channel))
         .filter((tool) => !applicationRealms.isPrivateTool(tool.name))
         .filter((tool) => isToolAllowedInInteractionMode(tool.name, interactionMode, toolRegistry))
         .map((tool) =>
@@ -1176,6 +1290,8 @@ export async function createAppContext(config: AppConfig): Promise<AppContext> {
       if (!capabilityGate.hasConfig(agentId)) {
         return registryTools.filter(
           (tool) =>
+            tool.name !== 'runtime_debug' &&
+            !toolRegistry.isRuntimeScoped(tool.name) &&
             (capabilityScope === 'default' || tool.name === 'finish_task') &&
             (isSystemProtocolTool(tool.name) || !disabled.has(tool.name)),
         )
@@ -1194,8 +1310,8 @@ export async function createAppContext(config: AppConfig): Promise<AppContext> {
           !disabled.has(tool.name),
       )
     },
-    resolveToolDefinitions: (definitions, agentId) =>
-      toolRegistry.resolveDefinitions(definitions, agentId),
+    resolveToolDefinitions: (definitions, agentId, threadId) =>
+      toolRegistry.resolveDefinitions(definitions, agentId, threadId),
     clearDynamicCapabilities: (scopeId) => capabilityGate.clearSession(scopeId),
     // 取消检测 → RuntimeStateService
     cancelChecker: runtimeStateService,
@@ -1388,42 +1504,51 @@ export async function createAppContext(config: AppConfig): Promise<AppContext> {
     ...(dbTtsApiBase && { apiBase: dbTtsApiBase }),
     ...(dbTtsApiKey && { apiKey: dbTtsApiKey }),
   })
-  const unregisterTtsProvider = capabilityDirectory.registerProvider(
-    {
-      offerId: `audio.tts.generate@1.0:${localNodeId}`,
-      provider: {
-        objectType: 'capability-provider',
-        objectId: 'audio.tts.generate/provider' as import('@infos/shared').KernelObjectId,
-        generation: 1,
-        ownerPrincipalId: 'system',
-        authorityNodeId: localNodeId,
-        authorityEpoch: 1,
+  ttsService.configureReferences({
+    root: path.join(config.dataDir, 'assets', 'tts-references'),
+    authority: assetFileAuthority,
+    repository: kernelAssetRepo,
+  })
+  await ttsService.loadWorkspace(configRepo).catch(() => {
+    ttsService.updateConfig({ provider: 'local' })
+    logger.warn(__t('server.tts', '语音配置无效，请检查字段与引用'))
+  })
+  const registerTtsProvider = () =>
+    capabilityDirectory.registerProvider(
+      {
+        offerId: `audio.tts.generate@1.0:${localNodeId}`,
+        provider: {
+          objectType: 'capability-provider',
+          objectId: 'audio.tts.generate/provider' as import('@infos/shared').KernelObjectId,
+          generation: 1,
+          ownerPrincipalId: 'system',
+          authorityNodeId: localNodeId,
+          authorityEpoch: 1,
+        },
+        capabilityType: 'audio.tts.generate',
+        contractVersion: '1.0',
+        operations: ['generate'],
+        resourceKinds: ['audio', 'speech'],
+        health: ttsService.hasAvailablePreset ? 'available' : 'unavailable',
+        placement: {
+          providerNodeId: localNodeId,
+          providerFacet: 'capability',
+          executionLocation: 'node-local',
+          resourceAuthorityNodeId: localNodeId,
+          supportsHeadless: true,
+          dataResidency: ttsService.isRemote ? 'unrestricted' : 'node-only',
+          latencyClass: ttsService.isRemote ? 'wan' : 'local',
+          costClass: ttsService.isMetered ? 'metered' : 'free',
+        },
       },
-      capabilityType: 'audio.tts.generate',
-      contractVersion: '1.0',
-      operations: ['generate'],
-      resourceKinds: ['audio', 'speech'],
-      health: ttsService.isAvailable ? 'available' : 'unavailable',
-      placement: {
-        providerNodeId: localNodeId,
-        providerFacet: 'capability',
-        executionLocation: 'node-local',
-        resourceAuthorityNodeId: localNodeId,
-        supportsHeadless: true,
-        dataResidency: 'node-only',
-        latencyClass: 'local',
-        costClass: 'free',
-      },
-    },
-    async (envelope) => {
-      if (envelope.payload.operation !== 'generate') {
-        throw new Error(`CAPABILITY_OPERATION_UNSUPPORTED: ${envelope.payload.operation}`)
-      }
-      return ttsService.synthesize(
-        envelope.payload.input as import('./services/voice/ttsService').TtsRequest,
-      )
-    },
-  )
+      createTtsCapabilityInvoke(ttsService),
+    )
+  let unregisterTtsProvider = registerTtsProvider()
+  const unsubscribeTtsConfig = ttsService.onConfigChanged(() => {
+    unregisterTtsProvider()
+    unregisterTtsProvider = registerTtsProvider()
+  })
+  kernelLifecycle.defer(unsubscribeTtsConfig)
   kernelLifecycle.defer(() => unregisterTtsProvider())
   const audioDeliveryService = new AudioDeliveryService(
     path.join(config.dataDir, 'assets', 'audio'),
@@ -1605,6 +1730,7 @@ export async function createAppContext(config: AppConfig): Promise<AppContext> {
   await privacyDeletionService.initialize()
   kernelLifecycle.defer(() => attachmentService.dispose())
   const chatBackgroundService = new ChatBackgroundService(pathResolver, configRepo)
+  const userAvatarService = new UserAvatarService(pathResolver, configRepo)
   const conversationProjection = new ConversationProjectionService(
     threadService,
     attachmentService,
@@ -1785,6 +1911,7 @@ export async function createAppContext(config: AppConfig): Promise<AppContext> {
         `辅助上下文：${JSON.stringify(request.context ?? {})}\n请判断后给出简洁、可执行的结构化建议。`,
       inputPersistence: 'ephemeral',
       outputPersistence: 'ephemeral',
+      capabilityScope: 'follow_up',
     })
     return { decision: 'responded', content: result.reply, correlationId: request.correlationId }
   })
@@ -1798,23 +1925,42 @@ export async function createAppContext(config: AppConfig): Promise<AppContext> {
     agentInputService,
   )
   backgroundTaskService.setPlanService(taskPlanService)
+  backgroundTaskService.registerDelegatedExecutor(
+    'social',
+    createSocialTaskExecutor(appManager, backgroundTaskRepo),
+  )
   const authorizeTaskOrigin = async (
     origin: import('@infos/shared').TaskOrigin,
   ): Promise<string | undefined> => {
-    const social = await configRepo.getJson<{ ownerQq?: string; agentId?: string }>('social')
-    if (
-      origin.platform !== 'qq' ||
-      origin.channelType !== 'private' ||
-      !social?.ownerQq ||
-      origin.senderId !== String(social.ownerQq) ||
-      origin.channelId !== origin.senderId ||
-      !social.agentId ||
-      !agentManager.getAgent(social.agentId)
-    )
-      return undefined
-    return social.agentId
+    return taskDeliveryService.authorizeOrigin(origin)
   }
   const taskDeliveryService = new TaskDeliveryService(db, gatewayHub, authorizeTaskOrigin)
+  appManager.setSocialHostCapabilityFactory((realmId) =>
+    createSocialHostCapabilities({
+      realmId,
+      realms: applicationRealms,
+      tools: toolRegistry,
+      executor: toolExecutor,
+      authorize: authorizeTaskOrigin,
+      activity: async (agentId) =>
+        (
+          await backgroundTaskService.query({
+            agentId,
+            pageSize: 12,
+            status: ['queued', 'running', 'waiting', 'waiting_input', 'paused', 'blocked'],
+          })
+        ).items
+          .filter((task) => task.category !== 'resident' && !task.parentTaskId)
+          .map((task) => ({
+            id: task.id,
+            title: task.title,
+            status: task.status,
+            stage: task.currentStage?.slice(0, 300),
+            revision: task.revision,
+          })),
+    }),
+  )
+  taskDeliveryService.setConversationDelivery((input, id) => conversationQueue.enqueue(id, input))
   appManager.setCreativePort(pictoria.socialPort(authorizeTaskOrigin, taskDeliveryService))
   const taskControlService = new TaskControlService(
     backgroundTaskService,
@@ -1867,7 +2013,9 @@ export async function createAppContext(config: AppConfig): Promise<AppContext> {
   })
   taskDeliveryService.recover()
   appManager.setTaskPorts({
-    control: { execute: (origin, input) => taskControlService.remote(origin, input) },
+    control: {
+      execute: (origin, input, callId) => taskControlService.remote(origin, input, callId),
+    },
     registerDelivery: (port) => taskDeliveryService.register(port),
   })
   appManager.setStatusCardPort({
@@ -1897,8 +2045,36 @@ export async function createAppContext(config: AppConfig): Promise<AppContext> {
     },
   })
   setTaskToolRuntime({
-    control: (agentId, input, threadId) =>
-      taskControlService.execute(agentId, input, undefined, false, threadId),
+    delegateSocial: async (input, context) => {
+      const task = await backgroundTaskService.dispatch({
+        agentId: context.agentId,
+        instruction: input.intent || '结合近期上下文自然参与目标群聊',
+        title: __t('server.task', '社交委派 · {0} {1}', [input.platform ?? '', input.group_id]),
+        requestedBy: context.taskId ? 'agent' : (context.requestedBy ?? 'user'),
+        targetThreadId: context.threadId,
+        completionAction: context.taskId ? 'notify' : 'send_to_chat',
+        parentTaskId: context.taskId,
+        parentExecutionId: context.executionId,
+        idempotencyKey: `social-delegation:${context.threadId}:${context.toolCallId ?? crypto.randomUUID()}`,
+        metadata: {
+          delegatedExecutor: 'social',
+          socialInput: input,
+          originThreadId: context.threadId,
+        },
+      })
+      return {
+        accepted: true,
+        taskId: task.id,
+        revision: task.revision,
+        status: task.status,
+        message: __t(
+          'server.task',
+          '社交工作已持久化派发；通过 manage_task 查询结果，父任务可等待该任务。',
+        ),
+      }
+    },
+    control: (agentId, input, threadId, context) =>
+      taskControlService.execute(agentId, input, undefined, false, threadId, context),
     submitSegment: (taskId, executionId, result) =>
       backgroundTaskService.submitSegment(taskId, executionId, result),
     beforeTool: (taskId, executionId, name, callId) =>
@@ -1923,6 +2099,7 @@ export async function createAppContext(config: AppConfig): Promise<AppContext> {
       backgroundTaskRepo.findById(id).then((row) => (row ? { status: row.status } : null)),
     cancel: (id) => backgroundTaskService.cancel(id),
   })
+  await backgroundTaskRepo.pruneOrphanResidents(agentManager.listAgents().map((agent) => agent.id))
   for (const agent of agentManager.listAgents()) {
     const residentId = `resident_memory_${agent.id}`
     const existingResident = await backgroundTaskRepo.findById(residentId)
@@ -2057,6 +2234,7 @@ export async function createAppContext(config: AppConfig): Promise<AppContext> {
     eventNoteRepo,
     factsRepo,
     knowledgeService,
+    knowledgeRecallService,
     embeddingService,
     llmService,
     promptWorkspace,
@@ -2067,6 +2245,13 @@ export async function createAppContext(config: AppConfig): Promise<AppContext> {
     modelRegistry,
     modelService,
     agentManager,
+    async cleanupDeletedAgent(agentId: string): Promise<void> {
+      memoryAgents.invalidate(agentId)
+      await Promise.all([
+        backgroundTaskRepo.deleteResidentsForAgent(agentId),
+        eventNoteRepo.retireAgentBackgroundWork(agentId),
+      ])
+    },
     petStateService,
     agentService,
     // AIOS: promptService 已移除（死代码）
@@ -2101,6 +2286,7 @@ export async function createAppContext(config: AppConfig): Promise<AppContext> {
     htmlPreviewService,
     documentService,
     chatBackgroundService,
+    userAvatarService,
     // M05: 统一任务中心
     backgroundTaskService,
     taskControlService,
@@ -2121,6 +2307,10 @@ export async function createAppContext(config: AppConfig): Promise<AppContext> {
     inboundRouteService,
     packageRegistry,
     packageInstaller,
+    packageManagement,
+    packageUi,
+    runtimeDebug,
+    packageAssets,
     packageRuntime,
     mcpManager,
     mcpRegistrySynchronizer,
@@ -2216,6 +2406,10 @@ export async function createAppContext(config: AppConfig): Promise<AppContext> {
     },
 
     async reloadTtsConfig(): Promise<void> {
+      if (await configRepo.get('tts.workspace.v1')) {
+        await ttsService.loadWorkspace(configRepo)
+        return
+      }
       const provider = await configRepo.get('tts.provider')
       const voice = await configRepo.get('tts.voice')
       const rate = await configRepo.get('tts.rate')
@@ -2233,6 +2427,7 @@ export async function createAppContext(config: AppConfig): Promise<AppContext> {
         ...(apiBase && { apiBase }),
         ...(apiKey && { apiKey }),
       })
+      await ttsService.loadWorkspace(configRepo)
       logger.info(__t('logs.container.ts', 'TTS 配置已热更新'))
     },
 
@@ -2462,6 +2657,9 @@ export async function initAppContext(ctx: AppContext): Promise<void> {
 
   // 2. 激活用户 Package；失败包保持 failed 状态，不阻断内核启动。
   for (const installed of ctx.packageRegistry.list()) {
+    if (process.env.INFOS_RESOURCE_SAFE_MODE === '1' && installed.manifest.trust !== 'official')
+      continue
+    if (ctx.packageManagement.manages(installed.manifest.packageId)) continue
     if (ctx.integrationService.managedPackage(installed.manifest.packageId)) continue
     try {
       await ctx.packageRuntime.activate(installed.manifest.packageId)
@@ -2473,6 +2671,7 @@ export async function initAppContext(ctx: AppContext): Promise<void> {
   }
 
   await ctx.integrationService.reconcile()
+  if (process.env.INFOS_RESOURCE_SAFE_MODE !== '1') await ctx.packageManagement.startEnabled()
   // 3. Package Tool Contribution 已在激活时直接注册到 ToolRegistry。
 
   // 4. 扫描资产目录 (B6-5)
@@ -2495,7 +2694,7 @@ export async function initAppContext(ctx: AppContext): Promise<void> {
 
   // 5. 连接 MCP 服务器 + 桥接工具到 ToolRegistry
   try {
-    await ctx.mcpManager.connectAll()
+    if (process.env.INFOS_RESOURCE_SAFE_MODE !== '1') await ctx.mcpManager.connectAll()
     const synced = ctx.mcpRegistrySynchronizer.sync()
     logger.info(
       __t('logs.container.ts', 'MCP 工具桥接完成: {0} 个工具已同步', [synced.registered.length]),
@@ -2641,5 +2840,5 @@ export async function initAppContext(ctx: AppContext): Promise<void> {
   }
 
   // 注意：社交模式初始化（section 8）已迁移到 SocialAppRuntime.initialize()
-  // 由 AppManager.launch 启动社交应用时自动完成（创建 SocialBridge + NapcatAdapter + 启动调度器）
+  // 由 AppManager.launch 启动社交应用时自动完成（创建 SocialBridge + 平台适配器 + 启动调度器）
 }

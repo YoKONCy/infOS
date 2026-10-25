@@ -1,3 +1,4 @@
+import './utils/stdioGuard'
 import { t as __t } from './utils/i18n'
 /**
  * @file Electron 主进程入口
@@ -15,7 +16,7 @@ import { t as __t } from './utils/i18n'
  * @module electron/main
  */
 
-import { app, BrowserWindow, dialog, protocol } from 'electron'
+import { app, BrowserWindow, protocol, safeStorage } from 'electron'
 import { release } from 'node:os'
 import { logger } from './utils/logger'
 import { windowManager } from './windows/manager'
@@ -30,32 +31,44 @@ import { paths } from './utils/env'
 import { StartupSplash } from './windows/startupSplash'
 import { waitForLauncherFirstFrame } from './windows/launcherFirstFrame'
 import { StartupFlow } from './services/startupFlow'
+import {
+  ClientConnectionStore,
+  clientConnection,
+  configureClientConnection,
+  ensureSelectedBackend,
+  isRemoteConnection,
+} from './services/clientConnection'
+import {
+  configureConnectionSetup,
+  showConnectionSetup,
+  focusConnectionSetup,
+} from './services/clientConnectionSetup'
+import { notifyRendererError, reportMainError } from './utils/mainErrorHandler'
 
 configureClientCredential(process.env.PERO_DATA_DIR || paths.data)
-
-/** 向所有存活渲染窗口广播可见的系统错误，日志仍保留作诊断。 */
-function notifyRendererError(title: string, message: string): void {
-  BrowserWindow.getAllWindows().forEach((win) => {
-    if (!win.isDestroyed()) win.webContents.send('system-error', { title, message })
-  })
-}
+configureClientConnection(
+  new ClientConnectionStore(paths.userData, {
+    encrypt(value) {
+      if (
+        !safeStorage.isEncryptionAvailable() ||
+        (process.platform === 'linux' && safeStorage.getSelectedStorageBackend?.() === 'basic_text')
+      )
+        throw new Error('CONNECTION_ENCRYPTION_UNAVAILABLE')
+      return safeStorage.encryptString(value).toString('base64')
+    },
+    decrypt(value) {
+      return safeStorage.decryptString(Buffer.from(value, 'base64'))
+    },
+  }),
+)
 
 // ─── 全局错误捕获 ─────────────────────────────────────
 process.on('uncaughtException', (error) => {
-  const msg = `未捕获的异常: ${error.message}\n${error.stack}`
-  logger.error('Main', msg)
-  notifyRendererError('桌面应用异常', error.message)
-  try {
-    dialog.showErrorBox(__t('electron.ui.index.ts', '应用启动错误'), msg)
-  } catch {
-    // 忽略
-  }
+  reportMainError('exception', error)
 })
 
 process.on('unhandledRejection', (reason) => {
-  const message = reason instanceof Error ? reason.message : String(reason)
-  logger.error('Main', __t('electron.logs.index.ts', '未处理的 Promise 拒绝: {0}', [message]))
-  notifyRendererError('桌面服务异常', message)
+  reportMainError('rejection', reason)
 })
 
 // ─── 协议注册 (必须在 app.ready 之前) ──────────────────
@@ -142,6 +155,17 @@ const startupFlow = new StartupFlow({
   phase: (phase) => startupSplash.setPhase(phase),
   open: () => startupSplash.open(),
   prepare: async () => {
+    // 重试选择服务器前销毁旧隐藏页面，旧请求不能携带新服务器的凭据。
+    windowManager.launcherWin?.destroy()
+    const selected = clientConnection().load()
+    if (!selected) await showConnectionSetup()
+    else if (selected.mode === 'remote') {
+      try {
+        await clientConnection().verify()
+      } catch {
+        await showConnectionSetup(true, '连接失败，请检查地址、令牌和网络。')
+      }
+    }
     // 开屏已绘制后再扫描资源；外部模型映射仍先于 Launcher 初始化。
     const { registerAssetProtocol, scan3DModels } = await import('./services/assets')
     if (!assetProtocolRegistered) {
@@ -152,7 +176,7 @@ const startupFlow = new StartupFlow({
   },
   backend: async () => {
     const { ensurePortableDaemon } = await import('./services/portableDaemon')
-    return ensurePortableDaemon()
+    return ensureSelectedBackend(ensurePortableDaemon)
   },
   launcher: async (signal) => {
     // 前一次失败的隐藏页面不能携带旧的首帧握手进入下一次重试。
@@ -166,7 +190,7 @@ const startupFlow = new StartupFlow({
   },
   verifyBackend: async () => {
     const { probeBusinessHealth } = await import('./services/portableDaemon')
-    return probeBusinessHealth()
+    return ensureSelectedBackend(probeBusinessHealth)
   },
   finish: (signal) => startupSplash.finish(signal),
   reveal: () => {
@@ -181,8 +205,19 @@ const startupFlow = new StartupFlow({
     windowManager.setStartupVisibilityGate(null)
     windowManager.showLauncherWindow()
   },
-  close: () => startupSplash.dispose(),
+  close: () => startupSplash.hide(),
   failed: (kind, error) => startupSplash.fail(kind, error),
+})
+configureConnectionSetup({
+  selectConnection: (activate = true, error = '') => {
+    // 启动进行中只聚焦现有开屏，不能插入另一轮配置并打断显窗门控。
+    if (!activate && startupFlow.running) {
+      startupSplash.focus()
+      return Promise.reject(new Error('CONNECTION_STARTUP_IN_PROGRESS'))
+    }
+    return startupSplash.selectConnection(activate, error)
+  },
+  focusConnection: () => startupSplash.focusConnection(),
 })
 
 async function startDesktop(): Promise<void> {
@@ -221,7 +256,12 @@ async function startDesktop(): Promise<void> {
 // 窗口、后端与重试共享同一启动链；浏览器和 Docker 入口不使用此过渡。
 app
   .whenReady()
-  .then(() => startDesktop())
+  .then(async () => {
+    // 恢复托盘先于后端加载，首次启动失败时也必须保留原生恢复入口。
+    const { createTray } = await import('./services/tray')
+    createTray()
+    await startDesktop()
+  })
   .catch((error) => startupSplash.fail('shell', error))
 
 // ─── 应用生命周期 ─────────────────────────────────────
@@ -259,31 +299,32 @@ app.on('before-quit', async (event) => {
     windowManager.destroyAll()
 
     // 2.分别停止当前宿主托管的子应用；一个失败不阻塞另一个，外部实例保持独立。
-    await Promise.all(
-      ['arca', 'pictoria'].map(async (name) => {
-        try {
-          const token = getClientCredential()
-          const response = await fetch(
-            `http://127.0.0.1:${Number(process.env.PERO_PORT ?? 9120)}/api/applications/${name}/shutdown-managed`,
-            {
-              method: 'POST',
-              headers: token ? { Authorization: `Bearer ${token}` } : undefined,
-              signal: AbortSignal.timeout(12000),
-              redirect: 'error',
-            },
-          )
-          if (!response.ok) throw new Error(`HTTP ${response.status}`)
-        } catch (error) {
-          logger.warn(
-            'Main',
-            __t('electron.logs.index.ts', '停止托管 {0} 失败，继续退出清理：{1}', [
-              name,
-              String(error),
-            ]),
-          )
-        }
-      }),
-    )
+    if (!isRemoteConnection())
+      await Promise.all(
+        ['arca', 'pictoria'].map(async (name) => {
+          try {
+            const token = getClientCredential()
+            const response = await fetch(
+              `http://127.0.0.1:${Number(process.env.PERO_PORT ?? 9120)}/api/applications/${name}/shutdown-managed`,
+              {
+                method: 'POST',
+                headers: token ? { Authorization: `Bearer ${token}` } : undefined,
+                signal: AbortSignal.timeout(12000),
+                redirect: 'error',
+              },
+            )
+            if (!response.ok) throw new Error(`HTTP ${response.status}`)
+          } catch (error) {
+            logger.warn(
+              'Main',
+              __t('electron.logs.index.ts', '停止托管 {0} 失败，继续退出清理：{1}', [
+                name,
+                String(error),
+              ]),
+            )
+          }
+        }),
+      )
 
     await closePictoriaDesktopGuard()
     await closeArcaDesktopGuard()
@@ -342,7 +383,7 @@ app.on('before-quit', async (event) => {
 app.on('second-instance', () => {
   if (isPreparingQuit) return
   if (!startupFlow.completed) {
-    startupSplash.focus()
+    if (!focusConnectionSetup()) startupSplash.focus()
     return
   }
   logger.info('Main', __t('electron.logs.index.ts', '第二个实例启动请求，激活现有窗口'))

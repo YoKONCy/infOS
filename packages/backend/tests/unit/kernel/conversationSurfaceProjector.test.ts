@@ -31,6 +31,47 @@ function message(revision = 1): ConversationMessageProjection {
 }
 
 describe('Conversation Surface Projector', () => {
+  it('重建历史时使用搜索列表预览，不被无正文的工具审计覆盖', () => {
+    const value = message()
+    const preview = JSON.stringify({
+      matches: [{ file: '/project/a.ts', line: 3, column: 7, content: '命中' }],
+      total: 1,
+      fileCount: 1,
+      navigation: {
+        agentId: 'pero',
+        threadId: 'thread-1',
+        resultRef: 'tool-result:aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee',
+      },
+    })
+    value.toolCalls = [
+      {
+        callId: 'search',
+        name: 'code_search',
+        args: '{}',
+        result: '{"kind":"tool_result_audit","fileCount":1,"total":1}',
+        isError: false,
+      },
+    ]
+    value.contentBlocks = [
+      {
+        kind: 'tool',
+        blockId: 'search-block',
+        sequence: 1,
+        turn: 1,
+        callId: 'search',
+        name: 'code_search',
+        args: '{}',
+        result: preview,
+        isError: false,
+      },
+    ]
+    const restored = JSON.parse(JSON.stringify(value))
+    const result = new ConversationSurfaceProjector()
+      .projectMessage(restored, 'pero')
+      .nodes.find((node) => node.kind === 'tool-result')
+    expect(result?.props).toMatchObject({ callId: 'search', result: preview })
+  })
+
   it('旧 NIT 审计记录补进对应脚本，已有子时间线不重复渲染', () => {
     const value = message()
     value.contentBlocks = [

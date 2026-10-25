@@ -64,6 +64,7 @@ export interface HostDiaryReaderPort {
  * - memoryProvider 字段仅供应用私有记忆访问（非 Compiler 直接检索）
  */
 export interface AppRuntimeContext {
+  hostCapabilities?: import('@infos/shared').SocialHostCapabilityPort
   resources?: import('@infos/shared').SocialResourcePort
   creative?: import('@infos/shared').ApplicationCreativePort
   /** 受信任社交应用的状态卡片输出口；仅采集与渲染，不唤醒主 Agent。 */
@@ -132,7 +133,7 @@ export interface AppRuntimeContext {
   socialEvents?: SocialEventPort
   socialExecutions?: SocialExecutionPort
   /** 宿主签发的社交传输入口；返回该次注册的释放函数，跨 bundle 共享宿主权威。 */
-  registerSocialTransport?: (adapter: SocialWebSocketAdapterPort) => () => void
+  registerSocialTransport?: (adapter: SocialWebSocketAdapterPort, platform?: string) => () => void
   /** 只允许读取宿主 Agent 的 Workspace 日记，不暴露通用文件系统能力。 */
   hostDiaryReader?: HostDiaryReaderPort
   /**

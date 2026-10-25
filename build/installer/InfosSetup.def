@@ -1,0 +1,11 @@
+LIBRARY InfosSetup
+EXPORTS
+  Init
+  Scene
+  Control
+  Capture
+  Enter
+  Progress
+  Tips
+  Group
+  Failure

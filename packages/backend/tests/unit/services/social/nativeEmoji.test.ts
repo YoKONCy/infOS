@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from 'vitest'
 import type { SocialMessageRecord, SocialStoragePort } from '@infos/shared'
-import { NativeEmojiService } from '@infos/social/runtime/nativeEmoji'
+import { NativeEmojiService } from '@infos/social/adapters/napcat/nativeEmoji'
 import {
   cleanCQCodes,
   extractAttachments,

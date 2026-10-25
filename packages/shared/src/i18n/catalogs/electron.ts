@@ -216,3 +216,9 @@ registerCatalog('electron.ui.startupSplash', 'en-US', splashUiEn)
 registerCatalog('electron.logs.startupSplash', 'zh-CN', splashLogsZh)
 registerCatalog('electron.logs.startupSplash', 'zh-TW', splashLogsTw)
 registerCatalog('electron.logs.startupSplash', 'en-US', splashLogsEn)
+import resourceVersionsZh from '../locales/zh-CN/electron/ui/resource-recovery.json'
+import resourceVersionsTw from '../locales/zh-TW/electron/ui/resource-recovery.json'
+import resourceVersionsEn from '../locales/en-US/electron/ui/resource-recovery.json'
+registerCatalog('electron.ui.resource-recovery', 'zh-CN', resourceVersionsZh)
+registerCatalog('electron.ui.resource-recovery', 'zh-TW', resourceVersionsTw)
+registerCatalog('electron.ui.resource-recovery', 'en-US', resourceVersionsEn)

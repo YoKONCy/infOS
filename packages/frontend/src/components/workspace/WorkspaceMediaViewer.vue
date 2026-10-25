@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { t as __t } from '../../i18n/index'
 
-import { computed, onBeforeUnmount, ref, watch } from 'vue'
+import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import type { WorkspacePreviewState } from './workspacePreview'
 import WorkspaceFileGlyph from './WorkspaceFileGlyph.vue'
 
@@ -15,9 +15,9 @@ const props = defineProps<{
 const emit = defineEmits<{
   error: [message: string]
   state: [patch: Partial<WorkspacePreviewState>]
+  fullscreen: []
 }>()
 const media = ref<HTMLMediaElement | null>(null)
-const screen = ref<HTMLElement | null>(null)
 const playing = ref(false),
   waiting = ref(false),
   duration = ref(0),
@@ -48,7 +48,7 @@ async function toggle() {
     await media.value.play()
   } catch (error) {
     if (!(error instanceof DOMException && error.name === 'AbortError'))
-      emit('error', '无法播放该文件，可用系统应用打开')
+      emit('error', __t('ui.workspace', '无法播放该文件，可用系统应用打开'))
   }
 }
 function seek(event: Event) {
@@ -71,24 +71,65 @@ function mute() {
   emit('state', { muted })
   if (media.value) media.value.muted = muted
 }
-async function fullscreen() {
-  try {
-    if (document.fullscreenElement === screen.value) await document.exitFullscreen()
-    else await screen.value?.requestFullscreen()
-  } catch {
-    /* 当前窗口不支持全屏时继续在工作区播放。 */
-  }
-}
 watch(
   () => props.active,
   (active) => {
-    if (!active) media.value?.pause()
+    // 音频继续在后台播放；只有视频随文件、页面与窗口可见性暂停。
+    if (!active && props.kind === 'video') media.value?.pause()
   },
 )
 watch(rate, () => {
   if (media.value) media.value.playbackRate = rate.value
 })
+watch(
+  () => props.src,
+  (source) => {
+    if (props.kind !== 'audio' || !media.value) return
+    media.value.pause()
+    ready.value = false
+    waiting.value = false
+    duration.value = 0
+    media.value.src = source
+  },
+)
+let detachAudio: (() => void) | undefined
+onMounted(() => {
+  if (props.kind !== 'audio') return
+  // 音频不依附页面 DOM，KeepAlive 移走工作区节点时也不会被浏览器中断。
+  const audio = new Audio()
+  audio.preload = 'metadata'
+  media.value = audio
+  const handlers: Record<string, EventListener> = {
+    loadedmetadata: metadata,
+    timeupdate: () => emit('state', { position: audio.currentTime || 0 }),
+    play: () => {
+      playing.value = true
+    },
+    pause: () => {
+      playing.value = false
+    },
+    ended: () => {
+      playing.value = false
+    },
+    waiting: () => {
+      waiting.value = true
+    },
+    playing: () => {
+      waiting.value = false
+    },
+    canplay: () => {
+      waiting.value = false
+    },
+    error: () => emit('error', __t('ui.workspace', '当前文件或编码无法播放，可用系统应用打开')),
+  }
+  for (const [name, handler] of Object.entries(handlers)) audio.addEventListener(name, handler)
+  detachAudio = () => {
+    for (const [name, handler] of Object.entries(handlers)) audio.removeEventListener(name, handler)
+  }
+  audio.src = props.src
+})
 onBeforeUnmount(() => {
+  detachAudio?.()
   const element = media.value
   if (element) {
     element.pause()
@@ -98,19 +139,26 @@ onBeforeUnmount(() => {
 })
 </script>
 <template>
-  <div ref="screen" class="workspace-media" :class="{ 'workspace-media--audio': kind === 'audio' }">
-    <div class="workspace-media__stage" @dblclick="kind === 'video' && fullscreen()">
-      <component
-        :is="kind === 'video' ? 'video' : 'audio'"
+  <div
+    class="workspace-media"
+    :class="{ 'workspace-media--audio': kind === 'audio', 'workspace-media--inactive': !active }"
+  >
+    <div class="workspace-media__stage" @dblclick="kind === 'video' && emit('fullscreen')">
+      <video
+        v-if="kind === 'video'"
         ref="media"
         :src="src"
         preload="metadata"
         playsinline
-        :class="{ 'workspace-media__audio': kind === 'audio' }"
         :aria-label="name"
         @loadedmetadata="metadata"
         @timeupdate="emit('state', { position: media?.currentTime || 0 })"
-        @play="playing = true"
+        @play="
+          () => {
+            playing = true
+            if (!active) media?.pause()
+          }
+        "
         @pause="playing = false"
         @ended="playing = false"
         @waiting="waiting = true"
@@ -189,9 +237,6 @@ onBeforeUnmount(() => {
         <option :value="1.5">1.5×</option>
         <option :value="2">2×</option>
       </select>
-      <button v-if="kind === 'video'" type="button" @click="fullscreen">
-        {{ __t('ui.workspace', '全屏') }}
-      </button>
     </div>
   </div>
 </template>
@@ -218,9 +263,6 @@ onBeforeUnmount(() => {
   height: 100%;
   min-height: 0;
   object-fit: contain;
-}
-.workspace-media__audio {
-  display: none;
 }
 .workspace-media--audio .workspace-media__stage {
   background:
@@ -275,6 +317,9 @@ onBeforeUnmount(() => {
 .playing .workspace-media__bars i {
   animation: workspace-wave 950ms steps(4, end) var(--delay) infinite alternate;
 }
+.workspace-media--inactive .workspace-media__bars i {
+  animation-play-state: paused;
+}
 .workspace-media__waiting {
   position: absolute;
   left: 12px;
@@ -316,10 +361,6 @@ onBeforeUnmount(() => {
 }
 .workspace-media__volume {
   width: 65px;
-}
-.workspace-media:fullscreen {
-  width: 100%;
-  height: 100%;
 }
 @keyframes workspace-wave {
   to {

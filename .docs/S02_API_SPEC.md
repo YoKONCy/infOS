@@ -316,6 +316,8 @@ data: {"code":"LLM_ERROR","message":"AI 服务异常"}
 
 所有端点位于 `/api/knowledge`，使用标准信封。共享事实端点保持原有合同。
 
+`GET /api/knowledge/recall-settings` 读取独立的自动召回设置；`PUT /api/knowledge/recall-settings` 接受完整的 `{ "documentAutoRecall": false, "factAutoRecall": false }`，两个字段必须为布尔值，默认均关闭。只控制对应资料的自动注入，不控制手动查询工具，也不改变 `memory.runtime`。
+
 | 方法 | 路径 | 用途 |
 | --- | --- | --- |
 | GET | `/documents?query=&page=1&pageSize=30` | 资料列表、分页及统计，pageSize 最大 100 |

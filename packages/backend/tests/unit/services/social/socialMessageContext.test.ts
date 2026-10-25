@@ -1,3 +1,4 @@
+import { NapcatAdapter } from '@infos/social/adapters/napcat'
 import { fileURLToPath } from 'node:url'
 import { MdpEngine } from '@infos/backend/services/prompt/mdpEngine'
 import { describe, expect, it, vi } from 'vitest'
@@ -22,6 +23,8 @@ function message(patch: Partial<InboundMessage> = {}): InboundMessage {
     senderId: '123456',
     senderName: '群友',
     content: '你好',
+    messageId: '1',
+    accountId: '111111',
     rawEvent: { message_id: 1 },
     ...patch,
   }
@@ -44,11 +47,12 @@ describe('社交消息身份与附件上下文', () => {
     const visitor = message({
       senderId: '123456',
       senderName: '主人',
+      isMentioned: true,
       rawEvent: { _isMentioned: true },
     })
     expect(socialTriggerMessage([owner, visitor])).toBe(visitor)
     expect(isSocialMention(visitor)).toBe(true)
-    expect(formatSocialMessage(visitor, '654321')).toContain('QQ:123456 身份:普通联系人')
+    expect(formatSocialMessage(visitor, '654321')).toContain('平台账号:123456 身份:普通联系人')
     expect(formatSocialMessage(owner, '654321')).toContain('身份:主人')
   })
 
@@ -71,7 +75,7 @@ describe('社交消息身份与附件上下文', () => {
         ],
       }),
     } as SocialMessageRecord
-    const restored = restoreSocialMessage(row)
+    const restored = new NapcatAdapter({ defaultAgentId: 'pero' }).restoreMessage(row)
     expect(restored).toMatchObject({
       replyTo: '21',
       isMentioned: true,
@@ -103,7 +107,8 @@ describe('社交消息身份与附件上下文', () => {
 
   it('主人配置规范化，未配置或非法值不赋予主人身份', () => {
     expect(socialOwnerId(' 654321 ')).toBe('654321')
-    for (const value of ['', undefined, 'undefined', 'QQ654321', 0])
+    expect(socialOwnerId('@owner:example.org')).toBe('@owner:example.org')
+    for (const value of ['', undefined, 'bad\u0000id', 'x'.repeat(201)])
       expect(socialOwnerId(value)).toBeUndefined()
   })
 
@@ -132,7 +137,7 @@ describe('社交消息身份与附件上下文', () => {
       instanceId: 'test',
       hostAgentId: 'pero',
       channelType: 'group',
-      ownerQq: '654321',
+      ownerId: '654321',
       ownerAppellation: '主人',
       botAccountIds: ['123456', '654321'],
       triggerSenderId: '123456',
@@ -155,7 +160,7 @@ describe('社交消息身份与附件上下文', () => {
       '当前主要对话对象不是你的主人',
     )
     expect(compiled.messages.map((message) => message.content).join('\n')).toContain(
-      'QQ:123456 身份:普通联系人',
+      '平台账号:123456 身份:普通联系人',
     )
     const prompt = compiled.messages
       .flatMap((entry) =>
@@ -170,7 +175,7 @@ describe('社交消息身份与附件上下文', () => {
       { type: 'text', text: '看看这张图' },
       { type: 'text', text: '图片 1 来源：消息 22，发送者群友' },
       { type: 'image_url', image_url: { url: 'data:image/png;base64,aW1hZ2U=' } },
-      { type: 'text', text: expect.stringContaining('sender_qq="123456" identity="普通联系人"') },
+      { type: 'text', text: expect.stringContaining('sender_id="123456" identity="普通联系人"') },
     ])
   })
 })

@@ -1,0 +1,5 @@
+{
+  "头像文件应大于 0 且不超过 5MB": "The avatar file must be non-empty and no larger than 5 MB.",
+  "请上传客户端裁切生成的 512px PNG 头像": "Upload a 512px PNG avatar cropped by the client.",
+  "请上传裁切后的头像文件": "Upload the cropped avatar file."
+}

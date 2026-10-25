@@ -11,6 +11,32 @@ const context = {
 }
 
 describe('Browser Tool ABI', () => {
+  it('账号范围由可信工具现场覆盖，模型不能切换其他账号的浏览器', async () => {
+    const invoke = vi.fn(async (_operation: string, _input: unknown) => ({}))
+    const tools = createBrowserToolContributions({
+      offer: { operations: ['open'] },
+      invoke,
+    } as unknown as BoundCapabilityPort)
+    const open = tools.find((tool) => tool.definition.name === 'browser_open_url')!
+    await open.handler(
+      { url: 'example.com', __browserScope: { profileId: 'foreign' } },
+      {
+        ...context,
+        browserScope: { profileId: 'qq:owner', sessionId: 'owner-dm' },
+      },
+    )
+    expect(invoke).toHaveBeenCalledWith(
+      'open',
+      {
+        url: 'https://example.com',
+        __browserScope: { profileId: 'qq:owner', sessionId: 'owner-dm', principalId: 'pero' },
+      },
+      expect.any(Object),
+      undefined,
+    )
+    await open.handler({ url: 'example.com', __browserScope: { profileId: 'foreign' } }, context)
+    expect(invoke.mock.calls.at(-1)![1]).toEqual({ url: 'https://example.com' })
+  })
   it('等待工具将取消信号交给能力端，取消观察不会继续打开网页', async () => {
     const parent = new AbortController()
     const invoke = vi.fn(async () => {

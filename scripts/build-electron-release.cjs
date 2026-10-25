@@ -21,6 +21,28 @@ async function main() {
     throw new Error('请指定有效发行版：standard、portable 或 steam')
   }
   const root = path.resolve(__dirname, '..')
+  // 实际内嵌 Node 未修复时立即阻止打包，不能用构建机的 Node 版本代替。
+  const {
+    configurationIssues,
+    configuredElectron,
+    probeElectron,
+    runtimeIssues,
+  } = require('./runtime-security.cjs')
+  const { createRequire } = require('node:module')
+  const electronRequire = createRequire(path.join(root, 'electron/package.json'))
+  const issues = [
+    ...configurationIssues(),
+    ...runtimeIssues(probeElectron(electronRequire('electron')), configuredElectron()),
+  ]
+  if (issues.length) {
+    const { t } = await import('./i18n.mjs')
+    throw new Error(
+      t('scripts.security', '运行时安全检查失败：{0}（{1}）', [
+        'ELECTRON_RELEASE_REJECTED',
+        JSON.stringify(issues),
+      ]),
+    )
+  }
   return buildWithResourceRetry(
     () =>
       new Promise((resolve, reject) => {

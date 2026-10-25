@@ -19,6 +19,7 @@ interface RealmRecord {
   descriptor: ApplicationRealmDescriptor
   scope: LifecycleScope
   tools: Set<string>
+  hostTools: Set<string>
   toolDisposers: Map<string, () => Promise<void>>
 }
 
@@ -43,6 +44,7 @@ export class ApplicationRealmManager {
       descriptor: Object.freeze({ ...descriptor }),
       scope: new LifecycleScope(`application-realm:${descriptor.realmId}`),
       tools: new Set(),
+      hostTools: new Set(),
       toolDisposers: new Map(),
     }
     this.realms.set(descriptor.realmId, record)
@@ -60,7 +62,18 @@ export class ApplicationRealmManager {
 
   allowsTool(realmId: string | undefined, toolName: string): boolean {
     if (!realmId) return !this.toolOwners.has(toolName) || this.hostProjections.has(toolName)
-    return this.realms.get(realmId)?.tools.has(toolName) ?? false
+    const record = this.realms.get(realmId)
+    return !!record && (record.tools.has(toolName) || record.hostTools.has(toolName))
+  }
+
+  /** 仅装配根签发收窄宿主能力，不把授权函数暴露给应用运行时。 */
+  grantHostTools(realmId: string, names: readonly string[]): void {
+    const record = this.require(realmId)
+    for (const name of names) record.hostTools.add(name)
+  }
+
+  hasHostToolGrant(realmId: string, name: string): boolean {
+    return this.realms.get(realmId)?.hostTools.has(name) ?? false
   }
 
   ownsTool(toolName: string): boolean {

@@ -12,8 +12,14 @@ import {
 import fs from 'node:fs'
 import path from 'node:path'
 import { desktopTabs } from '../windows/desktopTabs'
+import {
+  browserInvocationScope,
+  assertBrowserTargetScope,
+  type BrowserInvocationScope,
+} from './browserScope'
 
 interface BrowserTarget {
+  scope: BrowserInvocationScope
   id: string
   view: WebContentsView
   tabId: string
@@ -36,6 +42,7 @@ interface BrowserTarget {
 }
 
 interface BrowserDownload {
+  scopeKey: string
   id: string
   filename: string
   state: 'running' | 'completed' | 'cancelled' | 'failed'
@@ -85,10 +92,32 @@ type SearchEngine = keyof typeof SEARCH_ENGINES
 
 export class ElectronBrowserRuntime {
   private readonly targets = new Map<string, BrowserTarget>()
-  private activeTargetId?: string
+  private defaultActiveTargetId?: string
+  private readonly scopedActiveTargets = new Map<string, string>()
+  private get activeTargetId(): string | undefined {
+    const context = this.invocationContext.getStore()
+    return context ? context.targetId : this.defaultActiveTargetId
+  }
+  private set activeTargetId(id: string | undefined) {
+    const context = this.invocationContext.getStore()
+    if (!context) {
+      this.defaultActiveTargetId = id
+      return
+    }
+    context.targetId = id
+    if (id) this.scopedActiveTargets.set(context.scope.key, id)
+    else this.scopedActiveTargets.delete(context.scope.key)
+    if (context.scope.key === 'legacy') this.defaultActiveTargetId = id
+  }
   private nextTarget = 1
-  private sessionConfigured = false
-  private downloadsAllowed = false
+  private readonly configuredPartitions = new Set<string>()
+  private readonly downloadPermissions = new Map<string, boolean>()
+  private get downloadsAllowed(): boolean {
+    return this.downloadPermissions.get(this.scope().key) ?? false
+  }
+  private set downloadsAllowed(value: boolean) {
+    this.downloadPermissions.set(this.scope().key, value)
+  }
   private readonly downloads = new Map<string, BrowserDownload>()
   private readonly downloadDir = path.join(app.getPath('userData'), 'browser-downloads')
   private invocationQueue: Promise<void> = Promise.resolve()
@@ -96,6 +125,7 @@ export class ElectronBrowserRuntime {
   private invocationTargetId?: string
   private invocationRunning = false
   private readonly invocationContext = new AsyncLocalStorage<{
+    scope: BrowserInvocationScope
     targetId?: string
     cancelled: boolean
   }>()
@@ -113,11 +143,19 @@ export class ElectronBrowserRuntime {
     input: Record<string, unknown>,
     operatorName = 'Agent',
   ): Promise<unknown> {
+    const scope = browserInvocationScope(input.__browserScope, operatorName)
     const run = this.invocationQueue.then(() => {
       this.activeOperator = operatorName
       this.touchRuntime()
-      return this.invocationContext.run({ targetId: this.activeTargetId, cancelled: false }, () =>
-        this.invokeOnce(operation, input),
+      return this.invocationContext.run(
+        {
+          scope,
+          targetId:
+            this.scopedActiveTargets.get(scope.key) ??
+            (scope.key === 'legacy' ? this.defaultActiveTargetId : undefined),
+          cancelled: false,
+        },
+        () => this.invokeOnce(operation, input),
       )
     })
     this.invocationQueue = run.then(
@@ -238,6 +276,8 @@ export class ElectronBrowserRuntime {
   }
 
   private activateTarget(target: BrowserTarget): void {
+    if (this.invocationContext.getStore())
+      assertBrowserTargetScope(target.scope.key, this.scope().key)
     if (this.invocationContext.getStore()?.cancelled)
       throw new Error('WEB_OPERATION_CANCELLED: 浏览器操作已结束')
     this.activeTargetId = target.id
@@ -336,12 +376,17 @@ export class ElectronBrowserRuntime {
       if (!target.view.webContents.isDestroyed()) await desktopTabs.close(target.tabId, true)
     }
     this.targets.clear()
+    this.scopedActiveTargets.clear()
     this.programmaticCloseTargetIds.clear()
     this.activeTargetId = undefined
-    await session
-      .fromPartition(PARTITION)
-      .clearAuthCache()
-      .catch(() => undefined)
+    await Promise.all(
+      [...this.configuredPartitions].map((partition) =>
+        session
+          .fromPartition(partition)
+          .clearAuthCache()
+          .catch(() => undefined),
+      ),
+    )
   }
 
   private async loadUrlWithTimeout(contents: WebContents, url: string): Promise<void> {
@@ -426,6 +471,7 @@ export class ElectronBrowserRuntime {
           : 'bing_global'
     const maxResults = Math.min(30, Math.max(1, Number(input.maxResults ?? 10)))
     const cacheKey = JSON.stringify({
+      partition: this.scope().partition,
       query,
       engine,
       maxResults,
@@ -923,18 +969,20 @@ export class ElectronBrowserRuntime {
   }
 
   private listTargets(): unknown[] {
-    return [...this.targets.values()].map((target) => ({
-      targetId: target.id,
-      title: target.view.webContents.getTitle(),
-      url: target.view.webContents.getURL(),
-      active: target.id === this.activeTargetId,
-      visible: desktopTabs.isVisible(target.tabId),
-      createdAt: target.createdAt,
-      lastUsedAt: target.lastUsedAt,
-      generation: target.generation,
-      retained: target.retained,
-      loading: target.view.webContents.isLoading(),
-    }))
+    return [...this.targets.values()]
+      .filter((target) => target.scope.key === this.scope().key)
+      .map((target) => ({
+        targetId: target.id,
+        title: target.view.webContents.getTitle(),
+        url: target.view.webContents.getURL(),
+        active: target.id === this.activeTargetId,
+        visible: desktopTabs.isVisible(target.tabId),
+        createdAt: target.createdAt,
+        lastUsedAt: target.lastUsedAt,
+        generation: target.generation,
+        retained: target.retained,
+        loading: target.view.webContents.isLoading(),
+      }))
   }
 
   /** 用户创建的页面不会被 Agent 的空闲回收器销毁。 */
@@ -997,14 +1045,19 @@ export class ElectronBrowserRuntime {
       throw new Error(`WEB_TARGET_LIMIT_REACHED: 浏览器标签数量已达上限 ${MAX_TARGETS}`)
     }
     const id = `browser-${this.nextTarget++}`
-    const browserSession = session.fromPartition(PARTITION)
-    if (!this.sessionConfigured) {
+    const scope = this.scope()
+    const browserSession = session.fromPartition(scope.partition)
+    if (!this.configuredPartitions.has(scope.partition)) {
       browserSession.setPermissionRequestHandler((_contents, _permission, callback) =>
         callback(false),
       )
+      browserSession.setPermissionCheckHandler(() => false)
       fs.mkdirSync(this.downloadDir, { recursive: true })
-      browserSession.on('will-download', (event, item) => {
-        if (!this.downloadsAllowed) {
+      browserSession.on('will-download', (event, item, contents) => {
+        const owner = [...this.targets.values()].find(
+          (target) => target.view.webContents === contents,
+        )
+        if (!owner || !this.downloadPermissions.get(owner.scope.key)) {
           event.preventDefault()
           return
         }
@@ -1012,6 +1065,7 @@ export class ElectronBrowserRuntime {
         const filename = path.basename(item.getFilename())
         const destination = path.join(this.downloadDir, `${id}-${filename}`)
         const download: BrowserDownload = {
+          scopeKey: owner.scope.key,
           id,
           filename,
           state: 'running',
@@ -1031,7 +1085,7 @@ export class ElectronBrowserRuntime {
             state === 'completed' ? 'completed' : state === 'cancelled' ? 'cancelled' : 'failed'
         })
       })
-      this.sessionConfigured = true
+      this.configuredPartitions.add(scope.partition)
     }
     const view = new WebContentsView({
       webPreferences: {
@@ -1046,6 +1100,7 @@ export class ElectronBrowserRuntime {
     })
     const now = new Date().toISOString()
     const target: BrowserTarget = {
+      scope,
       id,
       view,
       tabId: id,
@@ -1077,11 +1132,14 @@ export class ElectronBrowserRuntime {
       throw error
     }
     view.webContents.setWindowOpenHandler(({ url: requestedUrl }) => {
-      this.invocationContext.exit(() => {
-        void this.createTarget(requestedUrl, !retained, retained).catch((error) => {
-          this.lastError = String(error)
-        })
-      })
+      this.invocationContext.run(
+        { scope: target.scope, targetId: target.id, cancelled: false },
+        () => {
+          void this.createTarget(requestedUrl, !retained, retained).catch((error) => {
+            this.lastError = String(error)
+          })
+        },
+      )
       return { action: 'deny' }
     })
     view.webContents.on('will-navigate', (event, requestedUrl) => {
@@ -1098,7 +1156,14 @@ export class ElectronBrowserRuntime {
       }
       this.lastCloseReason = programmatic ? 'programmatic' : 'user-closed'
       this.targets.delete(id)
-      if (this.activeTargetId === id) this.activeTargetId = this.targets.keys().next().value
+      for (const [key, selected] of this.scopedActiveTargets)
+        if (selected === id) this.scopedActiveTargets.delete(key)
+      if (this.defaultActiveTargetId === id)
+        this.defaultActiveTargetId = [...this.targets.values()].find(
+          (target) => target.scope.key === 'legacy',
+        )?.id
+      if (this.invocationContext.getStore()?.targetId === id)
+        this.invocationContext.getStore()!.targetId = undefined
       if (!programmatic) {
         if (this.invocationTargetId === id) {
           this.failActiveInvocation('WEB_TARGET_CLOSED', '用户关闭了 Agent 正在操作的浏览器标签')
@@ -1184,6 +1249,7 @@ export class ElectronBrowserRuntime {
   private switchTarget(targetId: string): unknown {
     const target = this.targets.get(targetId)
     if (!target) throw new Error(`WEB_TARGET_NOT_FOUND: ${targetId}`)
+    assertBrowserTargetScope(target.scope.key, this.scope().key)
     this.activateTarget(target)
     return this.listTargets()
   }
@@ -1191,6 +1257,7 @@ export class ElectronBrowserRuntime {
   private async closeTarget(targetId: string): Promise<unknown> {
     const target = this.targets.get(targetId)
     if (!target) return this.listTargets()
+    assertBrowserTargetScope(target.scope.key, this.scope().key)
     this.programmaticCloseTargetIds.add(targetId)
     await desktopTabs.close(target.tabId, true)
     return this.listTargets()
@@ -1329,13 +1396,15 @@ export class ElectronBrowserRuntime {
     return {
       enabled: this.downloadsAllowed,
       directory: this.downloadDir,
-      downloads: [...this.downloads.values()].map((download) => ({
-        ...download,
-        digest:
-          download.state === 'completed' && download.path && fs.existsSync(download.path)
-            ? `sha256:${createHash('sha256').update(fs.readFileSync(download.path)).digest('hex')}`
-            : undefined,
-      })),
+      downloads: [...this.downloads.values()]
+        .filter((download) => download.scopeKey === this.scope().key)
+        .map((download) => ({
+          ...download,
+          digest:
+            download.state === 'completed' && download.path && fs.existsSync(download.path)
+              ? `sha256:${createHash('sha256').update(fs.readFileSync(download.path)).digest('hex')}`
+              : undefined,
+        })),
     }
   }
 
@@ -1380,7 +1449,7 @@ export class ElectronBrowserRuntime {
     const area = String(input.area ?? 'local')
     const action = String(input.action ?? 'get')
     if (area === 'cookies') {
-      const browserSession = session.fromPartition(PARTITION)
+      const browserSession = session.fromPartition(this.scope().partition)
       if (action === 'get')
         return browserSession.cookies.get(
           typeof input.origin === 'string' ? { url: input.origin } : {},
@@ -1434,10 +1503,14 @@ export class ElectronBrowserRuntime {
     const active = this.activeTargetId ? this.targets.get(this.activeTargetId) : undefined
     return {
       available: true,
-      partition: PARTITION,
-      profilePath: path.join(app.getPath('userData'), 'Partitions', 'infos-browser'),
+      partition: this.scope().partition,
+      profilePath: path.join(
+        app.getPath('userData'),
+        'Partitions',
+        this.scope().partition.replace('persist:', ''),
+      ),
       activeTargetId: this.activeTargetId,
-      targetCount: this.targets.size,
+      targetCount: this.listTargets().length,
       maxTargets: MAX_TARGETS,
       idleTimeoutMs: IDLE_TIMEOUT_MS,
       rendererPid: active?.view.webContents.getOSProcessId(),
@@ -1451,7 +1524,9 @@ export class ElectronBrowserRuntime {
       pendingDialog: this.activeTargetId
         ? this.targets.get(this.activeTargetId)?.pendingDialog
         : undefined,
-      downloads: [...this.downloads.values()],
+      downloads: [...this.downloads.values()].filter(
+        (download) => download.scopeKey === this.scope().key,
+      ),
     }
   }
 
@@ -1485,7 +1560,12 @@ export class ElectronBrowserRuntime {
     const id = context ? context.targetId : this.activeTargetId
     const target = id ? this.targets.get(id) : undefined
     if (!target || target.view.webContents.isDestroyed()) throw new Error('WEB_TARGET_UNAVAILABLE')
+    if (context) assertBrowserTargetScope(target.scope.key, context.scope.key)
     return target
+  }
+
+  private scope(): BrowserInvocationScope {
+    return this.invocationContext.getStore()?.scope ?? { key: 'legacy', partition: PARTITION }
   }
 
   private activeContents(): WebContents {

@@ -16,6 +16,7 @@ import { useNotificationStore } from '../../../stores/useNotificationStore'
 import { logger } from '../../../lib/logger'
 
 import DocumentKnowledgePane from '../../knowledge/DocumentKnowledgePane.vue'
+import KnowledgeRecallControls from '../../knowledge/KnowledgeRecallControls.vue'
 import PrivacyCleanupPanel from '../PrivacyCleanupPanel.vue'
 import ArchiveEntryEditor from '../memories/ArchiveEntryEditor.vue'
 import type { ArchiveEditTarget } from '../../../lib/archiveEntryEdit'
@@ -31,7 +32,7 @@ const section = ref<'facts' | 'documents'>('facts')
 const notif = useNotificationStore()
 const retractTarget = ref<FactArchiveRecord | null>(null)
 const retracting = ref(false)
-const factAction = ref<'retract' | 'delete'>('retract')
+const factAction = ref<'retract' | 'delete' | 'restore'>('retract')
 const editTarget = ref<ArchiveEditTarget | null>(null)
 async function onFactEdited(): Promise<void> {
   editTarget.value = null
@@ -39,7 +40,7 @@ async function onFactEdited(): Promise<void> {
   notif.toast(__t('ui.archive-edit', '修改已保存，旧版本已保留。'), 'success')
   await loadFacts()
 }
-function selectFactAction(fact: FactArchiveRecord, action: 'retract' | 'delete'): void {
+function selectFactAction(fact: FactArchiveRecord, action: 'retract' | 'delete' | 'restore'): void {
   factAction.value = action
   retractTarget.value = fact
 }
@@ -128,15 +129,20 @@ async function confirmRetract(): Promise<void> {
   const action = factAction.value
   try {
     if (action === 'delete') await knowledgeApi.deleteFact(target.id)
+    else if (action === 'restore') await knowledgeApi.restoreFact(target.id)
     else await knowledgeApi.retractFact(target.id)
     retractTarget.value = null
     await loadFacts()
     notif.toast(
-      action === 'delete' ? __t('ui.settings', '事实已永久删除') : __t('ui.settings', '事实已撤回'),
+      action === 'restore'
+        ? __t('ui.archive-edit', '事实已还原')
+        : action === 'delete'
+          ? __t('ui.settings', '事实已永久删除')
+          : __t('ui.settings', '事实已撤回'),
       'success',
     )
   } catch (cause) {
-    notif.toast(__t('ui.settings', '删除事实失败：') + (cause as Error).message, 'error')
+    notif.toast(__t('ui.archive-edit', '事实操作失败：{0}', [(cause as Error).message]), 'error')
     retractTarget.value = null
     await loadFacts()
   } finally {
@@ -218,6 +224,8 @@ onMounted(loadFacts)
         <small>{{ documentStats.documentCount }}</small>
       </button>
     </nav>
+
+    <KnowledgeRecallControls :kind="section" />
 
     <section v-if="section === 'facts'" class="facts-workbench">
       <aside class="object-panel">
@@ -402,9 +410,20 @@ onMounted(loadFacts)
                 <span>{{ __t('ui.settings', '已撤回') }}</span>
                 <p>{{ fact.statement }}</p>
                 <time>{{ formatDate(fact.observedAt) }}</time>
-                <PButton size="sm" variant="danger" @click="selectFactAction(fact, 'delete')">
-                  {{ __t('ui.settings', '永久删除') }}
-                </PButton>
+                <div class="history-actions">
+                  <PButton
+                    v-if="!fact.supersededBy"
+                    size="sm"
+                    variant="secondary"
+                    @click="selectFactAction(fact, 'restore')"
+                  >
+                    <PixelIcon name="refresh" size="xs" />
+                    {{ __t('ui.archive-edit', '还原') }}
+                  </PButton>
+                  <PButton size="sm" variant="danger" @click="selectFactAction(fact, 'delete')">
+                    {{ __t('ui.settings', '永久删除') }}
+                  </PButton>
+                </div>
               </article>
             </div>
           </section>
@@ -423,19 +442,27 @@ onMounted(loadFacts)
     <PDialog
       :model-value="Boolean(retractTarget)"
       :title="
-        factAction === 'delete'
-          ? __t('ui.settings', '永久删除事实？')
-          : __t('ui.settings', '撤回事实？')
+        factAction === 'restore'
+          ? __t('ui.archive-edit', '还原事实？')
+          : factAction === 'delete'
+            ? __t('ui.settings', '永久删除事实？')
+            : __t('ui.settings', '撤回事实？')
       "
       :message="
-        factAction === 'delete'
-          ? __t('ui.settings', '将永久删除，无法恢复。')
-          : __t('ui.settings', '退出有效事实，保留历史记录。')
+        factAction === 'restore'
+          ? __t('ui.archive-edit', '重新纳入有效事实，保留原始来源与时间。')
+          : factAction === 'delete'
+            ? __t('ui.settings', '将永久删除，无法恢复。')
+            : __t('ui.settings', '退出有效事实，保留历史记录。')
       "
       :confirm-text="
-        factAction === 'delete' ? __t('ui.settings', '永久删除') : __t('ui.settings', '撤回')
+        factAction === 'restore'
+          ? __t('ui.archive-edit', '还原')
+          : factAction === 'delete'
+            ? __t('ui.settings', '永久删除')
+            : __t('ui.settings', '撤回')
       "
-      confirm-variant="danger"
+      :confirm-variant="factAction === 'restore' ? 'primary' : 'danger'"
       :loading="retracting"
       :auto-close="false"
       @update:model-value="!$event && (retractTarget = null)"
@@ -785,6 +812,11 @@ export default { name: 'KnowledgeTab' }
 }
 .history-card p {
   margin: 0;
+}
+.history-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
 }
 .history-card time {
   color: var(--ui-text-tertiary);

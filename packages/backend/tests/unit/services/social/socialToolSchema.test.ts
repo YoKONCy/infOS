@@ -1,16 +1,17 @@
+import { NAPCAT_ACTIONS as SOCIAL_ACTIONS } from '@infos/social/adapters/napcat/napcatActions'
 import { describe, expect, it } from 'vitest'
-import {
-  SOCIAL_ACTIONS,
-  SOCIAL_BUSINESS_TOOLS,
-  socialToolDefinition,
-  validateSocialInput,
-} from '@infos/shared'
+import { SOCIAL_BUSINESS_TOOLS, socialToolDefinition, validateSocialInput } from '@infos/shared'
 import { sanitizeToolParameters } from '../../../../src/services/llm/sanitize'
 
 describe('社交工具跨模型参数契约', () => {
   it('清洗对象分支时保留每个操作的参数，不裁成第一个空对象', () => {
     for (const name of SOCIAL_BUSINESS_TOOLS) {
-      const wire = sanitizeToolParameters(socialToolDefinition(name).parameters)
+      const wire = sanitizeToolParameters(
+        socialToolDefinition(
+          name,
+          SOCIAL_ACTIONS.filter((item) => item.tool === name),
+        ).parameters,
+      )
       const input = (
         (wire.properties as Record<string, unknown>).input as {
           properties: Record<string, unknown>

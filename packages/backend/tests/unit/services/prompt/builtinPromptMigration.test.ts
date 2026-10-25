@@ -1,4 +1,6 @@
 import { readFileSync } from 'node:fs'
+import { fileURLToPath } from 'node:url'
+import { MdpEngine } from '../../../../src/services/prompt/mdpEngine'
 import { describe, expect, it } from 'vitest'
 import type { PromptDocument } from '@infos/shared'
 import { TASK_PROMPTS } from '../../../../src/services/prompt/taskPrompts'
@@ -21,6 +23,52 @@ function document(body: string): PromptDocument {
 }
 
 describe('内置提示词正文升级', () => {
+  it('原样旧状态槽位升级社交通道过滤，用户改写保持原样', () => {
+    const engine = new MdpEngine(
+      fileURLToPath(new URL('../../../../src/services/mdp/prompts/', import.meta.url)),
+    )
+    const body = engine.getPrompt('slots/800_pet_state')!.content
+    const oldBody = body
+      .replace("{% if channel != 'social' %}", '')
+      .replace('{% endif %}</Current_Status>', '</Current_Status>')
+    expect(builtinBodyHash(oldBody)).toBe(
+      '55b2e7a610ceceaadc408f70fe28d2306dbc71629d6e385b627630c6d9fec8fc',
+    )
+    const original = { ...document(body), id: 'slots/800_pet_state' }
+    const unchanged = { ...original, body: oldBody }
+    const custom = { ...unchanged, body: oldBody + '\n我的规则' }
+    synchronizeBuiltinDocument(unchanged, original)
+    synchronizeBuiltinDocument(custom, original)
+    expect(unchanged.body).toBe(body)
+    expect(custom.body).toBe(oldBody + '\n我的规则')
+  })
+
+  it('原样本轮上下文升级独立资料 XML，用户自定义正文保持不变', () => {
+    const body = readFileSync(
+      new URL(
+        '../../../../src/services/mdp/prompts/components/state/turn_context.md',
+        import.meta.url,
+      ),
+      'utf8',
+    )
+      .replaceAll('\r\n', '\n')
+      .trim()
+    const oldBody = body.replace(
+      '{% if knowledge_context %}<knowledge_context>\n{{ knowledge_context }}\n</knowledge_context>{% endif %}\n{% if facts_context %}<facts_context>\n{{ facts_context }}\n</facts_context>{% endif %}\n',
+      '',
+    )
+    // 已核对的旧发行指纹保证测试原文确实属于已知内置版本。
+    expect(builtinBodyHash(oldBody)).toBe(
+      'ad6124337c958adcbaddcf0aacf94570ea9607e354459881731c2c1cb0a16a83',
+    )
+    const original = { ...document(body), id: 'components/state/turn_context' }
+    const unchanged = { ...original, body: oldBody }
+    const custom = { ...unchanged, body: oldBody + '\n我的规则' }
+    synchronizeBuiltinDocument(unchanged, original)
+    synchronizeBuiltinDocument(custom, original)
+    expect(unchanged.body).toBe(body)
+    expect(custom.body).toBe(oldBody + '\n我的规则')
+  })
   it('旧输出约定升级 selfMinding，但用户自定义正文不覆盖', () => {
     const body = readFileSync(
       new URL(

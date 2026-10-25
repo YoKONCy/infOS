@@ -14,6 +14,7 @@ import { logger } from '../utils/logger'
 import { isDev, paths } from '../utils/env'
 import { getWorkshopInstallations } from './steam'
 import { YsmManifestGenerator } from '@infos/avatar-assets'
+import { assetRequestHeaders } from './assetRequestPolicy'
 
 /** 资产信息 */
 export interface AssetInfo {
@@ -167,6 +168,12 @@ function loadModelManifest(
 export function registerAssetProtocol(): void {
   protocol.handle('asset', async (request) => {
     try {
+      const cors = assetRequestHeaders(
+        request,
+        isDev ? (process.env.ELECTRON_RENDERER_URL ?? process.env.VITE_DEV_SERVER_URL) : undefined,
+      )
+      if (!cors) return new Response(null, { status: 403 })
+      if (request.method === 'OPTIONS') return new Response(null, { status: 204, headers: cors })
       const url = new URL(request.url)
       if (url.hostname !== 'model') return new Response('不支持的资产命名空间', { status: 404 })
 
@@ -181,7 +188,10 @@ export function registerAssetProtocol(): void {
         const manifest = virtualManifests.get(key)
         if (!manifest) return new Response('模型清单未注册', { status: 404 })
         return new Response(JSON.stringify(manifest), {
-          headers: { 'content-type': 'application/json; charset=utf-8' },
+          headers: {
+            ...Object.fromEntries(cors),
+            'content-type': 'application/json; charset=utf-8',
+          },
         })
       }
 
@@ -189,7 +199,16 @@ export function registerAssetProtocol(): void {
       if (!filePath || !fs.existsSync(filePath) || !fs.statSync(filePath).isFile()) {
         return new Response('资产文件不存在', { status: 404 })
       }
-      return net.fetch(pathToFileURL(filePath).toString())
+      const response = await net.fetch(pathToFileURL(filePath).toString(), {
+        method: request.method,
+      })
+      const headers = new Headers(response.headers)
+      cors.forEach((value, name) => headers.set(name, value))
+      return new Response(request.method === 'HEAD' ? null : response.body, {
+        status: response.status,
+        statusText: response.statusText,
+        headers,
+      })
     } catch (e) {
       logger.warn('Assets', __t('electron.logs.assets', 'asset:// 请求失败: {0}', [e]))
       return new Response('资产加载失败', { status: 500 })

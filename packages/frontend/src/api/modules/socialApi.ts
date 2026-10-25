@@ -27,6 +27,31 @@ export interface AdapterStatus {
   error?: string
 }
 
+export interface SocialManagementSnapshot {
+  accounts: Array<{
+    id: string
+    name: string
+    connected: boolean
+    error?: string
+    fullGroupMessages?: boolean
+  }>
+  ownerId?: string
+  login?: { id: string; qrText: string; status: string }
+}
+export interface SocialPlatform {
+  type: string
+  platform: string
+}
+export interface SocialConnection {
+  id: string
+  adapter: string
+  platform: string
+  name: string
+  ownerId?: string
+  accounts: string[]
+  capabilities: string[]
+}
+
 /** 社交状态响应 */
 export interface SocialStatusData {
   adapters: AdapterStatus[]
@@ -53,6 +78,14 @@ export interface SocialModeConfig extends SocialSchedulerConfig {
 
 /** 社交配置（存储在 configs 表的 'social' key，JSON 字符串） */
 export interface SocialConfig {
+  connections?: Array<{
+    id: string
+    adapter: string
+    enabled?: boolean
+    ownerId?: string
+    [key: string]: unknown
+  }>
+  ownerId?: string
   /** 单实例 Social 负责自主社交的角色 */
   agentId?: string
   /** 主人的 QQ 号（用于权限识别 + prompt 注入） */
@@ -67,6 +100,7 @@ export interface SocialConfig {
 }
 
 export interface SocialContactImpression {
+  platform: string
   userId: string
   displayName: string
   identity?: string
@@ -96,30 +130,61 @@ export interface SocialStickerPage {
 }
 
 export const socialApi = {
+  getPlatforms: () => apiClient.get<{ platforms: SocialPlatform[] }>('/social/platforms'),
+  enablePlatform: (type: string) =>
+    apiClient.post<void>(`/social/platforms/${encodeURIComponent(type)}/enable`),
+  getConnectionManagement: (id: string, signal?: AbortSignal) =>
+    apiClient.request<SocialManagementSnapshot>(
+      `/social/connections/${encodeURIComponent(id)}/management`,
+      { signal },
+    ),
+  manageConnection: (
+    id: string,
+    action: string,
+    input: Record<string, unknown>,
+    signal?: AbortSignal,
+  ) =>
+    apiClient.request<SocialManagementSnapshot>(
+      `/social/connections/${encodeURIComponent(id)}/management`,
+      { method: 'POST', body: JSON.stringify({ action, input }), signal },
+    ),
+  getConnections: () => apiClient.get<{ connections: SocialConnection[] }>('/social/connections'),
+  saveConnectionOwner: (id: string, ownerId: string) =>
+    apiClient.put<void>(`/social/connections/${encodeURIComponent(id)}/owner`, { ownerId }),
   acknowledgeTurn: (id: string) =>
     apiClient.post<void>(`/social/turns/${encodeURIComponent(id)}/acknowledge`),
   acknowledgeTurns: (agentId: string, ids: string[]) =>
     apiClient.post<void>(`/social/turns/${encodeURIComponent(agentId)}/acknowledge-all`, { ids }),
-  getStickerAccounts: () => apiClient.get<{ accounts: string[] }>('/social/stickers/accounts'),
-  getStickers: (accountId: string, query: string, offset = 0, refresh = false) =>
+  getStickerAccounts: () =>
+    apiClient.get<{
+      accounts: string[]
+      connections: Array<{ platform: string; accountId: string }>
+    }>('/social/stickers/accounts'),
+  getStickers: (accountId: string, query: string, offset = 0, refresh = false, platform?: string) =>
     apiClient.get<SocialStickerPage>(
-      `/social/stickers/${encodeURIComponent(accountId)}?${new URLSearchParams({ query, offset: String(offset), limit: '30', refresh: String(refresh) })}`,
+      `/social/stickers/${encodeURIComponent(accountId)}?${new URLSearchParams({ query, offset: String(offset), limit: '30', refresh: String(refresh), ...(platform ? { platform } : {}) })}`,
     ),
-  getStickerImage: (accountId: string, stickerId: string) =>
+  getStickerImage: (accountId: string, stickerId: string, platform?: string) =>
     apiClient.get<{ dataUrl: string }>(
-      `/social/stickers/${encodeURIComponent(accountId)}/${encodeURIComponent(stickerId)}/image`,
+      `/social/stickers/${encodeURIComponent(accountId)}/${encodeURIComponent(stickerId)}/image${platform ? `?platform=${encodeURIComponent(platform)}` : ''}`,
     ),
-  describeSticker: (accountId: string, stickerId: string, description: string) =>
-    apiClient.post<SocialSticker>(`/social/stickers/${encodeURIComponent(accountId)}`, {
-      action: 'describe',
-      stickerId,
-      description,
-    }),
-  deleteSticker: (accountId: string, stickerId: string) =>
-    apiClient.post<{ removed: string }>(`/social/stickers/${encodeURIComponent(accountId)}`, {
-      action: 'delete',
-      stickerId,
-    }),
+  describeSticker: (accountId: string, stickerId: string, description: string, platform?: string) =>
+    apiClient.post<SocialSticker>(
+      `/social/stickers/${encodeURIComponent(accountId)}${platform ? `?platform=${encodeURIComponent(platform)}` : ''}`,
+      {
+        action: 'describe',
+        stickerId,
+        description,
+      },
+    ),
+  deleteSticker: (accountId: string, stickerId: string, platform?: string) =>
+    apiClient.post<{ removed: string }>(
+      `/social/stickers/${encodeURIComponent(accountId)}${platform ? `?platform=${encodeURIComponent(platform)}` : ''}`,
+      {
+        action: 'delete',
+        stickerId,
+      },
+    ),
   getStatusCardDesign: () => apiClient.get<StatusCardDesign>('/social/status-card/design'),
   saveStatusCardDesign: (design: StatusCardDesign) =>
     apiClient.put<StatusCardDesign>('/social/status-card/design', design),
@@ -142,7 +207,8 @@ export const socialApi = {
     accountId: string,
     channelType: 'private' | 'group',
     channelId: string,
-  ) => apiClient.post('/social/loop-guard/allow', { accountId, channelType, channelId }),
+    platform?: string,
+  ) => apiClient.post('/social/loop-guard/allow', { platform, accountId, channelType, channelId }),
   saveModeConfig: (config: SocialModeConfig) =>
     apiClient.put<SocialModeConfig>('/social/mode-config', config),
 
@@ -157,12 +223,14 @@ export const socialApi = {
   getProjection: (agentId: string) =>
     apiClient.get<SurfaceProjectionSnapshot>(`/social/projection/${encodeURIComponent(agentId)}`),
 
-  syncHistory: (platform = 'qq') =>
+  syncHistory: (platform: string) =>
     apiClient.post(`/social/history-sync/${encodeURIComponent(platform)}`),
 
   clearData: (input: {
     agentId: string
     scope: SocialClearScope
+    platform?: string
+    accountId?: string
     channelType?: 'private' | 'group'
     channelId?: string
     userId?: string

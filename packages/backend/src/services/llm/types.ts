@@ -15,6 +15,9 @@ import type { ReasoningEffort } from '@infos/shared'
 
 /** 聊天消息 */
 export interface ChatMessage {
+  /** 编译产物随检查点保留；各 Provider 仅序列化消息协议字段。 */
+  promptPlan?: import('@infos/shared').CompiledPromptPlan
+  promptSegment?: 'assistant_prefill'
   /** 本地文件事实，Provider 不序列化；检查点与跨轮投影使用同一来源。 */
   fileObservations?: import('../context/fileWorkingContext').FileObservation[]
   toolExecutionFailed?: boolean
@@ -48,7 +51,10 @@ export interface ChatMessage {
 export type ContentPart =
   | { type: 'text'; text: string }
   | { type: 'image_url'; image_url: { url: string; detail?: string } }
-  | { type: 'input_audio'; input_audio: { data: string; format: string } }
+  | {
+      type: 'input_audio'
+      input_audio: { data: string; format: string; mimeType?: string; durationMs?: number }
+    }
 
 /** 工具调用 */
 export interface ToolCall {

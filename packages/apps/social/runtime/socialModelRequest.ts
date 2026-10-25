@@ -1,6 +1,7 @@
 import { t as __t } from './i18n'
 import {
   appendNativeReasoning,
+  compileModelRequest,
   createLogger,
   safeModelDiagnostic,
   modelNetworkDetails,
@@ -22,6 +23,7 @@ export async function requestSocialModel(
   messages: ChatMessage[],
   options: ChatOptions,
 ): Promise<ChatCompletion> {
+  const request = compileModelRequest(messages, Math.max(0, (options.usageContext?.step ?? 1) - 1))
   const recovery = currentSocialRecovery()
   const context = {
     turnId: recovery?.record.id,
@@ -68,7 +70,7 @@ export async function requestSocialModel(
   timer.unref?.()
   try {
     let completion: ChatCompletion
-    if (!streaming) completion = await llm.chat(model, messages, options)
+    if (!streaming) completion = await llm.chat(model, request.messages, options)
     else {
       const message: ChatCompletion['choices'][number]['message'] = {
         role: 'assistant',
@@ -78,7 +80,7 @@ export async function requestSocialModel(
       const calls = new Map<number, ToolCall>()
       let finishReason: string | undefined
       let usage: ChatCompletion['usage']
-      for await (const event of llm.chatConfigured(model, messages, {
+      for await (const event of llm.chatConfigured(model, request.messages, {
         ...options,
         retryPartialResponse: options.retryPartialResponse || !!model.fallbackModels?.length,
       })) {
@@ -147,6 +149,10 @@ export async function requestSocialModel(
       }
       completion = { choices: [{ message, finishReason }], usage }
     }
+    if (request.prefill)
+      for (const choice of completion.choices)
+        if (choice.message.content || choice.message.toolCalls?.length)
+          choice.message.content = request.prefill + (choice.message.content ?? '')
     const usage = completion.usage
     const cacheReported =
       usage?.inputReported !== false &&

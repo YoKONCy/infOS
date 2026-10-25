@@ -1,12 +1,18 @@
 <script setup lang="ts">
 import { t as __t } from '../../i18n/index'
 
-import { onMounted, onUnmounted, ref } from 'vue'
+import { onMounted, onUnmounted, ref, computed } from 'vue'
 import { socialApi, type SocialStickerPage } from '../../api/modules/socialApi'
 import { PixelIcon, PButton } from '../pixel'
 
-const accounts = ref<string[]>([])
-const accountId = ref('')
+const props = defineProps<{ platform?: string }>()
+const accounts = ref<Array<{ platform: string; accountId: string }>>([])
+const accountKey = ref('')
+const key = (item: { platform: string; accountId: string }) =>
+  JSON.stringify([item.platform, item.accountId])
+const selected = computed(() => accounts.value.find((item) => key(item) === accountKey.value))
+const accountId = computed(() => selected.value?.accountId ?? '')
+const selectedPlatform = computed(() => selected.value?.platform ?? '')
 const query = ref('')
 const offset = ref(0)
 const page = ref<SocialStickerPage>()
@@ -30,7 +36,7 @@ async function loadImages(items: SocialStickerPage['stickers'], account: string,
     while (!disposed && version === revision && cursor < items.length) {
       const item = items[cursor++]!
       try {
-        const result = await socialApi.getStickerImage(account, item.id)
+        const result = await socialApi.getStickerImage(account, item.id, selectedPlatform.value)
         if (!disposed && version === revision && result.data)
           previews.value[item.id] = result.data.dataUrl
       } catch {
@@ -53,7 +59,13 @@ async function load(refresh = false) {
   busy.value = true
   const account = accountId.value
   try {
-    const result = await socialApi.getStickers(account, query.value.trim(), offset.value, refresh)
+    const result = await socialApi.getStickers(
+      account,
+      query.value.trim(),
+      offset.value,
+      refresh,
+      selectedPlatform.value,
+    )
     if (disposed || version !== revision) return
     if (!result.data) throw new Error('没有收到收藏列表')
     page.value = result.data
@@ -74,8 +86,11 @@ async function sync() {
   try {
     const result = await socialApi.getStickerAccounts()
     if (disposed) return
-    accounts.value = result.data?.accounts ?? []
-    if (!accounts.value.includes(accountId.value)) accountId.value = accounts.value[0] ?? ''
+    accounts.value = (result.data?.connections ?? []).filter(
+      (item) => !props.platform || item.platform === props.platform,
+    )
+    if (!accounts.value.some((item) => key(item) === accountKey.value))
+      accountKey.value = accounts.value[0] ? key(accounts.value[0]) : ''
     offset.value = 0
     if (!accountId.value) {
       revision++
@@ -111,12 +126,17 @@ async function save(id: string) {
   error.value = ''
   notice.value = ''
   try {
-    const result = await socialApi.describeSticker(accountId.value, id, drafts.value[id] ?? '')
+    const result = await socialApi.describeSticker(
+      accountId.value,
+      id,
+      drafts.value[id] ?? '',
+      selectedPlatform.value,
+    )
     if (disposed) return
     if (!result.data) throw new Error('描述未保存')
     const item = page.value?.stickers.find((sticker) => sticker.id === id)
     if (item) item.description = result.data.description
-    notice.value = '描述已同步到 QQ'
+    notice.value = __t('ui.social', '描述已同步到平台')
   } catch (e) {
     if (!disposed) error.value = e instanceof Error ? e.message : '保存失败'
   } finally {
@@ -129,11 +149,11 @@ async function remove(id: string) {
   error.value = ''
   notice.value = ''
   try {
-    await socialApi.deleteSticker(accountId.value, id)
+    await socialApi.deleteSticker(accountId.value, id, selectedPlatform.value)
     if (disposed) return
     if (page.value?.stickers.length === 1 && offset.value > 0) offset.value -= 30
     await load(true)
-    notice.value = '已从 QQ 收藏中移除'
+    notice.value = __t('ui.social', '已从平台收藏中移除')
   } catch (e) {
     if (!disposed) error.value = e instanceof Error ? e.message : '删除失败'
   } finally {
@@ -155,7 +175,7 @@ onMounted(() => {
           <PixelIcon name="image" size="sm" />
           {{ __t('ui.social', '收藏表情') }}
         </h3>
-        <p>{{ __t('ui.social', '属于 QQ 账号，随聊天慢慢积累。') }}</p>
+        <p>{{ __t('ui.social', '属于平台账号，随聊天慢慢积累。') }}</p>
       </div>
       <PButton size="sm" variant="secondary" :disabled="busy" @click="sync">
         <PixelIcon name="refresh" size="xs" />
@@ -164,9 +184,11 @@ onMounted(() => {
     </header>
     <form v-if="accounts.length" class="stickers-toolbar" @submit.prevent="search">
       <label>
-        {{ __t('ui.social', 'QQ 账号') }}
-        <select v-model="accountId" :disabled="busy" @change="changeAccount">
-          <option v-for="account in accounts" :key="account" :value="account">{{ account }}</option>
+        {{ __t('ui.social', '平台账号') }}
+        <select v-model="accountKey" :disabled="busy" @change="changeAccount">
+          <option v-for="account in accounts" :key="key(account)" :value="key(account)">
+            {{ account.platform }} · {{ account.accountId }}
+          </option>
         </select>
       </label>
       <input
@@ -185,7 +207,7 @@ onMounted(() => {
     <p v-if="notice" class="stickers-notice" role="status">{{ notice }}</p>
     <p v-if="busy && !page" class="stickers-empty">{{ __t('ui.social', '正在同步收藏…') }}</p>
     <p v-else-if="!accounts.length && !error" class="stickers-empty">
-      {{ __t('ui.social', '连接 QQ 后，点同步查看账号收藏。') }}
+      {{ __t('ui.social', '连接支持收藏表情的平台账号后，点同步查看收藏。') }}
     </p>
     <p v-else-if="page && !page.stickers.length" class="stickers-empty">
       {{
@@ -235,7 +257,7 @@ onMounted(() => {
           </PButton>
         </footer>
         <footer v-else class="sticker-confirm">
-          <span>{{ __t('ui.social', '移除 QQ 收藏？') }}</span>
+          <span>{{ __t('ui.social', '移除此账号的收藏？') }}</span>
           <PButton size="sm" variant="danger" :disabled="busy" @click="remove(item.id)">
             {{ __t('ui.social', '移除') }}
           </PButton>

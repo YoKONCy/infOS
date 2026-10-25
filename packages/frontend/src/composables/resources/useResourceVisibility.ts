@@ -1,6 +1,6 @@
 import { computed, onMounted, onBeforeUnmount, ref, type Ref } from 'vue'
 
-/** 资源只在接近可视区域时读取，离开后暂停媒体并释放重型预览。 */
+/** 资源接近视口才开始读取；离屏释放重型预览，已开始的音频由播放器保留。 */
 export function useResourceVisibility(root: Ref<HTMLElement | null>) {
   const visible = ref(false)
   const documentVisible = ref(document.visibilityState !== 'hidden')

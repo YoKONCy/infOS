@@ -96,6 +96,19 @@ textarea::placeholder {
   gap: 8px;
   margin-top: 12px;
 }
+.pet-user-identity {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin: 10px 0 7px;
+  color: var(--pet-muted);
+  font-size: 11px;
+}
+.pet-user-identity :deep(.user-avatar) {
+  border: 1px solid var(--pet-border);
+  background: var(--pet-input);
+  box-shadow: 1px 1px 0 var(--pet-side);
+}
 .text-button,
 .menu-item {
   border: 0;

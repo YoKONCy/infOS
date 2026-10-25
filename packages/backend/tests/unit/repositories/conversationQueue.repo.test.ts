@@ -30,6 +30,22 @@ afterEach(() => {
 })
 
 describe('消息队列持久派发与恢复', () => {
+  it('任务结果按稳定编号只入队一次，不能编辑成用户消息', () => {
+    const event = {
+      ...input('后台结果'),
+      taskResultEvent: { deliveryId: 'delivery', taskId: 'task' },
+    }
+    repo.enqueue('task-result:delivery', event)
+    repo.enqueue('task-result:delivery', event)
+    const [entry] = repo.snapshot('t').items
+    expect(repo.snapshot('t').items).toHaveLength(1)
+    expect(() => repo.mutate('t', entry!.id, entry!.revision, { content: '改写指令' })).toThrow(
+      '任务交付事件不能改写',
+    )
+    repo.mutate('t', entry!.id, entry!.revision, { cancel: true })
+    expect(repo.get(entry!.id)?.state).toBe('cancelled')
+    expect(db.select().from(threadMessages).all()).toEqual([])
+  })
   it('重开数据库只保留未发送消息，中断条目不能重新派发或生成用户消息', () => {
     closeDrizzleConnection(db)
     mkdirSync(temporaryRoot, { recursive: true })

@@ -1,4 +1,5 @@
 import { t as __t } from '../../lib/i18n'
+import { nativeAudioEnabled, MAX_NATIVE_AUDIO_BYTES } from '@infos/shared'
 /**
  * LLM Service — 统一 LLM 调用门面
  *
@@ -145,6 +146,28 @@ export class LlmService {
   }
   constructor(private readonly recordAttempt?: (attempt: LlmUsageAttempt) => void) {}
 
+  /** 原音只交给用户开启了音频模态的 Gemini 协议，回退链遵循同一约束。 */
+  private audioConfig(config: ModelConfig, messages: ChatMessage[]): ModelConfig {
+    const audios = messages.flatMap((message) =>
+      Array.isArray(message.content)
+        ? message.content.filter((part) => part.type === 'input_audio')
+        : [],
+    )
+    if (!audios.length) return config
+    if (!nativeAudioEnabled(config))
+      throw new AppError('CONFIG_ERROR', {
+        message: __t('server.audio-input', '请使用 Gemini 协议并手动开启模型卡片的原生音频输入'),
+      })
+    if (
+      audios.reduce((sum, part) => sum + Buffer.byteLength(part.input_audio.data, 'base64'), 0) >
+      MAX_NATIVE_AUDIO_BYTES
+    )
+      throw new AppError('PAYLOAD_TOO_LARGE', {
+        message: __t('server.audio-input', '单轮原生音频不能超过 12MB'),
+      })
+    return { ...config, fallbackModels: config.fallbackModels?.filter(nativeAudioEnabled) }
+  }
+
   private retryModels(config: ModelConfig, maxRetries: number): ModelConfig[] {
     if (!config.fallbackModels?.length) return Array.from({ length: maxRetries + 1 }, () => config)
     return [config, ...config.fallbackModels.slice(0, 32)].flatMap((model) => {
@@ -283,7 +306,7 @@ export class LlmService {
   /** 与真实 Provider 共用请求序列化；内部审计字段和重复思考不进入输入预算。 */
   estimateInputTokens(config: ModelConfig, messages: ChatMessage[], opts?: ChatOptions): number {
     messages = this.preparePromptMessages(messages, opts ?? {})
-    const provider = this.createProvider(config)
+    const provider = this.createProvider(this.audioConfig(config, messages))
     return estimateInputPayloadTokens(
       provider.getInputTokenPayload(messages, this.mergeOpts(config, opts)),
     )
@@ -302,6 +325,7 @@ export class LlmService {
   ): Promise<ChatCompletion> {
     opts?.signal?.throwIfAborted()
     messages = this.preparePromptMessages(messages, opts ?? {})
+    config = this.audioConfig(config, messages)
     consumeCurrentKernelExecution({ llmCalls: 1 })
     const startTime = Date.now()
     const finalOpts = this.mergeOpts(config, opts)
@@ -396,6 +420,7 @@ export class LlmService {
     opts?: ChatOptions,
   ): AsyncIterable<ChatDelta> {
     messages = this.preparePromptMessages(messages, opts ?? {})
+    config = this.audioConfig(config, messages)
     const startTime = Date.now()
     const finalOpts = this.mergeOpts(config, opts)
     const scope = retryScope(

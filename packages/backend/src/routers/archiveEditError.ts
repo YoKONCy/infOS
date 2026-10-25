@@ -1,6 +1,20 @@
 import { AppError } from '../lib/appError'
 import { t } from '../lib/i18n'
 import { AutomaticRagStageError } from '../services/memory/eventMemoryService'
+import { MemoryForgottenError } from '../services/maintenance/privacyPolicy'
+
+export function throwArchiveRestoreError(error: unknown): never {
+  const code = error instanceof Error ? error.message : ''
+  if (code === 'ARCHIVE_RESTORE_NOT_FOUND' || error instanceof MemoryForgottenError)
+    throw new AppError('NOT_FOUND', {
+      message: t('server.archive-edit', '条目不存在或已永久删除，无法还原。'),
+    })
+  if (code === 'ARCHIVE_RESTORE_CONFLICT')
+    throw new AppError('CONFLICT', {
+      message: t('server.archive-edit', '条目已被新版本替代或状态已变化，请刷新后重试。'),
+    })
+  throw error
+}
 
 /** 内部冲突与模型异常在接口边界翻译，原样保留用户尚未保存的正文。 */
 export function throwArchiveEditError(error: unknown): never {

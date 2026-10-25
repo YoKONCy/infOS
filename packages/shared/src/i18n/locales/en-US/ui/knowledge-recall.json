@@ -1,0 +1,14 @@
+{
+  "文档知识自动召回": "Automatic document recall",
+  "事实自动召回": "Automatic fact recall",
+  "将相关资料的极简摘要放入本轮上下文，Agent 仍可按需检索原文。": "Include brief summaries of relevant documents in this turn. The Agent can still retrieve original passages as needed.",
+  "将相关对象的少量有效事实放入本轮上下文，保留来源与记录时间。": "Include a few relevant active facts in this turn, with their sources and observation times.",
+  "独立于事件记忆": "Separate from event memory",
+  "默认关闭": "Off by default",
+  "已开启": "Enabled",
+  "读取中…": "Loading…",
+  "保存中…": "Saving…",
+  "自动召回设置读取失败": "Could not load recall settings",
+  "自动召回设置保存失败": "Could not save recall settings",
+  "重新读取": "Reload"
+}

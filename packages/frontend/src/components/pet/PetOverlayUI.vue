@@ -331,7 +331,9 @@ onUnmounted(() => clearTimeout(hideTimer))
       @ui-leave="leave"
       @play-media="emit('stop-speech')"
     />
+    <!-- 展开后由操作面提供收起入口，光点让位于会话选择和输入区域。 -->
     <div
+      v-if="!expanded"
       data-pet-ui
       class="hud-anchor"
       :style="placement"
@@ -341,7 +343,6 @@ onUnmounted(() => clearTimeout(hideTimer))
       <button
         type="button"
         class="floating-trigger"
-        :class="{ active: expanded }"
         :title="markTitle"
         :aria-label="markTitle + __t('ui.pet', '，展开桌宠菜单')"
         :aria-expanded="expanded"

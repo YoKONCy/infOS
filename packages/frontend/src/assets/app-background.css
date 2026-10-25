@@ -313,6 +313,11 @@
   background-color: var(--app-soft-fill) !important;
 }
 .main-view-root[data-app-background='active'] .main-content .social-panel {
+  /* 社交新面板也走统一材质；内层仅轻染色，避免重复叠加面板透明度。 */
+  --sp-surface: var(--app-panel-fill);
+  --sp-surface-soft: color-mix(in srgb, var(--ui-bg-surface-soft) 18%, transparent);
+  --sp-reading: var(--app-inset-reading-fill);
+  --sp-canvas: transparent;
   background: transparent !important;
 }
 .main-view-root[data-app-background='active']

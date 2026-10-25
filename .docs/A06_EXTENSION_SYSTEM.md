@@ -1,8 +1,8 @@
 # Package 与用户空间贡献系统
 
 > **适用范围**：`packages/backend/src/packages/`、`packages/shared/src/types/package.types.ts`
-> **状态**：生产安全边界规范；当前仅开放 official贡献
-> **最后更新**：2026-10-17
+> **状态**：内置贡献与显式授权的用户插件共存；安装、授权、激活相互独立
+> **最后更新**：2026-10-24
 
 ---
 
@@ -70,13 +70,14 @@ Manifest 只描述静态意图，不保存运行实例、连接、Handle、进�
 
 ### 2.1 当前生产开放范围
 
-签名验证、用户 Grant、进程隔离和调用期权限尚未对第三方 Package完整开放，因此当前执行以下 fail-closed规则：
+用户通过“工具与扩展 → 插件”上传 ZIP，由服务端安装到数据目录。安装阶段不加载模块，也不准备依赖。
 
-1. 仅 `trust: official` 的 Package可以安装和激活；
-2. `tool`、`event-subscriber`、`capability-provider` 等同进程代码只允许 official Package加载；
-3. `runtime-adapter`、`application`、`policy`、`presenter`、`asset` 在没有正式 Activator前必须激活失败，不能标记为 active；
-4. Service Process必须通过独立进程运行；未建立 Capability Binding的 Requirement不能视为已授权；
-5. 非 official Package必须等待签名链、Permission Grant与隔离执行面落地后才能开放。
+1. 用户上传包使用 `trust: user | generated`；`signed` 还须通过现有 Publisher 与文件签名验证。上传包或用户扫描目录不能靠声明 `official` 冒充内置来源。
+2. 用户确认版本、内容摘要与申请权限后，执行型贡献才能获得 `runtime:execute` Grant。更新、回退、本地修改均须重新审核；启用状态跨进程重启保留。
+3. 当前已接通 `tool`、`skill`、`event-subscriber`、`service`、`capability-provider`、`context-provider`、`agent-flow`、`presenter`、`asset`。
+4. `runtime-adapter`、`application`、`policy` 仍通过原有受控入口接入；上传包直接声明这些 Kind 会激活失败，不能冒充已实现。
+5. `runtime:execute` 是明确的本机代码信任授权，不是 OS 沙箱。Node 插件具有服务进程的实际权限；其他 Permission 声明不能被宣传成隔离 Node 内置模块的安全机制。普通 Agent 工具调用仍经过 CapabilityGate、Realm、执行模式和审批。
+6. Service Process 由现有 Supervisor 管理。进程分离用于生命周期管理，不表示操作系统权限隔离；没有 Capability Binding 的 Requirement 仍不能视为已授权。
 
 Contribution清单表示目标 ABI，不表示所有 Kind当前均已开放。
 
@@ -268,3 +269,89 @@ Package 相关变更至少验证：
 - Manifest 重复 ID、无效 Entry 与越界路径
 - required Capability 缺失时拒绝激活 -激活失败原子回滚 -停用后 Tool、Provider、Skill、Event 与 Process 全部释放
 - Consumer 只能获得 Bound Port -历史清单只在安装边界出现 -生产源码不存在 ExtensionManager、ExtensionLoader 或 ServiceRunner -用户安装和云同步目录统一为 `packages/`
+
+## 10. 用户插件管理与发行目录
+
+```text
+@data/packages/.managed/index.json             安装记录、启用状态和审核摘要
+@data/packages/.managed/releases/<UUID>/       独立版本代码、锁文件、node_modules
+@data/package-cache/                          pnpm 下载缓存
+@data/package-data/<packageId 的 SHA-256 前缀>/ 插件持久数据，重载和更新不清除
+```
+
+Electron 标准版、便携版和 Docker 都通过 PathResolver 使用各自的数据根，插件不写入 ASAR、resources 或镜像内置源码。服务端上传接口接收文件字节，不接收客户端本地路径。安装目录可在插件卡片中查看；运行数据应写入工厂参数 `host.dataDirectory`，不要写入版本源码目录。
+
+上传 ZIP 须在根目录或唯一顶层目录包含 `manifest.json`。支持已编译的 ESM `.mjs` / 带 `type: module` 的 `.js`；不在服务端隐式构建 TypeScript。拒绝路径逃逸、Windows 特殊文件名、预装 node_modules、包管理配置注入，限制压缩大小、展开大小和文件数量。
+
+依赖来自插件自己的 `package.json.dependencies` / `optionalDependencies`，支持注册表版本如 `1.2.3`、`^1.2.3`、`~1.2.3`；拒绝 file、workspace、Git 与任意 URL 依赖。启用时用随发行版携带的 pnpm 准备依赖，默认 npm 官方 registry，不依赖用户安装 Node 或 pnpm。移除包管理器覆盖配置和生命周期脚本，使用 `--ignore-scripts`；需要安装脚本编译的原生依赖不会被偷偷执行，应由作者提供兼容的运行产物。
+
+更新导入后停用，留存上一版本，审核后再启用。回退也保持停用直到重新审核。重载复制到新的代际目录，同时刷新入口与全部相对 import；不会仅给入口 URL 加参数。读取本地修改同样创建新代际并撤销旧内容授权。每包独立的数据目录不参与源码摘要，不随代码重载删除。
+
+管理 API 均处于现有 API 鉴权边界：
+
+| 操作 | API |
+| --- | --- |
+| 列表 / ZIP 上传 | `GET /api/packages` / `POST /api/packages/install` |
+| 内容授权 | `POST /api/packages/:id/authorize`，传 `digest`、`permissions` |
+| 启停 | `PUT /api/packages/:id/enabled` |
+| 重载 / 读取修改 / 回退 | `POST /api/packages/:id/reload|review|rollback` |
+| 卸载安装文件 | `DELETE /api/packages/:id`；独立运行数据保留 |
+| UI 插槽与动作 | `GET /api/packages/panels/:slot` / `POST /api/packages/panel-actions` |
+| 已激活静态资源 | `GET /api/packages/assets/:编码后的 packageId/contributionId?file=相对路径` |
+
+## 11. 编写贡献与扩展点
+
+最小工具包清单：
+
+```json
+{
+  "manifestVersion": 2,
+  "packageId": "example.hello",
+  "name": "示例工具",
+  "version": "1.0.0",
+  "trust": "user",
+  "permissions": [],
+  "contributions": [{ "id": "hello", "kind": "tool", "entry": "hello.mjs" }]
+}
+```
+
+`hello.mjs` 可以导出静态 `definition` / `execute`，也可以导出贡献工厂。工厂只收到公共作用域，不收到 AppContext；通过 `onDispose` 回收监听器、计时器、连接，通过 `signal` 响应停用。多个贡献可以共用模块，但各自有独立工厂调用与释放注册。
+
+```js
+export function createContribution(host) {
+  const controller = new AbortController()
+  host.onDispose(() => controller.abort())
+  return {
+    definition: {
+      name: 'example_hello',
+      description: '返回一句问候',
+      parameters: { type: 'object', properties: {} }
+    },
+    async execute(args, toolContext) {
+      return '你好'
+    }
+  }
+}
+```
+
+| Kind | 模块契约与调用位置 |
+| --- | --- |
+| `tool` | `definition`、`execute(args, toolContext)`；工具注册表与现有权限链，重名拒绝覆盖 |
+| `skill` | `entry` 指向技能目录；资源装卸不授予工具权限 |
+| `event-subscriber` | `hooks` 或 `onEvent`，接入现有 PackageHookBus / KernelEventBus |
+| `agent-flow` | `hooks`；Agent 开始、结束、模型请求前后及工具执行前后 |
+| `context-provider` | `provide(request)` 返回 ContextRegion 数组；宿主强制外部信任、可选、命名空间 ID，统一 Token 预算与过期处理 |
+| `presenter` | `panel`、可选 `onAction(actionId)`；声明式卡片、字段与按钮 |
+| `asset` | `entry` 指向资源目录；只在激活期间开放白名单 MIME 与受限读取 |
+| `capability-provider` | `definition`、`offer`、`invoke`；复用现有 CapabilityDirectory |
+| `service` | `entry` 由既有进程 Supervisor 启动、停用和回收 |
+
+当前真正触发的流程事件：`agent:beforeRun`、`agent:afterRun`、`agent:beforeRequest`、`agent:afterRequest`、`chat:beforeSend`、`chat:afterReply`、`chat:beforeToolCall`、`chat:afterToolCall`。请求前钩子只能调整普通消息正文，不能修改系统消息、工具协议、主体身份或工具白名单；超出输入预算的变更回退原请求。工具参数变更发生在后续权限校验与审批之前。
+
+记忆提供 `memory:beforeCreate`、`memory:afterCreate`、`memory:beforeDelete` 与 `memory:afterRetrieve` 观察点；不接受借钩子绕过事件时间、Agent 归属或持久化事务的修改。旧的 `agent:onSwitch` / `agent:onMoodChange` 事件名仅保留兼容类型，不表示新增了触发位置。
+
+普通异步钩子和上下文扩展有超时与失败隔离；钩子 `context.abort()` 只停止本次钩子链传播，不代替取消 Agent Execution。纯同步死循环等任意原生代码行为不在这个逻辑超时边界内，必须通过插件代码信任授权处理。
+
+UI 命名区域为 `dashboard.overview`、`chat.header`、`chat.footer`、`integrations`。前端使用实际 PCard/PButton 与主题变量，包含自定义背景的半透明承托；不执行插件 HTML、CSS 或 Vue 源码。插件自定义文字属于插件内容。停用立即撤销面板动作路由、工具、Hook、Context Provider 与资源注册；用户页面下次激活或定时刷新后同步撤下卡片。
+
+`application`、内核 `policy` 和底层 `runtime-adapter` 的动态开放不包含在本轮基础设施内；它们继续遵循各自正式的 Realm、Principal 和 Capability 契约。

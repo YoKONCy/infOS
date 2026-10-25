@@ -1,5 +1,29 @@
+import audioInputCn from '../locales/zh-CN/ui/audio-input.json'
+import knowledgeRecallCn from '../locales/zh-CN/ui/knowledge-recall.json'
+import knowledgeRecallTw from '../locales/zh-TW/ui/knowledge-recall.json'
+import knowledgeRecallEn from '../locales/en-US/ui/knowledge-recall.json'
+import audioInputTw from '../locales/zh-TW/ui/audio-input.json'
+import audioInputEn from '../locales/en-US/ui/audio-input.json'
+import tts0 from '../locales/zh-CN/ui/tts.json'
+import inputControlsZhCn from '../locales/zh-CN/ui/input-controls.json'
+import inputControlsZhTw from '../locales/zh-TW/ui/input-controls.json'
+import inputControlsEnUs from '../locales/en-US/ui/input-controls.json'
+import promptPresetsZhCn from '../locales/zh-CN/ui/prompt-presets.json'
+import promptPresetsZhTw from '../locales/zh-TW/ui/prompt-presets.json'
+import promptPresetsEnUs from '../locales/en-US/ui/prompt-presets.json'
+import tts1 from '../locales/zh-TW/ui/tts.json'
+import tts2 from '../locales/en-US/ui/tts.json'
+import packagesZhCn from '../locales/zh-CN/ui/packages.json'
+import runtimeDebugZhCn from '../locales/zh-CN/ui/runtime-debug.json'
+import runtimeDebugZhTw from '../locales/zh-TW/ui/runtime-debug.json'
+import runtimeDebugEnUs from '../locales/en-US/ui/runtime-debug.json'
+import packagesZhTw from '../locales/zh-TW/ui/packages.json'
+import packagesEnUs from '../locales/en-US/ui/packages.json'
 // 按模块、语言分别维护词库；此入口只装配当前运行端需要的资源。
 import { registerCatalog } from '../index'
+import userAvatarUiZhCn from '../locales/zh-CN/ui/user-avatar.json'
+import userAvatarUiZhTw from '../locales/zh-TW/ui/user-avatar.json'
+import userAvatarUiEnUs from '../locales/en-US/ui/user-avatar.json'
 import archiveEditZhCn from '../locales/zh-CN/ui/archive-edit.json'
 import archiveEditZhTw from '../locales/zh-TW/ui/archive-edit.json'
 import archiveEditEnUs from '../locales/en-US/ui/archive-edit.json'
@@ -204,6 +228,9 @@ import messages191 from '../locales/en-US/ui/petShortcuts.json'
 import messages192 from '../locales/zh-CN/errors/frontend.json'
 import messages193 from '../locales/zh-TW/errors/frontend.json'
 import messages194 from '../locales/en-US/errors/frontend.json'
+registerCatalog('ui.user-avatar', 'zh-CN', userAvatarUiZhCn)
+registerCatalog('ui.user-avatar', 'zh-TW', userAvatarUiZhTw)
+registerCatalog('ui.user-avatar', 'en-US', userAvatarUiEnUs)
 registerCatalog('common.tools', 'zh-CN', messages0)
 registerCatalog('common.tools', 'zh-TW', messages1)
 registerCatalog('common.tools', 'en-US', messages2)
@@ -408,3 +435,39 @@ registerCatalog('ui.provider-connections', 'en-US', providerChecksEnUs)
 registerCatalog('ui.archive-edit', 'zh-CN', archiveEditZhCn)
 registerCatalog('ui.archive-edit', 'zh-TW', archiveEditZhTw)
 registerCatalog('ui.archive-edit', 'en-US', archiveEditEnUs)
+
+registerCatalog('ui.packages', 'zh-CN', packagesZhCn)
+registerCatalog('ui.packages', 'zh-TW', packagesZhTw)
+registerCatalog('ui.packages', 'en-US', packagesEnUs)
+registerCatalog('ui.runtime-debug', 'zh-CN', runtimeDebugZhCn)
+registerCatalog('ui.runtime-debug', 'zh-TW', runtimeDebugZhTw)
+registerCatalog('ui.runtime-debug', 'en-US', runtimeDebugEnUs)
+registerCatalog('ui.input-controls', 'zh-CN', inputControlsZhCn)
+registerCatalog('ui.input-controls', 'zh-TW', inputControlsZhTw)
+registerCatalog('ui.input-controls', 'en-US', inputControlsEnUs)
+
+registerCatalog('ui.tts', 'zh-CN', tts0)
+registerCatalog('ui.tts', 'zh-TW', tts1)
+registerCatalog('ui.tts', 'en-US', tts2)
+registerCatalog('ui.prompt-presets', 'zh-CN', promptPresetsZhCn)
+registerCatalog('ui.prompt-presets', 'zh-TW', promptPresetsZhTw)
+registerCatalog('ui.prompt-presets', 'en-US', promptPresetsEnUs)
+import resourceVersionsZh from '../locales/zh-CN/ui/resource-versions.json'
+import resourceVersionsTw from '../locales/zh-TW/ui/resource-versions.json'
+import resourceVersionsEn from '../locales/en-US/ui/resource-versions.json'
+registerCatalog('ui.resource-versions', 'zh-CN', resourceVersionsZh)
+registerCatalog('ui.resource-versions', 'zh-TW', resourceVersionsTw)
+registerCatalog('ui.resource-versions', 'en-US', resourceVersionsEn)
+import attachmentsZh from '../locales/zh-CN/ui/attachments.json'
+import attachmentsTw from '../locales/zh-TW/ui/attachments.json'
+import attachmentsEn from '../locales/en-US/ui/attachments.json'
+registerCatalog('ui.attachments', 'zh-CN', attachmentsZh)
+registerCatalog('ui.attachments', 'zh-TW', attachmentsTw)
+registerCatalog('ui.attachments', 'en-US', attachmentsEn)
+
+registerCatalog('ui.audio-input', 'zh-CN', audioInputCn)
+registerCatalog('ui.knowledge-recall', 'zh-CN', knowledgeRecallCn)
+registerCatalog('ui.knowledge-recall', 'zh-TW', knowledgeRecallTw)
+registerCatalog('ui.knowledge-recall', 'en-US', knowledgeRecallEn)
+registerCatalog('ui.audio-input', 'zh-TW', audioInputTw)
+registerCatalog('ui.audio-input', 'en-US', audioInputEn)

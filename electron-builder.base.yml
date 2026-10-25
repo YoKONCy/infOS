@@ -6,7 +6,8 @@ appId: com.infos.peroperochat
 productName: '萌动链接：PeroperoChat！'
 copyright: Copyright © 2024-2026 YoKONCy and infOS Contributors
 
-electronVersion: 40.2.1
+electronVersion: 44.9.3
+beforePack: scripts/electron-security-before-pack.cjs
 
 extraMetadata:
   main: main/index.js
@@ -87,6 +88,8 @@ extraResources:
   # daemon 单文件 bundle（由 scripts/build-daemon-bundle.mjs 产出）
   - from: dist-daemon/daemon.mjs
     to: daemon/daemon.mjs
+  - from: dist-daemon/recovery.mjs
+    to: daemon/recovery.mjs
   # daemon 运行所需生产依赖（由 scripts/collect-daemon-deps.mjs 产出）
   - from: dist-daemon/node_modules
     to: node_modules

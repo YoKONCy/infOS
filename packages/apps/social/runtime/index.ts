@@ -15,9 +15,9 @@ import { t as __t } from './i18n'
  *   AppManager.launch → SocialAppRuntime.initialize
  *     ├─ 创建 SocialAppCompiler
  *     ├─ 创建 SocialBridge（含 SessionManager + Scheduler）
- *     ├─ 从配置读取 QQ→Agent 映射，创建 NapcatAdapter 并注册
+ *     ├─ 从连接配置创建平台适配器并注册
  *     ├─ 启动 SocialBridge
- *     └─ 通过宿主注入的传输入口注册 NapcatAdapter，供 WS 升级使用
+ *     └─ 通过宿主注入的传输入口注册平台传输，供 WS 升级使用
  *
  * 关闭流程：
  *   AppManager.stop → SocialAppRuntime.onStop
@@ -28,6 +28,8 @@ import { t as __t } from './i18n'
  */
 
 import { readFileSync } from 'node:fs'
+import { createHash } from 'node:crypto'
+import { SOCIAL_DELEGATED_TURN_PREFIX, isAgentBrowserRead } from '@infos/shared'
 import type {
   AgentAppRuntime,
   AppCheckpoint,
@@ -54,11 +56,15 @@ import type {
 } from './socialSessionManager'
 import type { SocialStoragePort } from '@infos/shared'
 import { ImageCacheManager } from './imageCacheManager'
-import { StickerService } from './stickerService'
-import { NapcatStickers } from '../adapters/napcat/napcatStickers'
 import { executeSocialSticker } from '../tools/sticker'
 import { SocialScorerService } from './socialScorer'
-import { NapcatAdapter } from '../adapters/napcat'
+import type { AbstractSocialAdapter } from '../adapters/ISocialAdapter'
+import {
+  createSocialAdapters,
+  socialConnectionSpecs,
+  BUILTIN_SOCIAL_ADAPTERS,
+  type SocialAdapterFactory,
+} from '../adapters/registry'
 import {
   setSocialMessagingProvider,
   setSocialModeControlProvider,
@@ -89,7 +95,6 @@ import {
   socialRateGateOptions,
 } from './socialRecovery'
 import { SocialOrchestration, type SocialActResult } from './socialOrchestration'
-import { NativeEmojiService } from './nativeEmoji'
 import { SocialLoopGuard, DEFAULT_LOOP_POLICY, normalizeLoopPolicy } from './socialLoopGuard'
 import { socialActDefinition } from './socialActDefinition'
 import { createSocialRouter } from './social.router'
@@ -103,8 +108,15 @@ import {
   socialGroupPolicyKey,
   type SocialGroupPolicies,
 } from '@infos/shared'
-import { SocialOperations, socialImageData, type SocialOperationScope } from './socialOperations'
-import { socialOwnerId } from './socialMessageContext'
+import {
+  SocialOperations,
+  type SocialOperationScope,
+  type SocialOperationDependencies,
+} from './socialOperations'
+import { restoreSocialMessage } from './socialMessageContext'
+import { SocialCommonOperations } from './socialCommonOperations'
+import { scopedSocialStorage, currentSocialScope } from './socialStorageScope'
+import type { NativeEmojiScope } from './nativeEmoji'
 import { fileURLToPath } from 'node:url'
 import path from 'node:path'
 
@@ -140,16 +152,77 @@ export class SocialAppRuntime implements AgentAppRuntime {
   private socialBridge?: SocialBridge
   private statusCards?: SocialStatusCardService
   private operations?: SocialOperations
+  private operationDeps?: SocialOperationDependencies
+  private adapterUpdates: Promise<unknown> = Promise.resolve()
+  private stopped = false
   private lifetime = new AbortController()
-  /** NapCat 适配器 */
-  private napcatAdapter?: NapcatAdapter
+  /** 已装配的平台网关。 */
+  private adapters: AbstractSocialAdapter[] = []
+  constructor(
+    private readonly adapterFactories: readonly SocialAdapterFactory[] = BUILTIN_SOCIAL_ADAPTERS,
+  ) {}
+
+  private adapter(platform?: string): AbstractSocialAdapter | undefined {
+    return platform
+      ? this.adapters.find((item) => item.platform === platform)
+      : this.adapters.length === 1
+        ? this.adapters[0]
+        : undefined
+  }
+  private identityListed(ids: string[], id: string, platform?: string): boolean {
+    return (
+      ids.includes(`${platform}:${id}`) ||
+      (!!platform &&
+        this.adapters.some(
+          (adapter) => adapter.platform === platform && adapter.legacyConfiguration,
+        ) &&
+        ids.includes(id))
+    )
+  }
+
+  private hasPlatformEntries(ids: string[], platform?: string): boolean {
+    return ids.some(
+      (id) =>
+        id.startsWith(`${platform}:`) ||
+        (!id.includes(':') &&
+          this.adapters.some(
+            (adapter) => adapter.platform === platform && adapter.legacyConfiguration,
+          )),
+    )
+  }
+
+  private isOwnerSession(session: {
+    platform?: string
+    channelType: string
+    peerId?: string
+    checkpoint?: Record<string, unknown>
+  }): boolean {
+    const peerId =
+      session.peerId ??
+      (session.checkpoint?.inbound as Array<{ senderId: string }> | undefined)?.at(-1)?.senderId
+    return (
+      session.channelType === 'private' && !!peerId && peerId === this.ownerFor(session.platform)
+    )
+  }
+
+  private ownerFor(platform?: string): string | undefined {
+    return this.adapter(platform)?.getOwnerId()
+  }
+  private async resolveNativeEmoji(scope: NativeEmojiScope, reference: string) {
+    const adapter = this.adapter(scope.platform)
+    const provider =
+      this.socialMessageRepo && this.ctx?.configRepo
+        ? adapter?.createNativeEmojiProvider(this.socialMessageRepo, this.ctx.configRepo)
+        : undefined
+    if (!provider) throw new Error('SOCIAL_CAPABILITY_UNSUPPORTED')
+    return provider.resolve(scope, reference)
+  }
+
   private releaseSocialTransport?: () => void
   /** 社交消息仓库 */
   private socialMessageRepo?: SocialStoragePort
   private socialScorer?: SocialScorerService
   private socialScorerRunning = new Set<string>()
-  /** QQ 账号收藏表情服务，不绑定角色资源。 */
-  private stickerService?: StickerService
   private loopGuard?: SocialLoopGuard
   private configWriteQueue: Promise<unknown> = Promise.resolve()
   /**
@@ -169,14 +242,13 @@ export class SocialAppRuntime implements AgentAppRuntime {
   /** 当前单实例 Social 绑定的角色，由配置界面指定。 */
   private socialAgentId = 'pero'
   /**
-   * 主人的 QQ 号（从 social 配置读取）
+   * 主人的平台账号（从 social 配置读取）
    *
    * 用途：
-   * 1. 注入到 NapcatAdapter 用于识别入站消息是否来自主人
+   * 1. 注入到平台适配器 用于识别入站消息是否来自主人
    * 2. 注入到 compiler 的 system prompt，让 Agent 知道主人是谁
    * 3. 通过 generateReply 传递给 compiler，按是否主人调整权限提示
    */
-  private ownerQq: string | undefined
   private releaseTaskDelivery?: () => void
   private modeConfig = {
     ...DEFAULT_SOCIAL_SCHEDULER_CONFIG,
@@ -256,32 +328,26 @@ export class SocialAppRuntime implements AgentAppRuntime {
       await this.registerGrants(ctx)
 
       // 3. 绑定Kernel提供的收窄存储Port。
-      this.socialMessageRepo = ctx.socialStorage
+      this.socialMessageRepo = scopedSocialStorage(ctx.socialStorage)
 
       // 4. 创建图片缓存管理器
       const imageCacheManager = ctx.pathResolver
         ? new ImageCacheManager({
             cacheDir: ctx.pathResolver.resolve('@data/social_images'),
+            requestContext: (url) => {
+              const scope = currentSocialScope()
+              return {
+                partition: JSON.stringify([scope?.platform, scope?.accountId]),
+                headers: this.adapter(scope?.platform)?.mediaHeaders(url, scope?.accountId),
+              }
+            },
           })
         : undefined
-
-      // 5. 收藏管理延迟到实际调用时选择可信账号，兼容远程 NapCat。
-      this.stickerService = new StickerService(
-        new NapcatStickers(async (...args) => {
-          if (
-            !this.napcatAdapter ||
-            !args[3] ||
-            !this.napcatAdapter.getConnectedAccountIds().includes(args[3])
-          )
-            throw new Error('当前 QQ 账号未连接')
-          return this.napcatAdapter.callApi(...args)
-        }),
-      )
 
       // 6. 创建社交 Scorer 服务（可选，依赖 storeRegistry + 社交炼化模型）
       if (ctx.storeRegistry && ctx.getSocialScorerModel) {
         this.socialScorer = new SocialScorerService(
-          this.socialMessageRepo,
+          ctx.socialStorage,
           ctx.storeRegistry,
           ctx.llmService,
           ctx.getSocialScorerModel,
@@ -294,27 +360,30 @@ export class SocialAppRuntime implements AgentAppRuntime {
       if (!ctx.configRepo) throw new Error('社交互聊保护需要可持久化的配置服务')
       this.loopGuard = new SocialLoopGuard(
         ctx.configRepo,
-        () => normalizeLoopPolicy(this.modeConfig.loopGuard),
-        () => this.napcatAdapter?.getConnectedAccountIds() ?? [],
-        () => this.ownerQq,
+        () =>
+          normalizeLoopPolicy(
+            this.modeConfig.loopGuard,
+            this.adapters.find((adapter) => adapter.legacyConfiguration)?.platform,
+          ),
+        (platform) => this.adapter(platform)?.getConnectedAccountIds() ?? [],
+        (platform) => this.ownerFor(platform),
         async (change) =>
           (await this.updateModeConfig((current) => ({ loopGuard: change(current.loopGuard) })))
             .loopGuard,
+        () => this.adapters.find((adapter) => adapter.legacyConfiguration)?.platform,
       )
       this.socialBridge = new SocialBridge({
         loopGuard: this.loopGuard,
         getAgentId: () => this.socialAgentId,
-        getOwnerId: () => this.ownerQq,
+        getOwnerId: (platform) => this.ownerFor(platform),
+        legacyPlatform: () =>
+          this.adapters.find((adapter) => adapter.legacyConfiguration)?.platform,
         socialEvents: ctx.socialEvents,
         executions: ctx.socialExecutions,
         socialMessageRepo: this.socialMessageRepo,
         imageCacheManager,
-        stickerService: this.stickerService,
-        resolveNativeEmoji: (scope, reference) =>
-          new NativeEmojiService(this.socialMessageRepo!, ctx.configRepo!).resolve(
-            scope,
-            reference,
-          ),
+        getStickerService: (platform) => this.adapter(platform)?.getStickerService(),
+        resolveNativeEmoji: (scope, reference) => this.resolveNativeEmoji(scope, reference),
         inboundRouteRepo: ctx.inboundRouteRepo,
         shouldAcceptInbound: (message) => {
           // 单实例 Social 始终由配置角色处理，频道路由不得跨角色改派。
@@ -322,12 +391,26 @@ export class SocialAppRuntime implements AgentAppRuntime {
           if (this.modeConfig.ownerPrivateOnlyAgentIds.includes(message.agentId)) {
             return message.channelType === 'private' && message.isOwner === true
           }
-          if (this.modeConfig.userBlacklist.includes(message.senderId)) return false
+          if (
+            this.identityListed(this.modeConfig.userBlacklist, message.senderId, message.platform)
+          )
+            return false
           if (message.channelType === 'group') {
-            if (this.modeConfig.groupBlacklist.includes(message.channelId)) return false
             if (
-              this.modeConfig.groupWhitelist.length > 0 &&
-              !this.modeConfig.groupWhitelist.includes(message.channelId)
+              this.identityListed(
+                this.modeConfig.groupBlacklist,
+                message.channelId,
+                message.platform,
+              )
+            )
+              return false
+            if (
+              this.hasPlatformEntries(this.modeConfig.groupWhitelist, message.platform) &&
+              !this.identityListed(
+                this.modeConfig.groupWhitelist,
+                message.channelId,
+                message.platform,
+              )
             )
               return false
           }
@@ -342,11 +425,19 @@ export class SocialAppRuntime implements AgentAppRuntime {
         shouldAllowSession: (session) =>
           session.agentId === this.socialAgentId &&
           (!this.modeConfig.ownerPrivateOnlyAgentIds.includes(session.agentId) ||
-            (session.channelType === 'private' && session.channelId === this.ownerQq)) &&
+            this.isOwnerSession(session)) &&
           (session.channelType !== 'group' ||
-            (!this.modeConfig.groupBlacklist.includes(session.channelId) &&
-              (!this.modeConfig.groupWhitelist.length ||
-                this.modeConfig.groupWhitelist.includes(session.channelId)))),
+            (!this.identityListed(
+              this.modeConfig.groupBlacklist,
+              session.channelId,
+              session.platform,
+            ) &&
+              (!this.hasPlatformEntries(this.modeConfig.groupWhitelist, session.platform) ||
+                this.identityListed(
+                  this.modeConfig.groupWhitelist,
+                  session.channelId,
+                  session.platform,
+                )))),
         onMessagePersisted: async (agentId) => {
           if (!this.socialScorer || this.socialScorerRunning.has(agentId)) return
           this.socialScorerRunning.add(agentId)
@@ -371,14 +462,27 @@ export class SocialAppRuntime implements AgentAppRuntime {
         generateReply: async (params) => this.generateReply(params),
       })
 
-      // 8. 从配置读取 QQ→Agent 映射，创建 NapcatAdapter 并注册
-      await this.setupNapcatAdapter(ctx)
+      // 8. 从连接配置创建平台适配器并注册
+      await this.setupSocialAdapters(ctx)
 
       // 9. 启动 SocialBridge
-      await this.socialBridge.start()
+      await this.socialBridge.start(this.lifetime.signal)
       this.releaseTaskDelivery = ctx.registerTaskDelivery?.({
+        authorizeOrigin: async (origin) => {
+          const adapter = this.adapter(origin.platform)
+          return adapter &&
+            origin.accountId &&
+            origin.channelId &&
+            origin.messageId &&
+            origin.channelType === 'private' &&
+            origin.senderId === adapter.getOwnerId() &&
+            adapter.getConnectedAccountIds().includes(origin.accountId) &&
+            ctx.agentManager.getAgent(this.socialAgentId)
+            ? this.socialAgentId
+            : undefined
+        },
         sendResources: async (origin, content, resources) => {
-          if (!this.socialBridge || origin.senderId !== this.ownerQq)
+          if (!this.socialBridge || origin.senderId !== this.ownerFor(origin.platform))
             throw new Error('社交绑定已变化')
           await this.socialBridge.sendReply(origin.platform, {
             accountId: origin.accountId,
@@ -407,25 +511,63 @@ export class SocialAppRuntime implements AgentAppRuntime {
         ready: async (origin) => {
           if (
             !this.running ||
-            origin.platform !== 'qq' ||
-            origin.senderId !== this.ownerQq ||
-            !this.napcatAdapter
+            origin.senderId !== this.ownerFor(origin.platform) ||
+            !this.adapter(origin.platform)
           )
             return false
           return (
-            (await this.napcatAdapter.getStatus()).connected &&
-            this.napcatAdapter.getConnectedAccountIds().includes(origin.accountId)
+            (await this.adapter(origin.platform)!.getStatus()).connected &&
+            this.adapter(origin.platform)!.getConnectedAccountIds().includes(origin.accountId) &&
+            (
+              await this.adapter(origin.platform)!.getSendReadiness({
+                accountId: origin.accountId,
+                channelId: origin.channelId,
+                channelType: 'private',
+                content: '',
+              })
+            ).ready
           )
         },
-        send: async (origin, content) => {
-          if (!this.socialBridge || origin.senderId !== this.ownerQq)
+        send: async (origin, content, delivery) => {
+          const agentId = this.socialAgentId
+          const signal = this.lifetime.signal
+          if (delivery && delivery.agentId !== agentId)
+            throw Object.assign(new Error('SOCIAL_PERSONA_BINDING_INVALID'), {
+              code: 'DELIVERY_NOT_SENT',
+            })
+          if (!this.socialBridge || origin.senderId !== this.ownerFor(origin.platform))
             throw new Error('社交绑定已变化，不能向旧来源发送')
-          await this.socialBridge.sendReply(origin.platform, {
-            accountId: origin.accountId,
-            channelType: 'private',
-            channelId: origin.channelId,
-            content,
-          })
+          // 先记下已生成的结果，后续社交回合能读取；投递状态仍由宿主账本独立记录。
+          if (delivery) {
+            try {
+              await this.socialMessageRepo!.insert({
+                msgId: `task-result:${delivery.deliveryId}`,
+                platform: origin.platform,
+                accountId: origin.accountId,
+                channelId: origin.channelId,
+                channelType: 'private',
+                senderId: 'self',
+                senderName: agentId,
+                agentId,
+                content: __t('apps.social.ui', '【后台任务结果已生成】\n{0}', [content]),
+              })
+            } catch (error) {
+              throw Object.assign(error instanceof Error ? error : new Error(String(error)), {
+                code: 'DELIVERY_NOT_SENT',
+              })
+            }
+          }
+          signal.throwIfAborted()
+          await this.socialBridge.sendReply(
+            origin.platform,
+            {
+              accountId: origin.accountId,
+              channelType: 'private',
+              channelId: origin.channelId,
+              content,
+            },
+            signal,
+          )
         },
       })
 
@@ -444,22 +586,28 @@ export class SocialAppRuntime implements AgentAppRuntime {
       setSocialModeControlProvider({
         setOwnerPrivateOnly: (agentId, enabled) => this.setOwnerPrivateOnly(agentId, enabled),
       })
-      this.operations = new SocialOperations({
-        adapter: () => this.napcatAdapter,
+      const operationDeps: SocialOperationDependencies = {
         active: (agentId) => this.running && agentId === this.socialAgentId,
         config: ctx.configRepo,
         storage: this.socialMessageRepo,
-        groupState: (scope, groupId) => this.getGroupState(scope.agentId, scope.accountId, groupId),
+        groupState: (scope, groupId) =>
+          this.getGroupState(scope.agentId, scope.accountId, groupId, scope.platform),
         configureGroupState: async (scope, groupId, policy, reset) => {
-          const key = socialGroupPolicyKey(scope.agentId, scope.accountId, groupId)
+          const key = socialGroupPolicyKey(scope.agentId, scope.accountId, groupId, scope.platform)
           await this.updateModeConfig((current) => {
             scope.signal?.throwIfAborted()
             const groupPolicies = { ...current.groupPolicies }
+            const oldKey = socialGroupPolicyKey(scope.agentId, scope.accountId, groupId)
+            const legacy =
+              this.adapter(scope.platform)?.legacyConfiguration === true
+                ? groupPolicies[oldKey]
+                : undefined
             if (reset) delete groupPolicies[key]
-            else groupPolicies[key] = { ...groupPolicies[key], ...policy }
+            else groupPolicies[key] = { ...legacy, ...groupPolicies[key], ...policy }
+            if (this.adapter(scope.platform)?.legacyConfiguration) delete groupPolicies[oldKey]
             return { groupPolicies }
           })
-          return this.getGroupState(scope.agentId, scope.accountId, groupId)
+          return this.getGroupState(scope.agentId, scope.accountId, groupId, scope.platform)
         },
         markBot: async (scope, input) => {
           if (!this.loopGuard) throw new Error('社交互聊保护尚未就绪')
@@ -467,7 +615,8 @@ export class SocialAppRuntime implements AgentAppRuntime {
         },
         send: async (scope, message) => {
           if (!this.socialBridge) throw new Error('社交发送服务尚未就绪')
-          return this.socialBridge.sendReply('qq', message, scope.signal)
+          if (!scope.platform) throw new Error('SOCIAL_PLATFORM_REQUIRED')
+          return this.socialBridge.sendReply(scope.platform, message, scope.signal)
         },
         prepareImage: async (source, scope) => {
           if (!ctx.resources) throw new Error('资源服务未就绪')
@@ -483,9 +632,24 @@ export class SocialAppRuntime implements AgentAppRuntime {
           })
           if (prepared.resource.kind !== 'image') throw new Error('此操作需要图片资源')
           scope.signal?.throwIfAborted()
-          return socialImageData(prepared.filePath)
+          const adapter = this.adapter(scope.platform)
+          if (!adapter) throw new Error('SOCIAL_PLATFORM_REQUIRED')
+          return adapter.prepareImage(prepared.filePath)
         },
-      })
+      }
+      this.operationDeps = operationDeps
+      this.operations = new SocialOperations()
+      for (const adapter of this.adapters) {
+        const provider = adapter.createOperations(operationDeps)
+        this.operations.register(
+          adapter.platform,
+          new SocialCommonOperations(
+            operationDeps,
+            () => adapter.getConnectedAccountIds(),
+            provider,
+          ),
+        )
+      }
 
       // 12. 读取社交工具 manifest，解析为 ToolDefinition[] 供 LLM function calling 使用
       //     路径: packages/apps/social/tools/manifest.json（与 prompts/ 同级）
@@ -637,6 +801,8 @@ export class SocialAppRuntime implements AgentAppRuntime {
         if (this.socialMessageRepo && imageCacheManager) {
           const repo = this.socialMessageRepo
           const imgCache = imageCacheManager
+          const decode = (row: Parameters<AbstractSocialAdapter['restoreMessage']>[0]) =>
+            this.adapter(row.platform)?.restoreMessage(row) ?? restoreSocialMessage(row)
           const imageReader: SocialImageReaderProvider = {
             async readImages(
               agentId: string,
@@ -654,7 +820,9 @@ export class SocialAppRuntime implements AgentAppRuntime {
                   const row = await repo.getByMsgId(agentId, msgId, accountId)
                   if (row?.accountId !== accountId) continue
                   if (!row?.rawEventJson || row.rawEventJson === '{}') continue
-                  const urls = extractImageUrlsFromRawEvent(row.rawEventJson)
+                  const urls = (decode(row).attachments ?? [])
+                    .filter((item) => item.type === 'image')
+                    .flatMap((item) => (item.url ? [item.url] : []))
                   for (const url of urls) {
                     if (images.length >= maxImages) break
                     if (collectedUrls.has(url)) continue
@@ -689,7 +857,11 @@ export class SocialAppRuntime implements AgentAppRuntime {
             async rememberImpression(input) {
               await repo.upsertContactImpression({
                 ...input,
-                platform: 'qq',
+                platform:
+                  currentSocialScope()?.platform ??
+                  (() => {
+                    throw new Error('SOCIAL_PLATFORM_REQUIRED')
+                  })(),
                 turnId: currentSocialRecovery()?.record.id,
               })
             },
@@ -734,7 +906,11 @@ export class SocialAppRuntime implements AgentAppRuntime {
                     input.groupLimit ?? 30,
                   )
                 : []
-              const impression = await repo.getContactImpression(input.agentId, 'qq', input.userId)
+              const impression = await repo.getContactImpression(
+                input.agentId,
+                currentSocialScope()?.platform ?? '',
+                input.userId,
+              )
               return {
                 contact: {
                   userId: input.userId,
@@ -775,21 +951,72 @@ export class SocialAppRuntime implements AgentAppRuntime {
       // 暴露 /api/social/status（适配器状态）和 /api/social/send（调试发消息）给前端 Dashboard。
       if (ctx.mountRouter) {
         const dataService = new SocialDataService({
-          cancelTasks: (agentId, channelId) => {
+          getPlatforms: () => this.adapters.map((adapter) => adapter.platform),
+          cancelTasks: (agentId, address) => {
             this.socialBridge?.closeSessionsExcept(
               (session) =>
                 session.agentId !== agentId ||
-                Boolean(channelId && session.channelId !== channelId),
+                Boolean(
+                  address &&
+                  (session.platform !== address.platform ||
+                    session.accountId !== address.accountId ||
+                    session.channelType !== address.channelType ||
+                    session.channelId !== address.channelId),
+                ),
             )
             this.socialScorer?.cancel(agentId)
           },
-          storage: this.socialMessageRepo!,
+          storage: ctx.socialStorage!,
           getAgentName: (agentId) => ctx.agentManager.getAgent(agentId)?.name,
         })
         const socialRouter = createSocialRouter(this.socialBridge, {
           statusCards: this.statusCards!,
-          stickers: this.stickerService,
-          getStickerAccounts: () => this.napcatAdapter?.getConnectedAccountIds() ?? [],
+          resolveStickers: (platform) => this.adapter(platform)?.getStickerService(),
+          getStickerConnections: () =>
+            this.adapters.flatMap((adapter) =>
+              adapter.getStickerService()
+                ? adapter
+                    .getConnectedAccountIds()
+                    .map((accountId) => ({ platform: adapter.platform, accountId }))
+                : [],
+            ),
+          getConnections: () =>
+            this.adapters.map((adapter) => ({
+              id: adapter.connectionId,
+              adapter: adapter.adapterType,
+              platform: adapter.platform,
+              name: adapter.displayName,
+              ownerId: adapter.getOwnerId(),
+              accounts: adapter.getConnectedAccountIds(),
+              capabilities: adapter.capabilities,
+            })),
+          getPlatforms: () =>
+            this.adapterFactories.map((factory) => ({
+              type: factory.type,
+              platform: factory.platform,
+            })),
+          enablePlatform: (type) => this.enablePlatform(type),
+          management: async (id, action, input) => {
+            const adapter = this.adapters.find((item) => item.connectionId === id)
+            if (!adapter) throw new Error('SOCIAL_CONNECTION_INVALID')
+            const owner = adapter.getOwnerId()
+            const result = action
+              ? await adapter.manage(action, input ?? {})
+              : await adapter.managementSnapshot()
+            if (owner !== adapter.getOwnerId())
+              this.socialBridge?.closeSessionsExcept(
+                (session) => session.platform !== adapter.platform,
+              )
+            else if (typeof result.changedAccountId === 'string')
+              this.socialBridge?.closeSessionsExcept(
+                (session) =>
+                  session.platform !== adapter.platform ||
+                  session.accountId !== result.changedAccountId,
+              )
+
+            return result
+          },
+          updateOwner: (id, ownerId) => this.updateConnectionOwner(id, ownerId),
           getHostAgentId: () => ctx.hostAgentId,
           dataService,
           getAgentConfig: () => ({ agentId: this.socialAgentId }),
@@ -808,8 +1035,7 @@ export class SocialAppRuntime implements AgentAppRuntime {
       }
 
       // 全部初始化成功后才向宿主发布；使用注入的函数跨越独立 bundle 边界。
-      if (this.napcatAdapter)
-        this.releaseSocialTransport = ctx.registerSocialTransport(this.napcatAdapter)
+      this.publishTransports()
       this.running = true
       ctx.logger.info(__t('apps.social.logs', '社交应用运行时已初始化（已接入真实组件）'))
       return { success: true }
@@ -889,21 +1115,106 @@ export class SocialAppRuntime implements AgentAppRuntime {
     this.ctx.logger.info(__t('apps.social.logs', '资源授权已撤销: {0} 条', [revokedCount]))
   }
 
-  async onConfigChanged(keys: readonly string[]): Promise<void> {
-    if (!keys.includes('social') || !this.ctx || this.lifetime.signal.aborted) return
-    const config = await this.readSocialConfig(this.ctx)
-    if (this.lifetime.signal.aborted) return
-    if (config.mode && typeof config.mode === 'object' && !Array.isArray(config.mode)) {
-      this.applyModeConfig(this.normalizeModeConfig(config.mode as Record<string, unknown>))
+  private publishTransports(): void {
+    this.releaseSocialTransport?.()
+    this.releaseSocialTransport = undefined
+    const releases: Array<() => void> = []
+    try {
+      for (const adapter of this.adapters) {
+        const transport = adapter.getWebSocketTransport()
+        if (transport)
+          releases.push(this.ctx!.registerSocialTransport!(transport, adapter.platform))
+      }
+      this.releaseSocialTransport = () => {
+        for (const release of releases) release()
+      }
+    } catch (error) {
+      for (const release of releases) release()
+      throw error
     }
-    const ownerQq = socialOwnerId(config.ownerQq)
-    if (ownerQq === this.ownerQq) return
-    this.ownerQq = ownerQq
-    invalidatePromptReplay(`social:${this.ctx.instanceId}:`)
-    this.napcatAdapter?.setOwnerQq(ownerQq)
-    // 身份边界已变化，取消持有旧身份上下文的回合；新消息使用新配置重新编译。
-    this.socialBridge?.closeSessionsExcept(() => false)
-    this.ctx.logger.info(__t('apps.social.logs', '主人 QQ 配置已即时更新，旧身份会话已关闭'))
+  }
+
+  async onConfigChanged(keys: readonly string[]): Promise<void> {
+    if (!keys.includes('social') || !this.ctx || this.stopped) return
+    const update = this.adapterUpdates
+      .catch(() => {})
+      .then(async () => {
+        if (!this.ctx || this.stopped) return
+        const config = await this.readSocialConfig(this.ctx)
+        if (this.stopped) return
+        const specs = socialConnectionSpecs(config, this.adapterFactories)
+        if (config.mode && typeof config.mode === 'object' && !Array.isArray(config.mode)) {
+          this.applyModeConfig(this.normalizeModeConfig(config.mode as Record<string, unknown>))
+        }
+        const next = specs.map(({ factory, connection }) => {
+          const existing = this.adapters.find(
+            (adapter) =>
+              adapter.platform === factory.platform &&
+              adapter.connectionId === connection.id &&
+              adapter.adapterType === factory.type,
+          )
+          const adapter =
+            existing ??
+            factory.create(connection, this.socialAgentId, {
+              privateRoot: this.ctx?.pathResolver?.resolve('@data/social_private'),
+            })
+          if (adapter.platform !== factory.platform || adapter.connectionId !== connection.id)
+            throw new Error('SOCIAL_CONNECTION_INVALID')
+          return { adapter, existing, connection }
+        })
+        const removed = this.adapters.filter(
+          (adapter) => !next.some((item) => item.adapter === adapter),
+        )
+        const changed = new Set<string>()
+        if (removed.length || next.some((item) => !item.existing)) {
+          this.releaseSocialTransport?.()
+          this.releaseSocialTransport = undefined
+        }
+        for (const adapter of removed) {
+          changed.add(adapter.platform)
+          this.socialBridge?.closeSessionsExcept((session) => session.platform !== adapter.platform)
+          this.socialBridge?.unregisterAdapter(adapter.platform)
+          this.operations?.unregister(adapter.platform)
+          try {
+            await adapter.disconnect()
+          } catch (error) {
+            this.ctx.logger.warn(
+              __t('apps.social.logs', '社交适配器 {0} 停止失败: {1}', [
+                adapter.platform,
+                String(error),
+              ]),
+            )
+          }
+        }
+        this.adapters = next.map((item) => item.adapter)
+        for (const { adapter, existing, connection } of next) {
+          const owner = adapter.getOwnerId()
+          adapter.configure(connection)
+          if (owner !== adapter.getOwnerId()) changed.add(adapter.platform)
+          if (!existing) {
+            changed.add(adapter.platform)
+            this.socialBridge!.registerAdapter(adapter)
+            if (this.operationDeps && this.operations)
+              this.operations.register(
+                adapter.platform,
+                new SocialCommonOperations(
+                  this.operationDeps,
+                  () => adapter.getConnectedAccountIds(),
+                  adapter.createOperations(this.operationDeps),
+                ),
+              )
+            if (this.running) await adapter.connect(this.lifetime.signal)
+          }
+        }
+        if (changed.size) {
+          invalidatePromptReplay(`social:${this.ctx.instanceId}:`)
+          this.socialBridge?.closeSessionsExcept((session) => !changed.has(session.platform ?? ''))
+        }
+        if (this.running && !this.releaseSocialTransport) this.publishTransports()
+        setSocialMessagingProvider(this.socialBridge?.createMessagingProvider() ?? null)
+      })
+    this.adapterUpdates = update
+    await update
   }
 
   private async readSocialConfig(ctx: AppRuntimeContext): Promise<Record<string, unknown>> {
@@ -949,14 +1260,17 @@ export class SocialAppRuntime implements AgentAppRuntime {
       ...normalizeSocialSchedulerConfig({ ...base, ...config }),
     }
     next.groupPolicies = normalizeSocialGroupPolicies(next.groupPolicies)
-    next.loopGuard = normalizeLoopPolicy({
-      ...base.loopGuard,
-      ...(config.loopGuard &&
-      typeof config.loopGuard === 'object' &&
-      !Array.isArray(config.loopGuard)
-        ? config.loopGuard
-        : {}),
-    })
+    next.loopGuard = normalizeLoopPolicy(
+      {
+        ...base.loopGuard,
+        ...(config.loopGuard &&
+        typeof config.loopGuard === 'object' &&
+        !Array.isArray(config.loopGuard)
+          ? config.loopGuard
+          : {}),
+      },
+      this.adapters.find((adapter) => adapter.legacyConfiguration)?.platform,
+    )
     next.groupWhitelist = Array.isArray(next.groupWhitelist) ? next.groupWhitelist.map(String) : []
     next.groupBlacklist = Array.isArray(next.groupBlacklist) ? next.groupBlacklist.map(String) : []
     next.userBlacklist = Array.isArray(next.userBlacklist) ? next.userBlacklist.map(String) : []
@@ -972,14 +1286,70 @@ export class SocialAppRuntime implements AgentAppRuntime {
     this.socialBridge?.updateGroupPolicies(config.groupPolicies)
   }
 
-  private getGroupState(agentId: string, accountId: string, groupId: string) {
+  private getGroupState(
+    agentId: string,
+    accountId: string,
+    groupId: string,
+    platform = this.adapter()?.platform,
+  ) {
     if (!this.socialBridge) throw new Error('群聊状态机尚未初始化')
     return {
-      ...this.socialBridge.getGroupState(agentId, accountId, groupId),
+      ...this.socialBridge.getGroupState(agentId, accountId, groupId, platform),
       override: {
-        ...this.modeConfig.groupPolicies[socialGroupPolicyKey(agentId, accountId, groupId)],
+        ...this.modeConfig.groupPolicies[
+          socialGroupPolicyKey(agentId, accountId, groupId, platform)
+        ],
       },
     }
+  }
+
+  private async enablePlatform(type: string): Promise<void> {
+    const factory = this.adapterFactories.find((item) => item.type === type)
+    if (!factory || !this.ctx?.configRepo) throw new Error('SOCIAL_ADAPTER_UNKNOWN')
+    await this.serializeConfigWrite(async () => {
+      const config = await this.readSocialConfig(this.ctx!)
+      const connections = Array.isArray(config.connections)
+        ? config.connections
+        : [
+            {
+              id: 'qq',
+              adapter: 'napcat',
+              ownerId: config.ownerId ?? config.ownerQq,
+              autoAcceptFriend: config.autoAcceptFriend,
+              legacyConfiguration: true,
+            },
+          ]
+      const existing = connections.find((item: Record<string, unknown>) => item.adapter === type)
+      if (existing) existing.enabled = true
+      else connections.push({ id: factory.platform, adapter: type, enabled: true })
+      await this.ctx!.configRepo!.set('social', JSON.stringify({ ...config, connections }))
+    })
+    await this.onConfigChanged(['social'])
+  }
+
+  private async updateConnectionOwner(id: string, ownerId: string): Promise<void> {
+    const adapter = this.adapters.find((item) => item.connectionId === id)
+    if (!adapter || !adapter.validateOwnerId(ownerId) || !this.ctx?.configRepo)
+      throw new Error('SOCIAL_OWNER_INVALID')
+    await this.serializeConfigWrite(async () => {
+      const config = await this.readSocialConfig(this.ctx!)
+      if (Array.isArray(config.connections)) {
+        const connection = config.connections.find(
+          (value) =>
+            value &&
+            typeof value === 'object' &&
+            ((value as Record<string, unknown>).id === id ||
+              (!(value as Record<string, unknown>).id &&
+                (value as Record<string, unknown>).adapter === adapter.adapterType)),
+        ) as Record<string, unknown> | undefined
+        if (!connection) throw new Error('SOCIAL_CONNECTION_INVALID')
+        connection.ownerId = ownerId
+      } else config.ownerId = ownerId
+      await this.ctx!.configRepo!.set('social', JSON.stringify(config))
+    })
+    adapter.setOwnerId(ownerId || undefined)
+    this.socialBridge?.closeSessionsExcept((session) => session.platform !== adapter.platform)
+    invalidatePromptReplay(`social:${this.ctx.instanceId}:`)
   }
 
   private serializeConfigWrite<T>(write: () => Promise<T>): Promise<T> {
@@ -1025,7 +1395,7 @@ export class SocialAppRuntime implements AgentAppRuntime {
     const closedSessions = this.socialBridge.closeSessionsExcept(() => false)
     await this.revokeGrants()
     this.socialAgentId = agentId
-    this.napcatAdapter?.setAgentId(agentId)
+    this.adapters.forEach((adapter) => adapter.setAgentId(agentId))
     await this.registerGrants(this.ctx)
     this.ctx.logger.info(
       __t('apps.social.logs', '[{0}] Social 单实例角色已切换，清理会话 {1} 个', [
@@ -1042,7 +1412,8 @@ export class SocialAppRuntime implements AgentAppRuntime {
   ): Promise<{ enabled: boolean; closedSessions: number }> {
     if (!this.ctx?.configRepo || !this.socialBridge) throw new Error('社交应用尚未初始化')
     if (!this.ctx.agentManager.getAgent(agentId)) throw new Error(`角色不存在: ${agentId}`)
-    if (enabled && !this.ownerQq) throw new Error('尚未配置主人 QQ，无法启用仅主人私聊模式')
+    if (enabled && !this.adapters.some((adapter) => adapter.getOwnerId()))
+      throw new Error('SOCIAL_OWNER_REQUIRED')
 
     await this.updateModeConfig((current) => {
       const ids = new Set(current.ownerPrivateOnlyAgentIds)
@@ -1053,9 +1424,7 @@ export class SocialAppRuntime implements AgentAppRuntime {
 
     const closedSessions = enabled
       ? this.socialBridge.closeSessionsExcept(
-          (session) =>
-            session.agentId !== agentId ||
-            (session.channelType === 'private' && session.channelId === this.ownerQq),
+          (session) => session.agentId !== agentId || this.isOwnerSession(session),
         )
       : 0
     this.ctx.logger.info(
@@ -1069,35 +1438,17 @@ export class SocialAppRuntime implements AgentAppRuntime {
   }
 
   /**
-   * 设置 NapCat 适配器（单实例统一使用配置角色）
+   * 装配平台适配器（单实例统一使用配置角色）
    */
-  private async setupNapcatAdapter(ctx: AppRuntimeContext): Promise<void> {
-    if (!ctx.configRepo) return
-
-    const socialConfig = await this.readSocialConfig(ctx)
-
-    if (socialConfig && typeof socialConfig === 'object') {
-      // 读取主人 QQ 号（权限控制核心配置）
-      // 存储在 social 配置的顶层 ownerQq 字段，值为字符串
-      this.ownerQq = socialOwnerId(socialConfig.ownerQq)
-      const mode = socialConfig.mode
-      if (mode && typeof mode === 'object' && !Array.isArray(mode)) {
-        this.applyModeConfig(this.normalizeModeConfig(mode as Record<string, unknown>))
-      }
-    }
-
-    // 创建并注册 NapCat 适配器（注入 ownerQq 用于入站消息身份识别）
-    this.napcatAdapter = new NapcatAdapter({
-      defaultAgentId: this.socialAgentId,
-      autoAcceptFriend: true,
-      ownerQq: this.ownerQq,
+  private async setupSocialAdapters(ctx: AppRuntimeContext): Promise<void> {
+    const config = await this.readSocialConfig(ctx)
+    if (config.mode && typeof config.mode === 'object' && !Array.isArray(config.mode))
+      this.applyModeConfig(this.normalizeModeConfig(config.mode as Record<string, unknown>))
+    this.adapters = createSocialAdapters(config, this.socialAgentId, this.adapterFactories, {
+      privateRoot: ctx.pathResolver?.resolve('@data/social_private'),
     })
-    this.socialBridge!.registerAdapter(this.napcatAdapter)
-
-    ctx.logger.info(
-      __t('apps.social.logs', 'NapCat 适配器已注册, Social Agent: {0}, ', [this.socialAgentId]) +
-        __t('apps.social.logs', '主人QQ: {0} (等待反向 WS 连接)', [this.ownerQq ?? '(未配置)']),
-    )
+    this.applyModeConfig(this.normalizeModeConfig(this.modeConfig))
+    for (const adapter of this.adapters) this.socialBridge!.registerAdapter(adapter)
   }
 
   /**
@@ -1106,6 +1457,7 @@ export class SocialAppRuntime implements AgentAppRuntime {
    * 由 SocialBridge.executeReply 调用。
    */
   private async generateReply(params: {
+    platform?: string
     signal?: AbortSignal
     taskOrigin?: import('@infos/shared').TaskOrigin
     agentId: string
@@ -1126,7 +1478,7 @@ export class SocialAppRuntime implements AgentAppRuntime {
     /** 触发消息中的图片附件（data URL 格式，供多模态 LLM 使用） */
     images?: string[]
     imageSources?: string[]
-    /** Bot 自身 QQ 号（注入到上下文） */
+    /** Bot 自身平台账号（注入到上下文） */
     botSelfId?: string
     /** Bot 自身昵称（注入到上下文） */
     botNickname?: string
@@ -1144,9 +1496,13 @@ export class SocialAppRuntime implements AgentAppRuntime {
     }
 
     const { agentId, channelType, channelId, combinedMessage } = params
-    const triggerSenderId =
-      params.triggerSenderId ?? (channelType === 'private' ? channelId : undefined)
-    const isOwner = Boolean(this.ownerQq && triggerSenderId === this.ownerQq)
+    const adapter = this.adapter(params.platform ?? params.taskOrigin?.platform)
+    if (!adapter) throw new Error('SOCIAL_PLATFORM_REQUIRED')
+    const platform = adapter.platform
+    const ownerId = adapter.getOwnerId()
+    const stickerService = adapter.getStickerService()
+    const triggerSenderId = params.triggerSenderId ?? params.taskOrigin?.senderId
+    const isOwner = Boolean(ownerId && triggerSenderId === ownerId)
     const stickerAccountId = params.taskOrigin?.accountId || params.botSelfId
     const triggerMessageId =
       params.triggerMessageId ?? params.taskOrigin?.messageId ?? params.flushMsgIds?.at(-1)
@@ -1169,7 +1525,7 @@ export class SocialAppRuntime implements AgentAppRuntime {
             row.msgId,
             row.senderId,
             row.content,
-            ...(this.loopGuard?.isBotAccount(row.senderId) ? ['bot·无需刻意回应@'] : []),
+            ...(this.loopGuard?.isBotAccount(row.senderId, platform) ? ['bot·无需刻意回应@'] : []),
           ])
         replayCurrentKeys = dbRows
           .filter(
@@ -1184,7 +1540,7 @@ export class SocialAppRuntime implements AgentAppRuntime {
             !excludeIds.has(row.msgId) && (!stickerAccountId || row.accountId === stickerAccountId),
         )
         const filteredRows = stableHistoryWindow(
-          `social:${agentId}:${stickerAccountId}:${channelType}:${channelId}`,
+          `social:${JSON.stringify([platform, agentId, stickerAccountId ?? '', channelType, channelId])}`,
           scopedRows,
           50,
           (row) => String(row.id),
@@ -1216,9 +1572,9 @@ export class SocialAppRuntime implements AgentAppRuntime {
     // 场景：用户 A 在群里 @ Agent，Agent 能看到与 A 的最近私聊作为补充上下文
     // 仅群聊场景需要（私聊时当前会话本身就是私聊，已在 history 中）
     let crossSessionContext: string | undefined
-    const contactUserId = channelType === 'private' ? channelId : params.triggerSenderId
+    const contactUserId = triggerSenderId
     const contactImpression = contactUserId
-      ? await this.socialMessageRepo?.getContactImpression(agentId, 'qq', contactUserId)
+      ? await this.socialMessageRepo?.getContactImpression(agentId, platform, contactUserId)
       : null
     if (channelType === 'group' && params.triggerSenderId && this.socialMessageRepo) {
       try {
@@ -1233,7 +1589,7 @@ export class SocialAppRuntime implements AgentAppRuntime {
             .filter((message) => !stickerAccountId || message.accountId === stickerAccountId)
             .map((m) => {
               const role = m.senderId === 'self' ? '自己' : m.senderName || m.senderId
-              return `[${JSON.stringify(role)} QQ:${m.senderId}]${this.loopGuard?.isBotAccount(m.senderId) ? ' [bot·无需刻意回应@]' : ''}: ${m.content}`
+              return `[${JSON.stringify(role)} 平台账号:${m.senderId}]${this.loopGuard?.isBotAccount(m.senderId, platform) ? ' [bot·无需刻意回应@]' : ''}: ${m.content}`
             })
           crossSessionContext = lines.join('\n')
           logger.debug(
@@ -1250,7 +1606,12 @@ export class SocialAppRuntime implements AgentAppRuntime {
     }
 
     // ── Realm私有会话心流，不创建或复用主应用Thread。──
-    const realmSessionId = `${stickerAccountId || 'unknown'}:${channelType}:${channelId}`
+    const realmSessionId = JSON.stringify([
+      platform,
+      stickerAccountId ?? '',
+      channelType,
+      channelId,
+    ])
     const flowState = await this.ctx.flowStateService.getRealm(
       this.ctx.realm.descriptor.realmId,
       realmSessionId,
@@ -1260,8 +1621,8 @@ export class SocialAppRuntime implements AgentAppRuntime {
     // ── 编译上下文（方案 B：基于 GrantRegistry 授权）──
     const stickersAvailable =
       !!stickerAccountId &&
-      !!this.stickerService &&
-      !!this.napcatAdapter?.getConnectedAccountIds().includes(stickerAccountId)
+      !!stickerService &&
+      !!adapter?.getConnectedAccountIds().includes(stickerAccountId)
     const model = this.ctx.getAgentModel ? await this.ctx.getAgentModel(agentId) : null
     if (!model) throw new Error('未配置角色主模型，无法处理社交回合')
     const compiled = await this.compiler.compile({
@@ -1269,21 +1630,18 @@ export class SocialAppRuntime implements AgentAppRuntime {
       modelName: model.modelId,
       modelContextTokens: model.contextWindowTokens,
       modelOutputTokens: model.maxTokens,
+      platformName: adapter.displayName,
+      platformVariables: adapter.promptVariables(),
       instanceId: this.ctx.instanceId,
       hostAgentId: this.socialAgentId,
       history,
-      botAccountIds: [
-        ...new Set([
-          ...this.modeConfig.loopGuard.knownBotIds,
-          ...(this.napcatAdapter?.getConnectedAccountIds() ?? []),
-        ]),
-      ].filter((id) => this.loopGuard?.isBotAccount(id)),
+      botAccountIds: this.loopGuard?.botIds(platform) ?? [],
       userMessage:
         !model.enableVision && params.images?.length
           ? `${combinedMessage}\n[图片状态：当前角色模型未开启视觉能力，本轮没有读到图片内容，不要假装已经看过。]`
           : combinedMessage,
       channelType,
-      ownerQq: this.ownerQq,
+      ownerId: ownerId,
       isOwner,
       flowState: { currentGoal: flowState.currentGoal, privateFacts: flowState.privateFacts },
       // 用户称呼：取该 Agent 的 agent.json owner_appellation（兜底"主人"），用于替换社交规则/身份提示中的"主人"占位
@@ -1321,19 +1679,20 @@ export class SocialAppRuntime implements AgentAppRuntime {
 
     // 社交回复属于角色自身表达，使用当前角色指派的模型。
 
-    const diaryAllowed = channelType === 'private' && isOwner && channelId === this.ownerQq
+    const diaryAllowed = channelType === 'private' && isOwner
     const turnToolDefinitions = diaryAllowed
       ? this.toolDefinitions
       : this.toolDefinitions.filter(
           (tool) => !['social_read_diary', 'social_status_card'].includes(tool.function.name),
         )
     const taskAllowed =
-      !!params.taskOrigin && params.taskOrigin.senderId === this.ownerQq && !!this.ctx.taskControl
+      !!params.taskOrigin && params.taskOrigin.senderId === ownerId && !!this.ctx.taskControl
     const creativeDefinition =
       taskAllowed && params.taskOrigin
         ? await this.ctx.creative?.describe(params.taskOrigin)
         : undefined
     const operationScope: SocialOperationScope = {
+      platform,
       agentId,
       accountId: stickerAccountId,
       channelId,
@@ -1344,23 +1703,37 @@ export class SocialAppRuntime implements AgentAppRuntime {
       callId: currentSocialRecovery()?.record.id ?? crypto.randomUUID(),
     }
     const capabilityDefinitions = [
+      ...(taskAllowed && params.taskOrigin
+        ? ((await this.ctx.hostCapabilities?.describe(
+            params.taskOrigin,
+            model.enableVision === true,
+          )) ?? [])
+        : []),
       ...((await this.operations?.definitions(operationScope)) ?? []),
       ...(taskAllowed
         ? turnToolDefinitions
-        : turnToolDefinitions.filter((tool) => tool.function.name !== 'manage_task')
+        : turnToolDefinitions.filter(
+            (tool) => !['manage_task', 'communicate_with_host'].includes(tool.function.name),
+          )
       ).filter((tool) => stickersAvailable || tool.function.name !== 'social_sticker'),
       ...(creativeDefinition ? [{ type: 'function' as const, function: creativeDefinition }] : []),
     ]
+    const activeWork =
+      taskAllowed && params.taskOrigin
+        ? ((await this.ctx.hostCapabilities?.activity?.(params.taskOrigin)) ?? [])
+        : []
     let cardSent = false
     let resourceSent = false
     let resourceUnconfirmed = false
     const sentResources = new Map<string, Promise<string>>()
     const situation = [
+      `人格主体：${agentId}。桌面与当前平台账号都是你自己的不同入口；工具范围以本轮实际能力目录为准。`,
+      activeWork.length ? `你正在处理的工作（宿主权威状态）：${JSON.stringify(activeWork)}` : '',
       `触发方式: ${params.trigger}`,
       `当前参与关系: ${params.participation}`,
       params.trigger === 'proactive_review' ? '没有人要求你回复；是否参与完全由你自己决定。' : '',
       channelType === 'group' && stickerAccountId
-        ? `当前群状态机（真实运行状态，时间为 Unix 毫秒）：${JSON.stringify(this.getGroupState(agentId, stickerAccountId, channelId))}`
+        ? `当前群状态机（真实运行状态，时间为 Unix 毫秒）：${JSON.stringify(this.getGroupState(agentId, stickerAccountId, channelId, platform))}`
         : '',
       params.deferredIntent
         ? `你之前想稍后重新考虑：${params.deferredIntent.intention}${params.deferredIntent.condition ? `；当时的条件：${params.deferredIntent.condition}` : ''}`
@@ -1398,23 +1771,25 @@ export class SocialAppRuntime implements AgentAppRuntime {
         if (
           !stickersAvailable ||
           !stickerAccountId ||
-          !this.stickerService ||
+          !stickerService ||
           !this.socialMessageRepo ||
           !this.running ||
           agentId !== this.socialAgentId ||
-          !this.napcatAdapter?.getConnectedAccountIds().includes(stickerAccountId)
+          !adapter?.getConnectedAccountIds().includes(stickerAccountId)
         )
           return JSON.stringify({ success: false, error: '当前账号的收藏表情能力不可用' })
         return executeSocialSticker(
-          this.stickerService,
+          stickerService,
           this.socialMessageRepo,
           {
+            platform,
             agentId,
             accountId: stickerAccountId,
             channelId,
             channelType,
           },
           args,
+          (row) => adapter.restoreMessage(row),
         )
       }
       if (name === 'pictoria') {
@@ -1459,19 +1834,19 @@ export class SocialAppRuntime implements AgentAppRuntime {
               source,
               caption,
               callId: currentSocialStep() ?? `social:${crypto.randomUUID()}`,
-              allowLocal: channelType === 'private' && isOwner && channelId === this.ownerQq,
+              allowLocal: channelType === 'private' && isOwner,
             })
             const accountId = params.taskOrigin?.accountId || params.botSelfId
             if (
               !this.running ||
               agentId !== this.socialAgentId ||
               !accountId ||
-              !this.napcatAdapter?.getConnectedAccountIds().includes(accountId)
+              !adapter?.getConnectedAccountIds().includes(accountId)
             )
               throw new Error('当前社交账号已断开或角色已变化')
             deliveryAttempted = true
             await this.socialBridge!.sendReply(
-              'qq',
+              platform,
               {
                 accountId,
                 channelId,
@@ -1500,7 +1875,8 @@ export class SocialAppRuntime implements AgentAppRuntime {
                 await this.socialMessageRepo?.insert({
                   turnId: currentSocialRecovery()?.record.id,
                   msgId: `resource_${prepared.resource.id}`,
-                  platform: 'qq',
+                  platform: platform,
+                  accountId,
                   channelId,
                   channelType,
                   senderId: 'self',
@@ -1509,7 +1885,7 @@ export class SocialAppRuntime implements AgentAppRuntime {
                   content: `[文件] ${prepared.resource.name} · attachment:${prepared.resource.id}${caption ? `\n${caption}` : ''}`,
                 })
               await this.ctx!.socialEvents?.publish('social_message', {
-                platform: 'qq',
+                platform: platform,
                 channelId,
                 direction: 'outbound',
                 content: `[文件] ${prepared.resource.name}`,
@@ -1560,8 +1936,7 @@ export class SocialAppRuntime implements AgentAppRuntime {
         let deliveryAttempted = false
         if (
           !diaryAllowed ||
-          params.triggerSenderId !== this.ownerQq ||
-          channelId !== this.ownerQq ||
+          params.triggerSenderId !== ownerId ||
           agentId !== this.socialAgentId ||
           !this.running ||
           !this.statusCards ||
@@ -1585,32 +1960,31 @@ export class SocialAppRuntime implements AgentAppRuntime {
           if (action !== 'send') return JSON.stringify({ success: false, error: '卡片操作无效' })
           if (cardSent) return JSON.stringify({ success: true, sent: true, terminal: true })
           const accountId = params.taskOrigin?.accountId || params.botSelfId
-          if (!accountId || !this.napcatAdapter?.getConnectedAccountIds().includes(accountId))
+          if (!accountId || !adapter?.getConnectedAccountIds().includes(accountId))
             throw new Error('当前社交账号未连接')
           const image = await this.statusCards.render(
             agentId,
             args.design ?? (await this.statusCards.getDesign(agentId)),
           )
           // 发送目标来自本轮可信会话，工具参数不能改写接收人。
-          if (
-            params.triggerSenderId !== this.ownerQq ||
-            channelId !== this.ownerQq ||
-            agentId !== this.socialAgentId ||
-            !this.running
-          )
+          if (params.triggerSenderId !== ownerId || agentId !== this.socialAgentId || !this.running)
             throw new Error('社交会话已停止或主人配置已变化')
           const s = image.snapshot
           const summary = `[状态卡片] ${s.deviceName} · ${s.capturedAt}；CPU ${s.cpu.percent === null ? '未提供' : `${Math.round(s.cpu.percent)}%`}；内存 ${(s.memory.usedBytes / 1024 ** 3).toFixed(1)} / ${(s.memory.totalBytes / 1024 ** 3).toFixed(1)} GB`
           deliveryAttempted = true
           await this.socialBridge.sendReply(
-            'qq',
+            platform,
             {
               accountId,
               channelId,
               channelType: 'private',
               content: '',
               attachments: [
-                { type: 'image', url: `base64://${image.imageBase64}`, mimeType: image.mimeType },
+                {
+                  type: 'image',
+                  url: `data:${image.mimeType};base64,${image.imageBase64}`,
+                  mimeType: image.mimeType,
+                },
               ],
             },
             params.signal,
@@ -1624,7 +1998,7 @@ export class SocialAppRuntime implements AgentAppRuntime {
               await this.socialMessageRepo?.insert({
                 turnId: currentSocialRecovery()?.record.id,
                 msgId: `card_${crypto.randomUUID()}`,
-                platform: 'qq',
+                platform: platform,
                 channelId,
                 channelType: 'private',
                 senderId: 'self',
@@ -1633,7 +2007,7 @@ export class SocialAppRuntime implements AgentAppRuntime {
                 agentId,
               })
             await this.ctx!.socialEvents?.publish('social_message', {
-              platform: 'qq',
+              platform: platform,
               channelId,
               direction: 'outbound',
               content: summary,
@@ -1677,6 +2051,9 @@ export class SocialAppRuntime implements AgentAppRuntime {
             await this.ctx!.taskControl!.execute(
               params.taskOrigin,
               args as unknown as import('@infos/shared').TaskControlInput,
+              currentSocialRecovery()?.record.id +
+                ':' +
+                (currentSocialStep() ?? JSON.stringify(args)),
             ),
           )
         } catch (error) {
@@ -1685,6 +2062,18 @@ export class SocialAppRuntime implements AgentAppRuntime {
             error: error instanceof Error ? error.message : String(error),
           })
         }
+      }
+      if (name.startsWith('browser_')) {
+        if (!taskAllowed || !params.taskOrigin || !this.ctx?.hostCapabilities)
+          return JSON.stringify({ success: false, error: 'SOCIAL_HOST_CAPABILITY_DENIED' })
+        return this.ctx.hostCapabilities.execute(params.taskOrigin, name, args, {
+          callId: currentSocialStep() ?? `${currentSocialRecovery()?.record.id}:${name}`,
+          threadId: realmSessionId,
+          enableVision: model.enableVision === true,
+          executionId: currentSocialRecovery()?.executionId,
+          processId: currentSocialRecovery()?.processId,
+          signal: operationScope.signal,
+        })
       }
       if (name === 'social_read_diary' && !diaryAllowed) {
         return JSON.stringify({ success: false, error: '只有主人私聊可以读取当前角色的日记' })
@@ -1712,6 +2101,8 @@ export class SocialAppRuntime implements AgentAppRuntime {
         })
       }
       if (name === 'communicate_with_host') {
+        if (!taskAllowed)
+          return JSON.stringify({ success: false, error: 'SOCIAL_HOST_CAPABILITY_DENIED' })
         const mode = String(args.mode ?? 'consult') as
           | 'consult'
           | 'verify'
@@ -1789,6 +2180,9 @@ export class SocialAppRuntime implements AgentAppRuntime {
       accountId: stickerAccountId,
       channelId,
       channelType,
+      isReadOnly: (name, args) =>
+        isAgentBrowserRead(name, args) ||
+        this.operations?.isReadOnly(operationScope, name, args) === true,
       triggerMessageId,
       triggerSenderId,
       available: (name, args) => {
@@ -1830,7 +2224,7 @@ export class SocialAppRuntime implements AgentAppRuntime {
         .sort((a, b) => a.sentAt - b.sentAt)
     params.signal?.throwIfAborted()
     await this.compiler.generateReply(compiled.messages, model, {
-      replayScope: `social:${this.ctx.instanceId}:${agentId}:${stickerAccountId}:${channelType}:${channelId}`,
+      replayScope: `social:${this.ctx.instanceId}:${JSON.stringify([platform, agentId, stickerAccountId ?? '', channelType, channelId])}`,
       replayCurrentKeys,
       replayReply: () =>
         replayMessages()
@@ -1851,7 +2245,7 @@ export class SocialAppRuntime implements AgentAppRuntime {
         agentId,
         channel: 'social',
         applicationId: 'social',
-        threadId: `social:${stickerAccountId}:${channelType}:${channelId}`,
+        threadId: `social:${realmSessionId}`,
       },
       signal: params.signal,
       beforeModelRequest: async (round) => {
@@ -1939,15 +2333,18 @@ export class SocialAppRuntime implements AgentAppRuntime {
     return outcome
   }
 
-  /** 获取 NapCat 适配器（供外部 WS 升级使用） */
-  getNapcatAdapter(): NapcatAdapter | undefined {
-    return this.napcatAdapter
+  /** 获取平台适配器列表（仅用于装配与管理） */
+  getAdapters(): readonly AbstractSocialAdapter[] {
+    return this.adapters
   }
 
   async onPause(): Promise<void> {
     invalidatePromptReplay(this.ctx ? `social:${this.ctx.instanceId}:` : 'social:')
     this.running = false
+    this.releaseSocialTransport?.()
+    this.releaseSocialTransport = undefined
     this.lifetime.abort(new Error('社交应用已暂停'))
+    await this.adapterUpdates.catch(() => {})
     for (const agentId of this.socialScorerRunning) this.socialScorer?.cancel(agentId)
     // 暂停时停止调度器（SocialBridge.stop 会停止调度器和适配器）
     if (this.socialBridge) {
@@ -1958,18 +2355,22 @@ export class SocialAppRuntime implements AgentAppRuntime {
 
   async onResume(): Promise<void> {
     this.lifetime = new AbortController()
+    await this.onConfigChanged(['social'])
     this.running = true
     // 恢复时重新启动 SocialBridge
     if (this.socialBridge) {
-      await this.socialBridge.start()
+      await this.socialBridge.start(this.lifetime.signal)
     }
+    this.publishTransports()
     this.ctx?.logger.info(__t('apps.social.logs', '社交应用已恢复'))
   }
 
   async onStop(): Promise<AppCheckpoint | undefined> {
-    invalidatePromptReplay(this.ctx ? `social:${this.ctx.instanceId}:` : 'social:')
+    this.stopped = true
     this.running = false
     this.lifetime.abort(new Error('社交应用已停止'))
+    await this.adapterUpdates.catch(() => {})
+    invalidatePromptReplay(this.ctx ? `social:${this.ctx.instanceId}:` : 'social:')
     this.operations?.close()
     for (const agentId of this.socialScorerRunning) this.socialScorer?.cancel(agentId)
     this.releaseSocialTransport?.()
@@ -2000,7 +2401,7 @@ export class SocialAppRuntime implements AgentAppRuntime {
   getCheckpoint(): AppCheckpoint | undefined {
     if (!this.ctx) return undefined
 
-    const connectedPlatforms = this.socialBridge?.hasActiveAdapter() ? ['qq'] : []
+    const connectedPlatforms = this.adapters.map((adapter) => adapter.platform)
 
     return {
       instanceId: this.ctx.instanceId,
@@ -2030,27 +2431,58 @@ export class SocialAppRuntime implements AgentAppRuntime {
 
   async listSessions(): Promise<Array<{ id: string; title: string; status: string }>> {
     return (this.socialBridge?.listSessions() ?? []).map((session) => ({
-      id: `${session.agentId}:${session.channelType}:${session.channelId}`,
-      title: `${session.channelType === 'private' ? __t('apps.social.ui', '私聊') : __t('apps.social.ui', '群聊')} ${session.channelId}`,
+      id: JSON.stringify([
+        session.platform,
+        session.agentId,
+        session.accountId,
+        session.channelType,
+        session.channelId,
+      ]),
+      title: `${session.platform} · ${session.channelType === 'private' ? __t('apps.social.ui', '私聊') : __t('apps.social.ui', '群聊')} ${session.channelId}`,
       status: `${session.participation}:${session.phase}`,
     }))
   }
 
+  private resolveSession(sessionId: string) {
+    const sessions = this.socialBridge?.listSessions() ?? []
+    const matches = sessions.filter(
+      (session) =>
+        JSON.stringify([
+          session.platform,
+          session.agentId,
+          session.accountId,
+          session.channelType,
+          session.channelId,
+        ]) === sessionId ||
+        `${session.agentId}:${session.channelType}:${session.channelId}` === sessionId,
+    )
+    return matches.length === 1 ? matches[0] : undefined
+  }
+
   async closeSession(sessionId: string): Promise<boolean> {
-    const [agentId, , channelId] = sessionId.split(':')
-    return Boolean(agentId && channelId && this.socialBridge?.closeSession(agentId, channelId))
+    const selected = this.resolveSession(sessionId)
+    if (!selected || !this.socialBridge) return false
+    return (
+      this.socialBridge.closeSessionsExcept(
+        (session) =>
+          session.platform !== selected.platform ||
+          session.agentId !== selected.agentId ||
+          session.accountId !== selected.accountId ||
+          session.channelType !== selected.channelType ||
+          session.channelId !== selected.channelId,
+      ) > 0
+    )
   }
 
   async sendMessage(sessionId: string, content: string): Promise<void> {
-    const [agentId, channelType, channelId] = sessionId.split(':')
-    const provider = this.socialBridge?.createMessagingProvider()
-    if (!provider || !agentId || !channelId) throw new Error('SOCIAL_SESSION_UNAVAILABLE')
-    await provider.sendMessage(
-      agentId,
-      channelId,
+    const session = this.resolveSession(sessionId)
+    if (!session?.platform || !this.socialBridge) throw new Error('SOCIAL_SESSION_UNAVAILABLE')
+    await this.socialBridge.sendReply(session.platform, {
+      accountId: session.accountId,
+      channelId: session.channelId,
+      channelType: session.channelType,
       content,
-      channelType === 'group' ? 'group' : 'private',
-    )
+    })
   }
 
   subscribeSession(_sessionId: string, _handler: (event: AppEvent) => void): () => void {
@@ -2059,6 +2491,37 @@ export class SocialAppRuntime implements AgentAppRuntime {
   }
 
   async executeCommand(request: AppCommandRequest): Promise<AppCommandResult> {
+    if (request.action === 'get_task' || request.action === 'cancel_task') {
+      const id = String(request.input.task_id ?? '')
+      const turn = await this.socialMessageRepo?.getTurn(id)
+      if (!turn || turn.kind !== 'task' || turn.agentId !== (request.agentId ?? this.socialAgentId))
+        return {
+          correlationId: request.correlationId,
+          status: 'failed',
+          summary: __t('apps.social.ui', '社交任务不存在或角色绑定已改变'),
+        }
+      if (request.action === 'cancel_task') await this.socialBridge?.cancelTurn(id)
+      const latest = (await this.socialMessageRepo?.getTurn(id)) ?? turn
+      return {
+        correlationId: request.correlationId,
+        status:
+          latest.status === 'completed'
+            ? 'completed'
+            : ['running', 'waiting', 'retrying'].includes(latest.status)
+              ? 'waiting'
+              : 'failed',
+        summary:
+          latest.status === 'completed'
+            ? latest.commandResult?.content || __t('apps.social.ui', '社交委派已完成')
+            : latest.error || __t('apps.social.ui', '社交委派正在执行或等待'),
+        output: {
+          taskId: id,
+          state: latest.status,
+          ...latest.commandResult,
+          orchestration: latest.orchestrationSummary,
+        },
+      }
+    }
     // 宿主只可委派任务，不能绕过社交会话权限直接执行内部业务工具。
     if (request.action !== 'chat_in_group') {
       return {
@@ -2081,14 +2544,28 @@ export class SocialAppRuntime implements AgentAppRuntime {
       this.socialAgentId,
       groupId,
       `【主 Agent 委派的单次社交任务】${intent}\n请结合群聊近期记录判断如何自然参与；通过 social_act 提交回复、PASS 或必要的编排。`,
-      this.ownerQq || 'host',
+      this.ownerFor(
+        typeof request.input.platform === 'string' ? request.input.platform : undefined,
+      ) || 'host',
+      typeof request.input.platform === 'string' ? request.input.platform : undefined,
+      typeof request.input.account_id === 'string' ? request.input.account_id : undefined,
+      request.signal,
+      request.executionId && request.processId
+        ? { executionId: request.executionId, processId: request.processId }
+        : undefined,
     )
     if (outcome.type === 'orchestration')
       return {
         correlationId: request.correlationId,
-        status: 'completed',
-        summary: '社交编排已接收，正在后台等待后续步骤',
-        output: { sent: false, scheduled: true, groupId, wakeAt: outcome.wakeAt },
+        status: 'waiting',
+        summary: __t('apps.social.ui', '社交编排已接收，正在后台等待后续步骤'),
+        output: {
+          sent: false,
+          scheduled: true,
+          groupId,
+          wakeAt: outcome.wakeAt,
+          taskId: `${SOCIAL_DELEGATED_TURN_PREFIX}${createHash('sha256').update(request.correlationId).digest('hex')}`,
+        },
       }
     if (outcome.type !== 'reply') {
       return {
@@ -2176,35 +2653,4 @@ export class SocialAppRuntime implements AgentAppRuntime {
  */
 export default function createRuntime(): AgentAppRuntime {
   return new SocialAppRuntime()
-}
-
-// ─────────────────────────────────────────────
-// 辅助函数
-// ─────────────────────────────────────────────
-
-/**
- * 从 OneBot 原始事件的 JSON 字符串中提取图片 URL
- *
- * 用于 social_read_image 工具：从 DB 查询到消息的 rawEventJson 后，
- * 解析 OneBot message segments，提取 image 段的 url 字段。
- *
- * OneBot v11 image 段格式：
- *   { "type": "image", "data": { "url": "https://...", "file": "xxx.jpg" } }
- */
-function extractImageUrlsFromRawEvent(rawEventJson: string): string[] {
-  try {
-    const event = JSON.parse(rawEventJson) as {
-      message?: Array<{ type: string; data: Record<string, unknown> }>
-    }
-    if (!Array.isArray(event.message)) return []
-    const urls: string[] = []
-    for (const seg of event.message) {
-      if (seg.type === 'image' && typeof seg.data.url === 'string') {
-        urls.push(seg.data.url)
-      }
-    }
-    return urls
-  } catch {
-    return []
-  }
 }

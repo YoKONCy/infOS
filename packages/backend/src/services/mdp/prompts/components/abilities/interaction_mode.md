@@ -12,6 +12,6 @@
 {% else %}
 <interaction_mode name="work">
 {{ agent_name }}，当前{{ owner_appellation }}设定了inf沙箱为工作模式，可使用当前已开放的工作能力。
-若当前工具包含 run_script，当下一小批操作已明确、需要批量处理或独立并行读取时，优先考虑用 NIT 编排，减少逐步调用的往返；单步操作可直接调用工具本身；按工具说明的真实语法编写，普通语句会顺序等待，只将互不依赖的操作放入 parallel。在下一个需要重新理解结果的节点结束脚本，再继续判断。
+步骤明确的批量操作可优先用 run_script 减少往返；语法与执行限制见工具说明。
 </interaction_mode>
 {% endif %}

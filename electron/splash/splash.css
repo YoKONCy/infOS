@@ -28,6 +28,10 @@ body {
   height: 100%;
   object-fit: contain;
   pointer-events: none;
+  transform-origin: 45% 50%;
+  transition:
+    transform 380ms cubic-bezier(0.2, 0.75, 0.3, 1),
+    opacity 280ms ease;
 }
 /* 以整个开屏画面为准水平居中，不再跟随右下角品牌组合。 */
 .progress {
@@ -73,6 +77,7 @@ body[data-phase='failed'] .progress {
   opacity: 0.25;
 }
 .close {
+  z-index: 3;
   position: absolute;
   top: 12px;
   right: 14px;
@@ -93,10 +98,601 @@ body[data-phase='failed'] .progress {
   opacity: 1;
   background: #35517466;
 }
-button:focus-visible {
+button:focus-visible,
+input:focus-visible,
+summary:focus-visible {
   outline: 2px solid #c7d9f1;
   outline-offset: 3px;
 }
+/* 连接阶段采用纸翼的银白操作区，加载阶段保留原有透明插画。 */
+/* 连接阶段采用纸翼的银白操作区，加载阶段保留原有透明插画。 */
+/* 连接阶段采用纸翼的银白操作区，加载阶段保留原有透明插画。 */
+.connection[hidden],
+.connection [hidden] {
+  display: none;
+}
+body::before {
+  content: '';
+  position: absolute;
+  inset: 5.5% 2.8%;
+  border: 1px solid #a7b7e322;
+  border-radius: 8px;
+  background:
+    radial-gradient(ellipse at 27% 52%, #5d76ae35, transparent 58%),
+    linear-gradient(115deg, #222e49f2, #1c2239f7);
+  opacity: 0;
+  transition: opacity 280ms ease;
+  pointer-events: none;
+}
+body[data-phase='connection']::before {
+  opacity: 1;
+}
+body[data-phase='connection'] #artwork {
+  transform: translateX(-20%) scale(0.9);
+  clip-path: polygon(0 0, 100% 0, 100% 76%, 43% 76%, 43% 100%, 0 100%);
+}
+body[data-phase='connection'] .progress {
+  opacity: 0;
+}
+.connection {
+  --ink: #30324b;
+  --muted: #777b93;
+  --accent: #7970bd;
+  position: absolute;
+  top: 50%;
+  right: 5.4%;
+  width: clamp(338px, 41.5%, 444px);
+  max-height: calc(100% - 80px);
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  padding: 32px 30px 27px;
+  transform: translateY(-50%);
+  border: 1px solid #f7f6ffb8;
+  border-radius: 4px;
+  color: var(--ink);
+  color-scheme: light;
+  background: linear-gradient(150deg, #fafafffc, #efedf9fc);
+  box-shadow:
+    0 18px 56px #0f142932,
+    inset 0 1px #fff;
+  -webkit-app-region: no-drag;
+  animation: connection-enter 350ms ease both;
+  clip-path: polygon(0 0, calc(100% - 17px) 0, 100% 17px, 100% 100%, 0 100%);
+}
+.connection::before {
+  content: '';
+  position: absolute;
+  inset: 0 0 auto;
+  height: 2px;
+  background: linear-gradient(90deg, #a9bfed, #c9b9e8 65%, #e4def2);
+}
+.connection::after {
+  content: '';
+  position: absolute;
+  top: 0;
+  right: 0;
+  width: 17px;
+  height: 17px;
+  background: #dcd7ed;
+  clip-path: polygon(0 0, 100% 100%, 0 100%);
+}
+.connection-heading {
+  flex-shrink: 0;
+}
+.connection-brand {
+  position: absolute;
+  left: 11.5%;
+  bottom: 10.5%;
+  display: none;
+  grid-template-columns: 52px 135px;
+  gap: 4px 10px;
+  align-items: center;
+  pointer-events: none;
+}
+body[data-phase='connection'] .connection-brand {
+  display: grid;
+}
+.brand-mark {
+  width: 52px;
+  height: 52px;
+  grid-row: 1 / 3;
+}
+.brand-wordmark {
+  width: 132px;
+  height: 42px;
+  color: #c3cdec;
+}
+.brand-caption {
+  grid-column: 2;
+  color: #a4afd1;
+  font:
+    10px 'Segoe UI',
+    'Microsoft YaHei',
+    sans-serif;
+  letter-spacing: 0.3px;
+  white-space: nowrap;
+}
+.connection-heading h1 {
+  margin: 0 0 9px;
+  color: var(--ink);
+  font-size: 26px;
+  font-weight: 650;
+  letter-spacing: 0.7px;
+  line-height: 1.35;
+}
+.connection-heading h1:focus {
+  outline: none;
+}
+.connection-heading p {
+  margin: 0;
+  color: var(--muted);
+  font-size: 12px;
+  line-height: 1.75;
+}
+#connection-form {
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  margin-top: 24px;
+}
+.connection-options {
+  min-height: 0;
+  overflow-y: auto;
+  scrollbar-width: thin;
+  scrollbar-color: #b8b5ce70 transparent;
+  padding: 4px;
+  margin: -4px;
+}
+.connection-modes {
+  display: grid;
+  flex-shrink: 0;
+  grid-template-columns: 1fr 1fr;
+  gap: 12px;
+}
+.mode-option {
+  --mode-color: #6487c4;
+  --mode-tint: #e8effa;
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  min-width: 0;
+  padding: 15px 13px 13px;
+  border: 1px solid #d4d7e6;
+  border-radius: 4px;
+  background: #fdfdff70;
+  color: #71758d;
+  text-align: left;
+  font: inherit;
+  cursor: pointer;
+  transition:
+    border-color 160ms,
+    background 160ms,
+    transform 160ms;
+}
+.mode-option[data-mode='remote'] {
+  --mode-color: #8a72bd;
+  --mode-tint: #eee8f7;
+}
+.mode-icon {
+  display: grid;
+  place-items: center;
+  width: 32px;
+  height: 32px;
+  margin-bottom: 12px;
+  border-radius: 3px;
+  background: var(--mode-tint);
+  color: var(--mode-color);
+}
+.mode-icon svg {
+  width: 21px;
+  height: 21px;
+  stroke: currentColor;
+  stroke-width: 1.4;
+  stroke-linecap: square;
+  stroke-linejoin: miter;
+}
+.mode-option strong {
+  display: block;
+  font-size: 14px;
+  font-weight: 600;
+  color: #474c68;
+  line-height: 1.5;
+}
+.mode-option small {
+  display: block;
+  margin-top: 5px;
+  font-size: 11px;
+  line-height: 1.65;
+  color: #7b7e94;
+}
+.mode-option:hover {
+  border-color: var(--mode-color);
+  background: #fff;
+  transform: translateY(-1px);
+}
+.mode-option:active {
+  transform: translateY(1px);
+}
+.mode-option[aria-pressed='true'] {
+  background: #fff;
+  border-color: var(--mode-color);
+  box-shadow: 0 3px 10px #414c8210;
+}
+.mode-option[aria-pressed='true'] strong {
+  color: var(--mode-color);
+}
+.mode-indicator {
+  position: absolute;
+  top: 15px;
+  right: 13px;
+  width: 11px;
+  height: 11px;
+  border: 1px solid #d6d8e4;
+  border-radius: 2px;
+}
+.mode-option[aria-pressed='true'] .mode-indicator {
+  border-color: var(--mode-color);
+  background: var(--mode-color);
+}
+.mode-option[aria-pressed='true'] .mode-indicator::after {
+  content: '';
+  position: absolute;
+  left: 2px;
+  top: 1px;
+  width: 3px;
+  height: 5px;
+  border: solid #fff;
+  border-width: 0 1.5px 1.5px 0;
+  transform: rotate(45deg);
+}
+.connection button:focus-visible,
+.connection input:focus-visible,
+.connection summary:focus-visible {
+  outline: 2px solid #9e8fd7;
+  outline-offset: 3px;
+}
+.mode-option:focus-visible {
+  outline: 1px solid #8e83c7;
+  outline-offset: 3px;
+}
+.remote-fields {
+  margin: 16px 0 0;
+  padding: 16px 0 0;
+  border: 0;
+  border-top: 1px solid #dadce9;
+  min-width: 0;
+}
+.remote-fields label {
+  display: block;
+  margin: 12px 0 6px;
+  color: #60657f;
+  font-size: 11px;
+  font-weight: 550;
+}
+.remote-fields > label:first-child {
+  margin-top: 0;
+}
+.remote-fields input {
+  display: block;
+  width: 100%;
+  min-width: 0;
+  height: 37px;
+  border: 1px solid #d6d9e7;
+  border-radius: 3px;
+  padding: 0 11px;
+  background: #ffffffba;
+  color: #434963;
+  font:
+    12px 'Segoe UI',
+    'Microsoft YaHei',
+    sans-serif;
+  user-select: text;
+  transition:
+    border-color 150ms,
+    background 150ms;
+}
+.remote-fields input::placeholder {
+  color: #a3a6b9;
+}
+.remote-fields input:hover {
+  border-color: #aaa7c5;
+}
+.remote-fields input:focus {
+  background: #fff;
+}
+.secret-field {
+  position: relative;
+}
+.secret-field input {
+  padding-right: 38px;
+}
+.secret-field button {
+  position: absolute;
+  right: 1px;
+  top: 1px;
+  width: 35px;
+  height: 35px;
+  border: 0;
+  background: transparent;
+  color: #8a8ca5;
+  cursor: pointer;
+}
+.secret-field button:hover {
+  color: #7563aa;
+}
+.secret-field svg {
+  width: 17px;
+  height: 17px;
+  stroke: currentColor;
+  stroke-width: 1.4;
+}
+.eye-slash {
+  display: none;
+}
+.secret-field button[aria-pressed='true'] .eye-slash {
+  display: block;
+}
+.connection-advanced {
+  margin-top: 14px;
+  color: #86839d;
+  font-size: 11px;
+}
+.connection-advanced summary {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  width: fit-content;
+  list-style: none;
+  cursor: pointer;
+}
+.connection-advanced summary::-webkit-details-marker {
+  display: none;
+}
+.connection-advanced summary::before {
+  content: '';
+  width: 5px;
+  height: 5px;
+  border: solid currentColor;
+  border-width: 1px 1px 0 0;
+  transform: rotate(45deg);
+  transition: transform 150ms;
+}
+.connection-advanced[open] summary::before {
+  transform: rotate(135deg);
+}
+.connection-advanced summary:hover {
+  color: #6e5d9f;
+}
+.connection-advanced small {
+  display: block;
+  margin-top: 6px;
+  font-size: 10px;
+  line-height: 1.6;
+  color: #9092a7;
+}
+.connection-error {
+  margin: 14px 0 0;
+  padding: 9px 11px;
+  border-left: 2px solid #c98ba4;
+  border-radius: 0 3px 3px 0;
+  background: #f2e6ed;
+  color: #95627c;
+  font-size: 11px;
+  line-height: 1.7;
+  overflow-wrap: anywhere;
+  user-select: text;
+}
+.connection-footer {
+  display: flex;
+  flex-shrink: 0;
+  gap: 9px;
+  margin-top: 26px;
+}
+.connection-submit {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 12px;
+  flex: 1;
+  min-height: 44px;
+  padding: 11px 16px;
+  border: 1px solid #8074b7;
+  border-radius: 3px;
+  background: #8278b6;
+  color: #fff;
+  font:
+    600 13px 'Segoe UI',
+    'Microsoft YaHei',
+    sans-serif;
+  cursor: pointer;
+  transition:
+    background 150ms,
+    transform 150ms;
+}
+.connection-submit:hover {
+  background: #7369a8;
+}
+.connection-submit:active {
+  background: #69609c;
+  transform: translateY(1px);
+}
+.submit-icon {
+  width: 20px;
+  height: 20px;
+  stroke: currentColor;
+  stroke-width: 1.5;
+  transition: transform 160ms;
+}
+.connection-submit:hover .submit-icon {
+  transform: translateX(3px);
+}
+.submit-spinner {
+  display: none;
+  width: 12px;
+  height: 12px;
+  border: 2px solid #ffffff50;
+  border-top-color: #fff;
+  animation: connection-spin 800ms steps(8) infinite;
+}
+.connection[aria-busy='true'] .submit-spinner {
+  display: block;
+}
+.connection[aria-busy='true'] .submit-icon {
+  display: none;
+}
+.connection-cancel {
+  padding: 9px 14px;
+  border: 1px solid #d0cedf;
+  border-radius: 3px;
+  background: transparent;
+  color: #77748e;
+  font: inherit;
+  font-size: 12px;
+  cursor: pointer;
+}
+.connection-cancel:hover {
+  background: #e7e5f1;
+}
+.connection-note {
+  flex-shrink: 0;
+  display: flex;
+  align-items: flex-start;
+  gap: 7px;
+  margin: 14px 0 0;
+  color: #858198;
+  font-size: 11px;
+  line-height: 1.8;
+}
+.connection-note::before {
+  content: '';
+  flex-shrink: 0;
+  width: 5px;
+  height: 5px;
+  margin-top: 6px;
+  background: #bcb3d8;
+}
+.connection button:disabled {
+  cursor: default;
+  opacity: 0.6;
+  transform: none;
+}
+@keyframes connection-enter {
+  from {
+    opacity: 0;
+    translate: 8px 0;
+  }
+  to {
+    opacity: 1;
+    translate: 0 0;
+  }
+}
+@keyframes connection-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+@media (max-height: 590px) {
+  .connection {
+    padding: 22px 23px 20px;
+    max-height: calc(100% - 60px);
+  }
+  .connection-brand {
+    left: 9%;
+    bottom: 9%;
+    grid-template-columns: 40px 114px;
+  }
+  .brand-mark {
+    width: 40px;
+    height: 40px;
+  }
+  .brand-wordmark {
+    width: 110px;
+    height: 34px;
+  }
+  .brand-caption {
+    font-size: 9px;
+  }
+  .connection-heading h1 {
+    font-size: 23px;
+  }
+  .connection-heading p {
+    font-size: 11px;
+  }
+  #connection-form {
+    margin-top: 18px;
+  }
+  .connection-modes {
+    gap: 9px;
+  }
+  .mode-option {
+    flex-direction: row;
+    align-items: center;
+    gap: 8px;
+    padding: 13px 10px;
+  }
+  .mode-icon {
+    flex-shrink: 0;
+    width: 23px;
+    height: 23px;
+    margin-bottom: 0;
+  }
+  .mode-icon svg {
+    width: 17px;
+    height: 17px;
+  }
+  .mode-option strong {
+    font-size: 12px;
+  }
+  .mode-option small {
+    display: none;
+  }
+  .mode-indicator {
+    top: 5px;
+    right: 5px;
+    width: 6px;
+    height: 6px;
+  }
+  .mode-option[aria-pressed='true'] .mode-indicator::after {
+    display: none;
+  }
+  .remote-fields {
+    margin-top: 14px;
+    padding-top: 12px;
+  }
+  .remote-fields input {
+    height: 33px;
+  }
+  .secret-field button {
+    width: 31px;
+    height: 31px;
+  }
+  .connection-footer {
+    margin-top: 18px;
+  }
+  .connection-note {
+    margin-top: 11px;
+  }
+}
+@media (max-width: 650px) {
+  body::before {
+    inset: 4% 2.8%;
+  }
+  body[data-phase='connection'] #artwork {
+    transform: scale(0.97);
+    opacity: 0.3;
+  }
+  .connection {
+    right: 50%;
+    width: min(420px, calc(100% - 40px));
+    transform: translate(50%, -50%);
+  }
+  body[data-phase='connection'] .connection-brand {
+    display: none;
+  }
+}
+
 .failure {
   position: absolute;
   left: 50%;
@@ -166,5 +762,17 @@ button:focus-visible {
   }
   .complete {
     transition: none;
+  }
+  body::before,
+  #artwork,
+  .mode-option,
+  .connection-submit,
+  .submit-icon,
+  .connection-advanced summary::before {
+    transition: none;
+  }
+  .connection,
+  .submit-spinner {
+    animation: none;
   }
 }

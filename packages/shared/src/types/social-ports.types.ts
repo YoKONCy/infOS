@@ -4,6 +4,14 @@
  * 负责定义该模块的稳定入口、数据边界与错误语义。
  * 调用方通过这里访问领域能力，避免绕过校验直接耦合内部状态。
  */
+/** 平台账号决定数据分区，会话标识由适配器保证包含主题等子会话范围。 */
+export interface SocialStorageScope {
+  platform?: string
+  accountId?: string
+  channelType?: string
+  channelId?: string
+}
+
 export interface SocialMessageRecord {
   id: number
   msgId: string
@@ -44,6 +52,7 @@ export interface SocialSyncCursorRecord {
 
 /** 恢复记录归 Social Realm 所有；终态只保留标识与结果，不保留上下文正文。 */
 export interface SocialTurnRecord {
+  platform?: string
   id: string
   /** 普通社交聊天保留恢复记录，只有明确委派的工作才进入任务中心。 */
   kind?: import('../socialTurnClassification').SocialTurnKind
@@ -84,6 +93,8 @@ export interface SocialTurnRecord {
   /** 保留触发消息标识，终态清空检查点后仍能准确定位回合来源。 */
   triggerMessageId?: string
   outcome?: 'reply' | 'pass' | 'wait' | 'defer' | 'orchestration'
+  /** 主体委派的交付摘要保留到终态，供原任务读取；不复制推理上下文。 */
+  commandResult?: { sent: boolean; content?: string }
   /** 不包含正文的编排进度，供前端显示托管与部分失败状态。 */
   orchestrationSummary?: {
     plans: number
@@ -118,13 +129,28 @@ export interface SocialStoragePort {
     includeTerminal?: boolean,
     kind?: import('../socialTurnClassification').SocialTurnKind,
   ): Promise<SocialTurnRecord[]>
-  deleteTurns(agentId: string, channelType?: string, channelId?: string): Promise<void>
-  getDataVersion(agentId: string, channelType?: string, channelId?: string): Promise<number>
+  deleteTurns(
+    agentId: string,
+    channelType?: string,
+    channelId?: string,
+    scope?: SocialStorageScope,
+  ): Promise<void>
+  getDataVersion(
+    agentId: string,
+    channelType?: string,
+    channelId?: string,
+    scope?: SocialStorageScope,
+  ): Promise<number>
   forgetLongMemory(agentId: string): Promise<void>
   deleteLongMemory(agentId: string): Promise<void>
   memoryAvailable(agentId: string): Promise<boolean>
   queuedMessages(agentId: string): Promise<SocialMessageRecord[]>
-  completeQueuedMessages(agentId: string, accountId: string, msgIds: string[]): Promise<void>
+  completeQueuedMessages(
+    agentId: string,
+    accountId: string,
+    msgIds: string[],
+    scope?: SocialStorageScope,
+  ): Promise<void>
   insert(msg: {
     msgId: string
     platform: string
@@ -147,37 +173,56 @@ export interface SocialStoragePort {
     channelId: string,
     channelType: string,
     limit?: number,
+    scope?: SocialStorageScope,
   ): Promise<SocialMessageRecord[]>
   getRecentChannels(
     agentId: string,
     limit?: number,
-  ): Promise<Array<{ channelId: string; channelType: string; lastTimestamp: string | null }>>
+  ): Promise<
+    Array<{
+      platform: string
+      accountId: string
+      channelId: string
+      channelType: string
+      lastTimestamp: string | null
+    }>
+  >
   getRecentPrivateBySender(
     agentId: string,
     senderId: string,
     limit?: number,
+    scope?: SocialStorageScope,
   ): Promise<SocialMessageRecord[]>
   getRecentBySender(
     agentId: string,
     senderId: string,
     limit?: number,
+    scope?: SocialStorageScope,
   ): Promise<SocialMessageRecord[]>
   getByMsgId(
     agentId: string,
     msgId: string,
     accountId?: string,
+    scope?: SocialStorageScope,
   ): Promise<SocialMessageRecord | null>
-  getRecentGroupsByContact(agentId: string, userId: string, groupLimit?: number): Promise<string[]>
+  getRecentGroupsByContact(
+    agentId: string,
+    userId: string,
+    groupLimit?: number,
+    scope?: SocialStorageScope,
+  ): Promise<string[]>
   getRecentSelfGroupMessages(
     agentId: string,
     groupId: string,
     limit?: number,
+    scope?: SocialStorageScope,
   ): Promise<SocialMessageRecord[]>
   getContactGroupMessages(
     agentId: string,
     senderId: string,
     groupId: string,
     limit?: number,
+    scope?: SocialStorageScope,
   ): Promise<SocialMessageRecord[]>
   getContactImpression(
     agentId: string,
@@ -195,8 +240,18 @@ export interface SocialStoragePort {
     sourceChannelId?: string
   }): Promise<void>
   listContactImpressions(agentId: string): Promise<SocialContactImpressionRecord[]>
-  countChannelMessages(agentId: string, channelType: string, channelId: string): Promise<number>
-  deleteChannelMessages(agentId: string, channelType: string, channelId: string): Promise<number>
+  countChannelMessages(
+    agentId: string,
+    channelType: string,
+    channelId: string,
+    scope?: SocialStorageScope,
+  ): Promise<number>
+  deleteChannelMessages(
+    agentId: string,
+    channelType: string,
+    channelId: string,
+    scope?: SocialStorageScope,
+  ): Promise<number>
   deleteAllMessages(agentId: string): Promise<number>
   deleteContactImpression(agentId: string, platform: string, userId: string): Promise<void>
   deleteAllContactImpressions(agentId: string): Promise<number>
@@ -237,7 +292,8 @@ export interface SocialStoragePort {
   getRecentChannelsForPlatform(
     platform: string,
     limit?: number,
-  ): Promise<Array<{ agentId: string; channelId: string; channelType: string }>>
+    scope?: { agentId: string; accountId: string },
+  ): Promise<Array<{ agentId: string; accountId: string; channelId: string; channelType: string }>>
   getUnsummarizedStats(agentId: string): Promise<{ count: number; totalChars: number }>
   getUnsummarized(agentId: string, limit?: number): Promise<SocialMessageRecord[]>
   markSummarized(messageIds: number[]): Promise<void>

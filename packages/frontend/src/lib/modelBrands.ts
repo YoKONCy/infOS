@@ -7,6 +7,8 @@ interface BrandDefinition {
 
 /** 图形来自固定版本的本地资产，不能将用户填写的地址用作图片来源。 */
 export const MODEL_BRANDS = {
+  microsoft: { label: 'Microsoft', asset: 'microsoft-color.svg' },
+  mimo: { label: 'MiMo', asset: 'xiaomimimo.svg', mono: true },
   openai: { label: 'OpenAI', asset: 'openai.svg', mono: true },
   anthropic: { label: 'Anthropic', asset: 'anthropic.svg', mono: true },
   google: { label: 'Google', asset: 'google-color.svg' },
@@ -123,14 +125,18 @@ export function modelBrandDefinition(brand?: ModelBrandId): BrandDefinition | un
 const modelRules: Array<[ModelBrandId, RegExp]> = [
   // 派生模型先识别明确的发布品牌，避免 Llama-Nemotron 被当作原版 Llama。
   ['nvidia', /(?:^|[-_.])nemotron(?:[-_.]|\d|$)/],
-  ['openai', /^(?:gpt|chatgpt|codex|whisper)(?:[-_.]|\d|$)|^o\d+(?:[-_.]|$)|^text-embedding-/],
+  [
+    'openai',
+    /^(?:gpt|chatgpt|codex|whisper)(?:[-_.]|\d|$)|^o\d+(?:[-_.]|$)|^text-embedding-|^tts-1(?:-hd)?$/,
+  ],
   ['claude', /^claude(?:[-_.]|\d|$)/],
   ['gemini', /^gemini(?:[-_.]|\d|$)/],
   ['deepseek', /^deepseek(?:[-_.]|\d|$)/],
   ['glm', /^(?:glm|chatglm)(?:[-_.]|\d|$)/],
   ['kimi', /^kimi(?:[-_.]|\d|$)/],
   ['moonshot', /^moonshot(?:[-_.]|\d|$)/],
-  ['minimax', /^(?:minimax|abab)(?:[-_.]|\d|$)/],
+  ['mimo', /^mimo(?:[-_.]|\d|$)/],
+  ['minimax', /^(?:minimax|abab)(?:[-_.]|\d|$)|^speech-\d+(?:\.\d+)?-(?:hd|turbo)$/],
   ['grok', /^grok(?:[-_.]|\d|$)/],
   ['agnes', /^agnes(?:[-_.]|\d|$)/],
   ['qwen', /^(?:qwen|qwq|qvq)(?:[-_.]|\d|$)/],
@@ -140,7 +146,7 @@ const modelRules: Array<[ModelBrandId, RegExp]> = [
     'mistral',
     /^(?:mistral|mixtral|magistral|ministral|codestral|devstral|pixtral|voxtral)(?:[-_.]|\d|$)/,
   ],
-  ['stepfun', /^step\d*(?:[-_.]|$)/],
+  ['stepfun', /^(?:step\d*|stepaudio)(?:[-_.]|$)/],
   ['yi', /^yi(?:[-_.]|\d|$)/],
   ['llama', /^(?:meta[-_.])?llama(?:[-_.]|\d|$)/],
   ['gemma', /^(?:code)?gemma(?:[-_.]|\d|$)/],
@@ -175,6 +181,10 @@ export function resolveModelBrand(modelId?: string): ModelBrandId | undefined {
 }
 
 const providerBrands: Record<string, ModelBrandId> = {
+  microsoft: 'microsoft',
+  edge_tts: 'microsoft',
+  mimo: 'mimo',
+  bailian: 'bailian',
   openai: 'openai',
   anthropic: 'anthropic',
   gemini: 'google',
@@ -202,6 +212,8 @@ const providerBrands: Record<string, ModelBrandId> = {
 }
 
 const providerDomains: Array<[ModelBrandId, string[]]> = [
+  ['mimo', ['xiaomimimo.com', 'mimo.mi.com']],
+  ['microsoft', ['speech.platform.bing.com']],
   ['openai', ['openai.com']],
   ['anthropic', ['anthropic.com']],
   ['google', ['generativelanguage.googleapis.com']],
@@ -215,9 +227,9 @@ const providerDomains: Array<[ModelBrandId, string[]]> = [
   ['volcengine', ['volces.com']],
   ['zhipu', ['bigmodel.cn']],
   ['zai', ['z.ai']],
-  ['minimax', ['minimax.chat', 'minimax.io', 'minimaxi.com']],
+  ['minimax', ['minimax.chat', 'minimax.io', 'minimaxi.com', 'minimax.cn']],
   ['yi', ['lingyiwanwu.com']],
-  ['stepfun', ['stepfun.com']],
+  ['stepfun', ['stepfun.com', 'stepfun.ai']],
   ['hunyuan', ['hunyuan.cloud.tencent.com']],
   ['openrouter', ['openrouter.ai']],
   ['cohere', ['cohere.com', 'cohere.ai']],

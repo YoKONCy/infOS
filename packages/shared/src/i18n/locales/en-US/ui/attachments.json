@@ -1,0 +1,9 @@
+{
+  "附件不能超过 100MB": "Attachments cannot exceed 100 MB",
+  "添加文件": "Add files",
+  "已保存原件，可按需读取": "Original saved; available to read as needed",
+  "当前会话暂不支持上传附件": "Attachments are unavailable in this conversation",
+  "请拖入文件，文件夹请先压缩": "Drop files here; compress folders first",
+  "松开以上传文件": "Drop to upload files",
+  "支持多文件，上传后可按需读取": "Multiple files supported; available to read after upload"
+}

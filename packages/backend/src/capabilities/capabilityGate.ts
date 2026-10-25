@@ -75,11 +75,35 @@ const FOLLOW_UP_ALLOWED_TOOLS = new Set([
 ])
 
 export class CapabilityGate {
+  private toolDescriptionResolver?: (name: string, description: string) => string | undefined
+  setToolDescriptionResolver(
+    resolve: (name: string, description: string) => string | undefined,
+  ): void {
+    this.toolDescriptionResolver = resolve
+  }
   /** Agent 能力配置 (agentId → config) */
   private configs = new Map<string, AgentCapabilityConfig>()
 
   /** 会话级临时解锁工具 (sessionId → Set<toolName>) */
   private sessionOverrides = new Map<string, Set<string>>()
+  private sessionToolPolicies = new Map<
+    string,
+    (agentId: string, channel: string, sessionId?: string) => boolean
+  >()
+  private resolveThreadId = (sessionId?: string) => sessionId
+
+  setSessionThreadResolver(resolve: (sessionId?: string) => string | undefined): void {
+    this.resolveThreadId = resolve
+  }
+
+  registerSessionTool(
+    name: string,
+    policy: (agentId: string, channel: string, sessionId?: string) => boolean,
+  ): () => void {
+    if (this.sessionToolPolicies.has(name)) throw new Error('DEBUG_POLICY_DUPLICATE')
+    this.sessionToolPolicies.set(name, policy)
+    return () => this.sessionToolPolicies.delete(name)
+  }
 
   constructor(
     private agentsDirs: string[],
@@ -246,6 +270,21 @@ export class CapabilityGate {
     }
 
     // 请求级作用域只能在 Channel 权限基础上做交集，禁止借由作用域扩权。
+    for (const [name, allows] of this.sessionToolPolicies) {
+      allowedTools.delete(name)
+      if (scope === 'default' && channelTools.has(name) && allows(agentId, channel, sessionId))
+        allowedTools.add(name)
+    }
+    for (const name of allowedTools) {
+      if (
+        !this.toolRegistry.isVisibleTo(name, agentId, this.resolveThreadId(sessionId)) ||
+        (this.toolRegistry.isRuntimeScoped(name) &&
+          (channel !== 'desktop' ||
+            scope !== 'default' ||
+            !this.sessionToolPolicies.get('runtime_debug')?.(agentId, channel, sessionId)))
+      )
+        allowedTools.delete(name)
+    }
     if (scope !== 'default') {
       const allowed = scope === 'follow_up' ? FOLLOW_UP_ALLOWED_TOOLS : AMBIENT_ALLOWED_TOOLS
       for (const tool of allowedTools) {
@@ -653,7 +692,14 @@ export class CapabilityGate {
 
     if (filtered.length === 0) return ''
 
-    return filtered.map((d) => `- ${d.name}: ${d.description}`).join('\n')
+    return filtered
+      .flatMap((d) => {
+        const description = this.toolDescriptionResolver
+          ? this.toolDescriptionResolver(d.name, d.description)
+          : d.description
+        return description === undefined ? [] : [`- ${d.name}: ${description}`]
+      })
+      .join('\n')
   }
 
   /** 解析 capabilities.yaml (极简 YAML 解析) */

@@ -1,5 +1,26 @@
+import audioInputCn from '../locales/zh-CN/server/audio-input.json'
+import knowledgeRecallCn from '../locales/zh-CN/logs/knowledge-recall.json'
+import knowledgeRecallTw from '../locales/zh-TW/logs/knowledge-recall.json'
+import knowledgeRecallEn from '../locales/en-US/logs/knowledge-recall.json'
+import audioInputTw from '../locales/zh-TW/server/audio-input.json'
+import audioInputEn from '../locales/en-US/server/audio-input.json'
+import tts0 from '../locales/zh-CN/server/tts.json'
+import tts1 from '../locales/zh-TW/server/tts.json'
+import tts2 from '../locales/en-US/server/tts.json'
+import packagesZhCn from '../locales/zh-CN/server/packages.json'
+import runtimeDebugZhCn from '../locales/zh-CN/server/runtime-debug.json'
+import runtimeDebugZhTw from '../locales/zh-TW/server/runtime-debug.json'
+import runtimeDebugEnUs from '../locales/en-US/server/runtime-debug.json'
+import packagesZhTw from '../locales/zh-TW/server/packages.json'
+import packagesEnUs from '../locales/en-US/server/packages.json'
 // 按模块、语言分别维护词库；此入口只装配当前运行端需要的资源。
 import { registerCatalog } from '../index'
+import userAvatarServerZhCn from '../locales/zh-CN/server/user-avatar.json'
+import userAvatarServerZhTw from '../locales/zh-TW/server/user-avatar.json'
+import userAvatarServerEnUs from '../locales/en-US/server/user-avatar.json'
+import userAvatarErrorsZhCn from '../locales/zh-CN/errors/user-avatar.json'
+import userAvatarErrorsZhTw from '../locales/zh-TW/errors/user-avatar.json'
+import userAvatarErrorsEnUs from '../locales/en-US/errors/user-avatar.json'
 import archiveEditZhCn from '../locales/zh-CN/server/archive-edit.json'
 import archiveEditZhTw from '../locales/zh-TW/server/archive-edit.json'
 import archiveEditEnUs from '../locales/en-US/server/archive-edit.json'
@@ -219,6 +240,12 @@ import messages212 from '../locales/en-US/logs/prompt.json'
 import messages213 from '../locales/zh-CN/logs/daemon.json'
 import messages214 from '../locales/zh-TW/logs/daemon.json'
 import messages215 from '../locales/en-US/logs/daemon.json'
+registerCatalog('server.user-avatar', 'zh-CN', userAvatarServerZhCn)
+registerCatalog('server.user-avatar', 'zh-TW', userAvatarServerZhTw)
+registerCatalog('server.user-avatar', 'en-US', userAvatarServerEnUs)
+registerCatalog('errors.user-avatar', 'zh-CN', userAvatarErrorsZhCn)
+registerCatalog('errors.user-avatar', 'zh-TW', userAvatarErrorsZhTw)
+registerCatalog('errors.user-avatar', 'en-US', userAvatarErrorsEnUs)
 registerCatalog('common.tools', 'zh-CN', messages0)
 registerCatalog('common.tools', 'zh-TW', messages1)
 registerCatalog('common.tools', 'en-US', messages2)
@@ -438,3 +465,27 @@ registerCatalog('logs.daemon', 'en-US', messages215)
 registerCatalog('server.archive-edit', 'zh-CN', archiveEditZhCn)
 registerCatalog('server.archive-edit', 'zh-TW', archiveEditZhTw)
 registerCatalog('server.archive-edit', 'en-US', archiveEditEnUs)
+
+registerCatalog('server.packages', 'zh-CN', packagesZhCn)
+registerCatalog('server.packages', 'zh-TW', packagesZhTw)
+registerCatalog('server.packages', 'en-US', packagesEnUs)
+registerCatalog('server.runtime-debug', 'zh-CN', runtimeDebugZhCn)
+registerCatalog('server.runtime-debug', 'zh-TW', runtimeDebugZhTw)
+registerCatalog('server.runtime-debug', 'en-US', runtimeDebugEnUs)
+
+registerCatalog('server.tts', 'zh-CN', tts0)
+registerCatalog('server.tts', 'zh-TW', tts1)
+registerCatalog('server.tts', 'en-US', tts2)
+import resourceVersionsZh from '../locales/zh-CN/server/resource-versions.json'
+import resourceVersionsTw from '../locales/zh-TW/server/resource-versions.json'
+import resourceVersionsEn from '../locales/en-US/server/resource-versions.json'
+registerCatalog('server.resource-versions', 'zh-CN', resourceVersionsZh)
+registerCatalog('server.resource-versions', 'zh-TW', resourceVersionsTw)
+registerCatalog('server.resource-versions', 'en-US', resourceVersionsEn)
+
+registerCatalog('server.audio-input', 'zh-CN', audioInputCn)
+registerCatalog('logs.knowledge-recall', 'zh-CN', knowledgeRecallCn)
+registerCatalog('logs.knowledge-recall', 'zh-TW', knowledgeRecallTw)
+registerCatalog('logs.knowledge-recall', 'en-US', knowledgeRecallEn)
+registerCatalog('server.audio-input', 'zh-TW', audioInputTw)
+registerCatalog('server.audio-input', 'en-US', audioInputEn)

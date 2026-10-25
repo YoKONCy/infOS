@@ -1,8 +1,202 @@
 import { describe, expect, it, vi } from 'vitest'
 import { ConversationTurnService } from '@infos/backend/services/conversation/conversationTurnService'
 import type { CompiledRunParams } from '@infos/backend/services/agent/agentService'
+import path from 'node:path'
 
 describe('ConversationTurnService 初始提示词快照', () => {
+  it.each([
+    ['gemini', true, true],
+    ['gemini', false, false],
+    ['openai', true, false],
+  ])('%s 手动音频开关为 %s 时，原音装配为 %s', async (provider, enabled, expected) => {
+    const row = {
+      id: 'audio-1',
+      kind: 'audio',
+      mimeType: 'audio/wav',
+      originalName: '录音.wav',
+      sizeBytes: 100,
+      metadataJson: '{}',
+    }
+    const readContent = vi.fn().mockResolvedValue({ bytes: Buffer.from('audio') })
+    const service = new ConversationTurnService({
+      threadService: {
+        getThread: vi.fn().mockResolvedValue({
+          id: 'thread',
+          agentId: 'pero',
+          channel: 'desktop',
+          disabledTools: [],
+        }),
+        appendUserMessage: vi.fn().mockResolvedValue({ id: 1 }),
+      },
+      getThreadModelConfig: vi
+        .fn()
+        .mockResolvedValue({ provider, modelId: 'gemini', apiKey: '', enableAudioInput: enabled }),
+      contextCompiler: {
+        compile: vi.fn().mockResolvedValue({
+          messages: [{ role: 'user', content: '听音频' }],
+          currentMessageIndex: 0,
+          manifest: { disabledTools: [] },
+        }),
+      },
+      attachmentService: {
+        validateForBinding: vi.fn().mockResolvedValue([row]),
+        toDto: vi.fn((value) => value),
+        bind: vi.fn(),
+        readContent,
+      },
+      imageUnderstandingService: { transcribe: vi.fn() },
+    } as never)
+    const prepared = await service.prepareTurn({
+      threadId: 'thread',
+      content: '听音频',
+      attachmentIds: ['audio-1'],
+    })
+    const parts = prepared.messages[0]!.content as Array<{ type: string; text?: string }>
+    expect(parts.some((part) => part.type === 'input_audio')).toBe(expected)
+    expect(readContent).toHaveBeenCalledTimes(expected ? 1 : 0)
+    expect(JSON.stringify(parts)).toContain('attachment:audio-1')
+  })
+  it('任务交付唤醒不伪造用户消息，保存原会话答复并标记 Agent 发起', async () => {
+    const appendUserMessage = vi.fn()
+    const appendAssistantMessage = vi.fn().mockResolvedValue({ id: 2, status: 'active' })
+    const run = vi.fn().mockResolvedValue('已接收结果，继续原任务')
+    const service = new ConversationTurnService({
+      threadService: {
+        getThread: vi.fn().mockResolvedValue({
+          id: 'origin',
+          agentId: 'pero',
+          channel: 'desktop',
+          interactionMode: 'work',
+          disabledTools: [],
+        }),
+        appendUserMessage,
+        appendAssistantMessage,
+      },
+      contextCompiler: {
+        compile: vi.fn().mockResolvedValue({
+          messages: [
+            { role: 'system', content: '人格' },
+            { role: 'user', content: '任务结果已到达', cacheControl: { kind: 'current' } },
+          ],
+          currentMessageIndex: 1,
+          manifest: { disabledTools: [] },
+        }),
+      },
+      agentService: { chatWithCompiledMessages: run },
+      attachmentService: {
+        validateForBinding: vi.fn().mockResolvedValue([]),
+        bindOutgoing: vi.fn(),
+      },
+      imageUnderstandingService: { transcribe: vi.fn() },
+    } as never)
+    await service.executeTurn({
+      threadId: 'origin',
+      content: '任务结果已到达',
+      queueMessageId: 'task-result:delivery',
+      inputPersistence: 'ephemeral',
+      proactive: true,
+    })
+    expect(appendUserMessage).not.toHaveBeenCalled()
+    expect(run).toHaveBeenCalledWith(expect.objectContaining({ requestedBy: 'agent' }))
+    expect(appendAssistantMessage).toHaveBeenCalledWith(
+      expect.objectContaining({ threadId: 'origin', content: '已接收结果，继续原任务' }),
+    )
+    const metadata = JSON.parse(appendAssistantMessage.mock.calls[0]![0].metadataJson)
+    expect(metadata.proactive).toBe(true)
+    expect(metadata.workContext.inputKind).toBe('proactive')
+  })
+  it('保存实际发送的预填充和后续请求，快照与执行期间的数组修改隔离', async () => {
+    const appendAssistantMessage = vi.fn().mockResolvedValue({ id: 2, status: 'active' })
+    const prefix = { role: 'assistant', content: '我先', promptSegment: 'assistant_prefill' }
+    const first = [{ role: 'user', content: '你好' }, prefix]
+    const later = [
+      { role: 'user', content: '你好' },
+      { role: 'tool', content: '查询结果', toolCallId: 'query' },
+      prefix,
+    ]
+    const service = new ConversationTurnService({
+      threadService: {
+        getThread: vi.fn().mockResolvedValue({
+          id: 'thread',
+          agentId: 'pero',
+          channel: 'desktop',
+          disabledTools: [],
+        }),
+        appendAssistantMessage,
+      },
+      agentService: {
+        chatWithCompiledMessages: vi.fn(async (params: CompiledRunParams) => {
+          params.onRequestCompiled?.({ turn: 1, messages: first, tools: [] } as never)
+          params.onRequestCompiled?.({ turn: 2, messages: later, tools: [] } as never)
+          first.push({ role: 'assistant', content: '不应污染快照' } as never)
+          return '我先确认了结果。'
+        }),
+      },
+      attachmentService: { bindOutgoing: vi.fn() },
+    } as never)
+    await service.executeTurn({
+      threadId: 'thread',
+      content: '你好',
+      resumeMessages: [{ role: 'user', content: '你好' }],
+    })
+    const metadata = JSON.parse(appendAssistantMessage.mock.calls[0]![0].metadataJson)
+    expect(metadata.initialPromptMessages).toHaveLength(2)
+    expect(metadata.initialPromptMessages.at(-1)).toEqual(prefix)
+    expect(metadata.modelRequests).toHaveLength(2)
+    expect(metadata.modelRequests[1].messages).toEqual(later)
+  })
+
+  it('未知文件只给本机服务端存储路径和附件引用，不注入完整内容', async () => {
+    const serverPath = path.resolve('TEMP/attachment-upload/stored-original')
+    const attachment = {
+      id: 'file-1',
+      kind: 'file',
+      mimeType: 'application/octet-stream',
+      originalName: '资料.custom',
+      storageKey: 'ab/aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee',
+      extractedText: '不应注入的长正文'.repeat(1000),
+    }
+    const service = new ConversationTurnService({
+      threadService: {
+        getThread: vi.fn().mockResolvedValue({
+          id: 'thread-1',
+          agentId: 'pero',
+          channel: 'desktop',
+          disabledTools: [],
+        }),
+        appendUserMessage: vi.fn().mockResolvedValue({ id: 1 }),
+      },
+      contextCompiler: {
+        compile: vi.fn().mockResolvedValue({
+          messages: [
+            { role: 'system', content: '系统' },
+            { role: 'user', content: '读取文件' },
+          ],
+          currentMessageIndex: 1,
+          manifest: { disabledTools: [] },
+        }),
+      },
+      attachmentService: {
+        validateForBinding: vi.fn().mockResolvedValue([attachment]),
+        toDto: vi.fn().mockReturnValue(attachment),
+        bind: vi.fn(),
+        resolveStoragePath: vi.fn().mockReturnValue(serverPath),
+      },
+      imageUnderstandingService: { transcribe: vi.fn().mockResolvedValue(null) },
+    } as never)
+    const prepared = await service.prepareTurn({
+      threadId: 'thread-1',
+      content: '读取文件',
+      attachmentIds: ['file-1'],
+    })
+    const text = (prepared.messages[1]!.content as Array<{ text?: string }>)
+      .map((part) => part.text ?? '')
+      .join('\n')
+    expect(text).toContain('attachment:file-1')
+    expect(text).toContain(JSON.stringify(serverPath))
+    expect(text).not.toContain('不应注入的长正文')
+    expect(prepared.messages[0]).toEqual({ role: 'system', content: '系统' })
+  })
   it('预算编译与执行共用会话模型快照，密钥不进入回合返回值', async () => {
     const model = {
       provider: 'openai',

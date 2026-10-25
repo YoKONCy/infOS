@@ -1,0 +1,14 @@
+{
+  "请手动重启外部或开发后端，资源将在下次启动时切换。": "Restart the external or development backend manually to apply the scheduled resources.",
+  "请手动重启开发后端，资源将在下次启动时切换。": "Restart the development backend manually to apply the scheduled resources.",
+  "拓展恢复": "Extension recovery",
+  "选择下次启动的恢复方式": "Choose recovery options for the next start",
+  "安全启动会暂停第三方拓展。回退会恢复各类资源最近一次修改前的备份，并保持恢复模式。业务数据库和对话不会被替换。": "Safe start pauses third-party extensions. Rollback restores the most recent backup for each resource category and keeps recovery mode enabled. Application databases and conversations are not replaced.",
+  "安全启动": "Safe start",
+  "回退最近资源": "Roll back recent resources",
+  "打开备份目录": "Open backup directory",
+  "取消": "Cancel",
+  "恢复操作未完成：{0}": "Recovery did not complete: {0}",
+  "重启应用以切换资源？": "Restart the application to apply resource changes?",
+  "重启": "Restart"
+}

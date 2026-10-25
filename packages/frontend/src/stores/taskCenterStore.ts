@@ -79,6 +79,7 @@ export const useTaskCenterStore = defineStore('taskCenter', () => {
 
   /** 当前筛选条件（历史视图） */
   const historyFilter = ref<BackgroundTaskQueryParams>({ page: 1, pageSize: 20 })
+  let historyRequest = 0
 
   // ── 计算属性 ──
 
@@ -142,29 +143,30 @@ export const useTaskCenterStore = defineStore('taskCenter', () => {
 
   /** 刷新历史任务（分页 + 筛选） */
   async function refreshHistory(filter: BackgroundTaskQueryParams = {}): Promise<void> {
+    const request = ++historyRequest
     isLoadingHistory.value = true
     historyFilter.value = { ...historyFilter.value, ...filter }
+    const query = { ...historyFilter.value }
     try {
-      // 历史视图只关心终态；首版按单状态查询或全部，这里统一拉全量后客户端过滤
-      // TODO(M05-后续): 后端支持 status in [...] 多值后改服务端过滤
+      // 终态过滤先于分页，避免活跃任务占用历史页和总数。
       const res = await backgroundTasksApi.list({
-        ...historyFilter.value,
+        ...query,
         category: 'agent_task',
-        pageSize: historyFilter.value.pageSize ?? 20,
+        view: 'history',
+        pageSize: query.pageSize ?? 20,
       })
+      if (request !== historyRequest) return
       const items = (res.data?.items ?? [])
         .filter((t) => t.category !== 'resident')
         .filter((t) =>
-          historyFilter.value.status
-            ? t.status === historyFilter.value.status
-            : FINISHED_STATUSES.includes(t.status),
+          query.status ? t.status === query.status : FINISHED_STATUSES.includes(t.status),
         )
       historyTasks.value = items
       historyTotal.value = res.data?.total ?? 0
     } catch (err) {
       logger.warn('taskCenterStore', __t('logs.frontend.taskCenterStore', '刷新历史任务失败'), err)
     } finally {
-      isLoadingHistory.value = false
+      if (request === historyRequest) isLoadingHistory.value = false
     }
   }
 

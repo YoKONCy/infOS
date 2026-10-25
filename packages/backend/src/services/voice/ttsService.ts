@@ -1,319 +1,398 @@
-import { t as __t } from '../../lib/i18n'
-/**
- * TTS 服务 — 文本转语音
- *
- * 支持多 Provider:
- * - Edge TTS (默认，免费，无需 API Key)
- * - OpenAI TTS (需 API Key)
- * - Azure Speech (TODO)
- * - [实验] 可爱化后处理 (音高/共振峰调整，默认关闭)
- *
- * (236行) 的核心功能。
- *
- * 三层架构：Service 层 — 负责业务逻辑编排，禁止直接构造 HTTP 响应。
- *
- * @see 三层架构
- * @module packages/backend/src/services/voice/ttsService
- */
-
-import { createLogger } from '../../lib/logger'
+import { createHash, randomUUID } from 'node:crypto'
+import { mkdir, readFile, writeFile, unlink } from 'node:fs/promises'
+import path from 'node:path'
+import {
+  createTtsWorkspace,
+  createTtsPreset,
+  TTS_ADAPTERS,
+  type TtsWorkspace,
+  type TtsSynthesisInput,
+  type TtsAdapterId,
+  type TtsAudioFormat,
+  type KernelAssetId,
+} from '@infos/shared'
+import type { ConfigRepository } from '../../repositories/config.repo'
+import type { AssetFileAuthority } from '../../kernel/assetFileAuthority'
+import type { KernelAssetRepository } from '../../kernel/kernelAssetRepository'
 import { AppError } from '../../lib/appError'
-import { cleanTextForTts } from './spokenReply'
+import { t } from '../../lib/i18n'
+import { createLogger } from '../../lib/logger'
+import { parseTtsWorkspace } from './ttsSchema'
+import { createTtsAdapterRegistry, type TtsAdapterRegistry } from './ttsAdapters'
+import { ttsConfigFailure } from './ttsHttp'
+import { prepareTtsText } from './spokenReply'
 
-const logger = createLogger('TtsService')
-
-// ── 类型 ──
-
-/** TTS 请求参数 */
-export interface TtsRequest {
-  /** 要合成的文本 */
-  text: string
-  /** TTS Provider */
+export const TTS_WORKSPACE_KEY = 'tts.workspace.v1'
+export type TtsProvider = TtsAdapterId | 'azure' | 'local'
+export interface TtsRequest extends TtsSynthesisInput {
   provider?: TtsProvider
-  /** 声音标识 */
-  voice?: string
-  /** 语速 — Edge: "+25%", OpenAI: 1.25 */
-  speed?: number | string
-  /** 音调 — Edge: "+5Hz" */
-  pitch?: string
-  /** 音频格式 */
-  format?: 'mp3' | 'opus' | 'aac' | 'pcm'
-  /**
-   * [实验] 可爱化后处理
-   * 设为 true 时调整音高/共振峰使声音变萌。
-   * 注意：当前 Node.js 端暂无 Parselmouth 等效库，标记为实验性。
-   */
+  signal?: AbortSignal
   cute?: boolean
 }
-
-/** 支持的 TTS Provider */
-export type TtsProvider = 'edge_tts' | 'openai' | 'azure' | 'local'
-
-/** TTS 响应 */
 export interface TtsResult {
-  /** 音频二进制数据 */
   audio: ArrayBuffer
-  /** MIME 类型 */
   mimeType: string
-  /** 音频时长（秒） */
   durationSec?: number
+  presetId?: string
 }
-
-/** TTS Provider 配置 */
+/** 旧配置入口保留兼容；新配置通过工作区合同一次保存。 */
 export interface TtsConfig {
-  /** 当前 Provider (默认 edge_tts) */
   provider: TtsProvider
-  /** OpenAI API 基础地址 */
   apiBase: string
-  /** OpenAI API Key */
   apiKey: string
-  /** Edge TTS 声音 (默认 zh-CN-XiaoyiNeural，对齐 v1) */
   voice: string
-  /** Edge TTS 语速 (默认 +25%，对齐 v1) */
   rate: string
-  /** Edge TTS 音调 (默认 +5Hz，对齐 v1) */
   pitch: string
-  /** OpenAI 语速 (0.25~4.0) */
   speed: number
-  /** OpenAI 音频格式 */
-  format: 'mp3' | 'opus' | 'aac' | 'pcm'
+  format: TtsAudioFormat
+}
+type ConfigStore = Pick<ConfigRepository, 'get' | 'set'>
+interface ReferenceStore {
+  root: string
+  authority: AssetFileAuthority
+  repository: KernelAssetRepository
 }
 
-// ── 默认配置 ──
-
-const DEFAULT_CONFIG: TtsConfig = {
-  provider: 'edge_tts',
-  apiBase: 'https://api.openai.com/v1',
-  apiKey: '',
-  voice: 'zh-CN-XiaoyiNeural',
-  rate: '+25%',
-  pitch: '+5Hz',
-  speed: 1.0,
-  format: 'mp3',
-}
-
-// ── Service ──
-
+/** 唯一语音调度入口：绑定解析 → 配置快照 → 有界队列 → 适配器 → 可播放音频。 */
 export class TtsService {
-  private config: TtsConfig
+  private workspace = createTtsWorkspace()
+  private legacyConfig: Partial<TtsConfig> = {}
+  private store?: ConfigStore
+  private references?: ReferenceStore
+  private active = 0
+  private waiting: Array<() => void> = []
+  private listeners = new Set<() => void>()
+  private mutations: Promise<unknown> = Promise.resolve()
+  private logger = createLogger('TtsService')
 
-  constructor(config?: Partial<TtsConfig>) {
-    this.config = { ...DEFAULT_CONFIG, ...config }
-    logger.info(
-      __t('logs.voice', '初始化完成 (Provider: {0}, 声音: {1})', [
-        this.config.provider,
-        this.config.voice,
-      ]),
-    )
+  constructor(
+    config?: Partial<TtsConfig>,
+    private registry: TtsAdapterRegistry = createTtsAdapterRegistry(),
+  ) {
+    if (config) this.updateConfig(config)
   }
 
-  /** 返回当前 TTS 配置是否有效可用 */
   get isAvailable(): boolean {
-    if (this.config.provider === 'openai') return !!this.config.apiKey
-    if (this.config.provider === 'edge_tts') return true
-    return false
+    return this.availableFor()
   }
-
-  /** 更新配置 */
-  updateConfig(partial: Partial<TtsConfig>): void {
-    this.config = { ...this.config, ...partial }
-    logger.info(__t('logs.voice', '配置已更新 (Provider: {0})', [this.config.provider]))
+  get hasAvailablePreset(): boolean {
+    return this.workspace.presets.some((item) => this.availableFor(undefined, item.id))
   }
-
-  /**
-   * 文本转语音
-   *
-   * @param request - TTS 请求参数
-   * @returns 音频数据 + MIME 类型
-   * @throws {Error} API 调用失败或配置缺失
-   */
-  async synthesize(request: TtsRequest): Promise<TtsResult> {
-    request = { ...request, text: cleanTextForTts(request.text) }
-    if (!request.text) throw new AppError('VALIDATION_ERROR', { message: '口语文本清洗后为空' })
-    const provider = request.provider ?? this.config.provider
-
-    switch (provider) {
-      case 'edge_tts':
-        return this.synthesizeEdge(request)
-      case 'openai':
-        return this.synthesizeOpenAI(request)
-      case 'azure':
-        throw new AppError('CONFIG_ERROR', { message: 'Azure TTS尚未实现' })
-      case 'local':
-        throw new AppError('CONFIG_ERROR', { message: '本地TTS尚未实现' })
-      default:
-        // 未知 Provider → 回退到 Edge
-        logger.warn(__t('logs.voice', '未知 Provider "{0}"，回退到 Edge TTS', [provider]))
-        return this.synthesizeEdge(request)
-    }
-  }
-
-  // ── Edge TTS (默认，免费) ──
-
-  /**
-   * 使用 Edge TTS 合成语音
-   *
-   * 通过 edge-tts npm 包调用 Microsoft Edge 的在线 TTS 服务。
-   * 无需 API Key， _synthesize_edge() 方法。
-   *
-   * 默认声音：zh-CN-XiaoyiNeural (对齐 v1)
-   * 默认语速：+25% (对齐 v1)
-   * 默认音调：+5Hz (对齐 v1)
-   */
-  private async synthesizeEdge(request: TtsRequest): Promise<TtsResult> {
-    // 动态导入 msedge-tts（避免在未安装时影响其他 Provider）
-    let MsEdgeTTS: typeof import('msedge-tts').MsEdgeTTS
-    let OUTPUT_FORMAT: typeof import('msedge-tts').OUTPUT_FORMAT
+  get isRemote(): boolean {
+    const preset = this.workspace.presets.find((item) => item.id === this.workspace.defaultPresetId)
+    const model = this.workspace.models.find((item) => item.id === preset?.modelId)
+    const profile = this.workspace.profiles.find((item) => item.id === model?.profileId)
+    if (profile?.adapter === 'edge_tts') return true
+    const base = this.workspace.connections.find((item) => item.id === model?.connectionId)?.apiBase
     try {
-      const msedge = await import('msedge-tts')
-      MsEdgeTTS = msedge.MsEdgeTTS
-      OUTPUT_FORMAT = msedge.OUTPUT_FORMAT
+      return !['localhost', '127.0.0.1', '[::1]'].includes(new URL(base ?? '').hostname)
     } catch {
-      throw new AppError('CONFIG_ERROR', {
-        message: 'msedge-tts包未安装，请运行: pnpm add msedge-tts',
-      })
-    }
-
-    const voice = (request.voice as string) ?? this.config.voice
-    // Edge TTS 的 rate/pitch 是字符串格式 ("+25%", "+5Hz")
-    // request.speed 可能是数字 (OpenAI 格式)，不能直接用于 Edge
-    const rate = (typeof request.speed === 'string' ? request.speed : null) ?? this.config.rate
-    const pitch = request.pitch ?? this.config.pitch
-
-    logger.info(
-      __t('logs.voice', '[Edge] 合成: "{0}..." (声音: {1}, 语速: {2}, 音调: {3})', [
-        request.text.slice(0, 50),
-        voice,
-        rate,
-        pitch,
-      ]),
-    )
-    const startTime = Date.now()
-
-    const tts = new MsEdgeTTS()
-    await tts.setMetadata(voice, OUTPUT_FORMAT.AUDIO_24KHZ_96KBITRATE_MONO_MP3)
-
-    const { audioStream } = tts.toStream(request.text, { rate, pitch })
-
-    // 将流转换为 Buffer
-    const chunks: Buffer[] = []
-    for await (const chunk of audioStream) {
-      chunks.push(chunk as Buffer)
-    }
-    const buffer = Buffer.concat(chunks)
-
-    const durationMs = Date.now() - startTime
-    logger.info(
-      __t('logs.voice', '[Edge] 合成完成 ({0}KB, 耗时 {1}ms)', [
-        (buffer.byteLength / 1024).toFixed(1),
-        durationMs,
-      ]),
-    )
-
-    return {
-      audio: new Uint8Array(buffer).buffer as ArrayBuffer,
-      mimeType: 'audio/mpeg',
+      return true
     }
   }
-
-  // ── OpenAI TTS ──
-
-  private async synthesizeOpenAI(request: TtsRequest): Promise<TtsResult> {
-    const apiBase = this.config.apiBase || 'https://api.openai.com/v1'
-    const apiKey = this.config.apiKey
-
-    if (!apiKey) {
-      throw new AppError('CONFIG_ERROR', {
-        message: 'OpenAI TTS需要API Key，请在VoiceTab中配置',
-      })
+  get isMetered(): boolean {
+    const preset = this.workspace.presets.find((item) => item.id === this.workspace.defaultPresetId)
+    const model = this.workspace.models.find((item) => item.id === preset?.modelId)
+    return (
+      this.workspace.profiles.find((item) => item.id === model?.profileId)?.adapter !== 'edge_tts'
+    )
+  }
+  availableFor(agentId?: string, presetId?: string): boolean {
+    if (!this.workspace.enabled) return false
+    const preset = this.workspace.presets.find(
+      (item) =>
+        item.id ===
+        (presetId ??
+          ((agentId && this.workspace.bindings[agentId]) || this.workspace.defaultPresetId)),
+    )
+    const model = this.workspace.models.find((item) => item.id === preset?.modelId)
+    const profile = this.workspace.profiles.find((item) => item.id === model?.profileId)
+    const connection = this.workspace.connections.find((item) => item.id === model?.connectionId)
+    return !!(
+      preset &&
+      model &&
+      profile &&
+      connection &&
+      (profile.adapter === 'edge_tts' ||
+        (connection.apiBase && (profile.adapter === 'custom' || connection.apiKey)))
+    )
+  }
+  getWorkspace(): TtsWorkspace {
+    return structuredClone(this.workspace)
+  }
+  onConfigChanged(listener: () => void): () => void {
+    this.listeners.add(listener)
+    return () => {
+      this.listeners.delete(listener)
     }
+  }
+  private apply(workspace: TtsWorkspace): void {
+    this.workspace = structuredClone(workspace)
+    for (const listener of this.listeners) listener()
+  }
+  configureReferences(store: ReferenceStore): void {
+    this.references = store
+  }
 
-    // 对齐 v1: 如果 speed 是 Edge 格式 ("+25%")，自动转换为 OpenAI 格式 (1.25)
-    let speed = this.config.speed
-    const rawSpeed = request.speed ?? this.config.rate
-    if (typeof rawSpeed === 'string' && rawSpeed.includes('%')) {
+  async loadWorkspace(store: ConfigStore): Promise<void> {
+    this.store = store
+    const value = await store.get(TTS_WORKSPACE_KEY)
+    if (value) {
+      let parsed: unknown
       try {
-        const val = parseInt(rawSpeed.replace('%', '').replace('+', ''))
-        speed = 1.0 + val / 100.0
+        parsed = JSON.parse(value)
       } catch {
-        speed = 1.0
+        throw ttsConfigFailure()
       }
-    } else if (typeof rawSpeed === 'number') {
-      speed = rawSpeed
-    }
-
-    const voice = (request.voice as string) ?? 'shimmer'
-    const format = request.format ?? this.config.format
-
-    const mimeMap: Record<string, string> = {
-      mp3: 'audio/mpeg',
-      opus: 'audio/ogg',
-      aac: 'audio/aac',
-      pcm: 'audio/pcm',
-    }
-
-    logger.info(
-      __t('logs.voice', '[OpenAI] 合成: "{0}..." (声音: {1}, 格式: {2})', [
-        request.text.slice(0, 50),
-        voice,
-        format,
-      ]),
-    )
-    const startTime = Date.now()
-
-    const response = await fetch(`${apiBase}/audio/speech`, {
-      method: 'POST',
-      headers: {
-        Authorization: `Bearer ${apiKey}`,
-        'Content-Type': 'application/json',
-      },
-      body: JSON.stringify({
-        model: 'tts-1',
-        input: request.text,
-        voice,
-        speed,
-        response_format: format,
-      }),
-    })
-
-    if (!response.ok) {
-      const body = await response.text()
-      logger.error(__t('logs.voice', 'OpenAI TTS API 失败: {0} — {1}', [response.status, body]))
-      throw new AppError('EXTERNAL_ERROR', {
-        message: `TTS API调用失败: ${response.status}`,
-        data: { status: response.status },
-      })
-    }
-
-    const audio = await response.arrayBuffer()
-    const durationMs = Date.now() - startTime
-
-    logger.info(
-      __t('logs.voice', '[OpenAI] 合成完成 ({0}KB, 耗时 {1}ms)', [
-        (audio.byteLength / 1024).toFixed(1),
-        durationMs,
-      ]),
-    )
-
-    return {
-      audio,
-      mimeType: mimeMap[format] ?? 'audio/mpeg',
+      this.apply(parseTtsWorkspace(parsed))
+    } else {
+      this.apply({ ...this.workspace, enabled: (await store.get('tts.enabled')) !== 'false' })
     }
   }
 
-  // ── [实验] 可爱化后处理 ──
-  // 可通过 Parselmouth (Praat) 调整音高/共振峰使声音变萌。
-  // Node.js 目前没有直接的 Parselmouth 替代品。
-  // 以下为预留接口，等待合适的 Node.js 音频处理库后启用。
-  //
-  // async processCute(audio: ArrayBuffer, options?: {
-  //   pitchFactor?: number   // 音高倍率 (默认 1.2，对齐 v1)
-  //   formantFactor?: number // 共振峰倍率 (默认 1.1，对齐 v1)
-  // }): Promise<ArrayBuffer> {
-  //   const { pitchFactor = 1.2, formantFactor = 1.1 } = options ?? {}
-  //   // TODO: 使用 Praat/SoX/ffmpeg 或 WebAssembly 音频处理库
-  //   // Parselmouth "Change gender" (75Hz, 600Hz, formantFactor, pitchFactor, 1.0, 1.0)
-  //   logger.warn('可爱化后处理尚未实现 (缺少 Node.js Parselmouth 替代)')
-  //   return audio
-  // }
+  async saveWorkspace(input: unknown): Promise<TtsWorkspace> {
+    const candidate = parseTtsWorkspace(input)
+    const operation = this.mutations
+      .catch(() => undefined)
+      .then(async () => {
+        if (!this.store) throw ttsConfigFailure()
+        await this.store.set(TTS_WORKSPACE_KEY, JSON.stringify(candidate))
+        this.apply(candidate)
+        return this.getWorkspace()
+      })
+    this.mutations = operation
+    return operation
+  }
+
+  updateConfig(config: Partial<TtsConfig>): void {
+    this.legacyConfig = { ...this.legacyConfig, ...config }
+    config = this.legacyConfig
+    const adapter = config.provider ?? this.workspace.profiles[0]!.adapter
+    const defaults = TTS_ADAPTERS.find((item) => item.id === adapter)
+    if (!defaults) {
+      this.apply({ ...this.workspace, enabled: false })
+      return
+    }
+    const preset = createTtsPreset('legacy', 'legacy', defaults.id)
+    if (config.voice !== undefined) preset.voice = config.voice
+    if (config.speed !== undefined) preset.speed = config.speed
+    if (config.rate !== undefined) preset.rate = config.rate
+    if (config.pitch !== undefined) preset.pitch = config.pitch
+    if (config.format !== undefined) preset.format = config.format
+    // 首次迁移沿用旧 OpenAI 的模型和默认声音，避免无意改变现有发声。
+    if (adapter === 'openai' && !config.voice) preset.voice = 'shimmer'
+    this.apply({
+      version: 1,
+      enabled: true,
+      connections: [
+        {
+          id: 'legacy',
+          name: defaults.id,
+          apiBase: config.apiBase || defaults.apiBase,
+          apiKey: config.apiKey ?? '',
+          headers: {},
+          timeoutMs: 60000,
+        },
+      ],
+      profiles: [{ id: 'legacy', adapter: defaults.id }],
+      models: [
+        {
+          id: 'legacy',
+          connectionId: 'legacy',
+          profileId: 'legacy',
+          modelId: adapter === 'openai' ? 'tts-1' : (defaults.models[0] ?? ''),
+        },
+      ],
+      presets: [preset],
+      defaultPresetId: 'legacy',
+      bindings: {},
+    })
+  }
+
+  async saveReference(file: File): Promise<{ assetId: string; name: string }> {
+    if (!this.references) throw ttsConfigFailure()
+    if (!file.size || file.size > 7 * 1024 * 1024)
+      throw new AppError('PAYLOAD_TOO_LARGE', {
+        message: t('server.tts', '参考音频应大于 0 且不超过 7MB'),
+      })
+    const bytes = Buffer.from(await file.arrayBuffer())
+    const wav =
+      bytes.subarray(0, 4).toString() === 'RIFF' && bytes.subarray(8, 12).toString() === 'WAVE'
+    const mp3 =
+      bytes.subarray(0, 3).toString() === 'ID3' ||
+      (bytes[0] === 0xff && (bytes[1]! & 0xe0) === 0xe0)
+    if (!wav && !mp3)
+      throw new AppError('UNSUPPORTED_MEDIA_TYPE', {
+        message: t('server.tts', '请选择 WAV 或 MP3 参考音频'),
+      })
+    await mkdir(this.references.root, { recursive: true })
+    const target = path.join(this.references.root, `${randomUUID()}.${wav ? 'wav' : 'mp3'}`)
+    try {
+      await writeFile(target, bytes, { flag: 'wx' })
+      const asset = this.references.authority.registerFile({
+        ownerPrincipalId: 'system',
+        filePath: target,
+        kind: 'audio.tts.reference',
+        mimeType: wav ? 'audio/wav' : 'audio/mpeg',
+        source: 'user',
+        retention: 'persistent',
+      })
+      await this.references.repository.save(asset, target)
+      return { assetId: asset.assetId, name: file.name }
+    } catch (error) {
+      await unlink(target).catch(() => undefined)
+      throw error
+    }
+  }
+
+  private async reference(assetId: string) {
+    if (!this.references) throw ttsConfigFailure()
+    const record = await this.references.repository.find(assetId as KernelAssetId)
+    if (
+      !record ||
+      record.asset.kind !== 'audio.tts.reference' ||
+      record.asset.sizeBytes > 7 * 1024 * 1024
+    )
+      throw ttsConfigFailure()
+    const relative = path.relative(this.references.root, record.storageRef)
+    if (relative.startsWith('..') || path.isAbsolute(relative)) throw ttsConfigFailure()
+    const bytes = await readFile(record.storageRef)
+    if (
+      bytes.length !== record.asset.sizeBytes ||
+      createHash('sha256').update(bytes).digest('hex') !== record.asset.sha256
+    )
+      throw ttsConfigFailure()
+    return { bytes, mimeType: record.asset.mimeType }
+  }
+
+  private acquire(signal: AbortSignal): Promise<() => void> {
+    signal.throwIfAborted()
+    const release = () => {
+      const next = this.waiting.shift()
+      if (next) next()
+      else --this.active
+    }
+    if (this.active < 2) {
+      ++this.active
+      return Promise.resolve(release)
+    }
+    if (this.waiting.length >= 16)
+      throw new AppError('EXTERNAL_ERROR', { message: t('server.tts', '语音请求过多，请稍后重试') })
+    return new Promise((resolve, reject) => {
+      const begin = () => {
+        signal.removeEventListener('abort', cancel)
+        resolve(release)
+      }
+      const cancel = () => {
+        this.waiting = this.waiting.filter((item) => item !== begin)
+        reject(signal.reason)
+      }
+      this.waiting.push(begin)
+      signal.addEventListener('abort', cancel, { once: true })
+    })
+  }
+
+  async synthesize(request: TtsRequest): Promise<TtsResult> {
+    const snapshot = this.getWorkspace()
+    if (!snapshot.enabled)
+      throw new AppError('CONFIG_ERROR', { message: t('server.tts', '语音合成已关闭') })
+    const id =
+      request.presetId ??
+      (request.agentId ? snapshot.bindings[request.agentId] : undefined) ??
+      snapshot.defaultPresetId
+    const stored = snapshot.presets.find((item) => item.id === id)
+    const model = snapshot.models.find((item) => item.id === stored?.modelId)
+    const profile = snapshot.profiles.find((item) => item.id === model?.profileId)
+    const connection = snapshot.connections.find((item) => item.id === model?.connectionId)
+    if (
+      !stored ||
+      !model ||
+      !profile ||
+      !connection ||
+      (request.provider && request.provider !== profile.adapter)
+    )
+      throw ttsConfigFailure()
+    if (
+      profile.adapter !== 'edge_tts' &&
+      (!connection.apiBase || (profile.adapter !== 'custom' && !connection.apiKey))
+    )
+      throw ttsConfigFailure()
+    const preset = {
+      ...stored,
+      ...(request.voice !== undefined ? { voice: request.voice } : {}),
+      ...(typeof request.speed === 'number'
+        ? { speed: request.speed }
+        : typeof request.speed === 'string'
+          ? { rate: request.speed }
+          : {}),
+      ...(request.pitch !== undefined ? { pitch: request.pitch } : {}),
+      ...(request.format !== undefined ? { format: request.format } : {}),
+      ...(request.instructions !== undefined ? { instructions: request.instructions } : {}),
+      ...(request.emotion !== undefined ? { emotion: request.emotion } : {}),
+    }
+    if (
+      !Number.isFinite(preset.speed) ||
+      preset.speed < 0.25 ||
+      preset.speed > 4 ||
+      !TTS_ADAPTERS.find((item) => item.id === profile.adapter)?.formats.includes(preset.format)
+    )
+      throw ttsConfigFailure()
+    const text = prepareTtsText(request.text)
+    const limit =
+      model.maxChars ??
+      ({ stepfun: 1000, bailian: 600, openai: 4096 } as Record<string, number>)[profile.adapter] ??
+      16000
+    if (!text || [...text].length > limit)
+      throw new AppError('VALIDATION_ERROR', {
+        message: t('server.tts', '朗读文本为空或超过模型长度限制'),
+      })
+    const controller = new AbortController()
+    const abort = () => controller.abort(request.signal?.reason)
+    request.signal?.addEventListener('abort', abort, { once: true })
+    if (request.signal?.aborted) abort()
+    const timer = setTimeout(() => controller.abort(new Error('TTS_TIMEOUT')), connection.timeoutMs)
+    let release: (() => void) | undefined
+    try {
+      release = await this.acquire(controller.signal)
+      controller.signal.throwIfAborted()
+      const reference = preset.referenceAssetId
+        ? await this.reference(preset.referenceAssetId)
+        : undefined
+      controller.signal.throwIfAborted()
+      const operation = this.registry.get(profile.adapter).synthesize({
+        text,
+        model,
+        profile,
+        connection,
+        preset,
+        reference,
+        signal: controller.signal,
+      })
+      // Edge 建连等上游可能忽略信号；调度层仍保证调用方及时返回。
+      const result = await new Promise<{ audio: ArrayBuffer; mimeType: string }>(
+        (resolve, reject) => {
+          const cancelled = () => reject(controller.signal.reason)
+          controller.signal.addEventListener('abort', cancelled, { once: true })
+          operation
+            .then(resolve, reject)
+            .finally(() => controller.signal.removeEventListener('abort', cancelled))
+            .catch(() => undefined)
+          if (controller.signal.aborted) cancelled()
+        },
+      )
+      return { ...result, presetId: preset.id }
+    } catch (error) {
+      if (controller.signal.aborted)
+        throw new AppError('EXTERNAL_ERROR', { message: t('server.tts', '语音合成已取消或超时') })
+      if (error instanceof AppError) throw error
+      this.logger.warn(t('server.tts', '语音合成失败，请检查服务配置'))
+      throw new AppError('EXTERNAL_ERROR', {
+        message: t('server.tts', '语音合成失败，请检查服务配置'),
+      })
+    } finally {
+      clearTimeout(timer)
+      request.signal?.removeEventListener('abort', abort)
+      release?.()
+    }
+  }
 }

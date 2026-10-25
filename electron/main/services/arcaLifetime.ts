@@ -1,4 +1,5 @@
 import { getClientCredential } from '../utils/clientCredential'
+import { getBackendOrigin, isRemoteConnection } from './clientConnection'
 import { createServer, type Server, type Socket } from 'node:net'
 import { randomBytes, timingSafeEqual } from 'node:crypto'
 import { tmpdir } from 'node:os'
@@ -100,21 +101,18 @@ export async function closeArcaDesktopGuard(): Promise<void> {
 }
 
 export async function startDesktopArca(): Promise<unknown> {
-  const value = await desktopGuard(),
+  const value = isRemoteConnection() ? undefined : await desktopGuard(),
     token = getClientCredential()
-  const response = await fetch(
-    `http://127.0.0.1:${Number(process.env.PERO_PORT ?? 9120)}/api/applications/arca/start`,
-    {
-      method: 'POST',
-      headers: {
-        'content-type': 'application/json',
-        ...(token ? { Authorization: `Bearer ${token}` } : {}),
-      },
-      body: JSON.stringify({ desktopGuard: value }),
-      signal: AbortSignal.timeout(25000),
-      redirect: 'error',
+  const response = await fetch(`${getBackendOrigin()}/api/applications/arca/start`, {
+    method: 'POST',
+    headers: {
+      'content-type': 'application/json',
+      ...(token ? { Authorization: `Bearer ${token}` } : {}),
     },
-  )
+    body: JSON.stringify(value ? { desktopGuard: value } : {}),
+    signal: AbortSignal.timeout(25000),
+    redirect: 'error',
+  })
   const result = (await response.json()) as { code: string; data?: unknown; message?: string }
   if (!response.ok || result.code !== 'OK') throw new Error(result.message ?? 'Arca 后台启动失败')
   return result.data

@@ -9,7 +9,7 @@
   "tools": [
     {
       "name": "document",
-      "description": "工作模式文档工具。action=capabilities 查询当前可用格式、PDF 引擎及 workbook 示例；inspect 检查结构；read 分页提取 Markdown（offset/limit），内嵌图片返回附件引用；export 从 source 或 content 导出 md/pdf/docx，或从 Markdown 表格、JSON workbook、workbook 参数导出 xlsx。source 支持工作区路径或当前会话 attachment:ID。PDF 默认 pdfkit；在线 Electron 提供可选 chromium。工作文件放任务子目录，output 不覆盖已有文件；省略时自动保存。生成后用 send_file 交付。扫描 PDF 需要已有 OCR 功能，工具不自动上传外部服务。",
+      "description": "读取或导出文档。capabilities 查询可用格式、PDF 引擎及示例；inspect 查看结构；read 按 offset/limit 提取 Markdown，图片返回附件引用；export 导出 md/pdf/docx/xlsx。source 接受工作区路径或当前会话 attachment:ID；XLSX 输入可用 Markdown 表格、JSON workbook 或 workbook 参数。output 保存在任务子目录，省略时自动命名，不覆盖已有文件；生成后用 send_file 交付。扫描 PDF 依赖已有 OCR，原件不自动上传外部服务。",
       "display": {
         "label": "处理文档",
         "description": "读取文档，导出 PDF、Word 和 Excel。",

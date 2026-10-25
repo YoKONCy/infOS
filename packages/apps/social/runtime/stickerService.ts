@@ -1,3 +1,4 @@
+import { t as __t } from './i18n'
 import type { Attachment } from './types'
 import { AppError } from '@infos/backend/applicationHostAbi'
 import { currentSocialRecovery } from './socialRecovery'
@@ -13,6 +14,7 @@ export interface AccountSticker {
 
 /** 原生收藏与文件传输由适配器实现，社交层只使用账号和表情标识。 */
 export interface AccountStickerProvider {
+  imageHeaders?(sticker: AccountSticker): Record<string, string>
   list(accountId: string): Promise<{ stickers: AccountSticker[]; truncated: boolean }>
   collect(accountId: string, url: string): Promise<{ md5: string }>
   describe(accountId: string, sticker: AccountSticker, description: string): Promise<void>
@@ -43,7 +45,7 @@ export function splitStickerSegments(content: string): MessageSegment[] {
     if (text) segments.push({ type: 'text', content: text })
     const id = match[2]!.trim()
     if (match[1]!.toLowerCase() === 'native_emoji') {
-      if (/^-?\d{1,30}:\d{1,2}$/.test(id)) segments.push({ type: 'native_emoji', reference: id })
+      if (/^[^[\]\r\n]{1,240}$/.test(id)) segments.push({ type: 'native_emoji', reference: id })
     } else if (/^s_[a-f0-9]{24}$/.test(id)) segments.push({ type: 'sticker', stickerId: id })
     cursor = match.index! + match[0].length
   }
@@ -118,7 +120,7 @@ export class StickerService {
         AbortSignal.timeout(15_000),
         ...(currentSocialRecovery() ? [currentSocialRecovery()!.signal] : []),
       ]),
-      headers: { 'User-Agent': 'Mozilla/5.0', Referer: 'https://qq.com' },
+      headers: this.provider.imageHeaders?.(sticker),
     })
     if (!response.ok || !response.body)
       throw new AppError('EXTERNAL_ERROR', { message: '收藏图片暂时无法读取，请重新同步' })
@@ -207,7 +209,12 @@ export class StickerService {
       )
       if (!sticker)
         throw Object.assign(
-          new Error('收藏请求已发送，但尚未在 QQ 收藏中确认；请强制刷新后确认，勿重复收藏'),
+          new Error(
+            __t(
+              'errors.social',
+              '收藏请求已发送，但尚未在平台收藏中确认；请强制刷新后确认，勿重复收藏',
+            ),
+          ),
           { uncertain: true, stage: 'verify', code: 'STICKER_NOT_CONFIRMED' },
         )
       if (description !== undefined) {
@@ -239,10 +246,13 @@ export class StickerService {
       )
     }
     if (updated.description !== description)
-      throw Object.assign(new Error('QQ 尚未确认描述更新，请强制刷新后确认'), {
-        uncertain: true,
-        stage: 'verify',
-      })
+      throw Object.assign(
+        new Error(__t('errors.social', '平台尚未确认描述更新，请强制刷新后确认')),
+        {
+          uncertain: true,
+          stage: 'verify',
+        },
+      )
     return updated
   }
 
@@ -274,7 +284,7 @@ export class StickerService {
       this.invalidate(accountId)
       try {
         if ((await this.snapshot(accountId, true)).stickers.some((item) => item.id === id))
-          throw new Error('QQ 尚未确认删除，请强制刷新后确认')
+          throw new Error(__t('errors.social', '平台尚未确认删除，请强制刷新后确认'))
       } catch (error) {
         throw Object.assign(new Error(error instanceof Error ? error.message : String(error)), {
           uncertain: true,

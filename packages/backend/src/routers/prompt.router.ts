@@ -2,7 +2,7 @@ import { t as __t } from '../lib/i18n'
 import { Hono } from 'hono'
 import { bodyLimit } from 'hono/body-limit'
 import { z } from 'zod'
-import { WHOLESOME_MODE_KEY } from '@infos/shared'
+import { WHOLESOME_MODE_KEY, ASSISTANT_PREFILL_KEY } from '@infos/shared'
 import type { AppContext } from '../container'
 import { promptBundleSchema, readPromptPersona } from '../services/prompt/promptWorkspace'
 import { AppError } from '../lib/appError'
@@ -151,7 +151,7 @@ export function createPromptRouter(ctx: AppContext) {
         agentId: z.string().max(100),
         frameworkId: z.string().max(180).optional(),
         taskId: z.string().max(180).optional(),
-        variables: z.record(z.unknown()).default({}),
+        variables: z.record(z.string(), z.unknown()).default({}),
       }),
       await c.req.json(),
     )
@@ -175,6 +175,7 @@ export function createPromptRouter(ctx: AppContext) {
       generation_type: 'normal',
       ...input.variables,
       wholesome_mode_enabled: (await ctx.configRepo.get(WHOLESOME_MODE_KEY)) !== 'false',
+      assistant_prefill_config: await ctx.configRepo.get(ASSISTANT_PREFILL_KEY),
     }
     const state = input.taskId
       ? undefined

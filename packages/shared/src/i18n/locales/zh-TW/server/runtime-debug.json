@@ -1,0 +1,8 @@
+{
+  "运行现场：{0}。使用 debug.resources.list() 查看资源版本，debug.resources.checkout(kind) 创建备份和候选目录。只修改候选目录；完成后由用户在资源版本页应用并重启。debug.load() 仅准备导出候选，不执行或热加载；debug.export() 导出插件供用户审核。文件助手只写调试工作区；Node 脚本仍具有后端进程权限，不得自行调用应用、重启或授权接口。": "執行現場：{0}。使用 debug.resources.list() 檢視資源版本，debug.resources.checkout(kind) 建立備份與候選目錄。只修改候選目錄；完成後由使用者在資源版本頁套用並重新啟動。debug.load() 僅準備匯出候選，不執行或熱載入；debug.export() 匯出外掛供使用者審核。檔案助手只寫入偵錯工作區；Node 指令碼仍具有後端程序權限，不得自行呼叫套用、重新啟動或授權介面。",
+  "调试执行失败：{0}": "偵錯執行失敗：{0}",
+  "运行现场：{0}。不传 code 读取现场。传 code 执行 JavaScript，使用 debug.inspect()、debug.files.list/read/write、debug.read、debug.check()、debug.load({id,entry,kind})、debug.recover(id)、debug.logs()、debug.electron()、debug.export({name,version})。文件助手只写调试工作区，临时加载随调试关闭撤销；任意 Node 脚本具有本机进程权限。检查仅覆盖语法与受支持的贡献入口。": "執行現場：{0}。不傳 code 讀取現場。傳 code 執行 JavaScript，使用 debug.inspect()、debug.files.list/read/write、debug.read、debug.check()、debug.load({id,entry,kind})、debug.recover(id)、debug.logs()、debug.electron()、debug.export({name,version})。檔案助手只寫入偵錯工作區，臨時載入隨偵錯關閉撤銷；任意 Node 指令碼具有本機程序權限。檢查僅涵蓋語法與支援的貢獻入口。",
+  "调试模式切换失败，请确认当前为普通桌面工作会话。": "偵錯模式切換失敗，請確認目前為一般桌面工作對話。",
+  "当前会话不支持调试": "目前對話不支援偵錯",
+  "调试脚本具有本机 Node 权限，本次执行需要审批": "偵錯指令碼具有本機 Node 權限，本次執行需要審批"
+}

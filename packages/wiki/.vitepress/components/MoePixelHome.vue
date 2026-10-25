@@ -9,18 +9,26 @@
             <span class="brand-title">萌动链接</span>
             <span class="brand-sub">PEROPEROCHAT</span>
           </div>
-          <span class="pixel-tag-pill">v0.9.5-hotfix1</span>
+          <span class="pixel-tag-pill">v0.9.6</span>
         </a>
 
         <nav class="pixel-nav-links">
           <a href="/" class="pixel-nav-item pixel-btn-home active">🏠 首页</a>
           <a href="/guide/intro" class="pixel-nav-item pixel-btn-guide">📖 指南</a>
-          <a href="https://store.steampowered.com/app/4457100" target="_blank" rel="noopener noreferrer"
-            class="pixel-nav-item pixel-btn-steam">
+          <a
+            href="https://store.steampowered.com/app/4457100"
+            target="_blank"
+            rel="noopener noreferrer"
+            class="pixel-nav-item pixel-btn-steam"
+          >
             🎮 Steam
           </a>
-          <a href="https://github.com/YoKONCy/infOS" target="_blank" rel="noopener noreferrer"
-            class="pixel-nav-item pixel-btn-gh">
+          <a
+            href="https://github.com/YoKONCy/infOS"
+            target="_blank"
+            rel="noopener noreferrer"
+            class="pixel-nav-item pixel-btn-gh"
+          >
             ⭐ GitHub
           </a>
         </nav>
@@ -91,7 +99,7 @@
               <span class="dot yellow"></span>
               <span class="dot blue"></span>
             </div>
-            <span class="dialog-status-title">✦ infOS-TS KERNEL v0.9.5-hotfix1 ✦</span>
+            <span class="dialog-status-title">✦ infOS-TS KERNEL v0.9.6 ✦</span>
             <span class="dialog-badge-live">● ONLINE</span>
           </div>
 
@@ -103,7 +111,8 @@
             </div>
 
             <h1 class="pixel-hero-title">
-              萌动链接：<br />
+              萌动链接：
+              <br />
               <span class="title-sub-eng">PEROPEROCHAT！</span>
             </h1>
 
@@ -115,7 +124,9 @@
             </div>
 
             <p class="pixel-hero-desc">
-              彻底告别 Python！全新 <strong>TypeScript (Hono) + TriviumDB (Rust)</strong> 驱动的开源全栈 AIOS 智能体操作系统。
+              彻底告别 Python！全新
+              <strong>TypeScript (Hono) + TriviumDB (Rust)</strong>
+              驱动的开源全栈 AIOS 智能体操作系统。
             </p>
 
             <div class="pixel-action-buttons">
@@ -123,13 +134,21 @@
                 <span class="btn-icon">🌸</span>
                 <span>快速启程</span>
               </a>
-              <a href="https://store.steampowered.com/app/4457100" target="_blank" rel="noopener noreferrer"
-                class="pixel-btn btn-steam">
+              <a
+                href="https://store.steampowered.com/app/4457100"
+                target="_blank"
+                rel="noopener noreferrer"
+                class="pixel-btn btn-steam"
+              >
                 <span class="btn-icon">🎮</span>
                 <span>Steam 商店</span>
               </a>
-              <a href="https://github.com/YoKONCy/infOS" target="_blank" rel="noopener noreferrer"
-                class="pixel-btn btn-alt">
+              <a
+                href="https://github.com/YoKONCy/infOS"
+                target="_blank"
+                rel="noopener noreferrer"
+                class="pixel-btn btn-alt"
+              >
                 <span class="btn-icon">⭐</span>
                 <span>GitHub 源码</span>
               </a>
@@ -162,7 +181,9 @@
         <div class="section-title-wrap">
           <span class="pixel-sec-chip">✦ CORE CAPABILITIES ✦</span>
           <h2 class="pixel-sec-heading">AIOS能力矩阵</h2>
-          <p class="pixel-sec-sub">拒绝死板的功能堆砌！每一扇视窗都是伙伴生命系统的一个重要维度：</p>
+          <p class="pixel-sec-sub">
+            拒绝死板的功能堆砌！每一扇视窗都是伙伴生命系统的一个重要维度：
+          </p>
         </div>
 
         <div class="pixel-os-grid">
@@ -198,7 +219,9 @@
                     <g class="svg-node">
                       <circle cx="150" cy="90" r="22" class="node-halo" />
                       <circle cx="150" cy="90" r="17" class="node-center-circle" />
-                      <text x="150" y="94" text-anchor="middle" class="node-text core-txt">YOU</text>
+                      <text x="150" y="94" text-anchor="middle" class="node-text core-txt">
+                        YOU
+                      </text>
                     </g>
 
                     <!-- 关联节点 1: 雨天 (事件) -->
@@ -233,7 +256,9 @@
                     <span class="stat-val">~2.95 ms</span>
                   </div>
                   <p class="mem-desc">
-                    不仅记住你说过的话，更能通过 <strong>SA-PPR 扩散激活 + 因果时间链</strong> 实现人脑般的联想推理。
+                    不仅记住你说过的话，更能通过
+                    <strong>SA-PPR 扩散激活 + 因果时间链</strong>
+                    实现人脑般的联想推理。
                   </p>
                   <ul class="pixel-check-list">
                     <li>✔ 候选 → 门控 → 正式记忆三层提纯</li>
@@ -253,13 +278,38 @@
             </div>
             <div class="window-body terminal-body">
               <div class="code-editor-mock">
-                <div class="line"><span class="c-v">mood</span> = get_agent_mood()</div>
-                <div class="line"><span class="c-k">if</span> mood == <span class="c-s">"happy"</span> {</div>
-                <div class="line indent">pet_action(action=<span class="c-s">"ear_flutter"</span>, speed=<span
-                    class="c-n">1.2</span>)</div>
-                <div class="line indent">say(<span class="c-s">"主人，今天也超棒喵！"</span>)</div>
-                <div class="line">} <span class="c-k">else</span> {</div>
-                <div class="line indent">tap_glass(intensity=<span class="c-n">0.6</span>)</div>
+                <div class="line">
+                  <span class="c-v">mood</span>
+                  = get_agent_mood()
+                </div>
+                <div class="line">
+                  <span class="c-k">if</span>
+                  mood ==
+                  <span class="c-s">"happy"</span>
+                  {
+                </div>
+                <div class="line indent">
+                  pet_action(action=
+                  <span class="c-s">"ear_flutter"</span>
+                  , speed=
+                  <span class="c-n">1.2</span>
+                  )
+                </div>
+                <div class="line indent">
+                  say(
+                  <span class="c-s">"主人，今天也超棒喵！"</span>
+                  )
+                </div>
+                <div class="line">
+                  }
+                  <span class="c-k">else</span>
+                  {
+                </div>
+                <div class="line indent">
+                  tap_glass(intensity=
+                  <span class="c-n">0.6</span>
+                  )
+                </div>
                 <div class="line">}</div>
                 <div class="cursor-line"><span class="terminal-cursor">█</span></div>
               </div>
@@ -348,7 +398,8 @@
             </div>
             <div class="cart-body">
               <p class="cart-quote">
-                “代码可以精益求精，但创造生命的温度才是我们的初心。infOS 是用工程托举幻想的最佳舞台。”
+                “代码可以精益求精，但创造生命的温度才是我们的初心。infOS
+                是用工程托举幻想的最佳舞台。”
               </p>
             </div>
             <div class="cart-notch"></div>
@@ -362,7 +413,8 @@
             </div>
             <div class="cart-body">
               <p class="cart-quote">
-                “主人主人！今天也要多喝温水、开开心心地敲代码哦！无论刮风下雨，Pero 都会一直一直陪着你喵~”
+                “主人主人！今天也要多喝温水、开开心心地敲代码哦！无论刮风下雨，Pero
+                都会一直一直陪着你喵~”
               </p>
             </div>
             <div class="cart-notch"></div>
@@ -376,7 +428,8 @@
             </div>
             <div class="cart-body">
               <p class="cart-quote">
-                “就是我啦！负责把天马行空的想法变成严谨优雅的 TypeScript 代码，守护 Wiki 每一个像素喵呜~！”
+                “就是我啦！负责把天马行空的想法变成严谨优雅的 TypeScript 代码，守护 Wiki
+                每一个像素喵呜~！”
               </p>
             </div>
             <div class="cart-notch"></div>
@@ -391,15 +444,19 @@
             <div class="arcade-scanlines"></div>
             <span class="arcade-coin-text">✦ INSERT COIN TO START JOURNEY ✦</span>
             <h3 class="arcade-title">你的 AI 伙伴，已在 Steam 启程</h3>
-            <p class="arcade-sub">PeroperoChat（萌动链接）现已上线 Steam 商店页，欢迎添加入愿望单！</p>
+            <p class="arcade-sub">
+              PeroperoChat（萌动链接）现已上线 Steam 商店页，欢迎添加入愿望单！
+            </p>
             <div class="arcade-btn-group">
-              <a href="https://store.steampowered.com/app/4457100" target="_blank" rel="noopener noreferrer"
-                class="pixel-btn btn-arcade-start">
+              <a
+                href="https://store.steampowered.com/app/4457100"
+                target="_blank"
+                rel="noopener noreferrer"
+                class="pixel-btn btn-arcade-start"
+              >
                 🎮 立即前往 Steam 商店页
               </a>
-              <a href="/guide/intro" class="pixel-btn btn-arcade-guide">
-                📖 查阅 infOS 系统文档
-              </a>
+              <a href="/guide/intro" class="pixel-btn btn-arcade-guide">📖 查阅 infOS 系统文档</a>
             </div>
           </div>
         </div>
@@ -509,7 +566,7 @@ onMounted(() => {
             }
           }
         },
-        { threshold: 0.05 }
+        { threshold: 0.05 },
       )
       heroObserver.observe(heroRef.value)
     }
@@ -532,7 +589,7 @@ const stageStyle = computed(() => {
   const rotY = currentX.value * 3.5 - 3
   const rotX = -currentY.value * 2.5 + 3
   return {
-    transform: `rotateY(${rotY.toFixed(2)}deg) rotateX(${rotX.toFixed(2)}deg) translateZ(0)`
+    transform: `rotateY(${rotY.toFixed(2)}deg) rotateX(${rotX.toFixed(2)}deg) translateZ(0)`,
   }
 })
 
@@ -541,7 +598,7 @@ const petTiltStyle = computed(() => {
   const moveX = currentX.value * 4
   const moveY = currentY.value * 3
   return {
-    transform: `translate(${moveX.toFixed(1)}px, ${moveY.toFixed(1)}px)`
+    transform: `translate(${moveX.toFixed(1)}px, ${moveY.toFixed(1)}px)`,
   }
 })
 
@@ -659,7 +716,10 @@ const codeSnippet3 = `
     linear-gradient(rgba(167, 216, 240, 0.15) 2px, transparent 2px),
     linear-gradient(90deg, rgba(167, 216, 240, 0.15) 2px, transparent 2px),
     radial-gradient(rgba(244, 114, 182, 0.12) 1px, transparent 1px);
-  background-size: 32px 32px, 32px 32px, 16px 16px;
+  background-size:
+    32px 32px,
+    32px 32px,
+    16px 16px;
   color: var(--moe-cocoa);
   font-family: 'ZCOOL KuaiLe', 'DotGothic16', sans-serif;
   overflow-x: hidden;
@@ -825,7 +885,9 @@ const codeSnippet3 = `
   border-radius: 12px;
   background: rgba(255, 255, 255, 0.86);
   border: 1.5px solid rgba(244, 114, 182, 0.3);
-  box-shadow: 0 8px 32px rgba(244, 114, 182, 0.08), inset 0 0 0 1px rgba(255, 255, 255, 0.5);
+  box-shadow:
+    0 8px 32px rgba(244, 114, 182, 0.08),
+    inset 0 0 0 1px rgba(255, 255, 255, 0.5);
   opacity: 0.88;
 }
 
@@ -920,10 +982,12 @@ const codeSnippet3 = `
   position: absolute;
   inset: 0;
   pointer-events: none;
-  background: radial-gradient(ellipse at 50% 45%,
-      transparent 20%,
-      rgba(253, 250, 253, 0.5) 65%,
-      var(--moe-bg) 95%);
+  background: radial-gradient(
+    ellipse at 50% 45%,
+    transparent 20%,
+    rgba(253, 250, 253, 0.5) 65%,
+    var(--moe-bg) 95%
+  );
 }
 
 /* 代码语法高亮 */
@@ -1113,7 +1177,9 @@ const codeSnippet3 = `
   border: 2.5px solid var(--moe-cocoa);
   border-radius: 4px;
   box-shadow: 3px 3px 0 var(--moe-cocoa);
-  transition: transform 0.1s steps(2), box-shadow 0.1s steps(2);
+  transition:
+    transform 0.1s steps(2),
+    box-shadow 0.1s steps(2);
   cursor: pointer;
 }
 
@@ -1168,7 +1234,6 @@ const codeSnippet3 = `
 }
 
 @keyframes petGentleBreathe {
-
   0%,
   100% {
     transform: translateY(0);
@@ -1218,7 +1283,6 @@ const codeSnippet3 = `
 }
 
 @keyframes floatBubble {
-
   0%,
   100% {
     transform: translateY(0);
@@ -1277,7 +1341,9 @@ const codeSnippet3 = `
   border-radius: 6px;
   box-shadow: 4px 4px 0 var(--moe-cocoa);
   overflow: hidden;
-  transition: transform 0.15s ease, box-shadow 0.15s ease;
+  transition:
+    transform 0.15s ease,
+    box-shadow 0.15s ease;
 }
 
 .os-window:hover {
@@ -1439,7 +1505,6 @@ const codeSnippet3 = `
 }
 
 @keyframes haloPulse {
-
   0%,
   100% {
     r: 20;
@@ -1572,7 +1637,6 @@ const codeSnippet3 = `
 }
 
 @keyframes blinkCursor {
-
   0%,
   100% {
     opacity: 1;
@@ -1746,11 +1810,13 @@ const codeSnippet3 = `
 .arcade-scanlines {
   position: absolute;
   inset: 0;
-  background: repeating-linear-gradient(0deg,
-      rgba(0, 0, 0, 0.2),
-      rgba(0, 0, 0, 0.2) 2px,
-      transparent 2px,
-      transparent 4px);
+  background: repeating-linear-gradient(
+    0deg,
+    rgba(0, 0, 0, 0.2),
+    rgba(0, 0, 0, 0.2) 2px,
+    transparent 2px,
+    transparent 4px
+  );
   pointer-events: none;
 }
 
@@ -1763,7 +1829,6 @@ const codeSnippet3 = `
 }
 
 @keyframes coinBlink {
-
   0%,
   100% {
     opacity: 1;

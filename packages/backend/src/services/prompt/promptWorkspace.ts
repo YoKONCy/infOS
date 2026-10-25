@@ -10,7 +10,14 @@ import type {
   PromptRelease,
   PromptWorkspaceView,
 } from '@infos/shared'
-import { promptFormat, ST_UTILITY_FIELDS, WHOLESOME_MODE_KEY } from '@infos/shared'
+import {
+  promptFormat,
+  ST_UTILITY_FIELDS,
+  WHOLESOME_MODE_KEY,
+  ASSISTANT_PREFILL_KEY,
+  parseAssistantPrefillConfig,
+} from '@infos/shared'
+import { compilePromptPlan } from './requestCompiler'
 import type { ConfigRepository } from '../../repositories/config.repo'
 import { AppError } from '../../lib/appError'
 import { tokenCounter } from '../tokenizer/tokenCounter'
@@ -143,10 +150,10 @@ export const promptBundleSchema = z.object({
                 .refine((value) => !['__proto__', 'constructor', 'prototype'].includes(value)),
               text,
             ),
-            sourcePreset: z.record(z.unknown()).optional(),
+            sourcePreset: z.record(z.string(), z.unknown()).optional(),
             orderProfile: z.number().int().min(0).max(99).optional(),
             utility: z
-              .record(
+              .partialRecord(
                 z.enum(
                   ST_UTILITY_FIELDS.map((item) => item.value) as [StUtilityKey, ...StUtilityKey[]],
                 ),
@@ -270,6 +277,8 @@ export const PROMPT_VARIABLES = [
   ['owner_appellation', '用户称呼'],
   ['current_time', '当前时间'],
   ['memory_context', '记忆'],
+  ['knowledge_context', '文档知识召回'],
+  ['facts_context', '事实召回'],
   ['conversation_history', '历史文本'],
   ['tools_description', '工具说明'],
   ['skill_menu', '技能目录'],
@@ -799,12 +808,32 @@ export class PromptWorkspace {
     return this.renderDocument(snapshot, key, vars, stack, budget)
   }
 
-  /** 未使用 system_core 的社交或导入框架也遵守全局开关，且不改写发布原件。 */
-  private withWholesomeMode<T extends { messages: RenderedMessage[]; preview: PromptPreview }>(
+  /** 原生、社交与导入框架统一编译全局规则和请求策略，不改写发布原件。 */
+  private withGlobalPolicies<T extends { messages: RenderedMessage[]; preview: PromptPreview }>(
     result: T,
     snapshot: PromptSnapshot,
     vars: Record<string, unknown>,
   ): T {
+    const plan = compilePromptPlan(
+      parseAssistantPrefillConfig(
+        typeof vars.assistant_prefill_config === 'string'
+          ? vars.assistant_prefill_config
+          : undefined,
+      ),
+    )
+    result.preview.requestPlan = plan
+    if (plan.assistantPrefill) {
+      const segment = plan.assistantPrefill
+      const tokens = tokenCounter.countTokens(segment.content)
+      result.preview.segments.push({
+        id: 'assistant_prefill',
+        source: segment.source,
+        role: 'assistant',
+        content: segment.content,
+        tokens,
+      })
+      result.preview.tokens += tokens
+    }
     const content = this.wholesomeContent(snapshot, vars)
     if (
       !content ||
@@ -870,6 +899,7 @@ export class PromptWorkspace {
       {
         ...input,
         wholesome_mode_enabled: (await this.repo.get(WHOLESOME_MODE_KEY)) !== 'false',
+        assistant_prefill_config: await this.repo.get(ASSISTANT_PREFILL_KEY),
       },
       undefined,
       state,
@@ -925,7 +955,7 @@ export class PromptWorkspace {
       __framework_id: selected,
     }
     if (promptFormat(framework) === 'sillytavern')
-      return this.withWholesomeMode(
+      return this.withGlobalPolicies(
         {
           ...assembleSillyTavern(framework, snapshot.id, vars, variableState),
           format: 'sillytavern',
@@ -1036,7 +1066,7 @@ export class PromptWorkspace {
     }
     if (segments.reduce((sum, segment) => sum + segment.content.length, 0) > 4_000_000)
       fail('提示词总内容过大，请缩小装配范围')
-    return this.withWholesomeMode(
+    return this.withGlobalPolicies(
       {
         messages: segments.map((s) => ({
           role: s.role,

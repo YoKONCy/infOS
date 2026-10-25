@@ -1,7 +1,10 @@
+import { NAPCAT_ACTIONS as SOCIAL_ACTIONS } from '@infos/social/adapters/napcat/napcatActions'
 import { describe, expect, it, vi } from 'vitest'
-import { SOCIAL_ACTIONS } from '@infos/shared'
 import type { SocialStoragePort } from '@infos/shared'
-import { SocialOperations, type SocialOperationScope } from '@infos/social/runtime/socialOperations'
+import {
+  NapcatOperations as SocialOperations,
+  type SocialOperationScope,
+} from '@infos/social/adapters/napcat/napcatOperations'
 import type { NapcatAdapter } from '@infos/social/adapters/napcat'
 
 type Role = 'member' | 'admin' | 'owner'

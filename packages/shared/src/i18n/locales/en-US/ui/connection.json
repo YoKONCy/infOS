@@ -60,5 +60,8 @@
   "检查连接中…": "Checking connection...",
   "重新检查连接": "Recheck connection",
   "局域网与设备": "LAN and equipment",
-  "服务访问与设备": "Service Access and Devices"
+  "服务访问与设备": "Service Access and Devices",
+  "选择运行方式": "Choose connection mode",
+  "桌面客户端请通过连接窗口切换服务器。": "Use the desktop connection window to switch servers.",
+  "在开屏中切换本地或远程模式，重启客户端后生效。": "Choose local or remote mode on the startup screen. Changes take effect after restarting."
 }

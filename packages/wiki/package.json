@@ -1,6 +1,6 @@
 {
   "name": "@infos/wiki",
-  "version": "0.9.5-hotfix1",
+  "version": "0.9.6",
   "description": "infOS Wiki — VitePress 文档站点",
   "private": true,
   "scripts": {

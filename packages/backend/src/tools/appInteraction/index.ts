@@ -1,5 +1,6 @@
 import type { BuiltinTool } from '../index'
 import type { AppManager } from '../../applications/appManager'
+import { optionalTaskToolRuntime } from '../taskControl/runtime'
 
 let appManager: AppManager | null = null
 
@@ -16,12 +17,28 @@ export const interactWithSocialTool: BuiltinTool = {
     if (!groupId) return JSON.stringify({ success: false, error: 'group_id 不能为空' })
 
     try {
+      const delegate = optionalTaskToolRuntime()?.delegateSocial
+      if (delegate)
+        return JSON.stringify({
+          success: true,
+          ...((await delegate(
+            {
+              group_id: groupId,
+              ...(typeof args.intent === 'string' ? { intent: args.intent } : {}),
+              ...(typeof args.platform === 'string' ? { platform: args.platform } : {}),
+              ...(typeof args.account_id === 'string' ? { account_id: args.account_id } : {}),
+            },
+            context,
+          )) as object),
+        })
       const result = await appManager.executeCommand({
         appId: 'social',
         hostAgentId: context.agentId,
         action: 'chat_in_group',
         input: {
           group_id: groupId,
+          ...(typeof args.platform === 'string' ? { platform: args.platform } : {}),
+          ...(typeof args.account_id === 'string' ? { account_id: args.account_id } : {}),
           ...(typeof args.intent === 'string' && args.intent.trim()
             ? { intent: args.intent.trim() }
             : {}),
@@ -34,8 +51,9 @@ export const interactWithSocialTool: BuiltinTool = {
                 successCriteria: '社交Agent已读取目标群聊并完成本次参与判断',
               }
             : undefined,
+        signal: context.signal,
       })
-      return JSON.stringify({ success: result.status === 'completed', ...result })
+      return JSON.stringify({ success: result.status !== 'failed', ...result })
     } catch (error) {
       return JSON.stringify({
         success: false,

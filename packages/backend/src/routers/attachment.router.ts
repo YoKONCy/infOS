@@ -6,13 +6,18 @@ import { t as __t } from '../lib/i18n'
  * 调用方通过这里访问领域能力，避免绕过校验直接耦合内部状态。
  */
 import { Hono } from 'hono'
+import { bodyLimit } from 'hono/body-limit'
 import type { AppContext } from '../container'
 import { AppError } from '../lib/appError'
 import { z } from 'zod'
 import { validate as zValidator } from '../lib/validation'
 import { resourceContent, previewResourceText } from '../services/attachment/resourceContent'
 import { HtmlPreviewService } from '../services/attachment/htmlPreviewService'
-import { DOCUMENT_MAX_INPUT_BYTES, isOfficeDocumentName } from '@infos/shared'
+import {
+  DOCUMENT_MAX_INPUT_BYTES,
+  isOfficeDocumentName,
+  MAX_ATTACHMENT_UPLOAD_BYTES,
+} from '@infos/shared'
 import { readBoundedResourceFile } from '../services/attachment/resourceSource'
 
 const referenceSchema = z.object({
@@ -122,16 +127,27 @@ export function createAttachmentRouter(
     }),
   )
 
-  router.post('/', async (c) => {
-    const body = await c.req.parseBody({ all: true })
-    const fileValue = body.file
-    const threadValue = body.threadId
-    if (!(fileValue instanceof File) || typeof threadValue !== 'string' || !threadValue) {
-      throw new AppError('BAD_REQUEST', { message: 'multipart 请求必须包含 file 和 threadId' })
-    }
-    const data = await ctx.attachmentService.upload(fileValue, threadValue)
-    return c.json({ code: 'CREATED', message: __t('server.routers', '附件上传成功'), data }, 201)
-  })
+  router.post(
+    '/',
+    bodyLimit({
+      maxSize: MAX_ATTACHMENT_UPLOAD_BYTES + 64 * 1024,
+      onError: () => {
+        throw new AppError('PAYLOAD_TOO_LARGE', { message: '附件不能超过 100MB' })
+      },
+    }),
+    async (c) => {
+      const body = await c.req.parseBody({ all: true })
+      const fileValue = body.file
+      const threadValue = body.threadId
+      if (!(fileValue instanceof File) || typeof threadValue !== 'string' || !threadValue) {
+        throw new AppError('BAD_REQUEST', { message: 'multipart 请求必须包含 file 和 threadId' })
+      }
+      const data = await ctx.attachmentService.upload(fileValue, threadValue, {
+        referenceOnly: body.contextMode === 'reference',
+      })
+      return c.json({ code: 'CREATED', message: __t('server.routers', '附件上传成功'), data }, 201)
+    },
+  )
 
   router.on(['GET', 'HEAD'], '/:id/content', async (c) => {
     const { row, filePath } = await ctx.attachmentService.contentFile(c.req.param('id'))

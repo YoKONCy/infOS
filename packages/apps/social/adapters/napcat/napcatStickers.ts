@@ -11,6 +11,9 @@ const MAX_STICKERS = 4096
 
 /** 下载在 NapCat 一侧执行，支持与 infOS 分机部署。 */
 export class NapcatStickers implements AccountStickerProvider {
+  imageHeaders(): Record<string, string> {
+    return { 'User-Agent': 'Mozilla/5.0', Referer: 'https://qq.com' }
+  }
   constructor(private readonly callApi: CallApi) {}
 
   private async invoke(

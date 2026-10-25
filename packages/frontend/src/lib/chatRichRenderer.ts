@@ -1,4 +1,4 @@
-import { t as __t } from '../i18n/index'
+import { t as __t, getDisplayLocale } from '../i18n/index'
 /**
  * chatRichRenderer — 前端领域模块
  *
@@ -6,6 +6,7 @@ import { t as __t } from '../i18n/index'
  * 调用方依赖这里的稳定契约，不直接耦合底层传输或运行时实现。
  */
 import DOMPurify from 'dompurify'
+import { decorateChatParentheses } from './chatParentheses'
 import { isResourceLink, isFileReference } from './resourceLinks'
 import { Marked, Renderer } from 'marked'
 import katex from 'katex'
@@ -158,7 +159,8 @@ interface ProtectedMath {
 export function renderChatRichText(source: string, options: ChatRichRenderOptions = {}): string {
   if (!source.trim()) return ''
   const cacheEnabled = options.cache !== false && source.length <= RICH_TEXT_CACHE_MAX_SOURCE_LENGTH
-  const cached = cacheEnabled ? readRichTextCache(source) : undefined
+  const cacheKey = `${getDisplayLocale()}\u0000${source}`
+  const cached = cacheEnabled ? readRichTextCache(cacheKey) : undefined
   if (cached !== undefined) return cached
   const inlineMath: ProtectedMath[] = []
   // 兼容清理模型偶发复述的旧版内部历史标签。该标签在名称后使用逗号，
@@ -186,7 +188,7 @@ export function renderChatRichText(source: string, options: ChatRichRenderOption
     ADD_TAGS: ['annotation', 'math', 'semantics'],
   })
   const rendered = decorateTextNodes(sanitized)
-  if (cacheEnabled) writeRichTextCache(source, rendered)
+  if (cacheEnabled) writeRichTextCache(cacheKey, rendered)
   return rendered
 }
 
@@ -266,6 +268,7 @@ function decorateTextNodes(html: string): string {
     const fragment = htmlReferenceFragment(node.data) ?? quoteFragment(node.data)
     if (fragment) node.replaceWith(fragment)
   }
+  decorateChatParentheses(template.content)
   return template.innerHTML
 }
 

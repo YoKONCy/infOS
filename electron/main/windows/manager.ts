@@ -21,8 +21,9 @@ import { loadSystemIcon } from '../utils/appIcon'
 import { applyWindowIdentity, APPLICATION_NAME } from '../utils/appIdentity'
 import { isDevelopmentRuntime } from '../utils/runtimeMode'
 import { logger } from '../utils/logger'
-import { resolveWindowBackground } from './windowConfig'
+import { guardTransparentWindowMaterial, resolveWindowBackground } from './windowConfig'
 import { desktopTabs } from './desktopTabs'
+import { isSelectedBackendUrl } from '../services/clientConnection'
 
 // ─── 窗口配置表 ─────────────────────────────────────────
 interface WindowConfig {
@@ -150,10 +151,7 @@ export class WindowManager {
       preload: true,
       acceptsUrl: (url) =>
         ['http:', 'https:'].includes(url.protocol) &&
-        ['127.0.0.1', 'localhost'].includes(url.hostname) &&
-        ((Number(url.port || (url.protocol === 'https:' ? 443 : 80)) ===
-          Number(process.env.PERO_PORT ?? 9120) &&
-          /^\/applications\/arca(?:\/|$)/.test(url.pathname)) ||
+        ((isSelectedBackendUrl(url) && /^\/applications\/arca(?:\/|$)/.test(url.pathname)) ||
           url.origin === configuredUiOrigin) &&
         !url.username &&
         !url.password,
@@ -175,10 +173,7 @@ export class WindowManager {
       waitForSurfaceReady: true,
       acceptsUrl: (url) =>
         ['http:', 'https:'].includes(url.protocol) &&
-        ['127.0.0.1', 'localhost'].includes(url.hostname) &&
-        ((Number(url.port || (url.protocol === 'https:' ? 443 : 80)) ===
-          Number(process.env.PERO_PORT ?? 9120) &&
-          /^\/applications\/pictoria(?:\/|$)/.test(url.pathname)) ||
+        ((isSelectedBackendUrl(url) && /^\/applications\/pictoria(?:\/|$)/.test(url.pathname)) ||
           url.origin === pictoriaOrigin) &&
         !url.username &&
         !url.password,
@@ -294,7 +289,8 @@ export class WindowManager {
     if (!cfg) throw new Error(`未知窗口配置: ${configKey}`)
 
     // 分离 webPreferences 避免被 extraOpts 展开覆盖
-    const { webPreferences: extraWebPrefs, ...restExtraOpts } = extraOpts ?? {}
+    const { webPreferences: extraWebPrefs, backgroundMaterial, ...restExtraOpts } = extraOpts ?? {}
+    const transparent = restExtraOpts.transparent ?? cfg.transparent
 
     const win = new BrowserWindow({
       title: APPLICATION_NAME,
@@ -309,21 +305,29 @@ export class WindowManager {
       alwaysOnTop: cfg.alwaysOnTop,
       skipTaskbar: cfg.skipTaskbar,
       resizable: cfg.resizable,
-      backgroundColor: resolveWindowBackground(cfg, nativeTheme.shouldUseDarkColors),
+      backgroundColor: resolveWindowBackground({ transparent }, nativeTheme.shouldUseDarkColors),
       webPreferences: {
         preload: this.getPreloadPath(),
-        nodeIntegration: false,
-        contextIsolation: true,
         backgroundThrottling: !this.startupVisibilityGate,
         ...extraWebPrefs,
+        nodeIntegration: false,
+        contextIsolation: true,
+        sandbox: true,
+        webSecurity: true,
+        allowRunningInsecureContent: false,
+        webviewTag: false,
       },
       ...restExtraOpts,
+      // 包括 none 在内的 Electron 材质选项都不能进入透明窗口的创建路径。
+      ...(!transparent && backgroundMaterial ? { backgroundMaterial } : {}),
     })
 
     applyWindowIdentity(win)
 
-    // 亚克力效果 (非 Pet 窗口)
-    if (cfg.hasShadow) {
+    // 透明窗口与系统背景材质互斥，不以阴影开关决定是否启用背景。
+    if (transparent) {
+      guardTransparentWindowMaterial(win)
+    } else if (cfg.hasShadow) {
       this.trySetAcrylic(win)
     }
 
@@ -476,7 +480,7 @@ export class WindowManager {
     const existing = this.petWin
     this.petWin = this.createOrFocus(this.petWin, 'pet', {
       // 桌宠长期不抢焦点，不能让 Chromium 按后台页面把可见动画压到约 1 帧。
-      webPreferences: { webSecurity: false, backgroundThrottling: false },
+      webPreferences: { backgroundThrottling: false },
     })
     if (this.petWin !== existing) {
       const pet = this.petWin

@@ -24,6 +24,7 @@ import {
 } from '@infos/shared'
 import { isDev, paths } from '../utils/env'
 import { getWorkshopInstallations } from './steam'
+import { isRemoteConnection } from './clientConnection'
 import { logger } from '../utils/logger'
 
 /** 业务 HTTP 端口（与 backend SERVER_PORT 一致） */
@@ -44,6 +45,11 @@ let startupPromise: Promise<boolean> | null = null
 let shuttingDown = false
 let logStartOffset = 0
 let logFallback = ''
+
+/** 仅宿主托管的后端可随客户端重启，外部实例不能被顺带结束。 */
+export function ownsPortableDaemon(): boolean {
+  return !!daemonChild
+}
 
 export interface DaemonStartupStatus {
   ready: boolean
@@ -88,6 +94,7 @@ export function getPortableDaemonStatus(): DaemonStartupStatus {
 
 /** 确认实际业务服务健康，不能将任意占用端口的程序视为后端。 */
 export async function probeBusinessHealth(): Promise<boolean> {
+  if (isRemoteConnection()) return false
   try {
     const response = await fetch(`http://127.0.0.1:${BUSINESS_PORT}/api/health`, {
       signal: AbortSignal.timeout(1000),
@@ -194,6 +201,7 @@ export async function stopPortableDaemon(): Promise<void> {
  * @returns 是否成功等待到 Daemon 就绪
  */
 export async function ensurePortableDaemon(): Promise<boolean> {
+  if (isRemoteConnection()) return false
   if (shuttingDown) return false
   if (startupPromise) return startupPromise
   startupPromise = startPortableDaemon()

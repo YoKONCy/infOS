@@ -1,0 +1,16 @@
+# 佩诺菈的角色能力矩阵，具体可用能力继续由通道、模型与运行策略决定。
+agent: penora
+
+channels:
+  desktop:
+    tools:
+      - '*'
+    skills:
+      - '*'
+    prompt_fragments:
+      - components/abilities/workspace
+  group:
+    tools:
+      - '*'
+    skills: []
+    prompt_fragments: []

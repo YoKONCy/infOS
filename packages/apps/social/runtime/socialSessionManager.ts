@@ -55,6 +55,10 @@ export type SocialTurnOutcome =
     }
 
 export interface SocialSession {
+  platform?: string
+  connectionId?: string
+  /** 私聊对端账号与会话 ID 分开保存。 */
+  peerId?: string
   accountId: string
   channelId: string
   channelType: 'private' | 'group'
@@ -131,12 +135,21 @@ export class SocialSessionManager {
   }
 
   getOrCreate(msg: InboundMessage): SocialSession {
-    const accountId = String((msg.rawEvent as Record<string, unknown> | undefined)?.self_id ?? '')
-    const key = this.sessionKey(msg.agentId, msg.channelType, msg.channelId, accountId)
+    const accountId = msg.accountId ?? ''
+    const key = this.sessionKey(
+      msg.agentId,
+      msg.channelType,
+      msg.channelId,
+      accountId,
+      msg.platform,
+    )
     let session = this.sessions.get(key)
     if (!session) {
       session = {
+        platform: msg.platform,
+        connectionId: msg.connectionId,
         accountId,
+        peerId: msg.channelType === 'private' && msg.senderId !== 'self' ? msg.senderId : undefined,
         channelId: msg.channelId,
         channelType: msg.channelType,
         agentId: msg.agentId,
@@ -162,16 +175,26 @@ export class SocialSessionManager {
     return [...this.sessions.values()].sort((a, b) => b.lastMessageTime - a.lastMessageTime)
   }
 
-  closeSession(agentId: string, channelId: string): boolean {
-    let closed = false
-    for (const [key, session] of this.sessions) {
-      if (session.agentId !== agentId || session.channelId !== channelId) continue
-      this.clearTimer(session)
-      session.controller?.abort(new Error('社交任务已取消：会话关闭'))
-      this.sessions.delete(key)
-      closed = true
-    }
-    return closed
+  closeSession(
+    agentId: string,
+    channelId: string,
+    scope?: { platform: string; accountId: string; channelType: string },
+  ): boolean {
+    const matches = [...this.sessions].filter(
+      ([, session]) =>
+        session.agentId === agentId &&
+        session.channelId === channelId &&
+        (!scope ||
+          (session.platform === scope.platform &&
+            session.accountId === scope.accountId &&
+            session.channelType === scope.channelType)),
+    )
+    if (matches.length !== 1) return false
+    const [key, session] = matches[0]!
+    this.clearTimer(session)
+    session.controller?.abort(new Error('社交任务已取消：会话关闭'))
+    this.sessions.delete(key)
+    return true
   }
 
   closeSessionsExcept(predicate: (session: SocialSession) => boolean): number {
@@ -198,23 +221,18 @@ export class SocialSessionManager {
     const now = Date.now()
     const rawEvent = msg.rawEvent as Record<string, unknown> | undefined
     const directlyTriggered =
-      rawEvent?._isMentioned === true ||
       msg.isMentioned === true ||
       msg.channelType === 'private' ||
       (rawEvent?._infosQueuedForReply === true && rawEvent?._infosContinuation !== true)
 
-    const msgId = rawEvent?.message_id
+    const msgId = msg.messageId
     if (
-      msgId !== undefined &&
+      Boolean(msgId) &&
       [
         ...session.pendingMessages,
         ...session.inFlightMessages,
         ...(session.retryMessages ?? []),
-      ].some(
-        (message) =>
-          String((message.rawEvent as Record<string, unknown> | undefined)?.message_id) ===
-          String(msgId),
-      )
+      ].some((message) => message.messageId === String(msgId))
     )
       return
     // 明确请求由持久队列保留；内存只保留下一批窗口，完成一批后再补入。
@@ -467,8 +485,11 @@ export class SocialSessionManager {
     channelId: string,
     accountId: string,
     msgIds: string[] = [],
+    platform?: string,
   ): void {
-    const session = this.sessions.get(this.sessionKey(agentId, channelType, channelId, accountId))
+    const session = this.sessions.get(
+      this.sessionKey(agentId, channelType, channelId, accountId, platform),
+    )
     if (!session) return
     this.clearTimer(session)
     session.controller?.abort(new Error('社交任务已取消'))
@@ -480,10 +501,7 @@ export class SocialSessionManager {
     session.turnId = undefined
     const cancelled = new Set(msgIds)
     session.pendingMessages = session.pendingMessages.filter(
-      (message) =>
-        !cancelled.has(
-          String((message.rawEvent as Record<string, unknown> | undefined)?.message_id ?? ''),
-        ),
+      (message) => !cancelled.has(message.messageId ?? ''),
     )
     session.phase = 'ready'
     if (session.pendingMessages.length) this.scheduleFlush(session, 3, 'buffer_timeout')
@@ -599,8 +617,9 @@ export class SocialSessionManager {
     channelType: string,
     channelId: string,
     accountId: string,
+    platform?: string,
   ): string {
-    return JSON.stringify([agentId, accountId, channelType, channelId])
+    return JSON.stringify([platform, agentId, accountId, channelType, channelId])
   }
 
   private clearTimer(session: SocialSession): void {

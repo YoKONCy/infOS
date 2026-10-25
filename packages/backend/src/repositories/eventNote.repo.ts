@@ -1,5 +1,5 @@
 import { randomUUID } from 'node:crypto'
-import { and, asc, desc, eq, inArray, isNull, or, sql } from 'drizzle-orm'
+import { and, asc, desc, eq, inArray, notInArray, isNull, ne, or, sql, type SQL } from 'drizzle-orm'
 import type {
   ConversationCoverage,
   EventNote,
@@ -245,7 +245,16 @@ export class EventNoteRepository {
 
   async restore(id: string): Promise<void> {
     if (this.privacy?.deleted('memory', id)) throw new Error('记忆已永久删除')
-    await this.db.update(eventNotes).set({ status: 'active' }).where(eq(eventNotes.id, id))
+    await this.db
+      .update(eventNotes)
+      .set({ status: 'active' })
+      .where(
+        and(
+          eq(eventNotes.id, id),
+          eq(eventNotes.status, 'archived'),
+          isNull(eventNotes.replacedBy),
+        ),
+      )
   }
 
   async recordDailyNoteFile(id: string, name: string): Promise<void> {
@@ -647,6 +656,35 @@ export class EventNoteRepository {
       .where(eq(eventMemoryDailyNoteTasks.id, id))
   }
 
+  /** 取消已删除角色的后台队列，保留记忆正文与日记文件清单供历史查询及隐私清理。 */
+  async retireAgentBackgroundWork(agentId: string): Promise<void> {
+    this.retireBackgroundWork(
+      eq(eventMemoryReflectionTasks.agentId, agentId),
+      eq(eventMemoryDailyNoteTasks.agentId, agentId),
+    )
+  }
+
+  async retireOrphanBackgroundWork(agentIds: string[]): Promise<void> {
+    this.retireBackgroundWork(
+      agentIds.length ? notInArray(eventMemoryReflectionTasks.agentId, agentIds) : undefined,
+      agentIds.length ? notInArray(eventMemoryDailyNoteTasks.agentId, agentIds) : undefined,
+    )
+  }
+
+  private retireBackgroundWork(reflections: SQL | undefined, diaries: SQL | undefined): void {
+    this.db.transaction((tx) => {
+      tx.delete(eventMemoryReflectionTasks).where(reflections).run()
+      tx.update(eventMemoryDailyNoteTasks)
+        .set({
+          status: 'exhausted',
+          nextAttemptAt: null,
+          updatedAt: new Date().toISOString(),
+        })
+        .where(and(diaries, ne(eventMemoryDailyNoteTasks.status, 'completed')))
+        .run()
+    })
+  }
+
   async enqueueReflectionTask(input: {
     id: string
     agentId: string
@@ -763,11 +801,18 @@ export class EventNoteRepository {
       .where(eq(eventMemoryReflectionTasks.id, id))
   }
 
-  async enqueueMissingReflectionTasks(): Promise<number> {
+  async enqueueMissingReflectionTasks(
+    isAgentAvailable: (agentId: string) => boolean = () => true,
+  ): Promise<number> {
     const notes = await this.listAllCurrent()
     let count = 0
     for (const note of notes) {
-      if (note.status !== 'active' || this.isMemoryForgotten(note)) continue
+      if (
+        !isAgentAvailable(note.agentId) ||
+        note.status !== 'active' ||
+        this.isMemoryForgotten(note)
+      )
+        continue
       const id = `reflection:${note.agentId}:${note.id}`
       const result = await this.db
         .insert(eventMemoryReflectionTasks)

@@ -2,13 +2,12 @@
 import { computed, onActivated, ref, toRef, watch } from 'vue'
 import { useThreadPlan } from '../../composables/chat/useThreadPlan'
 import { useMainNav } from '../../composables/main/useMainNav'
-import { useTaskNavigation } from '../../composables/main/useTaskNavigation'
+import { requestTaskNavigation } from '../../composables/main/useTaskNavigation'
 import TodoPlanCard from './TodoPlanCard.vue'
 
 const props = defineProps<{ threadId: string; agentId: string }>()
 const { plan } = useThreadPlan(toRef(props, 'threadId'), toRef(props, 'agentId'))
 const { setTab } = useMainNav()
-const navigation = useTaskNavigation()
 const dismissed = ref('')
 onActivated(() => {
   const id = plan.value?.id
@@ -41,7 +40,7 @@ function dismiss() {
   }
 }
 function openTask(id: string) {
-  navigation.value = { taskId: id, revision: Date.now() }
+  requestTaskNavigation(id)
   setTab('tasks')
 }
 </script>

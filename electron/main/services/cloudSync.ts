@@ -1,5 +1,6 @@
 import { t as __t } from '../utils/i18n'
 import { getClientCredential } from '../utils/clientCredential'
+import { isRemoteConnection } from './clientConnection'
 /**
  * Steam Cloud 完整快照适配器。
  *
@@ -46,7 +47,7 @@ class CloudSyncService {
 
   getStatus(): CloudSyncStatus {
     return {
-      enabled: IS_STEAM(),
+      enabled: IS_STEAM() && !isRemoteConnection(),
       isSteam: IS_STEAM(),
       lastSyncTime: this.lastSyncTime,
       syncInProgress: this.syncInProgress,
@@ -194,6 +195,16 @@ class CloudSyncService {
   }
 
   private acquireLock(result: SyncResult): boolean {
+    if (isRemoteConnection()) {
+      result.success = false
+      result.errors.push(
+        __t(
+          'electron.ui.startupSplash',
+          '远程模式的业务存档由服务器备份，请在本地模式管理本机 Steam 快照。',
+        ),
+      )
+      return false
+    }
     if (this.syncInProgress) {
       result.success = false
       result.errors.push('同步正在进行中')

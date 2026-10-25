@@ -1,9 +1,14 @@
+import { SocialCommonOperations } from '@infos/social/runtime/socialCommonOperations'
 import { describe, expect, it, vi } from 'vitest'
 import type { SocialMessageRecord, SocialStoragePort } from '@infos/shared'
 import type { NapcatAdapter } from '@infos/social/adapters/napcat'
-import { SocialOperations, type SocialOperationScope } from '@infos/social/runtime/socialOperations'
+import {
+  type SocialOperationDependencies,
+  type SocialOperationScope,
+} from '@infos/social/runtime/socialOperations'
 
 const scope: SocialOperationScope = {
+  platform: 'qq',
   agentId: 'keromi',
   accountId: '123456',
   channelId: '456789',
@@ -49,19 +54,24 @@ function fixture(patch: Partial<SocialMessageRecord> = {}) {
     getConnectedAccountIds: () => ['123456', '234567'],
     callApi,
   } as unknown as NapcatAdapter
-  const service = new SocialOperations({
-    adapter: () => adapter,
-    active: () => true,
-    config: {
-      get: async (key) => data.get(key),
-      set: async (key, value) => {
-        data.set(key, value)
+  const service = new SocialCommonOperations(
+    {
+      active: () => true,
+      config: {
+        get: async (key) => data.get(key),
+        set: async (key, value) => {
+          data.set(key, value)
+        },
       },
-    },
-    storage: { getByMsgId } as unknown as SocialStoragePort,
-    prepareImage: vi.fn(),
-    markBot,
-  })
+      storage: { getByMsgId } as unknown as SocialStoragePort,
+      prepareImage: vi.fn(),
+      send: vi.fn(),
+      groupState: vi.fn(),
+      configureGroupState: vi.fn(),
+      markBot,
+    } as SocialOperationDependencies,
+    () => adapter.getConnectedAccountIds(),
+  )
   return { service, markBot, getByMsgId, callApi }
 }
 
@@ -97,7 +107,12 @@ describe('社交机器人标记的来源边界', () => {
       messageId: '11',
       reason: args.input.reason,
     })
-    expect(f.getByMsgId).toHaveBeenCalledWith('keromi', '11', '123456')
+    expect(f.getByMsgId).toHaveBeenCalledWith(
+      'keromi',
+      '11',
+      '123456',
+      expect.objectContaining({ platform: 'qq', accountId: '123456' }),
+    )
     expect(f.callApi).not.toHaveBeenCalled()
   })
   it.each([
@@ -134,7 +149,12 @@ describe('社交机器人标记的来源边界', () => {
     const f = fixture({ accountId: '234567', channelType: 'private', channelId: '678901' })
     f.getByMsgId.mockResolvedValueOnce(null)
     expect(JSON.parse(await f.service.execute('social', args, scope)).success).toBe(true)
-    expect(f.getByMsgId).toHaveBeenCalledWith('keromi', '11')
+    expect(f.getByMsgId).toHaveBeenCalledWith(
+      'keromi',
+      '11',
+      undefined,
+      expect.objectContaining({ platform: 'qq', accountId: undefined }),
+    )
     expect(f.markBot).toHaveBeenCalledWith(
       { ...scope, accountId: '234567', channelType: 'private', channelId: '678901' },
       { userId: '567890', messageId: '11', reason: args.input.reason },

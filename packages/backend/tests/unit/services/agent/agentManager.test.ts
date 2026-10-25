@@ -1,6 +1,5 @@
-import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
-import { join, resolve } from 'node:path'
-import { tmpdir } from 'node:os'
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
+import { join, resolve, sep } from 'node:path'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { AgentManager } from '@infos/backend/services/agent/agentManager'
 import type { PathResolver } from '@infos/backend/core/pathResolver'
@@ -40,13 +39,15 @@ function createResolver(appRoot: string, dataRoot: string): PathResolver {
 }
 
 describe('AgentManager', () => {
+  const fixtureRoot = resolve('TEMP/agent-manager')
   let rootDir: string
   let builtinDir: string
   let dataDir: string
   let configRepo: ConfigRepositoryMock
 
   beforeEach(() => {
-    rootDir = join(tmpdir(), `infos-agent-manager-${Date.now()}-${Math.random()}`)
+    mkdirSync(fixtureRoot, { recursive: true })
+    rootDir = mkdtempSync(join(fixtureRoot, 'run-'))
     builtinDir = join(rootDir, 'builtin')
     dataDir = join(rootDir, 'data')
     mkdirSync(builtinDir, { recursive: true })
@@ -58,7 +59,25 @@ describe('AgentManager', () => {
   })
 
   afterEach(() => {
+    vi.unstubAllEnvs()
+    if (!resolve(rootDir).startsWith(fixtureRoot + sep)) throw new Error('测试目录超出 TEMP 范围')
     rmSync(rootDir, { recursive: true, force: true })
+  })
+
+  it('恢复模式仍加载用户角色和工坊角色，并保留用户覆盖优先级', () => {
+    vi.stubEnv('INFOS_RESOURCE_SAFE_MODE', '1')
+    createAgent(builtinDir, 'pero', { name: '内置角色' })
+    createAgent(dataDir, 'keromi', { name: '用户角色' }, { 'system_prompt.md': '用户角色人设' })
+    createAgent(dataDir, 'pero', { name: '用户覆盖' })
+    const workshop = join(rootDir, 'workshop')
+    createAgent(join(workshop, 'agents'), 'workshop-role', { name: '工坊角色' })
+    const resolver = createResolver(builtinDir, dataDir)
+    resolver.getRoots = vi.fn(() => [workshop])
+    const manager = new AgentManager(resolver, configRepo as never)
+    expect(manager.getAgent('keromi')?.name).toBe('用户角色')
+    expect(manager.getAgent('workshop-role')?.name).toBe('工坊角色')
+    expect(manager.getAgent('pero')?.name).toBe('用户覆盖')
+    expect(manager.getAgentDetail('keromi')?.systemPrompt).toBe('用户角色人设')
   })
 
   it('PathResolver残留逻辑别名时不得向仓库写入 Workspace', () => {

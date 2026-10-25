@@ -1,0 +1,76 @@
+/* 角色头像共用薄边相框；角标保留像素细节，底板沿用主题与透景材质。 */
+.agent-portrait {
+  --portrait-edge: var(--ui-border-strong);
+  --portrait-corner: var(--ui-text-tertiary);
+  --portrait-corner-size: 6px;
+  --portrait-shadow: var(--ui-border-subtle);
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+  box-sizing: border-box;
+  width: 40px;
+  height: 40px;
+  padding: 2px;
+  border: 1px solid var(--portrait-edge);
+  border-radius: 0;
+  background: var(--dash-panel-soft, var(--ui-bg-surface-soft));
+  box-shadow: 2px 2px 0 var(--portrait-shadow);
+  color: var(--ui-text-secondary);
+  font-size: 14px;
+  font-weight: 700;
+  line-height: 1;
+  vertical-align: middle;
+  transition:
+    border-color var(--ui-duration-fast) var(--ui-ease-standard),
+    box-shadow var(--ui-duration-fast) var(--ui-ease-standard);
+}
+
+/* 装饰不参与点击与浮层触发，也不裁切消息头像旁的状态标识。 */
+.agent-portrait::before,
+.agent-portrait::after {
+  content: '';
+  position: absolute;
+  z-index: 1;
+  width: var(--portrait-corner-size);
+  height: var(--portrait-corner-size);
+  box-sizing: border-box;
+  pointer-events: none;
+  border-color: var(--portrait-corner);
+  border-style: solid;
+}
+.agent-portrait::before {
+  top: -1px;
+  left: -1px;
+  border-width: 2px 0 0 2px;
+}
+.agent-portrait::after {
+  right: -1px;
+  bottom: -1px;
+  border-width: 0 2px 2px 0;
+}
+.agent-portrait > img {
+  display: block;
+  width: 100%;
+  height: 100%;
+  min-width: 0;
+  object-fit: cover;
+  image-rendering: auto;
+  border-radius: 0;
+}
+
+.agent-portrait--current,
+.agent-portrait--selected {
+  --portrait-corner: var(--ui-focus-color);
+}
+.agent-portrait--selected {
+  --portrait-edge: color-mix(in srgb, var(--ui-focus-color) 45%, var(--ui-border-strong));
+  --portrait-shadow: color-mix(in srgb, var(--ui-focus-color) 18%, transparent);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .agent-portrait {
+    transition: none;
+  }
+}

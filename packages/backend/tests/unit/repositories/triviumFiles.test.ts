@@ -28,9 +28,23 @@ describe('TriviumDB 文件组与升级副本', () => {
       '.pidx',
       '.gidx',
       '.manifest.json',
+      '.publish',
+      '.publish.tmp',
+      '.publish.0',
+      '.publish.1',
+      '.publish.2',
+      '.publish.2.tmp',
     ])
       expect(isTriviumFile(`memory.tdb${suffix}`, 'memory.tdb')).toBe(true)
-    for (const suffix of ['2', '.notes.md', '.pld.bad', '.pld.123.zip', '.pidx.backup'])
+    for (const suffix of [
+      '2',
+      '.notes.md',
+      '.pld.bad',
+      '.pld.123.zip',
+      '.pidx.backup',
+      '.publish.3',
+      '.publish.notes',
+    ])
       expect(isTriviumFile(`memory.tdb${suffix}`, 'memory.tdb')).toBe(false)
     expect(managedStoreBase('agent_pero/memory.tdb.pld.123')).toBe('agent_pero/memory.tdb')
     expect(managedStoreBase('knowledge/facts.tdb.pidx')).toBe('knowledge/facts.tdb')
@@ -57,7 +71,7 @@ describe('TriviumDB 文件组与升级副本', () => {
     expect(readFileSync(path.join(backup, 'memory.tdb.vec'), 'utf8')).toBe('向量制品')
     expect(existsSync(path.join(backup, 'memory.tdb.vec.tmp'))).toBe(false)
     expect(JSON.parse(readFileSync(path.join(backup, 'backup.json'), 'utf8'))).toMatchObject({
-      targetVersion: '0.8.9',
+      targetVersion: '0.8.11',
       format: 7,
       source: path.join('agent_pero', 'memory.tdb'),
     })

@@ -33,6 +33,7 @@ import { initTelemetry, shutdownTelemetry } from './lib/telemetry'
 import { setLocale } from './lib/i18n'
 import { LANGUAGE_CONFIG_KEY } from '@infos/shared/i18n'
 import { acquireDaemonLease, retryStartupIo, verifyDataDirectory } from './lib/startupStorage'
+import { ResourceVersions } from '@infos/shared/resource-versions'
 
 // ─────────────────────────────────────────────
 // 类型定义
@@ -105,6 +106,12 @@ export async function startServer(options: StartServerOptions): Promise<void> {
   // 3. 在数据库打开前应用已校验的完整同步快照。
   await DistributedSyncService.applyPending(getDataDir())
 
+  // 完整数据同步完成后再切换资源，避免新版本被待应用的同步快照覆盖。
+  // 此时仍持有实例锁，数据库与第三方代码尚未加载。
+  const resourceVersions = new ResourceVersions(lease.dataDirectory)
+  const resourceBoot = await resourceVersions.beginBoot()
+  process.env.INFOS_RESOURCE_SAFE_MODE = resourceBoot.safeMode ? '1' : '0'
+
   // 4. 初始化 DI 容器（同步阶段）
   const config = createDefaultConfig()
   const ctx = await createAppContext(config)
@@ -113,6 +120,14 @@ export async function startServer(options: StartServerOptions): Promise<void> {
       process.env.INFOS_LANGUAGE ??
       process.env.LANG,
   )
+
+  if (resourceBoot.safeMode)
+    logger.warn(
+      __t(
+        'logs.startup.ts',
+        '已进入拓展恢复模式，第三方插件及 MCP 自动连接暂停；角色和技能资料仍正常加载。',
+      ),
+    )
 
   // 4. 异步初始化（工具注册 + 扩展加载 + 资产扫描）
   await initAppContext(ctx)
@@ -275,6 +290,7 @@ export async function startServer(options: StartServerOptions): Promise<void> {
       logger.warn(__t('logs.startup.ts', '数据库关闭失败: {0}', [err]))
     }
     logger.info(__t('logs.startup.ts', '{0} 资源清理完成', [processName]))
+    await resourceVersions.cleanShutdown(resourceBoot.id)
   })
 }
 

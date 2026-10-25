@@ -16,7 +16,7 @@ import {
   writeFileSync,
 } from 'node:fs'
 
-export const TRIVIUM_VERSION = '0.8.9'
+export const TRIVIUM_VERSION = '0.8.11'
 export const TRIVIUM_FORMAT = 9
 export const TRIVIUM_BACKUP_DIRECTORY = '.store-upgrades'
 
@@ -34,6 +34,10 @@ const suffixes = new Set([
   '.gidx',
   '.manifest.json',
   '.dimension',
+  '.publish',
+  '.publish.0',
+  '.publish.1',
+  '.publish.2',
 ])
 
 /** 只识别指定数据库的文件组，不把同目录其他数据库或用户文档算作旁路文件。 */
@@ -93,6 +97,22 @@ export function upgradeBackupPath(dataRoot: string, databasePath: string): strin
     TRIVIUM_VERSION,
     managedRelative(dataRoot, databasePath),
   )
+}
+
+/** 升级后仍发现历代受管备份，避免永久遗忘或维度重建遗漏旧版本正文。 */
+export function upgradeBackupRoots(dataRoot: string): string[] {
+  const root = path.join(dataRoot, TRIVIUM_BACKUP_DIRECTORY)
+  assertManagedFilePath(dataRoot, root)
+  if (!existsSync(root)) return []
+  return readdirSync(root, { withFileTypes: true })
+    .filter(
+      (entry) =>
+        entry.isDirectory() &&
+        !entry.isSymbolicLink() &&
+        /^\d+\.\d+\.\d+(?:-[\da-z.-]+)?$/i.test(entry.name),
+    )
+    .map((entry) => path.join(root, entry.name))
+    .sort()
 }
 
 export function managedStoreBase(relativePath: string): string | null {

@@ -354,6 +354,8 @@ exports.default = async function afterPack(context) {
     const smokeExecutable = path.join(appOutDir, '.infos-runtime-smoke.exe')
     await fs.copyFile(executable, smokeExecutable)
     try {
+      // 检查最终二进制的副本，避免探测产生的短暂映像锁影响后续签名与资源写入。
+      await require('./electron-security-after-pack.cjs')(context, smokeExecutable)
       await validateArcaBoot(appOutDir, resourcesDir, path.basename(smokeExecutable))
       await validateDaemonBoot(appOutDir, resourcesDir, path.basename(smokeExecutable))
     } finally {

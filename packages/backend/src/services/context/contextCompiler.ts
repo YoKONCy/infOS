@@ -62,6 +62,7 @@ import type { PromptWorkspace } from '../prompt/promptWorkspace'
 import type { CapabilityGate } from '../../capabilities/capabilityGate'
 import type { ChatMessage } from '../llm/types'
 import { historyKey } from '../llm/promptCache'
+import { taskResultContext } from './taskResultContext'
 import { createLogger } from '../../lib/logger'
 import { AppError } from '../../lib/appError'
 import { tokenCounter } from '../tokenizer/tokenCounter'
@@ -69,6 +70,7 @@ import type { ToolContextService } from './toolContextService'
 import { projectWorkHistory } from './workContext'
 import { formatEventTime } from '../memory/eventMemoryTime'
 import { splitSpokenReply } from '../../nit/spokenReplyFilter'
+import type { KnowledgeRecallService } from '../knowledge/knowledgeRecallService'
 
 const logger = createLogger('ContextCompiler')
 
@@ -122,6 +124,8 @@ export interface CompiledContext {
 
 /** 上下文清单 */
 export interface ContextManifest {
+  documentRecallHitCount?: number
+  factRecallHitCount?: number
   promptRevision?: string
   promptFrameworkId?: string
   promptSegments?: Array<{ id: string; source: string; role: string; tokens: number }>
@@ -254,6 +258,9 @@ const STATIC_ENV_INFO = collectEnvironmentInfo()
 
 /** 群聊等外部历史源可覆盖检索查询，并选择不重复追加空壳 Thread 消息。 */
 export interface ContextCompileOptions {
+  signal?: AbortSignal
+  /** 预算预览不触发文档与事实的自动召回，与事件记忆开关独立。 */
+  disableReferenceRetrieval?: boolean
   workContextModelKey?: string
   workContextTaskId?: string
   disableWorkContext?: boolean
@@ -337,6 +344,10 @@ export class ContextCompiler {
   }
 
   private eventMemory?: EventMemoryService
+  private knowledgeRecallService?: KnowledgeRecallService
+  setKnowledgeRecallService(service: KnowledgeRecallService): void {
+    this.knowledgeRecallService = service
+  }
   private toolContextService?: ToolContextService
 
   setToolContextService(service: ToolContextService): void {
@@ -430,8 +441,22 @@ export class ContextCompiler {
     const historyMessages = currentMessage
       ? messages.filter((message) => message.id !== currentMessage.id)
       : messages
+    // 只对已入库的历史用户消息注入时间。当前输入沿用动态状态中的当前时间。
+    const historyTimeAnchors =
+      options.appendThreadMessages === false ||
+      !historyMessages.some((message) => message.role === 'user')
+        ? new Map<number, string>()
+        : await this.threadService.getConversationTimeAnchors(
+            threadId,
+            historyMessages.reduce((latest, message) => Math.max(latest, message.id), 0),
+          )
     const ownerName = (await this.configRepo.get('owner.name')) ?? '用户'
-    const conversationHistory = this.formatConversationHistory(historyMessages, ownerName, agentId)
+    const conversationHistory = this.formatConversationHistory(
+      historyMessages,
+      ownerName,
+      agentId,
+      historyTimeAnchors,
+    )
 
     // ── 3. 提取最后一条 user 消息作为检索查询 ──
     const lastUserMessage = options.retrievalQuery?.trim() || this.extractLastUserMessage(messages)
@@ -527,6 +552,11 @@ export class ContextCompiler {
       toolCount = [...enabledTools].filter((name) => !isAdvancedTool(name)).length
     }
 
+    const referenceContext =
+      !options.realmExecution && !options.disableReferenceRetrieval && this.knowledgeRecallService
+        ? await this.knowledgeRecallService.recall(lastUserMessage, enabledTools, options.signal)
+        : { knowledge: '', facts: '', documentHits: 0, factHits: 0 }
+
     // ── 6. [可选] 状态注入 → 组装状态变量对象 ──
     // buildStateSection 返回 current_time/mood/vibe/mind/owner_name/environment_info/user_persona 等变量
     let stateVars: Record<string, string> = {}
@@ -560,7 +590,11 @@ export class ContextCompiler {
       native_history:
         options.appendThreadMessages === false
           ? []
-          : this.assembleMessages({ slotMessages: [], messages: historyMessages }).map((message) =>
+          : this.assembleMessages({
+              slotMessages: [],
+              messages: historyMessages,
+              timeAnchors: historyTimeAnchors,
+            }).map((message) =>
               message.role === 'system'
                 ? { role: 'user', content: `[图片档案]\n${message.content}` }
                 : message,
@@ -595,6 +629,8 @@ export class ContextCompiler {
       ...stateVars,
       // 记忆上下文（RAG 检索结果）
       memory_context: memoryContext,
+      knowledge_context: referenceContext.knowledge,
+      facts_context: referenceContext.facts,
       // 已完成历史轮次以XML嵌套在750号Slot；当前触发消息仍是唯一原生user。
       conversation_history: conversationHistory,
       // 图谱记忆上下文（预留，暂不注入）
@@ -743,7 +779,11 @@ export class ContextCompiler {
             }),
             ...regionMessages.filter((m) => m.role !== 'system'),
             ...(!assembly && options.appendThreadMessages !== false
-              ? this.assembleMessages({ slotMessages: [], messages: historyMessages })
+              ? this.assembleMessages({
+                  slotMessages: [],
+                  messages: historyMessages,
+                  timeAnchors: historyTimeAnchors,
+                })
               : []),
             ...(options.currentInput
               ? [options.currentInput]
@@ -773,6 +813,8 @@ export class ContextCompiler {
       loadedMessageCount: messages.length,
       hasMemoryRetrieval: enableAutoRag,
       memoryHitCount,
+      documentRecallHitCount: referenceContext.documentHits,
+      factRecallHitCount: referenceContext.factHits,
       toolCount,
       disabledTools: [...disabledTools],
       interactionMode: thread.interactionMode,
@@ -805,13 +847,18 @@ export class ContextCompiler {
     const currentInputMessage =
       currentMessageIndex === undefined ? undefined : llmMessages[currentMessageIndex]
     if (detailedWorkContext) {
-      llmMessages = projectWorkHistory(llmMessages, historyMessages, {
-        threadId,
-        agentId,
-        channel,
-        taskId: options.workContextTaskId,
-        modelKey: options.workContextModelKey,
-      })
+      llmMessages = projectWorkHistory(
+        llmMessages,
+        historyMessages,
+        {
+          threadId,
+          agentId,
+          channel,
+          taskId: options.workContextTaskId,
+          modelKey: options.workContextModelKey,
+        },
+        historyTimeAnchors,
+      )
       if (currentInputMessage) currentMessageIndex = llmMessages.indexOf(currentInputMessage)
     }
     if (currentInputMessage && !options.realmExecution) {
@@ -828,6 +875,12 @@ export class ContextCompiler {
         ],
       }
     }
+    // 请求策略属于编译结果；检查点恢复时沿用，不重新读取全局设置。
+    if (
+      llmMessages[0] &&
+      (assembly?.preview.requestPlan?.assistantPrefill || llmMessages[0].promptPlan)
+    )
+      llmMessages[0] = { ...llmMessages[0], promptPlan: assembly?.preview.requestPlan ?? {} }
     return {
       messages: llmMessages,
       manifest,
@@ -1081,6 +1134,7 @@ export class ContextCompiler {
     messages: ThreadMessageInfo[],
     ownerName: string,
     fallbackAgentId: string,
+    timeAnchors?: ReadonlyMap<number, string>,
   ): string {
     return messages
       .flatMap((message) => {
@@ -1088,6 +1142,7 @@ export class ContextCompiler {
         if (message.role === 'user') tag = ownerName
         else if (message.role === 'assistant') tag = message.agentId || fallbackAgentId
         else if (message.role === 'system') {
+          if (taskResultContext(message)) tag = 'background_task_result'
           try {
             const metadata = JSON.parse(message.metadataJson) as { kind?: string }
             if (metadata.kind === 'image_transcription') tag = 'image_transcription'
@@ -1098,7 +1153,7 @@ export class ContextCompiler {
         if (!tag) return []
         const safeTag = this.normalizeConversationTag(tag)
         return [
-          `<${safeTag}>${escapeConversationXml(this.conversationContent(message))}</${safeTag}>`,
+          `<${safeTag}>${escapeConversationXml(taskResultContext(message) ?? this.historicalConversationContent(message, timeAnchors))}</${safeTag}>`,
         ]
       })
       .join('\n')
@@ -1109,13 +1164,23 @@ export class ContextCompiler {
     return normalized || 'unknown'
   }
 
-  /** 历史携带图片与文档引用；原件按需读取，不重复注入正文或媒体。 */
+  private historicalConversationContent(
+    message: ThreadMessageInfo,
+    timeAnchors?: ReadonlyMap<number, string>,
+  ): string {
+    const content = this.conversationContent(message)
+    const anchor = message.role === 'user' ? timeAnchors?.get(message.id) : undefined
+    return anchor ? `${anchor}\n${content}` : content
+  }
+
+  /** 历史携带图片、文档与音频引用；不重复注入正文或媒体。 */
   private conversationContent(message: ThreadMessageInfo): string {
     if (message.role !== 'user' && message.role !== 'assistant') return message.content
     let content =
       message.role === 'assistant' ? splitSpokenReply(message.content).content : message.content
     const images = new Map<string, string>()
     const documents = new Map<string, string>()
+    const audios = new Map<string, string>()
     try {
       const metadata = JSON.parse(message.metadataJson)
       if (message.role === 'assistant' && metadata?.executionPause?.kind === 'desktop') {
@@ -1126,7 +1191,9 @@ export class ContextCompiler {
         for (const item of metadata.attachments) {
           if (item?.kind === 'image' && typeof item.id === 'string')
             images.set(item.id, String(item.originalName ?? '图片'))
-          if ((item?.kind === 'file' || item?.kind === 'pdf') && typeof item.id === 'string')
+          if (item?.kind === 'audio' && typeof item.id === 'string')
+            audios.set(item.id, String(item.originalName ?? '音频'))
+          if (['file', 'pdf'].includes(item?.kind) && typeof item.id === 'string')
             documents.set(item.id, String(item.originalName ?? '文档'))
         }
       }
@@ -1134,7 +1201,9 @@ export class ContextCompiler {
         for (const call of metadata.toolCalls) {
           const resource = resourceFromToolResult(call?.name, call?.result)
           if (resource?.kind === 'image' && resource.id) images.set(resource.id, resource.name)
-          if (resource?.id && resource.kind !== 'image') documents.set(resource.id, resource.name)
+          if (resource?.kind === 'audio' && resource.id) audios.set(resource.id, resource.name)
+          if (resource?.id && !['image', 'audio'].includes(resource.kind))
+            documents.set(resource.id, resource.name)
         }
       }
     } catch {
@@ -1150,6 +1219,11 @@ export class ContextCompiler {
       .map(([id, name]) => `${JSON.stringify(name.slice(0, 180))} — attachment:${id}`)
     if (refs.length) content += `\n【图片附件】\n${refs.join('\n')}`
     if (documentRefs.length) content += `\n【文档附件】\n${documentRefs.join('\n')}`
+    const audioRefs = [...audios]
+      .filter(([id]) => /^[0-9a-f-]{36}$/i.test(id))
+      .slice(0, 5)
+      .map(([id, name]) => `${JSON.stringify(name.slice(0, 180))} — attachment:${id}`)
+    if (audioRefs.length) content += `\n【音频附件】\n${audioRefs.join('\n')}`
     return content
   }
 
@@ -1174,8 +1248,10 @@ export class ContextCompiler {
     slotMessages: RenderedMessage[]
     /** Thread 活跃消息（时间正序） */
     messages: ThreadMessageInfo[]
+    /** 仅历史路径传入，当前输入不得附带历史时间标记。 */
+    timeAnchors?: ReadonlyMap<number, string>
   }): LlmMessage[] {
-    const { slotMessages, messages } = params
+    const { slotMessages, messages, timeAnchors } = params
     const llmMessages: LlmMessage[] = []
 
     // 槽位 system 消息（renderSlots 已合并相邻同角色消息，通常为一条）
@@ -1194,12 +1270,13 @@ export class ContextCompiler {
     // 活跃消息（user/assistant 原生角色，时间正序）
     for (const msg of messages) {
       if (msg.role === 'user' || msg.role === 'assistant') {
+        const content = this.historicalConversationContent(msg, timeAnchors)
         llmMessages.push({
           role: msg.role,
-          content: this.conversationContent(msg),
+          content,
           cacheControl: {
             kind: 'history',
-            key: `${msg.id}:${msg.revision}:${historyKey({ role: msg.role, content: this.conversationContent(msg) })}`,
+            key: `${msg.id}:${msg.revision}:${historyKey({ role: msg.role, content })}`,
             edited: msg.revision > 1,
             historyMessageId: msg.id,
             historyRevision: msg.revision,
@@ -1209,6 +1286,20 @@ export class ContextCompiler {
         continue
       }
       if (msg.role === 'system') {
+        const taskResult = taskResultContext(msg)
+        if (taskResult) {
+          llmMessages.push({
+            role: 'user',
+            content: taskResult,
+            cacheControl: {
+              kind: 'history',
+              key: `${msg.id}:${msg.revision}:${historyKey({ role: 'user', content: taskResult })}`,
+              historyMessageId: msg.id,
+              historyRevision: msg.revision,
+            },
+          })
+          continue
+        }
         try {
           const metadata = JSON.parse(msg.metadataJson) as { kind?: string }
           if (metadata.kind === 'image_transcription') {

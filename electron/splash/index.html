@@ -59,6 +59,147 @@
       </svg>
     </main>
     <button id="close" class="close" type="button">×</button>
+    <!-- 品牌路径沿用 infos-mark.svg 与 infos-wordmark.svg，开屏无需加载主应用的资源协议。 -->
+    <div class="connection-brand" aria-hidden="true">
+      <svg class="brand-mark" viewBox="0 0 160 160">
+        <defs>
+          <linearGradient id="brand-fold" x1="0" y1="0" x2="1" y2="1">
+            <stop stop-color="#6c9bed" />
+            <stop offset="1" stop-color="#ad8cdb" />
+          </linearGradient>
+        </defs>
+        <path d="M80 67 18 36 12 82 57 107Z" fill="#6c9bed" />
+        <path d="M80 67 142 36 148 82 103 107Z" fill="#6e58a8" />
+        <path d="M57 107 46 133 80 119 114 133 103 107 80 91Z" fill="url(#brand-fold)" />
+        <path d="M80 52 99 76 80 96 61 76Z" fill="#ad8cdb" />
+        <path d="M18 36 80 67 57 107 48 78Z" fill="url(#brand-fold)" />
+      </svg>
+      <svg class="brand-wordmark" viewBox="0 0 260 82">
+        <g
+          fill="none"
+          stroke="currentColor"
+          stroke-width="8"
+          stroke-linecap="butt"
+          stroke-linejoin="round"
+        >
+          <path
+            d="M8 34V70M33 70V34H54C63 34 68 40 68 49V70M94 70V24C94 16 100 12 109 12H122M82 35H116"
+          />
+          <path
+            d="M157 12H169C183 12 190 23 190 41S183 70 169 70H157C143 70 136 59 136 41S143 12 157 12ZM248 17C239 11 214 8 209 24 203 43 248 35 248 54 248 74 219 74 205 64"
+          />
+        </g>
+        <rect x="4" y="11" width="8" height="8" rx="1" fill="#6c9bed" />
+      </svg>
+      <span class="brand-caption">萌动链接：PeroperoChat</span>
+    </div>
+    <section id="connection" class="connection" hidden aria-labelledby="connection-title">
+      <header class="connection-heading">
+        <h1 id="connection-title" tabindex="-1" data-label="选择运行方式"></h1>
+        <p data-label="本机运行，或连接已有的 infOS 服务。"></p>
+      </header>
+      <form id="connection-form">
+        <div id="connection-modes" class="connection-modes" role="group">
+          <button
+            id="mode-local"
+            class="mode-option"
+            type="button"
+            aria-pressed="true"
+            data-mode="local"
+            aria-labelledby="mode-local-title"
+            aria-describedby="mode-local-detail"
+          >
+            <span class="mode-icon">
+              <svg viewBox="0 0 24 24" fill="none" aria-hidden="true">
+                <path d="M4 4h16v12H4zM8 20h8M12 16v4M7 8h4M7 11h7" />
+              </svg>
+            </span>
+            <span class="mode-indicator" aria-hidden="true"></span>
+            <strong id="mode-local-title" data-label="本地运行"></strong>
+            <small id="mode-local-detail" data-label="在这台设备启动服务端"></small>
+          </button>
+          <button
+            id="mode-remote"
+            class="mode-option"
+            type="button"
+            aria-pressed="false"
+            data-mode="remote"
+            aria-labelledby="mode-remote-title"
+            aria-describedby="mode-remote-detail"
+          >
+            <span class="mode-icon">
+              <svg viewBox="0 0 24 24" fill="none" aria-hidden="true">
+                <path
+                  d="M7 13H5V5h14v8h-2M8 8h8M8 11h4M9 20H4v-4h5zM20 20h-5v-4h5zM12 13v5M9 18h6"
+                />
+              </svg>
+            </span>
+            <span class="mode-indicator" aria-hidden="true"></span>
+            <strong id="mode-remote-title" data-label="连接服务器"></strong>
+            <small id="mode-remote-detail" data-label="只启动客户端与本机能力"></small>
+          </button>
+        </div>
+        <div class="connection-options">
+          <fieldset id="remote-fields" class="remote-fields" hidden disabled>
+            <label for="server-origin" data-label="服务器地址"></label>
+            <input
+              id="server-origin"
+              type="url"
+              placeholder="https://infos.example.com"
+              autocomplete="url"
+              spellcheck="false"
+            />
+            <label for="server-token" data-label="访问令牌"></label>
+            <div class="secret-field">
+              <input
+                id="server-token"
+                type="password"
+                autocomplete="off"
+                maxlength="4096"
+                spellcheck="false"
+              />
+              <button id="reveal-token" type="button" aria-pressed="false">
+                <svg viewBox="0 0 24 24" fill="none" aria-hidden="true">
+                  <path d="M3 12s3-6 9-6 9 6 9 6-3 6-9 6-9-6-9-6Z" />
+                  <circle cx="12" cy="12" r="2.5" />
+                  <path class="eye-slash" d="m4 4 16 16" />
+                </svg>
+              </button>
+            </div>
+            <details id="connection-advanced" class="connection-advanced">
+              <summary data-label="高级连接选项"></summary>
+              <label for="capability-endpoint" data-label="能力通道地址"></label>
+              <input
+                id="capability-endpoint"
+                type="url"
+                placeholder="wss://infos.example.com:9121"
+                autocomplete="off"
+                spellcheck="false"
+              />
+              <small data-label="留空时使用服务器同域的 9121 端口"></small>
+            </details>
+          </fieldset>
+          <p id="connection-error" class="connection-error" hidden role="alert"></p>
+        </div>
+        <div class="connection-footer">
+          <button
+            id="connection-cancel"
+            class="connection-cancel"
+            type="button"
+            hidden
+            data-label="取消"
+          ></button>
+          <button id="connection-submit" class="connection-submit" type="submit">
+            <span class="submit-label"></span>
+            <svg class="submit-icon" viewBox="0 0 24 24" fill="none" aria-hidden="true">
+              <path d="M4 12h15m-6-6 6 6-6 6" />
+            </svg>
+            <span class="submit-spinner" aria-hidden="true"></span>
+          </button>
+        </div>
+        <p id="connection-note" class="connection-note"></p>
+      </form>
+    </section>
     <p id="status" class="sr-only" role="status" aria-live="polite"></p>
     <section id="failure" class="failure" hidden role="alert">
       <h1 id="failure-title"></h1>

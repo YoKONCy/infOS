@@ -3,29 +3,28 @@ import path from 'node:path'
 import { app, Notification } from 'electron'
 import { paths } from '../utils/env'
 import { logger } from '../utils/logger'
+import { windowManager } from '../windows/manager'
+import { desktopTabs } from '../windows/desktopTabs'
 import { CompletionAlertController } from './completionAlertController'
 import { playCompletionTone, stopCompletionTone } from './completionTone'
 import { isApplicationFocused } from './notificationVisibility'
 import type { CompletionAlert } from '@infos/shared'
 
 function openResult(alert: CompletionAlert): void {
-  void import('../windows/manager')
-    .then(async ({ windowManager }) => {
-      const { desktopTabs } = await import('../windows/desktopTabs')
-      const win = windowManager.createDashboardWindow()
-      if (win.isMinimized()) win.restore()
-      win.show()
-      win.focus()
-      desktopTabs.openHome(alert.kind === 'task' ? 'tasks' : 'chat', {
-        agentId: alert.agentId,
-        threadId: alert.threadId,
-        messageId: alert.messageId,
-        taskId: alert.taskId,
-      })
+  try {
+    const win = windowManager.createDashboardWindow()
+    if (win.isMinimized()) win.restore()
+    win.show()
+    win.focus()
+    desktopTabs.openHome(alert.kind === 'task' ? 'tasks' : 'chat', {
+      agentId: alert.agentId,
+      threadId: alert.threadId,
+      messageId: alert.messageId,
+      taskId: alert.taskId,
     })
-    .catch((error) =>
-      logger.warn(__t('electron.logs.completionAlerts', '完成通知结果跳转失败'), String(error)),
-    )
+  } catch (error) {
+    logger.warn(__t('electron.logs.completionAlerts', '完成通知结果跳转失败'), String(error))
+  }
 }
 
 export const completionAlerts = new CompletionAlertController(
@@ -33,8 +32,7 @@ export const completionAlerts = new CompletionAlertController(
   path.join(paths.userData, 'completion-alerts-seen.json'),
   {
     applicationFocused: isApplicationFocused,
-    petVisible: async () =>
-      (await import('../windows/manager')).windowManager.getPetWindowState().visible,
+    petVisible: () => windowManager.getPetWindowState().visible,
     playSound: playCompletionTone,
     stopSound: stopCompletionTone,
     windowsNotificationsSupported: () =>

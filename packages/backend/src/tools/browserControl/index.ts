@@ -1,5 +1,6 @@
 import { t as __t } from '../../lib/i18n'
 import { WEB_PAGE_OPERATIONS } from '@infos/shared'
+import { AsyncLocalStorage } from 'node:async_hooks'
 import { BrowserActionCoordinator } from '../../applications/browserActionCoordinator'
 import { BrowserInteractionRuntime } from '../../applications/browserInteractionRuntime'
 import type { BoundCapabilityPort } from '../../kernel/capabilityDirectory'
@@ -32,8 +33,34 @@ export function createBrowserToolContributions(
   const availableOperations =
     typeof operationsOrObserver === 'function' ? WEB_PAGE_OPERATIONS : operationsOrObserver
   const onObservation = typeof operationsOrObserver === 'function' ? operationsOrObserver : observer
-  const actions = new BrowserActionCoordinator(port)
-  const interactions = new BrowserInteractionRuntime(port, port.offer?.placement?.providerNodeId)
+  const calling = new AsyncLocalStorage<ToolContext>()
+  const scopedPort: BoundCapabilityPort = {
+    bindingId: port.bindingId,
+    get offer() {
+      return port.offer
+    },
+    dispose: () => port.dispose(),
+    invoke(operation, input, context, signal) {
+      const caller = calling.getStore()
+      const { __browserScope: _untrusted, ...parameters } = input as Record<string, unknown>
+      return port.invoke(
+        operation,
+        caller?.browserScope
+          ? {
+              ...parameters,
+              __browserScope: { ...caller.browserScope, principalId: caller.agentId },
+            }
+          : parameters,
+        context,
+        signal,
+      )
+    },
+  }
+  const actions = new BrowserActionCoordinator(scopedPort)
+  const interactions = new BrowserInteractionRuntime(
+    scopedPort,
+    port.offer?.placement?.providerNodeId,
+  )
   const invoke = async (
     operation: string,
     args: Record<string, unknown>,
@@ -228,6 +255,7 @@ export function createBrowserToolContributions(
     )
     .map((definition) => ({
       definition: definition as ToolDefinition,
-      handler: handlers[definition.name]!,
+      handler: (args, context) =>
+        calling.run(context, () => handlers[definition.name]!(args, context)),
     }))
 }

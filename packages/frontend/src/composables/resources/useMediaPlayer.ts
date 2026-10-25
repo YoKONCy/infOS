@@ -17,6 +17,7 @@ export function useMediaPlayer(
   media: Ref<HTMLMediaElement | null>,
   source: () => string,
   active: () => boolean,
+  options: { background?: boolean } = {},
 ) {
   const state = reactive({
     playing: false,
@@ -84,10 +85,12 @@ export function useMediaPlayer(
     state.waiting = true
     try {
       await element.play()
-      if (version !== operation || element !== media.value || !active()) return
+      if (version !== operation || element !== media.value || (!active() && !options.background))
+        return
       state.waiting = false
     } catch (error) {
-      if (version !== operation || element !== media.value || !active()) return
+      if (version !== operation || element !== media.value || (!active() && !options.background))
+        return
       state.waiting = false
       if (!(error instanceof DOMException && error.name === 'AbortError')) state.error = failure()
     }
@@ -131,7 +134,7 @@ export function useMediaPlayer(
     timeupdate: track,
     progress: buffer,
     play: () => {
-      if (!active() || document.hidden) {
+      if ((!active() || document.hidden) && !options.background) {
         pause()
         return
       }
@@ -206,15 +209,17 @@ export function useMediaPlayer(
   watch(
     active,
     (value) => {
-      if (!value) pause()
+      if (!value && !options.background) pause()
     },
     { flush: 'sync' },
   )
   const visibility = () => {
-    if (document.hidden) pause()
+    if (document.hidden && !options.background) pause()
   }
   document.addEventListener('visibilitychange', visibility)
-  onDeactivated(pause)
+  onDeactivated(() => {
+    if (!options.background) pause()
+  })
   onBeforeUnmount(() => {
     pause()
     document.removeEventListener('visibilitychange', visibility)

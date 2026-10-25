@@ -11,6 +11,8 @@ import { loadSystemIcon } from '../utils/appIcon'
 import { windowManager } from '../windows/manager'
 import { logger } from '../utils/logger'
 import { onLocaleChange } from '../../../packages/shared/src/i18n'
+import { showResourceRecovery } from './resourceRecovery'
+import { showConnectionSetup, focusConnectionSetup } from './clientConnectionSetup'
 
 let tray: Tray | null = null
 let stopLocaleListener: (() => void) | undefined
@@ -20,15 +22,33 @@ function updateTrayMenu(): void {
   tray.setContextMenu(
     Menu.buildFromTemplate([
       {
-        label: __t('electron.ui.tray', '打开启动器'),
+        label: __t('electron.ui.tray', '启动器'),
         click: () => windowManager.createLauncherWindow(),
       },
-      { label: __t('electron.ui.tray', '召唤桌宠'), click: () => windowManager.createPetWindow() },
+      { label: __t('electron.ui.tray', '桌宠召唤'), click: () => windowManager.createPetWindow() },
       {
-        label: __t('electron.ui.tray', '控制面板'),
+        label: __t('electron.ui.tray', '工作台'),
         click: () => windowManager.createDashboardWindow(),
       },
       { type: 'separator' },
+      {
+        label: __t('electron.ui.startupSplash', '选择运行方式'),
+        click: () => {
+          if (focusConnectionSetup()) return
+          void showConnectionSetup(false)
+            .then(() => {
+              app.relaunch()
+              app.quit()
+            })
+            .catch(() => {})
+        },
+      },
+      {
+        label: __t('electron.ui.resource-recovery', '拓展恢复'),
+        click: () => {
+          void showResourceRecovery()
+        },
+      },
       { label: __t('electron.ui.tray', '彻底退出'), click: () => app.quit() },
     ]),
   )
@@ -47,8 +67,8 @@ export function createTray(): void {
     updateTrayMenu()
     stopLocaleListener = onLocaleChange(updateTrayMenu)
 
-    // 单击托盘图标打开 Launcher
-    tray.on('click', () => windowManager.createLauncherWindow())
+    // 单击打开或聚焦综合工作台，保留用户当前所在的页面。
+    tray.on('click', () => windowManager.createDashboardWindow())
 
     logger.info('Tray', __t('electron.logs.tray', '系统托盘已创建'))
   } catch (e: unknown) {

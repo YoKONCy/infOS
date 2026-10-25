@@ -45,6 +45,20 @@ import type {
 } from '@infos/shared'
 import { petControls } from './services/petControls'
 import { desktopControl } from './services/desktopControl'
+import {
+  captureScreen,
+  readClipboard,
+  writeClipboard,
+  readClipboardImage,
+  writeClipboardImage,
+  getActiveWindow,
+} from './services/desktopAwareness'
+import {
+  getSteamUser,
+  getSubscribedItems,
+  getWorkshopInstallations,
+  getCloudStatus,
+} from './services/steam'
 import { completionAlerts } from './services/completionAlerts'
 import { registerPictoriaSurface } from './services/pictoriaSurface'
 import { startDesktopArca } from './services/arcaLifetime'
@@ -52,14 +66,19 @@ import { registerArcaSurface } from './services/arcaSurface'
 import { paths, isDev, isPackaged, isPortable } from './utils/env'
 import { logger } from './utils/logger'
 import { getClientCredential } from './utils/clientCredential'
+import {
+  getBackendOrigin,
+  ensureSelectedBackend,
+  isRemoteConnection,
+} from './services/clientConnection'
+import { showConnectionSetup, focusConnectionSetup } from './services/clientConnectionSetup'
 
-// ─── 延迟导入的服务 (避免循环引用) ─────────────────────
-// 使用函数包装，在调用时才 import
-// 第七阶段：backendProcess 已移除（Daemon 独立运行）
+// ─── 按功能边界延迟导入的服务 ─────────────────────────
+// 窗口、桌面感知与 Steam 状态已有启动期静态依赖，直接复用；
+// 可选服务保留动态入口，模块求值与服务启动分别由各自的调用时序控制。
 const getNapCatService = () => import('./services/napcat')
 const getNapCatDashboard = () => import('./services/napcatDashboard')
 const getAssetService = () => import('./services/assets')
-const getDesktopAwareness = () => import('./services/desktopAwareness')
 const getSystemService = () => import('./services/system')
 const getUpdaterService = () => import('./services/updater')
 const execFileAsync = promisify(execFile)
@@ -252,7 +271,6 @@ export function registerIpcHandlers(): void {
       if (!contents.isDestroyed()) contents.send('i18n:changed', language)
     return language
   })
-  const backendOrigin = `http://localhost:${Number(process.env.PERO_PORT ?? 9120)}`
   const trustedClient = (url: string) => {
     const development =
       process.env.ELECTRON_RENDERER_URL ||
@@ -271,13 +289,31 @@ export function registerIpcHandlers(): void {
       windowManager.ideWin,
     ].some((win) => win?.webContents === sender)
   let credentialHooksInstalled = false
+  ipcMain.handle('client-connection:configure', async (event) => {
+    if (
+      !trustedWindow(event.sender) ||
+      !trustedClient(event.sender.getURL()) ||
+      event.senderFrame !== event.sender.mainFrame
+    )
+      throw new Error('CONNECTION_HOST_REQUIRED')
+    if (focusConnectionSetup()) return
+    try {
+      await showConnectionSetup(false)
+    } catch {
+      return
+    }
+    setImmediate(() => {
+      app.relaunch()
+      app.quit()
+    })
+  })
   ipcMain.on('client-access:credential', (event, kind?: string) => {
     const url = event.sender.getURL()
     const trusted = trustedWindow(event.sender) && trustedClient(url)
     if (trusted && !credentialHooksInstalled) {
       // 原生 img/audio/video 等不能自设 Header，只给可信主应用帧的本机请求附加凭据。
       event.sender.session.webRequest.onBeforeSendHeaders(
-        { urls: [`${backendOrigin}/*`] },
+        { urls: ['http://*/*', 'https://*/*'] },
         (details, callback) => {
           const source =
             typeof details.webContentsId === 'number'
@@ -285,6 +321,7 @@ export function registerIpcHandlers(): void {
               : undefined
           const frame = (details as { frame?: { url: string } | null }).frame
           const allowed =
+            new URL(details.url).origin === getBackendOrigin() &&
             source &&
             trustedWindow(source) &&
             trustedClient(source.getURL()) &&
@@ -298,7 +335,15 @@ export function registerIpcHandlers(): void {
       )
       credentialHooksInstalled = true
     }
-    event.returnValue = trusted ? (kind === 'origin' ? backendOrigin : getClientCredential()) : ''
+    event.returnValue = trusted
+      ? kind === 'origin'
+        ? getBackendOrigin()
+        : kind === 'mode'
+          ? isRemoteConnection()
+            ? 'remote'
+            : 'local'
+          : getClientCredential()
+      : ''
   })
   logger.info('IPC', __t('electron.logs.ipcBridge.ts', '正在注册 IPC 通道...'))
   const assertCompletionSettingsSender = (sender: Electron.WebContents) => {
@@ -460,7 +505,7 @@ function registerDesktopTabHandlers(): void {
       throw new Error('不支持此 Arca 控制操作')
     }
     if (action === 'start') return startDesktopArca()
-    const origin = `http://127.0.0.1:${Number(process.env.PERO_PORT ?? 9120)}`
+    const origin = getBackendOrigin()
     const token = getClientCredential()
     const response = await fetch(`${origin}/api/applications/arca/${action}`, {
       method: action === 'status' ? 'GET' : 'POST',
@@ -621,7 +666,7 @@ function registerNavigationHandlers(): void {
       typeof input === 'object' && input !== null
         ? String((input as { url?: unknown }).url ?? '')
         : String(input ?? '')
-    const backendOrigin = `http://127.0.0.1:${Number(process.env.PERO_PORT ?? 9120)}`
+    const backendOrigin = getBackendOrigin()
     const url = new URL(requestedUrl, backendOrigin).toString()
     windowManager.createArcaWindow(url)
     return windowManager.getArcaWindowState()
@@ -660,11 +705,28 @@ function registerNavigationHandlers(): void {
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 // 仅管理本应用的内置 Daemon；业务操作继续通过 HTTP API 完成。
 function registerBackendHandlers(): void {
+  ipcMain.handle('resource-recovery:restart', async (event) => {
+    if (event.senderFrame !== event.sender.mainFrame) throw new Error('RESOURCE_HOST_REQUIRED')
+    const { restartForResources } = await import('./services/resourceRecovery')
+    const result = await dialog.showMessageBox({
+      type: 'question',
+      message: __t('electron.ui.resource-recovery', '重启应用以切换资源？'),
+      buttons: [
+        __t('electron.ui.resource-recovery', '重启'),
+        __t('electron.ui.resource-recovery', '取消'),
+      ],
+      cancelId: 1,
+      defaultId: 1,
+    })
+    if (result.response === 0) await restartForResources()
+  })
   ipcMain.handle('start-backend', async () => {
     const { ensurePortableDaemon, getPortableDaemonStatus } =
       await import('./services/portableDaemon')
-    await ensurePortableDaemon()
-    return getPortableDaemonStatus()
+    const ready = await ensureSelectedBackend(ensurePortableDaemon)
+    return isRemoteConnection()
+      ? { ready, running: false, mode: 'remote' }
+      : getPortableDaemonStatus()
   })
 
   ipcMain.handle('stop-backend', async () => {
@@ -1001,7 +1063,6 @@ function registerSteamHandlers(): void {
 
   ipcMain.handle('steam-get-user', async () => {
     try {
-      const { getSteamUser } = await import('./services/steam')
       return getSteamUser()
     } catch {
       return null
@@ -1010,7 +1071,6 @@ function registerSteamHandlers(): void {
 
   ipcMain.handle('steam-workshop-get-subscribed', async () => {
     try {
-      const { getSubscribedItems } = await import('./services/steam')
       return getSubscribedItems()
     } catch {
       return []
@@ -1019,7 +1079,6 @@ function registerSteamHandlers(): void {
 
   ipcMain.handle('steam-workshop-get-installations', async () => {
     try {
-      const { getWorkshopInstallations } = await import('./services/steam')
       return getWorkshopInstallations()
     } catch {
       return []
@@ -1029,7 +1088,6 @@ function registerSteamHandlers(): void {
   // 云存档系列
   ipcMain.handle('steam-cloud-get-status', async () => {
     try {
-      const { getCloudStatus } = await import('./services/steam')
       return getCloudStatus()
     } catch {
       return { enabled: false }
@@ -1125,32 +1183,26 @@ function registerDragHandlers(): void {
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 function registerDesktopAwarenessHandlers(): void {
   ipcMain.handle('capture-screen', async (_event, maxWidth?: number) => {
-    const { captureScreen } = await getDesktopAwareness()
     return captureScreen(maxWidth)
   })
 
   ipcMain.handle('read-clipboard', async () => {
-    const { readClipboard } = await getDesktopAwareness()
     return readClipboard()
   })
 
   ipcMain.handle('write-clipboard', async (_event, text: string) => {
-    const { writeClipboard } = await getDesktopAwareness()
-    writeClipboard(text)
+    await writeClipboard(text)
   })
 
   ipcMain.handle('read-clipboard-image', async () => {
-    const { readClipboardImage } = await getDesktopAwareness()
     return readClipboardImage()
   })
 
   ipcMain.handle('write-clipboard-image', async (_event, dataUrl: string) => {
-    const { writeClipboardImage } = await getDesktopAwareness()
-    writeClipboardImage(dataUrl)
+    await writeClipboardImage(dataUrl)
   })
 
   ipcMain.handle('get-active-window', async () => {
-    const { getActiveWindow } = await getDesktopAwareness()
     return getActiveWindow()
   })
 }

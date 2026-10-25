@@ -12,6 +12,8 @@ import WeatherCard from '../../weather/WeatherCard.vue'
 import DesktopControlSettings from '../../desktop/DesktopControlSettings.vue'
 import CompletionAlertSettings from '../../notification/CompletionAlertSettings.vue'
 import WholesomeModeSettings from '../WholesomeModeSettings.vue'
+import AssistantPrefillSettings from '../AssistantPrefillSettings.vue'
+import UserAvatarSettings from '../../user/UserAvatarSettings.vue'
 import { PixelIcon, PInput, PSelect, PSlider, PSwitch, PButton, PCard } from '../../pixel'
 import { configApi } from '../../../api/modules/configApi'
 import { useDashboardContext } from '../../../composables/dashboard'
@@ -28,6 +30,16 @@ import { useNotificationStore } from '../../../stores'
 import { appLocale, applyLanguage } from '../../../i18n'
 import { LANGUAGE_OPTIONS, normalizeLocale } from '@infos/shared/i18n'
 import { resolveSavedMotionLevel } from '../../../lib/sensorySettings'
+import {
+  ASSISTANT_PREFILL_KEY,
+  WHOLESOME_MODE_KEY,
+  parseAssistantPrefillConfig,
+} from '@infos/shared'
+import {
+  createSystemSettingsPage,
+  provideSystemSettingsPage,
+  registerSettingsParticipant,
+} from '../../../composables/ui/useSystemSettingsPage'
 
 const ctx = useDashboardContext()
 const notif = useNotificationStore()
@@ -35,6 +47,8 @@ const notif = useNotificationStore()
 // ── 用户人设 ──
 const ownerName = ref('主人')
 const ownerPersona = ref('')
+const wholesomeEnabled = ref(true)
+const assistantPrefill = ref(parseAssistantPrefillConfig())
 const language = ref<string>(appLocale.value)
 watch(appLocale, (value, previous) => {
   if (language.value === previous) language.value = value
@@ -93,15 +107,73 @@ const soundEffectsBinding = computed({
 // ── 高级 ──
 const dataDir = ref('~/.infos')
 const logLevel = ref('info')
-const autoSave = ref(true)
-const isSaving = ref(false)
+const settingsLoaded = ref(false)
+const settingsLoading = ref(false)
+const loadError = ref(false)
+const saveError = ref(false)
+const savedSettings = ref('')
+const settingsPage = createSystemSettingsPage({
+  write: (items) => configApi.batchSet(items),
+  saved: () => {
+    saveError.value = false
+    void uiSound.play('action.confirmed')
+    notif.toast(__t('ui.settings', '设置已保存'), {
+      type: 'success',
+      title: __t('ui.settings', '系统设定'),
+    })
+  },
+  failed: (cause) => {
+    saveError.value = true
+    logger.error('UserSettings', __t('logs.frontend.settings', '保存失败'), cause)
+    notif.toast(__t('ui.settings', '保存失败，请稍后重试'), {
+      type: 'error',
+      title: __t('ui.settings', '系统设定'),
+    })
+  },
+})
+provideSystemSettingsPage(settingsPage)
+const isSaving = settingsPage.saving
+const settingsDisabled = settingsPage.disabled
+function settingsItems() {
+  return [
+    ['owner.name', ownerName.value],
+    ['owner.persona', ownerPersona.value],
+    ['user.language', language.value],
+    ['ui.theme', mainNav.theme.value],
+    ['ui.fontSize', String(fontSize.value)],
+    ['ui.motionLevel', sensory.motionLevel.value],
+    ['ui.animations', String(sensory.motionLevel.value !== 'off')],
+    ['ui.soundEffects', String(sensory.soundEffects.value)],
+    ['system.logLevel', logLevel.value],
+    [WHOLESOME_MODE_KEY, String(wholesomeEnabled.value)],
+    [ASSISTANT_PREFILL_KEY, JSON.stringify(assistantPrefill.value)],
+  ].map(([key, value]) => ({ key: key!, value: value! }))
+}
+registerSettingsParticipant(settingsPage, {
+  ready: () => settingsLoaded.value && !settingsLoading.value,
+  capture: () => {
+    const items = settingsItems()
+    const selectedLanguage = language.value
+    return {
+      items,
+      committed: () => {
+        savedSettings.value = JSON.stringify(items)
+        applyLanguage(selectedLanguage)
+      },
+    }
+  },
+})
+registerSettingsParticipant(settingsPage, {
+  ready: () => appBackground.loaded.value,
+  capture: () => ({ persist: appBackground.captureSave() }),
+})
 const backgroundLocked = computed(
   () =>
     !appBackground.loaded.value ||
     appBackground.busy.value ||
     backgroundBusy.value ||
     backgroundSaving.value ||
-    isSaving.value,
+    settingsDisabled.value,
 )
 
 const languageOptions = [...LANGUAGE_OPTIONS]
@@ -154,6 +226,13 @@ const logOptions = [
 
 /** 从后端加载配置 */
 async function loadSettings() {
+  if (
+    settingsLoading.value ||
+    isSaving.value ||
+    (settingsLoaded.value && JSON.stringify(settingsItems()) !== savedSettings.value)
+  )
+    return
+  settingsLoading.value = true
   try {
     const res = await configApi.batch([
       'owner.name',
@@ -165,11 +244,14 @@ async function loadSettings() {
       'ui.soundEffects',
       'system.dataDir',
       'system.logLevel',
-      'system.autoSave',
+      WHOLESOME_MODE_KEY,
+      ASSISTANT_PREFILL_KEY,
     ])
     const d = res.data ?? {}
-    if (d['owner.name']) ownerName.value = d['owner.name'] as string
-    if (d['owner.persona']) ownerPersona.value = d['owner.persona'] as string
+    ownerName.value = d['owner.name'] ?? '主人'
+    ownerPersona.value = d['owner.persona'] ?? ''
+    wholesomeEnabled.value = d[WHOLESOME_MODE_KEY] !== 'false'
+    assistantPrefill.value = parseAssistantPrefillConfig(d[ASSISTANT_PREFILL_KEY])
     if (d['user.language']) language.value = normalizeLocale(d['user.language'])
     if (d['ui.fontSize']) fontSize.value = Number(d['ui.fontSize'])
     sensory.motionLevel.value = resolveSavedMotionLevel(d['ui.motionLevel'], d['ui.animations'])
@@ -177,9 +259,14 @@ async function loadSettings() {
       sensory.soundEffects.value = d['ui.soundEffects'] === 'true'
     if (d['system.dataDir']) dataDir.value = d['system.dataDir'] as string
     if (d['system.logLevel']) logLevel.value = d['system.logLevel'] as string
-    if (d['system.autoSave'] !== undefined) autoSave.value = d['system.autoSave'] !== 'false'
+    savedSettings.value = JSON.stringify(settingsItems())
+    settingsLoaded.value = true
+    loadError.value = false
   } catch {
-    // 首次使用，保持默认值
+    // 加载失败不能把默认配置当作整页草稿覆盖服务端。
+    loadError.value = true
+  } finally {
+    settingsLoading.value = false
   }
 }
 
@@ -208,13 +295,7 @@ async function handleBackgroundFile(event: Event): Promise<void> {
   }
   backgroundBusy.value = true
   try {
-    await appBackground.upload(file)
-    notif.toast(__t('ui.settings', '图片已保存到当前背景预设'), {
-      type: 'success',
-      get title() {
-        return __t('ui.settings', '外观设置')
-      },
-    })
+    await handleSave(() => appBackground.upload(file), 'background')
   } catch (error) {
     logger.error('UserSettings', __t('logs.frontend.settings', '背景上传失败'), error)
     notif.toast(__t('ui.settings', '背景上传失败'), {
@@ -232,14 +313,7 @@ async function saveBackgroundSettings(): Promise<void> {
   if (backgroundLocked.value) return
   backgroundSaving.value = true
   try {
-    await appBackground.save()
-    void uiSound.play('action.confirmed')
-    notif.toast(__t('ui.settings', '当前背景预设已保存'), {
-      type: 'success',
-      get title() {
-        return __t('ui.settings', '外观设置')
-      },
-    })
+    await handleSave()
   } catch (error) {
     logger.error('UserSettings', __t('logs.frontend.settings', '背景设置保存失败'), error)
     notif.toast(__t('ui.settings', '背景设置保存失败'), {
@@ -257,7 +331,7 @@ async function removeBackground(): Promise<void> {
   if (backgroundLocked.value) return
   backgroundBusy.value = true
   try {
-    await appBackground.remove()
+    await handleSave(() => appBackground.remove(), 'background')
   } catch (error) {
     logger.error('UserSettings', __t('logs.frontend.settings', '背景删除失败'), error)
     notif.toast(__t('ui.settings', '背景删除失败'), {
@@ -274,8 +348,7 @@ async function removeBackground(): Promise<void> {
 async function switchBackgroundPreset(id: string): Promise<void> {
   if (backgroundLocked.value || id === appBackground.selectedPreset.value) return
   try {
-    await appBackground.selectPreset(id)
-    void uiSound.play('action.confirmed')
+    await handleSave(() => appBackground.selectPreset(id), 'background')
   } catch (error) {
     logger.error('UserSettings', __t('logs.frontend.settings', '背景预设切换失败'), error)
     notif.toast(__t('ui.settings', '背景预设切换失败，当前调整已保留，请稍后重试'), {
@@ -287,41 +360,20 @@ async function switchBackgroundPreset(id: string): Promise<void> {
   }
 }
 
-/** 保存配置到后端 */
-async function handleSave() {
-  isSaving.value = true
+/** 所有保存入口和即时切换都提交整页快照。 */
+function handleSave(after?: () => Promise<void>, actionKey?: string): Promise<boolean> {
+  return settingsPage.save(after, actionKey)
+}
+function changeLanguage(): void {
+  applyLanguage(language.value)
+  void handleSave()
+}
+
+async function retryLoad(): Promise<void> {
   try {
-    const pairs: Array<[string, string]> = [
-      ['owner.name', ownerName.value],
-      ['owner.persona', ownerPersona.value],
-      ['user.language', language.value],
-      ['ui.theme', mainNav.theme.value],
-      ['ui.fontSize', String(fontSize.value)],
-      ['ui.motionLevel', sensory.motionLevel.value],
-      ['ui.animations', String(sensory.motionLevel.value !== 'off')],
-      ['ui.soundEffects', String(sensory.soundEffects.value)],
-      ['system.logLevel', logLevel.value],
-      ['system.autoSave', String(autoSave.value)],
-    ]
-    await Promise.all([...pairs.map(([k, v]) => configApi.set(k, v)), appBackground.save()])
-    applyLanguage(language.value)
-    void uiSound.play('action.confirmed')
-    notif.toast(__t('ui.settings', '设置已保存'), {
-      type: 'success',
-      get title() {
-        return __t('ui.settings', '系统设定')
-      },
-    })
-  } catch (e) {
-    logger.error('UserSettings', __t('logs.frontend.settings', '保存失败'), e)
-    notif.toast(__t('ui.settings', '保存失败，请稍后重试'), {
-      type: 'error',
-      get title() {
-        return __t('ui.settings', '系统设定')
-      },
-    })
-  } finally {
-    isSaving.value = false
+    await Promise.all([loadSettings(), appBackground.load()])
+  } catch {
+    loadError.value = true
   }
 }
 
@@ -372,7 +424,43 @@ onMounted(() => {
     </div>
 
     <div class="flex flex-col gap-6 pr-1">
-      <WholesomeModeSettings />
+      <p class="settings-save-hint">{{ __t('ui.settings', '切换即时保存，每次提交整页修改。') }}</p>
+      <div
+        v-if="loadError || saveError || !appBackground.loaded.value"
+        class="settings-save-feedback"
+        role="status"
+      >
+        <span>
+          {{
+            loadError || !appBackground.loaded.value
+              ? __t('ui.settings', '设置尚未读取完成，请重试')
+              : __t('ui.settings', '保存失败，请稍后重试')
+          }}
+        </span>
+        <PButton
+          size="sm"
+          variant="ghost"
+          :disabled="isSaving"
+          @click="loadError || !appBackground.loaded.value ? retryLoad() : settingsPage.retry()"
+        >
+          {{ __t('ui.settings', '重试') }}
+        </PButton>
+      </div>
+      <WholesomeModeSettings
+        :model-value="wholesomeEnabled"
+        :disabled="settingsDisabled"
+        @update:model-value="
+          (enabled) => {
+            wholesomeEnabled = enabled
+            handleSave()
+          }
+        "
+      />
+      <AssistantPrefillSettings
+        v-model="assistantPrefill"
+        :disabled="settingsDisabled"
+        @save="handleSave()"
+      />
       <!-- 用户人设 -->
       <PCard pixel padding="lg" overflow-visible>
         <h3
@@ -381,30 +469,65 @@ onMounted(() => {
           <PixelIcon name="user" size="sm" />
           {{ __t('ui.settings', '用户人设') }}
         </h3>
+        <UserAvatarSettings />
         <div class="flex flex-col gap-4">
           <div class="grid grid-cols-2 gap-4">
             <div class="flex flex-col gap-1.5">
-              <label class="text-xs font-bold text-slate-500">
-                {{ __t('ui.settings', '你的名字') }}
-              </label>
-              <PInput v-model="ownerName" :placeholder="__t('ui.settings', '你的名字')" />
+              <div class="settings-field-heading">
+                <label class="text-xs font-bold text-slate-500">
+                  {{ __t('ui.settings', '你的名字') }}
+                </label>
+                <PButton
+                  size="sm"
+                  variant="secondary"
+                  :disabled="settingsDisabled"
+                  @click="handleSave()"
+                >
+                  <PixelIcon name="save" size="xs" />
+                  {{ __t('ui.settings', '保存') }}
+                </PButton>
+              </div>
+              <PInput
+                v-model="ownerName"
+                :disabled="settingsDisabled"
+                :placeholder="__t('ui.settings', '你的名字')"
+              />
               <p class="text-[10px] text-slate-400">
                 {{ __t('ui.settings', '助手会记住你的名字') }}
               </p>
             </div>
             <div class="flex flex-col gap-1.5">
-              <label class="text-xs font-bold text-slate-500">
-                {{ __t('ui.settings', '语言') }}
-              </label>
-              <PSelect v-model="language" :options="languageOptions" />
+              <div class="settings-field-heading">
+                <label class="text-xs font-bold text-slate-500">
+                  {{ __t('ui.settings', '语言') }}
+                </label>
+              </div>
+              <PSelect
+                v-model="language"
+                :options="languageOptions"
+                :disabled="settingsDisabled"
+                @change="changeLanguage"
+              />
             </div>
           </div>
           <div class="flex flex-col gap-1.5">
-            <label class="text-xs font-bold text-slate-500">
-              {{ __t('ui.settings', '人设描述') }}
-            </label>
+            <div class="settings-field-heading">
+              <label class="text-xs font-bold text-slate-500">
+                {{ __t('ui.settings', '人设描述') }}
+              </label>
+              <PButton
+                size="sm"
+                variant="secondary"
+                :disabled="settingsDisabled"
+                @click="handleSave()"
+              >
+                <PixelIcon name="save" size="xs" />
+                {{ __t('ui.settings', '保存') }}
+              </PButton>
+            </div>
             <textarea
               v-model="ownerPersona"
+              :disabled="settingsDisabled"
               rows="5"
               class="w-full p-3 bg-[var(--dash-input-bg)] border-2 border-[var(--dash-input-border)] text-sm text-[var(--ui-text-secondary)] resize-y focus:border-[var(--ui-accent-sky)] focus:outline-none transition-colors"
               :placeholder="__t('ui.settings', '介绍你的称呼、兴趣和偏好…')"
@@ -433,7 +556,12 @@ onMounted(() => {
           <!-- 主题：与 app 侧边栏深色/浅色按钮实时联动 -->
           <div class="flex flex-col gap-1.5">
             <label class="text-xs font-bold text-slate-500">{{ __t('ui.settings', '主题') }}</label>
-            <PSelect v-model="themeBinding" :options="themeOptions" />
+            <PSelect
+              v-model="themeBinding"
+              :options="themeOptions"
+              :disabled="settingsDisabled"
+              @change="handleSave()"
+            />
             <p class="text-[10px] text-slate-400">
               {{ __t('ui.settings', '与侧边栏的深色/浅色切换按钮实时联动') }}
             </p>
@@ -594,7 +722,7 @@ onMounted(() => {
                 class="flex items-center justify-between text-xs font-bold text-[var(--ui-text-secondary)]"
               >
                 {{ __t('ui.settings', '启用背景') }}
-                <PSwitch v-model="appBackground.settings.value.enabled" />
+                <PSwitch v-model="appBackground.settings.value.enabled" @change="handleSave()" />
               </label>
               <div
                 class="app-background-presets"
@@ -610,7 +738,12 @@ onMounted(() => {
                     appBackground.activePreset.value === preset.id ? 'primary' : 'secondary'
                   "
                   :aria-pressed="appBackground.activePreset.value === preset.id"
-                  @click="appBackground.applyPreset(preset.id)"
+                  @click="
+                    () => {
+                      appBackground.applyPreset(preset.id)
+                      handleSave()
+                    }
+                  "
                 >
                   {{ preset.label }}
                 </PButton>
@@ -627,6 +760,7 @@ onMounted(() => {
                       :min="0.1"
                       :max="1"
                       :step="0.05"
+                      @change="handleSave()"
                     />
                   </div>
                   <div class="flex flex-col gap-1">
@@ -638,6 +772,7 @@ onMounted(() => {
                       :min="0"
                       :max="32"
                       :step="1"
+                      @change="handleSave()"
                     />
                   </div>
                   <div class="flex flex-col gap-1">
@@ -649,6 +784,7 @@ onMounted(() => {
                       :min="0.6"
                       :max="1.4"
                       :step="0.05"
+                      @change="handleSave()"
                     />
                   </div>
                   <div class="flex flex-col gap-1">
@@ -660,6 +796,7 @@ onMounted(() => {
                       :min="0"
                       :max="1.6"
                       :step="0.05"
+                      @change="handleSave()"
                     />
                   </div>
                   <div class="flex flex-col gap-1">
@@ -671,6 +808,7 @@ onMounted(() => {
                       :min="0.6"
                       :max="1.4"
                       :step="0.05"
+                      @change="handleSave()"
                     />
                   </div>
                   <div class="flex flex-col gap-1">
@@ -682,6 +820,7 @@ onMounted(() => {
                       :min="0"
                       :max="0.85"
                       :step="0.05"
+                      @change="handleSave()"
                     />
                   </div>
                   <div class="flex flex-col gap-1">
@@ -693,6 +832,7 @@ onMounted(() => {
                       :min="0.55"
                       :max="1"
                       :step="0.05"
+                      @change="handleSave()"
                     />
                   </div>
                   <div class="flex flex-col gap-1">
@@ -704,6 +844,7 @@ onMounted(() => {
                       :min="0"
                       :max="24"
                       :step="1"
+                      @change="handleSave()"
                     />
                   </div>
                   <div class="flex flex-col gap-1">
@@ -713,6 +854,7 @@ onMounted(() => {
                     <PSelect
                       v-model="appBackground.settings.value.fit"
                       :options="backgroundFitOptions"
+                      @change="handleSave()"
                     />
                   </div>
                   <div class="flex flex-col gap-1">
@@ -724,6 +866,7 @@ onMounted(() => {
                       :min="0"
                       :max="100"
                       :step="1"
+                      @change="handleSave()"
                     />
                   </div>
                   <div class="flex flex-col gap-1">
@@ -735,6 +878,7 @@ onMounted(() => {
                       :min="0"
                       :max="100"
                       :step="1"
+                      @change="handleSave()"
                     />
                   </div>
                 </div>
@@ -753,7 +897,12 @@ onMounted(() => {
               <label class="text-xs font-bold text-[var(--ui-text-secondary)]">
                 {{ __t('ui.settings', '动态效果') }}
               </label>
-              <PSelect v-model="motionBinding" :options="motionOptions" />
+              <PSelect
+                v-model="motionBinding"
+                :options="motionOptions"
+                :disabled="settingsDisabled"
+                @change="handleSave()"
+              />
               <p class="text-[10px] text-[var(--ui-text-tertiary)]">
                 {{ __t('ui.settings', '选择界面动效强度') }}
               </p>
@@ -767,7 +916,11 @@ onMounted(() => {
                   {{ __t('ui.settings', '任务完成、失败、审批和重要确认使用客户端合成音') }}
                 </p>
               </div>
-              <PSwitch v-model="soundEffectsBinding" />
+              <PSwitch
+                v-model="soundEffectsBinding"
+                :disabled="settingsDisabled"
+                @change="handleSave()"
+              />
             </div>
           </div>
         </div>
@@ -793,18 +946,12 @@ onMounted(() => {
             <label class="text-xs font-bold text-slate-500">
               {{ __t('ui.settings', '日志级别') }}
             </label>
-            <PSelect v-model="logLevel" :options="logOptions" />
-          </div>
-          <div class="flex items-center justify-between">
-            <div class="flex flex-col gap-0.5">
-              <label class="text-xs font-bold text-slate-500">
-                {{ __t('ui.settings', '自动保存') }}
-              </label>
-              <p class="text-[10px] text-slate-400">
-                {{ __t('ui.settings', '每次修改后自动保存配置') }}
-              </p>
-            </div>
-            <PSwitch v-model="autoSave" />
+            <PSelect
+              v-model="logLevel"
+              :options="logOptions"
+              :disabled="settingsDisabled"
+              @change="handleSave()"
+            />
           </div>
         </div>
       </PCard>
@@ -813,8 +960,8 @@ onMounted(() => {
         <PButton
           variant="primary"
           :loading="isSaving"
-          :disabled="backgroundLocked"
-          @click="handleSave"
+          :disabled="settingsDisabled"
+          @click="handleSave()"
         >
           {{ __t('ui.settings', '保存设置') }}
         </PButton>

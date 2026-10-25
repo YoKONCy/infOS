@@ -16,6 +16,22 @@ const modelConfig: ModelConfig = {
   apiKey: 'test-key',
 }
 
+// 桌面应用工具按需展开；以下记录模拟此前已成功展开，保留接管与审批测试的原始目标。
+const expandedDesktopHistory: ChatMessage[] = [
+  {
+    role: 'assistant',
+    content: null,
+    toolCalls: [
+      {
+        id: 'desktop-expand',
+        type: 'function',
+        function: { name: 'expand_advanced_tools', arguments: '{}' },
+      },
+    ],
+  },
+  { role: 'tool', toolCallId: 'desktop-expand', content: '已展开', toolExecutionFailed: false },
+]
+
 async function* streamFrom(chunks: ChatDelta[]) {
   for (const chunk of chunks) {
     yield chunk
@@ -41,6 +57,225 @@ async function collectLoop(params: Parameters<typeof runReActLoop>[0]) {
 }
 
 describe('runReActLoop', () => {
+  it.each(['code_search', 'run_script'])(
+    '%s 搜索列表在实时和最终视图保留，模型审计不复制正文',
+    async (name) => {
+      const matches = Array.from({ length: 12 }, (_, index) => ({
+        file: `/project/${index}.ts`,
+        line: 3,
+        column: 7,
+        content: '搜索命中正文',
+      }))
+      const output = JSON.stringify({
+        matches,
+        total: 12,
+        fileCount: 12,
+        searchRoot: '/project',
+        respectGitIgnore: true,
+      })
+      const chatStream = vi
+        .fn()
+        .mockImplementationOnce(() =>
+          streamFrom([
+            {
+              choices: [
+                {
+                  delta: {
+                    toolCalls: [
+                      { index: 0, id: 'search-outer', function: { name, arguments: '{}' } },
+                    ],
+                  },
+                  finishReason: 'tool_calls',
+                },
+              ],
+            },
+          ]),
+        )
+        .mockImplementationOnce(() =>
+          streamFrom([{ choices: [{ delta: { content: '完成' }, finishReason: 'stop' }] }]),
+        )
+      const { result, yields } = await collectLoop({
+        llmService: { chatStream } as never,
+        modelConfig,
+        source: 'desktop',
+        messages: [{ role: 'user', content: '搜索代码' }],
+        tools: [{ name, description: '搜索', parameters: {} }],
+        toolExecutor: {
+          execute: async (_name, _args, _source, runtime) => {
+            if (name === 'run_script')
+              await runtime?.onToolObserved?.({
+                name: 'code_search',
+                args: {},
+                callId: 'search-child',
+                output,
+                isError: false,
+              })
+            return {
+              output: name === 'code_search' ? output : '完成',
+              isError: false,
+              durationMs: 1,
+              shouldTerminate: false,
+            }
+          },
+        },
+      })
+      const live = yields.find(
+        (value) =>
+          typeof value === 'object' &&
+          value.event === 'tool_result' &&
+          (value.data as { name?: string }).name === 'code_search',
+      )
+      expect(live).toBeDefined()
+      const block = result.contentBlocks.find(
+        (value) => value.kind === 'tool' && value.name === 'code_search',
+      )
+      expect(block?.kind).toBe('tool')
+      if (typeof live !== 'object' || live.event !== 'tool_result' || block?.kind !== 'tool')
+        throw new Error('缺少搜索视图')
+      expect(JSON.parse((live.data as { result: string }).result).matches).toHaveLength(12)
+      expect(JSON.parse(block.result!).matches).toHaveLength(12)
+      expect(JSON.parse(block.result!).searchRoot).toBe('/project')
+      expect(result.toolCalls.find((value) => value.name === 'code_search')?.result).not.toContain(
+        '搜索命中正文',
+      )
+    },
+  )
+
+  it.each([
+    { assistantPrefill: '', mode: 'once' as const },
+    { assistantPrefill: '我先查看。', mode: 'once' as const },
+    { assistantPrefill: '我先查看。', mode: 'continuous' as const },
+  ])(
+    '编译预填充保持工具配对与完整历史：$mode / $assistantPrefill',
+    async ({ assistantPrefill, mode }) => {
+      const requests: ChatMessage[][] = []
+      const snapshots: unknown[] = []
+      const prepareToolDefinitions = vi.fn(async (definitions) => definitions)
+      const chatStream = vi.fn((_config, messages: ChatMessage[]) => {
+        requests.push(structuredClone(messages))
+        return requests.length === 1
+          ? streamFrom([
+              {
+                choices: [
+                  {
+                    delta: {
+                      toolCalls: [
+                        {
+                          index: 0,
+                          id: 'prefill-tool',
+                          type: 'function',
+                          function: { name: 'lookup', arguments: '{}' },
+                        },
+                      ],
+                    },
+                    finishReason: 'tool_calls',
+                  },
+                ],
+              },
+            ])
+          : streamFrom([{ choices: [{ delta: { content: '查到了。' }, finishReason: 'stop' }] }])
+      })
+      const history: ChatMessage[] = [
+        { role: 'system', content: '固定规则' },
+        { role: 'user', content: '查询一下' },
+      ]
+      const { yields, result } = await collectLoop({
+        llmService: { chatStream } as never,
+        modelConfig,
+        messages: history,
+        promptPlan: assistantPrefill
+          ? {
+              assistantPrefill: {
+                content: assistantPrefill,
+                mode,
+                source: 'system.assistantPrefill',
+              },
+            }
+          : {},
+        onRequestCompiled: (request) => snapshots.push(structuredClone(request)),
+        prepareToolDefinitions,
+        tools: [{ name: 'lookup', description: '查询', parameters: { type: 'object' } }],
+        toolExecutor: {
+          execute: vi.fn().mockResolvedValue({
+            output: '查询结果',
+            durationMs: 1,
+            isError: false,
+            shouldTerminate: false,
+          }),
+        },
+        source: 'desktop',
+        config: { maxTurns: 2 },
+      })
+      expect(requests[0]!.slice(0, 2)).toEqual([
+        { role: 'system', content: '固定规则' },
+        { role: 'user', content: '查询一下' },
+      ])
+      expect(requests[0]!.at(-1)).toEqual(
+        assistantPrefill
+          ? { role: 'assistant', content: assistantPrefill, promptSegment: 'assistant_prefill' }
+          : { role: 'user', content: '查询一下' },
+      )
+      expect(requests[1]!.at(-1)?.role).toBe(
+        assistantPrefill && mode === 'continuous' ? 'assistant' : 'tool',
+      )
+      expect(requests[1]!.filter((message) => message.role === 'tool')).toHaveLength(1)
+      const replies = result.messages.filter((message) => message.role === 'assistant')
+      expect(replies).toHaveLength(2)
+      expect(replies[0]).toMatchObject({
+        content: assistantPrefill || null,
+        toolCalls: [{ id: 'prefill-tool' }],
+      })
+      expect(replies[1]!.content).toBe((mode === 'continuous' ? assistantPrefill : '') + '查到了。')
+      expect(yields.filter((item) => typeof item === 'string').join('')).toBe(
+        assistantPrefill + (mode === 'continuous' ? assistantPrefill : '') + '查到了。',
+      )
+      expect(result.rawText).not.toContain('我先查看。')
+      expect(prepareToolDefinitions).toHaveBeenCalledTimes(1)
+      expect(snapshots).toHaveLength(2)
+      expect(snapshots[0]).toMatchObject({ turn: 1, messages: requests[0] })
+      expect(
+        history.filter((message) => message.promptSegment === 'assistant_prefill'),
+      ).toHaveLength(0)
+    },
+  )
+
+  it('接口拒绝预填充时保留原始异常，不发布预填充作为伪造答复', async () => {
+    const failure = new Error('模型接口不支持预填充')
+    const generator = runReActLoop({
+      llmService: {
+        chatStream: vi.fn(() =>
+          (async function* () {
+            yield* []
+            throw failure
+          })(),
+        ),
+        estimateInputTokens: vi.fn(() => 20),
+      } as never,
+      modelConfig,
+      messages: [{ role: 'user', content: '你好' }],
+      promptPlan: {
+        assistantPrefill: {
+          content: '我已经完成。',
+          mode: 'continuous',
+          source: 'system.assistantPrefill',
+        },
+      },
+      tools: [],
+      toolExecutor: undefined,
+      source: 'desktop',
+    })
+    const narration: string[] = []
+    let caught: unknown
+    try {
+      for await (const event of generator)
+        if (event.event === 'narration_delta') narration.push(event.data.delta)
+    } catch (error) {
+      caught = error
+    }
+    expect(caught).toBe(failure)
+    expect(narration).toEqual([])
+  })
+
   it.each([false, true])(
     'NIT 子调用进入实时事件和持久时间线，取消结果缺失时收口：%s',
     async (missingReceipt) => {
@@ -252,6 +487,7 @@ describe('runReActLoop', () => {
   })
 
   it('上游明确拒绝输入容量时自动缩窗重试，不重放历史工具', async () => {
+    const requestIds: Array<number | undefined> = []
     const chatStream = vi
       .fn()
       .mockReturnValueOnce(
@@ -282,8 +518,10 @@ describe('runReActLoop', () => {
       toolExecutor: { execute },
       source: 'desktop',
       maxInputTokens: 2200,
+      onRequestCompiled: (snapshot) => requestIds.push(snapshot.requestId),
     })
     expect(chatStream).toHaveBeenCalledTimes(2)
+    expect(requestIds).toEqual([1, 2])
     expect(execute).not.toHaveBeenCalled()
     expect(result.messages.at(-1)?.content).toBe('继续完成')
   })
@@ -407,9 +645,13 @@ describe('runReActLoop', () => {
     const { result, yields } = await collectLoop({
       llmService: { chatStream } as never,
       modelConfig,
-      messages: [{ role: 'user', content: '继续任务' }],
+      messages: [...expandedDesktopHistory, { role: 'user', content: '继续任务' }],
       source: 'desktop',
-      tools: [{ name: 'open_application', description: '打开应用', parameters: {} }],
+      tools: ['expand_advanced_tools', 'open_application'].map((name) => ({
+        name,
+        description: name,
+        parameters: {},
+      })),
       toolExecutor: {
         execute: vi.fn().mockResolvedValue({
           output: JSON.stringify({
@@ -469,9 +711,9 @@ describe('runReActLoop', () => {
     const { result, yields } = await collectLoop({
       llmService: { chatStream } as never,
       modelConfig,
-      messages: [{ role: 'user', content: '操作桌面' }],
+      messages: [...expandedDesktopHistory, { role: 'user', content: '操作桌面' }],
       source: 'desktop',
-      tools: ['open_application', 'write_file'].map((name) => ({
+      tools: ['expand_advanced_tools', 'open_application', 'write_file'].map((name) => ({
         name,
         description: name,
         parameters: {},
@@ -2103,8 +2345,13 @@ describe('runReActLoop', () => {
     await collectLoop({
       llmService: llmService as never,
       modelConfig,
-      messages: [{ role: 'user', content: '打开计算器' }],
+      messages: [...expandedDesktopHistory, { role: 'user', content: '打开计算器' }],
       tools: [
+        {
+          name: 'expand_advanced_tools',
+          description: '展开高级工具',
+          parameters: { type: 'object' },
+        },
         { name: 'open_application', description: '打开应用', parameters: { type: 'object' } },
       ],
       toolExecutor,

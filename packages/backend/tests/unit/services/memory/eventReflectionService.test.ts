@@ -1,5 +1,6 @@
 import { describe, expect, it, vi } from 'vitest'
 import type { EventNote } from '@infos/shared'
+import { MemoryAgentScope } from '@infos/backend/services/memory/memoryAgentScope'
 import {
   EventReflectionService,
   type ReflectionDecision,
@@ -31,7 +32,7 @@ function note(id: string): EventNote {
   }
 }
 
-function fixture() {
+function fixture(agents?: MemoryAgentScope) {
   const main = note('main')
   const candidate = note('candidate')
   const notes = new Map([
@@ -67,6 +68,7 @@ function fixture() {
   let busy = false
   const model = { reflect: vi.fn<EventReflectionModel['reflect']>().mockResolvedValue(decision) }
   const service = new EventReflectionService(memory as never, {} as never, model, repo as never, {
+    agents,
     canMaintain: () => !busy,
   })
   return {
@@ -86,6 +88,35 @@ function fixture() {
 }
 
 describe('事件关系维护与永久删除互斥', () => {
+  it('已删除角色的排队任务直接收口，不调用模型或登记失败重试', async () => {
+    const f = fixture(new MemoryAgentScope(() => false))
+    await f.service.drain()
+    expect(f.model.reflect).not.toHaveBeenCalled()
+    expect(f.repo.completeReflectionTask).toHaveBeenCalledWith(f.task.id)
+    expect(f.repo.failReflectionTask).not.toHaveBeenCalled()
+    expect(f.service.validateAndRepair('pero')).toEqual({ valid: true, repaired: false })
+  })
+
+  it('角色删除后即使模型忽略取消并返回结果，也不能写入旧决策或修订', async () => {
+    let exists = true
+    const agents = new MemoryAgentScope(() => exists)
+    const otherSignal = agents.signal('other')
+    const f = fixture(agents)
+    f.model.reflect.mockImplementation(async ({ signal }) => {
+      exists = false
+      agents.invalidate('pero')
+      expect(signal?.aborted).toBe(true)
+      return { ...decision, revision: { narrative: '已删除角色的迟到结果' } }
+    })
+    await f.service.drain()
+    expect(f.repo.createOperation).not.toHaveBeenCalled()
+    expect(f.memory.revise).not.toHaveBeenCalled()
+    expect(f.repo.failReflectionTask).not.toHaveBeenCalled()
+    expect(otherSignal.aborted).toBe(false)
+    exists = true
+    expect(agents.signal('pero').aborted).toBe(false)
+  })
+
   it('来源已遗忘但事件行尚存时正常取消任务，不调用模型或进入错误退避', async () => {
     const { main, service, repo, model, forgotten } = fixture()
     forgotten.add(main.id)

@@ -77,6 +77,10 @@ function commit(event: Event): void {
       :aria-describedby="`${id}-description`"
       @input="commit"
     />
+    <div class="rag-number-bounds" aria-hidden="true">
+      <span>{{ min }}</span>
+      <span>{{ max }}</span>
+    </div>
     <p :id="`${id}-description`">{{ description }}</p>
   </div>
 </template>
@@ -85,9 +89,20 @@ function commit(event: Event): void {
 .rag-number {
   min-width: 0;
   padding: 18px;
-  border: 1px solid var(--ui-border-default);
-  border-radius: 8px;
+  position: relative;
+  border: 2px solid var(--ui-border-default);
+  border-radius: 0;
+  box-shadow: 3px 3px 0 var(--ui-border-default);
   background: var(--dash-panel-bg, var(--ui-bg-surface));
+}
+.rag-number::before {
+  content: '';
+  position: absolute;
+  top: -2px;
+  left: 18px;
+  width: 22px;
+  height: 2px;
+  background: var(--ui-accent-purple);
 }
 .rag-number-head {
   display: flex;
@@ -96,8 +111,9 @@ function commit(event: Event): void {
   gap: 12px;
 }
 .rag-number-head label {
-  font-size: 13px;
-  font-weight: 650;
+  font:
+    700 13px/1.6 var(--ui-font-pixel),
+    monospace;
   color: var(--ui-text-primary);
 }
 .rag-number-value {
@@ -111,59 +127,85 @@ function commit(event: Event): void {
 .rag-number-value input {
   width: 78px;
   padding: 6px 8px;
-  border: 1px solid var(--ui-border-default);
-  border-radius: 5px;
-  background: var(--ui-bg-input, var(--ui-bg-surface));
+  border: 2px solid var(--ui-border-default);
+  border-radius: 0;
+  background: var(--dash-input-bg);
+  box-shadow: inset 1px 1px 0 var(--ui-border-subtle);
   color: var(--ui-text-primary);
-  font: inherit;
-  font-size: 13px;
+  font:
+    16px/1.4 var(--ui-font-pixel),
+    monospace;
   font-variant-numeric: tabular-nums;
   text-align: right;
 }
 .rag-number-range {
   display: block;
   width: 100%;
-  height: 5px;
-  margin: 21px 0 15px;
-  border-radius: 3px;
+  height: 20px;
+  margin: 16px 0 0;
+  padding: 0;
+  border: 0;
+  border-radius: 0;
   appearance: none;
   cursor: pointer;
   background: linear-gradient(
-    to right,
-    var(--ui-accent-purple) var(--range-fill),
-    var(--ui-border-default) var(--range-fill)
-  );
+      to right,
+      var(--ui-accent-purple) var(--range-fill),
+      var(--ui-border-default) var(--range-fill)
+    )
+    center / 100% 6px no-repeat;
 }
 .rag-number-range::-webkit-slider-thumb {
   width: 13px;
   height: 13px;
   border: 2px solid var(--ui-bg-surface);
-  border-radius: 4px;
+  border-radius: 0;
   appearance: none;
   background: var(--ui-accent-purple);
-  box-shadow: 0 0 0 1px var(--ui-accent-purple);
+  box-shadow:
+    0 0 0 1px var(--ui-accent-purple),
+    2px 2px 0 var(--ui-border-strong);
   transition: transform 140ms ease;
 }
 .rag-number-range::-moz-range-thumb {
   width: 10px;
   height: 10px;
   border: 2px solid var(--ui-bg-surface);
-  border-radius: 4px;
+  border-radius: 0;
   background: var(--ui-accent-purple);
-  box-shadow: 0 0 0 1px var(--ui-accent-purple);
+  box-shadow:
+    0 0 0 1px var(--ui-accent-purple),
+    2px 2px 0 var(--ui-border-strong);
 }
-.rag-number-range:hover::-webkit-slider-thumb {
-  transform: scale(1.15);
+.rag-number-range::-moz-range-track,
+.rag-number-range::-moz-range-progress {
+  height: 6px;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+}
+.rag-number-range:hover:enabled::-webkit-slider-thumb {
+  background: var(--ui-accent-sky);
+}
+.rag-number-bounds {
+  display: flex;
+  justify-content: space-between;
+  color: var(--ui-text-tertiary);
+  font: 10px/1.5 var(--ui-font-mono);
 }
 .rag-number p {
-  margin: 0;
+  margin: 10px 0 0;
   color: var(--ui-text-tertiary);
   font-size: 11px;
   line-height: 1.7;
+  font-family: var(--ui-font-sans);
 }
 .rag-number input:focus-visible {
   outline: 2px solid var(--ui-accent-purple);
   outline-offset: 4px;
+}
+.rag-number-value input:focus {
+  border-color: var(--ui-accent-purple);
 }
 .rag-number.is-disabled {
   opacity: 0.5;

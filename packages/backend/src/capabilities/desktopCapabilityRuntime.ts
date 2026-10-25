@@ -4,6 +4,7 @@ import type { CapabilityHandleRegistry } from '../kernel/capabilityHandleRegistr
 import { LifecycleScope } from '../kernel/lifecycleScope'
 
 type DesktopOperation =
+  | 'runtimeDiagnostics'
   | 'control'
   | 'statusCard'
   | 'screenCapture'

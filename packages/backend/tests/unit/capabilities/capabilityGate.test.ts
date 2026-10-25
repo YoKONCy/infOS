@@ -18,6 +18,8 @@ type SkillLoaderMock = {
 }
 
 type ToolRegistryMock = {
+  isVisibleTo: ReturnType<typeof vi.fn>
+  isRuntimeScoped: ReturnType<typeof vi.fn>
   getDefinitions: ReturnType<typeof vi.fn>
 }
 
@@ -72,6 +74,8 @@ modes:
       ),
     }
     toolRegistry = {
+      isVisibleTo: vi.fn(() => true),
+      isRuntimeScoped: vi.fn(() => false),
       getDefinitions: vi.fn(() => [
         { name: 'chat.send', description: '发送聊天消息' },
         { name: 'memory.search', description: '搜索记忆' },
@@ -87,6 +91,27 @@ modes:
   })
 
   describe('resolve', () => {
+    it('条目引导可动态增减，只影响已获准工具的说明', () => {
+      toolRegistry.getDefinitions.mockReturnValue([
+        { name: 'search_knowledge', description: '检索文档' },
+        { name: 'query_facts', description: '查询事实' },
+      ])
+      const gate = new CapabilityGate([rootDir], skillLoader as never, toolRegistry as never)
+      let hasDocuments = false
+      gate.setToolDescriptionResolver((name, description) =>
+        name === 'search_knowledge'
+          ? hasDocuments
+            ? description + ' 相关主题可查询参考。'
+            : undefined
+          : description,
+      )
+      expect(gate.describeTools(['search_knowledge', 'query_facts'])).toBe(
+        '- query_facts: 查询事实',
+      )
+      hasDocuments = true
+      expect(gate.describeTools(['search_knowledge'])).toContain('相关主题可查询参考')
+      expect(gate.describeTools(['query_facts'])).not.toContain('search_knowledge')
+    })
     it('到期跟进只开放读取和建议，不能加载技能、写文件、发消息或执行命令', () => {
       writeFileSync(
         join(rootDir, 'pero', 'capabilities.yaml'),

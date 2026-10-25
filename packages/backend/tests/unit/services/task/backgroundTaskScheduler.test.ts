@@ -1,10 +1,12 @@
 import { describe, expect, it, vi } from 'vitest'
 import { BackgroundTaskService } from '@infos/backend/services/task/backgroundTaskService'
+import { readTaskLifecycle } from '@infos/backend/services/task/taskLifecycle'
 
 function taskRow(overrides: Record<string, unknown> = {}) {
   return {
     id: 'task-1',
     revision: 1,
+    parentTaskId: null as string | null,
     lifecycleJson: null,
     agentId: 'pero',
     threadId: 'thread-task',
@@ -41,6 +43,14 @@ function setup() {
     return row
   }
   const repo = {
+    listPendingCancellations: vi.fn(async () => []),
+    consumeUsage: vi.fn(),
+    query: vi.fn(async (query) => {
+      const items = [...rows.values()].filter(
+        (row) => !query.parentTaskId || row.parentTaskId === query.parentTaskId,
+      )
+      return { items, total: items.length }
+    }),
     create: vi.fn(async (input) => {
       return seed(taskRow({ ...input, metadataJson: input.metadataJson ?? '{}' }))
     }),
@@ -79,7 +89,7 @@ function setup() {
     updateDisabledTools: vi.fn(),
     appendSystemMessage: vi.fn(),
   }
-  const executeTurn = vi.fn(async () => ({ reply: '完成', toolCalls: [] }))
+  const executeTurn = vi.fn(async (_input: unknown) => ({ reply: '完成', toolCalls: [] }))
   let scheduleInput: Record<string, unknown> | undefined
   const listeners: Array<(snapshot: any) => void> = []
   const scheduler = {
@@ -137,6 +147,125 @@ function setup() {
 }
 
 describe('BackgroundTask KernelScheduler迁移', () => {
+  it('同一父任务并发派发仍遵守八个子任务上限', async () => {
+    const { service, executeTurn } = setup()
+    executeTurn.mockImplementation(() => new Promise(() => {}))
+    const parent = await service.dispatch({ agentId: 'pero', instruction: '分配工作' })
+    await vi.waitFor(() => expect(executeTurn).toHaveBeenCalled())
+    const children = await Promise.allSettled(
+      Array.from({ length: 9 }, (_, index) =>
+        service.dispatch({
+          agentId: 'pero',
+          instruction: `工作 ${index}`,
+          parentTaskId: parent.id,
+          parentExecutionId: 'execution-task-1',
+          idempotencyKey: `child-${index}`,
+        }),
+      ),
+    )
+    expect(children.filter((result) => result.status === 'fulfilled')).toHaveLength(8)
+    expect(children.filter((result) => result.status === 'rejected')).toHaveLength(1)
+  })
+  it('社交来源的后台工作继承账号登录态，但使用任务自己的页面会话', async () => {
+    const { service, executeTurn } = setup()
+    await service.dispatch({
+      agentId: 'pero',
+      instruction: '读取网页',
+      lifecycle: {
+        origin: {
+          platform: 'telegram',
+          accountId: 'bot',
+          senderId: 'owner',
+          channelType: 'private',
+          channelId: 'dm',
+          messageId: 'message',
+        },
+      },
+    })
+    await vi.waitFor(() => expect(executeTurn).toHaveBeenCalled())
+    const scope = (
+      executeTurn.mock.calls[0]![0] as { browserScope: { profileId: string; sessionId: string } }
+    ).browserScope
+    expect(JSON.parse(scope.profileId)).toEqual(['pero', 'telegram', 'bot'])
+    expect(JSON.parse(scope.sessionId).slice(0, 2)).toEqual(['pero', 'task'])
+  })
+
+  it('委派执行器的等待与完成保存真实交接，不额外唤醒一个主模型', async () => {
+    const { service, executeTurn, repo } = setup()
+    const run = vi.fn(async () => ({ outcome: 'deliver' as const, summary: '已确认送达' }))
+    service.registerDelegatedExecutor('social', { run })
+    const task = await service.dispatch({
+      agentId: 'pero',
+      instruction: '群里汇报',
+      metadata: { delegatedExecutor: 'social' },
+    })
+    await vi.waitFor(() =>
+      expect(repo.transition).toHaveBeenCalledWith(
+        task.id,
+        ['running', 'waiting_input'],
+        'completed',
+        expect.objectContaining({ result: '已确认送达' }),
+        1,
+      ),
+    )
+    expect(executeTurn).not.toHaveBeenCalled()
+    expect(run).toHaveBeenCalledWith(
+      expect.objectContaining({ id: task.id }),
+      expect.any(AbortSignal),
+      expect.objectContaining({ executionId: 'execution-task-1' }),
+    )
+  })
+  it('等待结束后将依赖结果与失败原因交还父任务，而非仅唤醒', async () => {
+    const { service, repo, scheduler, seed } = setup()
+    seed(
+      taskRow({
+        id: 'parent',
+        status: 'waiting',
+        lifecycleJson: JSON.stringify({
+          ...readTaskLifecycle(null, '汇总'),
+          wait: { kind: 'task', key: 'child' },
+        }),
+      }),
+    )
+    seed(taskRow({ id: 'child', status: 'failed', result: null, errorMessage: '远端拒绝提交' }))
+    scheduler.submit.mockResolvedValue({ descriptor: { executionId: 'resumed' } } as never)
+    await service.wakeWaitingTasks()
+    expect(repo.transition).toHaveBeenCalledWith(
+      'parent',
+      ['waiting', 'waiting_input'],
+      'queued',
+      expect.objectContaining({ lifecycleJson: expect.stringContaining('远端拒绝提交') }),
+      1,
+    )
+    expect(scheduler.submit).toHaveBeenCalledWith(expect.objectContaining({ taskId: 'parent' }))
+  })
+
+  it('子任务绑定真实父执行、限制预算，并拒绝迟到的派发', async () => {
+    const { service, executeTurn, repo } = setup()
+    executeTurn.mockImplementation(() => new Promise(() => {}))
+    const parent = await service.dispatch({ agentId: 'pero', instruction: '汇总资料' })
+    await vi.waitFor(() => expect(executeTurn).toHaveBeenCalled())
+    const child = await service.dispatch({
+      agentId: 'pero',
+      instruction: '收集资料',
+      parentTaskId: parent.id,
+      parentExecutionId: 'execution-task-1',
+      idempotencyKey: 'child-1',
+    })
+    expect(child.parentTaskId).toBe(parent.id)
+    expect(child.lifecycle.maxLlmCalls).toBeLessThan(parent.lifecycle.maxLlmCalls)
+    expect(repo.create).toHaveBeenLastCalledWith(
+      expect.objectContaining({ parentTaskId: parent.id, requestedBy: 'agent' }),
+    )
+    await expect(
+      service.dispatch({
+        agentId: 'pero',
+        instruction: '迟到任务',
+        parentTaskId: parent.id,
+        parentExecutionId: 'old-execution',
+      }),
+    ).rejects.toMatchObject({ code: 'CONFLICT' })
+  })
   it('派发绑定来源会话时继承极简模式、审批模式与禁用工具', async () => {
     const { service, threadService } = setup()
     await service.dispatch({

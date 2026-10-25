@@ -55,5 +55,6 @@
   "Skill \"{0}\" 已删除": "Skill \"{0}\" has been deleted",
   "删除 Skill \"{0}\" 失败": "failed to delete Skill \"{0}\"",
   "加载模型列表失败": "failed to load model list",
-  "获取远程模型列表失败": "Failed to obtain remote model list"
+  "获取远程模型列表失败": "Failed to obtain remote model list",
+  "保存主人平台账号配置失败": "Failed to save the platform owner configuration"
 }

@@ -89,6 +89,10 @@ export interface AutomaticRagTrace {
 }
 
 export class EventMemoryService {
+  private packageHooks?: import('../../packages/packageAgentFlow').PackageFlowEmitter
+  setPackageHooks(hooks: import('../../packages/packageAgentFlow').PackageFlowEmitter): void {
+    this.packageHooks = hooks
+  }
   private manualEdits = new Map<string, Promise<EventNote>>()
   private background?: import('@infos/shared').MemoryBackgroundPolicy
   setBackgroundPolicy(policy: import('@infos/shared').MemoryBackgroundPolicy): void {
@@ -106,11 +110,15 @@ export class EventMemoryService {
   }
   async restore(id: string): Promise<void> {
     const note = await this.repo.findById(id)
-    if (!note || note.replacedBy) throw new Error('记忆不存在或已永久删除')
+    if (!note) throw new Error('ARCHIVE_RESTORE_NOT_FOUND')
+    if (note.replacedBy) throw new Error('ARCHIVE_RESTORE_CONFLICT')
     this.privacy?.assertMemory(note)
     await this.repo.restore(id)
-    this.privacy?.assertMemory(note)
-    this.retrievalRevision++
+    const latest = await this.repo.findById(id)
+    if (!latest) throw new Error('ARCHIVE_RESTORE_NOT_FOUND')
+    if (latest.replacedBy || latest.status !== 'active') throw new Error('ARCHIVE_RESTORE_CONFLICT')
+    this.privacy?.assertMemory(latest)
+    this.invalidateForDeletion()
     const store = this.stores.getAgentStore(note.agentId, 'main')
     const node = store.get<TdbEventPayload>(note.tdbId)
     if (!node) {
@@ -217,6 +225,7 @@ export class EventMemoryService {
       return payload.note
     }
     this.validateDraft(input)
+    await this.packageHooks?.emitHook('memory:beforeCreate', { input, operationId })
     const note: EventNote = {
       id: randomUUID(),
       agentId: input.agentId,
@@ -245,6 +254,7 @@ export class EventMemoryService {
       }
     }
     await this.onCommitted?.(note)
+    await this.packageHooks?.emitHook('memory:afterCreate', { note, operationId })
     return note
   }
 
@@ -423,6 +433,7 @@ export class EventMemoryService {
     const note = await this.repo.findById(id)
     if (!note) throw new Error('事件不存在')
     if (note.status === 'archived') return
+    await this.packageHooks?.emitHook('memory:beforeDelete', { note, operationId })
     const inserted = await this.repo.createOperation(operationId, note.agentId, 'archive', {
       id,
       tdbId: note.tdbId,
@@ -944,6 +955,7 @@ export class EventMemoryService {
       truncated: result.truncated,
       queriedAt: new Date().toISOString(),
     })
+    await this.packageHooks?.emitHook('memory:afterRetrieve', { agentId: input.agentId, result })
     return stale() ? empty : result
   }
 
@@ -1096,6 +1108,7 @@ export class EventMemoryService {
       candidateCount: hits.length,
       resultCount: notes.length,
     })
+    await this.packageHooks?.emitHook('memory:afterRetrieve', { agentId, notes, channel })
     return stale() ? [] : notes
   }
 
@@ -1163,8 +1176,10 @@ export class EventMemoryService {
     }
   }
 
-  async replayPending(): Promise<void> {
+  async replayPending(isAgentAvailable: (agentId: string) => boolean = () => true): Promise<void> {
     for (const operation of await this.repo.pendingOperations()) {
+      // 已删除角色的未完成操作保持原状，不在启动时重新打开其记忆存储。
+      if (!isAgentAvailable(operation.agentId)) continue
       if (
         this.background?.enabled === false &&
         /^(background:|reflection:)/.test(operation.operationId)

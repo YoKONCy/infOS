@@ -13,6 +13,8 @@ import {
 } from '@infos/backend/packages'
 
 const roots: string[] = []
+const fixtureRoot = path.resolve('TEMP/plugin-infrastructure')
+mkdirSync(fixtureRoot, { recursive: true })
 
 afterEach(async () => {
   const { rm } = await import('node:fs/promises')
@@ -59,8 +61,8 @@ function signedFixture(root: string, permissions: PackageManifest['permissions']
 
 describe('Package Installer', () => {
   it('应把旧安装目录迁移到 packages 并保留新目录冲突项', () => {
-    const previous = path.join(process.cwd(), `.tmp-extensions-${Date.now()}`)
-    const packages = path.join(process.cwd(), `.tmp-packages-${Date.now()}`)
+    const previous = path.join(fixtureRoot, `.tmp-extensions-${Date.now()}`)
+    const packages = path.join(fixtureRoot, `.tmp-packages-${Date.now()}`)
     roots.push(previous, packages)
     mkdirSync(path.join(previous, 'old-only'), { recursive: true })
     mkdirSync(path.join(previous, 'same'), { recursive: true })
@@ -77,7 +79,7 @@ describe('Package Installer', () => {
   })
 
   it('Signed Package应验证Publisher、文件完整性和权限Grant', () => {
-    const root = path.join(process.cwd(), `.tmp-signed-package-${Date.now()}`)
+    const root = path.join(fixtureRoot, `.tmp-signed-package-${Date.now()}`)
     roots.push(root)
     const { manifest, publicKeyPem } = signedFixture(root, ['network:internet'])
     const registry = new PackageRegistry()
@@ -98,7 +100,7 @@ describe('Package Installer', () => {
   })
 
   it('Signed Package文件被篡改或Publisher被撤销时应fail-closed', () => {
-    const root = path.join(process.cwd(), `.tmp-tampered-package-${Date.now()}`)
+    const root = path.join(fixtureRoot, `.tmp-tampered-package-${Date.now()}`)
     roots.push(root)
     const { manifest, publicKeyPem } = signedFixture(root)
     const security = new PackageSecurityAuthority()
@@ -130,7 +132,7 @@ describe('Package Installer', () => {
   })
 
   it('权限Grant撤销后应立即停用已激活Package', async () => {
-    const root = path.join(process.cwd(), `.tmp-revoke-package-${Date.now()}`)
+    const root = path.join(fixtureRoot, `.tmp-revoke-package-${Date.now()}`)
     roots.push(root)
     const { manifest, publicKeyPem } = signedFixture(root, ['system:info'])
     const registry = new PackageRegistry()
@@ -175,7 +177,7 @@ describe('Package Installer', () => {
   })
 
   it('旧 Extension 清单投影后应因缺少官方信任而拒绝安装', () => {
-    const root = path.join(process.cwd(), `.tmp-package-${Date.now()}`)
+    const root = path.join(fixtureRoot, `.tmp-package-${Date.now()}`)
     roots.push(root)
     mkdirSync(root, { recursive: true })
     writeFileSync(

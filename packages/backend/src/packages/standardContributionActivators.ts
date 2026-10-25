@@ -1,6 +1,7 @@
 import { existsSync } from 'node:fs'
 import path from 'node:path'
-import { pathToFileURL } from 'node:url'
+import { loadPackageModule as loadModule } from './packageModule'
+import { packageTimeout } from './packageTimeout'
 import type { PackageContributionKind } from '@infos/shared'
 import type { KernelEventBus } from '../kernel/kernelOutboxPublisher'
 import type { CapabilityDirectory, CapabilityProviderInvoke } from '../kernel/capabilityDirectory'
@@ -9,8 +10,8 @@ import type { ToolRegistry, ToolHandler } from '../services/agent/toolRegistry'
 import type { PackageRuntime } from './packageRuntime'
 import type { PackageProcessSupervisor } from './packageProcessSupervisor'
 import type { PackageHookBus } from './packageHookBus'
-import type { PackageActivationContext } from './types'
 import type { PackageInterceptEvent, PackageInterceptor } from './packageInterceptor'
+import { PACKAGE_INTERCEPT_EVENTS } from '@infos/shared'
 
 interface ToolModule {
   definition: import('../services/pipeline/types').ToolDefinition
@@ -52,13 +53,36 @@ export function registerStandardContributionActivators(input: {
       throw new Error(`Tool Contribution 无有效定义或入口: ${context.contribution.id}`)
     }
     const execute = value.execute
+    if (input.tools.has((definition as { name: string }).name))
+      throw new Error('PACKAGE_TOOL_NAME_CONFLICT')
     input.tools.register(
       {
         ...(definition as import('../services/pipeline/types').ToolDefinition),
         packageId: `package:${context.manifest.packageId}`,
+        ...(context.host?.threadId ? { requiresApproval: true } : {}),
       },
       async (args, toolContext) => {
-        const result = await execute(args, toolContext)
+        if (
+          context.host?.threadId &&
+          (toolContext.threadId !== context.host.threadId ||
+            toolContext.agentId !== context.host.agentId)
+        )
+          throw new Error('DEBUG_SCOPE_DENIED')
+        if (
+          context.host?.threadId &&
+          (toolContext.realmId ||
+            toolContext.taskId ||
+            (toolContext.capabilityScope && toolContext.capabilityScope !== 'default'))
+        )
+          throw new Error('DEBUG_SCOPE_DENIED')
+        const signal = context.host
+          ? AbortSignal.any([
+              context.host.signal,
+              ...(toolContext.signal ? [toolContext.signal] : []),
+            ])
+          : toolContext.signal
+        signal?.throwIfAborted()
+        const result = await execute(args, { ...toolContext, signal })
         if (typeof result === 'string') return result
         if (result && typeof result === 'object' && 'success' in result) {
           const legacy = result as { success: boolean; data?: unknown; error?: string }
@@ -70,6 +94,10 @@ export function registerStandardContributionActivators(input: {
         }
         return result
       },
+      context.host?.threadId ? ['desktop'] : undefined,
+      context.host?.threadId
+        ? { runtimeScope: { threadId: context.host.threadId, agentId: context.host.agentId! } }
+        : undefined,
     )
     return () => {
       input.tools.unregister((definition as { name: string }).name)
@@ -80,6 +108,7 @@ export function registerStandardContributionActivators(input: {
     if (!context.rootDir) throw new Error(`Skill Contribution 缺少 Package 根目录`)
     const dir = path.resolve(context.rootDir, context.contribution.entry ?? 'skills')
     if (context.contribution.metadata?.optional && !existsSync(dir)) return
+    context.host?.onDispose(() => input.skills.removeDirs([dir]))
     input.skills.addDirs([dir])
     return () => input.skills.removeDirs([dir])
   })
@@ -88,15 +117,61 @@ export function registerStandardContributionActivators(input: {
     const module = await loadModule<SubscriberModule>(context)
     const value = module.default ?? module
     if (value.hooks && input.hooks) {
+      if (
+        Object.entries(value.hooks).some(
+          ([event, handler]) =>
+            !PACKAGE_INTERCEPT_EVENTS.includes(event as PackageInterceptEvent) ||
+            typeof handler !== 'function',
+        )
+      )
+        throw new Error('PACKAGE_HOOK_INVALID')
       const removers = Object.entries(value.hooks).map(([event, handler]) =>
-        input.hooks!.register(context.manifest.packageId, event as PackageInterceptEvent, handler),
+        input.hooks!.register(
+          context.manifest.packageId,
+          event as PackageInterceptEvent,
+          async (data, hookContext) => {
+            const caller = data as {
+              threadId?: string
+              agentId?: string
+              realmId?: string
+              taskId?: string
+              capabilityScope?: string
+            }
+            if (
+              context.host?.threadId &&
+              (caller?.threadId !== context.host.threadId ||
+                caller?.agentId !== context.host.agentId ||
+                caller.realmId ||
+                caller.taskId ||
+                (caller.capabilityScope && caller.capabilityScope !== 'default'))
+            )
+              return
+            return handler(data, hookContext)
+          },
+        ),
       )
       return () => removers.reverse().forEach((remove) => remove())
     }
     if (typeof value.onEvent !== 'function') {
       throw new Error(`Event Subscriber 无 onEvent: ${context.contribution.id}`)
     }
-    const unsubscribe = input.events.subscribe(value.onEvent)
+    const unsubscribe = input.events.subscribe(async (event) => {
+      const payload = event.payload as {
+        threadId?: string
+        agentId?: string
+        descriptor?: { threadId?: string }
+      } | null
+      if (
+        context.host?.threadId &&
+        (payload?.threadId ?? payload?.descriptor?.threadId) !== context.host.threadId
+      )
+        return
+      try {
+        await packageTimeout(Promise.resolve(value.onEvent!(structuredClone(event))))
+      } catch (error) {
+        input.hooks?.recordFailure(context.manifest.packageId, 'kernel:event', error)
+      }
+    })
     return () => {
       unsubscribe()
     }
@@ -106,11 +181,16 @@ export function registerStandardContributionActivators(input: {
     if (!context.contribution.entry) return
     if (!context.rootDir) throw new Error(`Service Contribution 缺少 Package 根目录`)
     const processId = `${context.manifest.packageId}/${context.contribution.id}`
+    // 启动阶段失败也要释放已拉起的进程，不能等到启动成功后才登记清理。
+    context.host?.onDispose(() => input.processes.stop(processId))
     await input.processes.start({
       processId,
       packageId: context.manifest.packageId,
       entry: context.contribution.entry,
       cwd: context.rootDir,
+      env: context.host?.dataDirectory
+        ? { INFOS_PACKAGE_DATA_DIR: context.host.dataDirectory }
+        : undefined,
     })
     return () => input.processes.stop(processId)
   })
@@ -142,27 +222,10 @@ export function registerStandardContributionActivators(input: {
     throw new Error(`PACKAGE_CONTRIBUTION_UNSUPPORTED: runtime-adapter/${context.contribution.id}`)
   })
 
-  const unsupportedKinds: PackageContributionKind[] = [
-    'asset',
-    'presenter',
-    'application',
-    'policy',
-  ]
+  const unsupportedKinds: PackageContributionKind[] = ['application', 'policy']
   for (const kind of unsupportedKinds) {
     input.runtime.registerActivator(kind, (context) => {
       throw new Error(`PACKAGE_CONTRIBUTION_UNSUPPORTED: ${kind}/${context.contribution.id}`)
     })
   }
-}
-
-async function loadModule<T>(context: PackageActivationContext): Promise<T> {
-  if (context.manifest.trust !== 'official') {
-    throw new Error(`PACKAGE_IN_PROCESS_CODE_FORBIDDEN: ${context.manifest.packageId}`)
-  }
-  if (!context.rootDir || !context.contribution.entry) {
-    throw new Error(`Contribution 缺少入口: ${context.contribution.id}`)
-  }
-  return import(
-    pathToFileURL(path.resolve(context.rootDir, context.contribution.entry)).href
-  ) as Promise<T>
 }

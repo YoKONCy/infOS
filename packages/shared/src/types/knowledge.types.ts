@@ -1,4 +1,9 @@
 export type KnowledgeSourceKind = 'text' | 'file' | 'url' | 'workspace'
+/** 共享资料的自动召回独立于事件记忆配置，默认均关闭。 */
+export interface KnowledgeRecallSettings {
+  documentAutoRecall: boolean
+  factAutoRecall: boolean
+}
 export type KnowledgeDocumentStatus = 'queued' | 'processing' | 'ready' | 'failed'
 export type KnowledgeVectorStatus = 'skipped' | 'pending' | 'ready' | 'failed' | 'stale'
 

@@ -12,7 +12,8 @@ import {
 } from '../services/knowledge/knowledgeText'
 import { knowledgeSearchSchema } from '../services/knowledge/knowledgeValidation'
 import { factEditSchema } from '../schemas/archiveEdit.schema'
-import { throwArchiveEditError } from './archiveEditError'
+import { throwArchiveEditError, throwArchiveRestoreError } from './archiveEditError'
+import { knowledgeRecallSettingsSchema } from '../services/knowledge/knowledgeRecallService'
 
 const archiveQuerySchema = z.object({
   query: z.string().trim().max(200).default(''),
@@ -29,6 +30,16 @@ const documentBodyLimit = (maxSize: number) =>
 
 export function createKnowledgeRouter(ctx: AppContext) {
   const router = new Hono()
+
+  router.get('/recall-settings', async (c) =>
+    c.json({ code: 'OK', data: await ctx.knowledgeRecallService.settings() }),
+  )
+  router.put('/recall-settings', zValidator('json', knowledgeRecallSettingsSchema), async (c) =>
+    c.json({
+      code: 'OK',
+      data: await ctx.knowledgeRecallService.saveSettings(c.req.valid('json')),
+    }),
+  )
 
   router.patch('/facts/:id', zValidator('json', factEditSchema), async (c) => {
     try {
@@ -48,6 +59,14 @@ export function createKnowledgeRouter(ctx: AppContext) {
   router.post('/facts/:id/retract', async (c) => {
     await ctx.factsRepo.retractFact(c.req.param('id'))
     return c.json({ code: 'OK', message: __t('server.routers', '事实已撤回') })
+  })
+  router.post('/facts/:id/restore', async (c) => {
+    try {
+      await ctx.factsRepo.restoreFact(c.req.param('id'))
+    } catch (error) {
+      throwArchiveRestoreError(error)
+    }
+    return c.json({ code: 'OK', message: __t('server.archive-edit', '事实已还原') })
   })
   router.delete('/facts/:id', async (c) => {
     await ctx.privacyDeletionService.deleteFact(c.req.param('id'))

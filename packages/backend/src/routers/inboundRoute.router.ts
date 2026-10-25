@@ -43,7 +43,7 @@ const createRouteSchema = z.object({
     .regex(/^[a-z0-9_-]+$/, 'agentId 只允许小写字母、数字、下划线和短横线'),
   channel: z.enum(CHANNEL_VALUES).optional().default('social'),
   threadId: z.string().max(64).optional().nullable(),
-  config: z.record(z.unknown()).optional(),
+  config: z.record(z.string(), z.unknown()).optional(),
 })
 
 /** 更新路由的请求体 Schema（所有字段可选） */
@@ -56,7 +56,7 @@ const updateRouteSchema = z.object({
     .optional(),
   channel: z.enum(CHANNEL_VALUES).optional(),
   threadId: z.string().max(64).optional().nullable(),
-  config: z.record(z.unknown()).optional(),
+  config: z.record(z.string(), z.unknown()).optional(),
 })
 
 // ─────────────────────────────────────────────

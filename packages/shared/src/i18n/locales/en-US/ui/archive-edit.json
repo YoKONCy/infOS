@@ -33,5 +33,10 @@
   "保存为新修订，不修改来源对话。": "Saves a new revision without changing the source conversation.",
   "取消": "Cancel",
   "保存修改": "Save changes",
-  "修改已保存，旧版本已保留。": "Changes saved. The previous version is preserved."
+  "修改已保存，旧版本已保留。": "Changes saved. The previous version is preserved.",
+  "事实已还原": "Fact restored",
+  "事实操作失败：{0}": "Fact operation failed: {0}",
+  "还原": "Restore",
+  "还原事实？": "Restore fact?",
+  "重新纳入有效事实，保留原始来源与时间。": "Make this fact active again, preserving its original source and time."
 }

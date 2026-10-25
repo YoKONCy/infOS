@@ -109,7 +109,10 @@ watch(
       </p>
       <p v-if="running" class="queue-running">
         <span class="queue-pulse" />
-        {{ __t('ui.chat', '正在执行：') }}{{ running.input.content }}
+        {{ __t('ui.chat', '正在执行：')
+        }}{{
+          running.input.taskResultEvent ? __t('ui.chat', '处理后台任务结果') : running.input.content
+        }}
       </p>
       <TransitionGroup name="queue-item" tag="ol" class="queue-items">
         <li
@@ -126,13 +129,19 @@ watch(
                 {{ item.input.attachmentIds.length }} {{ __t('ui.chat', '个附件') }}
               </span>
             </div>
-            <p class="queue-content">{{ item.input.content }}</p>
+            <p class="queue-content">
+              {{
+                item.input.taskResultEvent
+                  ? __t('ui.chat', '后台任务结果已到达，等待当前对话结束后处理。')
+                  : item.input.content
+              }}
+            </p>
             <p v-if="item.error" class="queue-error">
               <PixelIcon name="alert" size="xs" />
               {{ queueErrorMessage(item.error) }}
             </p>
             <div v-if="!item.immediate" class="queue-actions">
-              <template v-if="item.state === 'queued'">
+              <template v-if="item.state === 'queued' && !item.input.taskResultEvent">
                 <button
                   type="button"
                   class="queue-immediate"
@@ -175,8 +184,16 @@ watch(
               <button
                 type="button"
                 class="queue-remove"
-                :title="__t('ui.chat', '删除待发消息')"
-                :aria-label="__t('ui.chat', '删除待发消息')"
+                :title="
+                  item.input.taskResultEvent
+                    ? __t('ui.chat', '取消自动处理')
+                    : __t('ui.chat', '删除待发消息')
+                "
+                :aria-label="
+                  item.input.taskResultEvent
+                    ? __t('ui.chat', '取消自动处理')
+                    : __t('ui.chat', '删除待发消息')
+                "
                 :disabled="busy || unavailable"
                 @click="emit('change', item, 'cancel')"
               >

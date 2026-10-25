@@ -61,8 +61,8 @@ const updateAgentSchema = z.object({
   publicProfile: publicProfileSchema.optional(),
   ownerAppellation: z.string().max(20).optional(),
   systemPrompt: z.string().optional(),
-  channelPatches: z.record(z.string()).optional(),
-  waifuTexts: z.record(z.unknown()).optional(),
+  channelPatches: z.record(z.string(), z.string()).optional(),
+  waifuTexts: z.record(z.string(), z.unknown()).optional(),
 })
 
 /** 能力矩阵更新（各 channel 的工具/技能/提示词片段） */
@@ -337,11 +337,15 @@ export function createAgentRouter(ctx: AppContext) {
 
   // DELETE /api/agents/:id — 删除自定义 Agent (B6-3)
   router.delete('/:id', async (c) => {
-    const id = c.req.param('id')
+    const id = c.req.param('id').toLowerCase()
 
     try {
       ctx.agentManager.deleteAgent(id)
-      await disposeExecutionOwner({ agentId: id }, false, true)
+      // 记忆取消不依赖终端回收成功，避免角色已删但后台工作仍在提交。
+      await Promise.all([
+        ctx.cleanupDeletedAgent(id),
+        disposeExecutionOwner({ agentId: id }, false, true),
+      ])
       return c.json({ code: 'OK', message: __t('server.routers', 'Agent "{0}" 已删除', [id]) })
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err)

@@ -1,0 +1,7 @@
+<?xml version='1.0' encoding='utf-8'?>
+<svg xmlns="http://www.w3.org/2000/svg" width="260" height="82" viewBox="0 0 260 82" color="#e2e8f6"><defs><symbol id="ref-type-b" viewBox="0 0 260 82">
+      <g fill="none" stroke="currentColor" stroke-width="8" stroke-linecap="butt" stroke-linejoin="round">
+        <path d="M8 34V70M33 70V34H54C63 34 68 40 68 49V70M94 70V24C94 16 100 12 109 12H122M82 35H116" />
+        <path d="M157 12H169C183 12 190 23 190 41S183 70 169 70H157C143 70 136 59 136 41S143 12 157 12ZM248 17C239 11 214 8 209 24 203 43 248 35 248 54 248 74 219 74 205 64" />
+      </g><rect x="4" y="11" width="8" height="8" rx="1" fill="#6c9bed" />
+    </symbol></defs><use href="#ref-type-b" width="260" height="82" /></svg>

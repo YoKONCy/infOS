@@ -15,6 +15,8 @@ import { copyClientText } from '../../../lib/clientPlatform'
  */
 import { ref, shallowRef, computed, onMounted, onUnmounted, watch } from 'vue'
 import { PixelIcon, PInput, PSelect, PButton, PEmpty, PCard, PDialog } from '../../pixel'
+import UserAvatar from '../../user/UserAvatar.vue'
+import { isLocalOwnerMessage } from '../../../lib/userMessageIdentity'
 import { threadsApi } from '../../../api/modules/threadsApi'
 import { strongholdApi } from '../../../api/modules/strongholdApi'
 import type { ThreadInfo, ThreadMessageInfo } from '../../../api/modules/threadsApi'
@@ -52,7 +54,7 @@ interface LogMessage {
   agentId?: string | null
   /** Agent 回复的原始内容（含调试块），仅 assistant 可能有值。 */
   rawContent?: string | null
-  /** 包含进入 ReAct 前的初始提示词快照与 Token 使用量。 */
+  /** 包含实际模型请求快照与 Token 使用量。 */
   metadataJson?: string
   /** Assistant 可见输出的总 Token。 */
   outputTokens?: number
@@ -60,6 +62,7 @@ interface LogMessage {
 }
 
 interface InitialPromptMessage {
+  promptSegment?: string
   role: 'system' | 'user' | 'assistant' | 'tool'
   content: unknown
 }
@@ -352,6 +355,15 @@ function getAgentName(agentId: string): string {
   return agentStore.agents.find((agent) => agent.id === agentId)?.name || agentId
 }
 
+function isOwnerMessage(log: LogEntry, message: LogMessage): boolean {
+  return isLocalOwnerMessage({
+    role: message.role,
+    channel: log.channel,
+    platform: log.roomId ? 'stronghold' : undefined,
+    senderId: message.agentId,
+  })
+}
+
 function toLogEntry(t: ThreadInfo): LogEntry {
   return {
     id: t.id,
@@ -531,8 +543,32 @@ function getDebugRawContent(msg: LogMessage): string {
   return msg.rawContent?.trim() || msg.content
 }
 
-/** 读取进入 ReAct 前首次发送给 LLM 的完整消息快照。 */
+const debugRequestTurn = ref(1)
+interface DebugModelRequest {
+  requestId: number
+  turn: number
+  messages: InitialPromptMessage[]
+  prefill?: { content: string; mode: string }
+  omitted?: boolean
+}
+function getModelRequests(msg: LogMessage): DebugModelRequest[] {
+  try {
+    const data = JSON.parse(msg.metadataJson ?? '{}')
+    return Array.isArray(data.modelRequests)
+      ? data.modelRequests.map((request: DebugModelRequest, index: number) => ({
+          ...request,
+          requestId: request.requestId ?? index + 1,
+        }))
+      : []
+  } catch {
+    return []
+  }
+}
+
+/** 新记录显示所选轮次的请求编译结果；旧记录保留历史快照。 */
 function getInitialPromptMessages(msg: LogMessage): InitialPromptMessage[] {
+  const request = getModelRequests(msg).find((item) => item.requestId === debugRequestTurn.value)
+  if (request) return request.messages
   if (!msg.metadataJson) return []
   try {
     const parsed = JSON.parse(msg.metadataJson) as {
@@ -563,6 +599,7 @@ function formatPromptContent(content: unknown): string {
 
 /** 打开调试弹窗。 */
 function openDebugDialog(msg: LogMessage): void {
+  debugRequestTurn.value = getModelRequests(msg)[0]?.requestId ?? 1
   currentDebugMsg.value = msg
   debugViewMode.value = 'prompt'
   showDebugDialog.value = true
@@ -873,8 +910,9 @@ onUnmounted(() => {
                     msg.role === 'user' ? 'message-avatar--user' : 'message-avatar--assistant'
                   "
                 >
+                  <UserAvatar v-if="isOwnerMessage(log, msg)" :size="36" :framed="false" />
                   <PixelIcon
-                    v-if="msg.role === 'user'"
+                    v-else-if="msg.role === 'user'"
                     name="user"
                     size="sm"
                     class="relative z-10"
@@ -1136,8 +1174,28 @@ onUnmounted(() => {
         </div>
       </div>
 
-      <!-- 完整提示词：仅展示进入 ReAct 前首次发送给 LLM 的消息快照。 -->
+      <!-- 完整提示词按实际请求轮次展示，兼容旧记录的初始快照。 -->
       <div v-if="debugViewMode === 'prompt'" class="prompt-view logs-scrollbar">
+        <div v-if="getModelRequests(currentDebugMsg).length" class="request-selection">
+          <select v-model="debugRequestTurn" :aria-label="__t('ui.settings', '模型请求轮次')">
+            <option
+              v-for="request in getModelRequests(currentDebugMsg)"
+              :key="request.requestId"
+              :value="request.requestId"
+            >
+              {{ __t('ui.settings', '第 {0} 次模型请求', [request.requestId]) }}
+            </option>
+          </select>
+          <small>{{ __t('ui.settings', '请求编译结果，媒体内容以引用展示') }}</small>
+          <p
+            v-if="
+              getModelRequests(currentDebugMsg).find((item) => item.requestId === debugRequestTurn)
+                ?.omitted
+            "
+          >
+            {{ __t('ui.settings', '此轮请求过大，未保存重复正文') }}
+          </p>
+        </div>
         <template v-if="getInitialPromptMessages(currentDebugMsg).length">
           <article
             v-for="(message, index) in getInitialPromptMessages(currentDebugMsg)"
@@ -1147,6 +1205,9 @@ onUnmounted(() => {
           >
             <header>
               <span>{{ message.role }}</span>
+              <span v-if="message.promptSegment === 'assistant_prefill'">
+                {{ __t('ui.settings', '预填充') }}
+              </span>
               <small>#{{ String(index + 1).padStart(2, '0') }}</small>
             </header>
             <pre><code>{{ formatPromptContent(message.content) }}</code></pre>

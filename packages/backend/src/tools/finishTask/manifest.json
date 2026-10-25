@@ -27,7 +27,7 @@
         },
         "reply": {
           "type": "string",
-          "description": "调用本工具时必填的最终回复。普通结果说明应优先直接流式输出正文，不必使用本字段。"
+          "description": "调用本工具时提交的最终回复，必填。"
         },
         "summary": {
           "type": "string",

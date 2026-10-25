@@ -4,6 +4,30 @@
   color: var(--ui-text-primary);
 }
 
+.settings-save-hint {
+  margin: 0;
+  color: var(--ui-text-tertiary);
+  font-size: 11px;
+  line-height: 1.7;
+}
+.settings-field-heading,
+.settings-save-feedback {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+.settings-field-heading {
+  min-height: 32px;
+}
+.settings-save-feedback {
+  padding: 10px 12px;
+  border: 1px solid var(--ui-border-default);
+  background: var(--dash-panel-soft);
+  color: var(--ui-text-secondary);
+  font-size: 12px;
+}
+
 .app-background-settings {
   position: relative;
   min-width: 0;

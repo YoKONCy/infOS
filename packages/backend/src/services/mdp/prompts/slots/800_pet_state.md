@@ -26,11 +26,10 @@ builtin: true
 {% if weather_location %}- 当前地区: {{ weather_location | escape }}
 {% endif %}{% if weather_info %}- 当前天气: {{ weather_info | escape }}
 {% endif %}
-- 上次记录的心情: {{ mood | escape }}
+{% if channel != 'social' %}- 上次记录的心情: {{ mood | escape }}
 - 外在表现: {{ vibe | escape }}
 - 角色心声: {{ mind | escape }}
-根据当前交流维护角色状态；仅在有变化时更新相关项，保持前后连贯，不必刻意制造情绪变化。执行进度使用运行状态；完成任务时可顺带更新，无需另调工具。
-</Current_Status>
+{% endif %}</Current_Status>
 {% endif %}
 {% if environment_info %}
 <Environment>

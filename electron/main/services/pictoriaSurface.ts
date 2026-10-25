@@ -1,4 +1,5 @@
 import { getClientCredential } from '../utils/clientCredential'
+import { getBackendOrigin } from './clientConnection'
 import { ipcMain } from 'electron'
 import { desktopTabs } from '../windows/desktopTabs'
 import { startDesktopPictoria } from './pictoriaLifetime'
@@ -88,19 +89,16 @@ export function registerPictoriaSurface(): void {
     const serialized = body === undefined ? undefined : JSON.stringify(body)
     if (serialized && serialized.length > 28_100_000) throw new Error('画布请求超过大小限制')
     const token = getClientCredential()
-    const response = await fetch(
-      `http://127.0.0.1:${Number(process.env.PERO_PORT ?? 9120)}/api/applications/pictoria${endpoint}`,
-      {
-        method,
-        body: serialized,
-        headers: {
-          'Content-Type': 'application/json',
-          ...(token ? { Authorization: `Bearer ${token}` } : {}),
-        },
-        signal: AbortSignal.timeout(90_000),
-        redirect: 'error',
+    const response = await fetch(`${getBackendOrigin()}/api/applications/pictoria${endpoint}`, {
+      method,
+      body: serialized,
+      headers: {
+        'Content-Type': 'application/json',
+        ...(token ? { Authorization: `Bearer ${token}` } : {}),
       },
-    )
+      signal: AbortSignal.timeout(90_000),
+      redirect: 'error',
+    })
     const result = (await response.json()) as { code: string; data?: unknown; message?: string }
     if (!response.ok || result.code !== 'OK') throw new Error(result.message || '画布请求失败')
     return result.data

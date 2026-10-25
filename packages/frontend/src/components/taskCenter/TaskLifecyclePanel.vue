@@ -23,27 +23,43 @@ const readOnly = ref(false)
 const budgetSegments = ref(48)
 const budgetLlm = ref(192)
 const budgetTools = ref(768)
+const editing = ref(false)
+let draftRevision = 1
 const deliveries = ref<
-  Array<{ id: string; channel: string; status: string; lastError: string | null }>
+  Array<{ id: string; channel: string; status: string; attempts: number; lastError: string | null }>
 >([])
+const deliveryError = ref(false)
 let generation = 0
 watch(
   () => [props.task.id, props.task.revision],
-  () => {
-    instruction.value = props.task.instruction
-    criteria.value = props.task.lifecycle?.successCriteria ?? ''
-    budgetSegments.value = props.task.lifecycle?.maxSegments ?? 48
-    budgetLlm.value = props.task.lifecycle?.maxLlmCalls ?? 192
-    budgetTools.value = props.task.lifecycle?.maxToolCalls ?? 768
+  (value, previous) => {
+    if (value[0] !== previous?.[0]) {
+      editing.value = false
+      error.value = ''
+    }
     confirmed.value = false
-    readOnly.value = props.task.lifecycle?.recovery === 'read_only'
-    const date = props.task.lifecycle?.deadline ? new Date(props.task.lifecycle.deadline) : null
-    deadline.value = date
-      ? new Date(date.getTime() - date.getTimezoneOffset() * 60_000).toISOString().slice(0, 16)
-      : ''
+    if (!editing.value) resetDraft()
   },
   { immediate: true },
 )
+function resetDraft(): void {
+  draftRevision = props.task.revision ?? 1
+  instruction.value = props.task.instruction
+  criteria.value = props.task.lifecycle?.successCriteria ?? ''
+  budgetSegments.value = props.task.lifecycle?.maxSegments ?? 48
+  budgetLlm.value = props.task.lifecycle?.maxLlmCalls ?? 192
+  budgetTools.value = props.task.lifecycle?.maxToolCalls ?? 768
+  readOnly.value = props.task.lifecycle?.recovery === 'read_only'
+  const date = props.task.lifecycle?.deadline ? new Date(props.task.lifecycle.deadline) : null
+  deadline.value = date
+    ? new Date(date.getTime() - date.getTimezoneOffset() * 60_000).toISOString().slice(0, 16)
+    : ''
+}
+function toggleEditing(event: Event): void {
+  const open = (event.target as HTMLDetailsElement).open
+  if (open && !editing.value) resetDraft()
+  editing.value = open
+}
 let timer: ReturnType<typeof setTimeout> | undefined
 let disposed = false
 async function loadDeliveries() {
@@ -51,9 +67,12 @@ async function loadDeliveries() {
   clearTimeout(timer)
   try {
     const result = await backgroundTasksApi.deliveries(props.task.id)
-    if (sequence === generation) deliveries.value = result.data ?? []
+    if (sequence === generation) {
+      deliveries.value = result.data ?? []
+      deliveryError.value = false
+    }
   } catch {
-    if (sequence === generation) deliveries.value = []
+    if (sequence === generation) deliveryError.value = true
   } finally {
     if (
       !disposed &&
@@ -66,7 +85,8 @@ async function loadDeliveries() {
 }
 watch(
   () => [props.task.id, props.task.updatedAt],
-  () => {
+  (value, previous) => {
+    if (value[0] !== previous?.[0]) deliveries.value = []
     void loadDeliveries()
   },
   { immediate: true },
@@ -83,7 +103,7 @@ async function control(action: TaskControlInput['action']) {
   error.value = ''
   try {
     if (action === 'resume' && props.task.lifecycle?.pendingEffect && !confirmed.value)
-      throw new Error('请先核验上一次动作的执行结果')
+      throw new Error(__t('ui.taskCenter', '请先核验上一次动作的执行结果'))
     if (
       action === 'resume' &&
       desktop.supported &&
@@ -96,7 +116,7 @@ async function control(action: TaskControlInput['action']) {
     await backgroundTasksApi.control(props.task.agentId, {
       action,
       taskId: props.task.id,
-      expectedRevision: props.task.revision ?? 1,
+      expectedRevision: action === 'update' ? draftRevision : (props.task.revision ?? 1),
       ...(action === 'update'
         ? {
             instruction: instruction.value,
@@ -110,9 +130,11 @@ async function control(action: TaskControlInput['action']) {
         : {}),
       ...(action === 'resume' ? { confirmUncertain: confirmed.value } : {}),
     })
+    if (action === 'update') editing.value = false
     emit('updated')
   } catch (reason) {
-    error.value = reason instanceof Error ? reason.message : '操作失败，请刷新后重试'
+    error.value =
+      reason instanceof Error ? reason.message : __t('ui.taskCenter', '操作失败，请刷新后重试')
   } finally {
     busy.value = false
   }
@@ -126,7 +148,7 @@ async function resolveDelivery(id: string, decision: 'sent' | 'retry') {
     await loadDeliveries()
     emit('updated')
   } catch (reason) {
-    error.value = reason instanceof Error ? reason.message : '投递操作失败'
+    error.value = reason instanceof Error ? reason.message : __t('ui.taskCenter', '投递操作失败')
   } finally {
     busy.value = false
   }
@@ -211,8 +233,9 @@ const deliveryLabels: Record<string, string> = {
     <template v-if="!['completed', 'cancelled'].includes(task.status)">
       <label v-if="task.lifecycle.pendingEffect">
         <input v-model="confirmed" type="checkbox" :disabled="busy" />
-        {{ __t('ui.taskCenter', '我已核验「') }}{{ task.lifecycle.pendingEffect.toolName
-        }}{{ __t('ui.taskCenter', '」的执行结果') }}
+        {{
+          __t('ui.taskCenter', '我已核验「{0}」的执行结果', [task.lifecycle.pendingEffect.toolName])
+        }}
       </label>
       <PButton
         v-if="['blocked', 'paused', 'failed', 'waiting'].includes(task.status)"
@@ -222,7 +245,7 @@ const deliveryLabels: Record<string, string> = {
       >
         {{ __t('ui.taskCenter', '继续任务') }}
       </PButton>
-      <details>
+      <details :open="editing" @toggle="toggleEditing">
         <summary>{{ __t('ui.taskCenter', '调整任务') }}</summary>
         <label>
           {{ __t('ui.taskCenter', '任务要求') }}
@@ -259,7 +282,7 @@ const deliveryLabels: Record<string, string> = {
         </PButton>
       </details>
     </template>
-    <details v-if="deliveries.length">
+    <details v-if="deliveries.length" open class="lifecycle-deliveries">
       <summary>{{ __t('ui.taskCenter', '结果投递') }}</summary>
       <div v-for="item in deliveries" :key="item.id" class="delivery-item">
         <span>
@@ -268,18 +291,25 @@ const deliveryLabels: Record<string, string> = {
               ? __t('ui.taskCenter', '来源会话')
               : item.channel === 'chat'
                 ? __t('ui.taskCenter', '主应用对话')
-                : __t('ui.taskCenter', '应用通知')
+                : item.channel === 'resume'
+                  ? __t('ui.taskCenter', '会话接续')
+                  : __t('ui.taskCenter', '应用通知')
           }}
           ·
           {{
             item.status === 'sent'
               ? item.channel === 'app'
                 ? __t('ui.taskCenter', '已记录')
-                : __t('ui.taskCenter', '已发送')
+                : item.channel === 'resume'
+                  ? __t('ui.taskCenter', '已加入处理队列')
+                  : __t('ui.taskCenter', '已发送')
               : (deliveryLabels[item.status] ?? item.status)
           }}
         </span>
         <small v-if="item.lastError">{{ item.lastError }}</small>
+        <small v-if="item.attempts > 1">
+          {{ __t('ui.taskCenter', '已尝试 {0} 次', [item.attempts]) }}
+        </small>
         <div v-if="item.status === 'uncertain'">
           <PButton
             size="sm"
@@ -300,6 +330,9 @@ const deliveryLabels: Record<string, string> = {
         </div>
       </div>
     </details>
+    <p v-if="deliveryError" class="lifecycle-muted" role="status">
+      {{ __t('ui.taskCenter', '投递状态暂时无法读取，正在重试。') }}
+    </p>
     <p v-if="error" role="alert" class="lifecycle-error">{{ error }}</p>
   </section>
 </template>
@@ -310,9 +343,7 @@ const deliveryLabels: Record<string, string> = {
   gap: 12px;
   color: var(--ui-text-primary);
   font-size: 13px;
-  border-top: 1px solid var(--ui-border-default);
-  padding-top: 16px;
-  font-family: var(--ui-font-pixel);
+  font-family: var(--ui-font-sans);
 }
 p {
   margin: 0;
@@ -385,9 +416,11 @@ small {
   display: grid;
   gap: 5px;
   padding-block: 8px;
-  border-left: 2px solid var(--ui-border-default);
+  border-left: 2px solid var(--ui-accent-sky);
   padding: 8px 10px;
   background: var(--ui-bg-hover);
+  margin-top: 7px;
+  border-radius: var(--ui-radius-xs);
 }
 .lifecycle-error {
   color: var(--ui-danger);

@@ -40,18 +40,23 @@ h3 {
 h4 {
   font-size: 14px;
 }
+.prompt-heading h2 {
+  font-size: 24px;
+  font-weight: 900;
+  line-height: 1.4;
+}
 .eyebrow {
   display: block;
-  margin-top: 8px;
-  font-size: 11px;
-  font-family: monospace;
-  letter-spacing: 0.15em;
+  margin-top: 4px;
+  /* 英文副标题使用项目等宽字体，不回落到浏览器的默认等宽字形。 */
+  font: 400 11px/1.6 var(--ui-font-mono);
+  letter-spacing: 0.08em;
   color: var(--ui-text-tertiary);
 }
 .status-chip {
   border: 1px solid var(--ui-border-default);
   color: var(--ui-text-tertiary);
-  font-size: 12px;
+  font: 700 11px/1.5 var(--ui-font-pixel);
   padding: 3px 8px;
 }
 .status-chip.changed {
@@ -200,6 +205,25 @@ h4 {
   max-height: 65vh;
   overflow-y: auto;
   padding: 2px 4px 8px;
+}
+.preset-package-choice {
+  display: grid;
+  gap: 12px;
+  padding: 16px;
+  border: 2px solid var(--ui-border-default);
+  background: var(--dash-panel-soft, var(--ui-bg-surface-soft));
+  box-shadow: 2px 2px 0 var(--ui-border-subtle);
+}
+.preset-package-choice strong {
+  color: var(--ui-text-primary);
+  font-family: var(--font-pixel);
+}
+.preset-package-choice p {
+  color: var(--ui-text-secondary);
+  font-size: 12px;
+}
+.preset-package-choice > .p-btn {
+  justify-self: start;
 }
 .independent-body {
   min-height: 180px;

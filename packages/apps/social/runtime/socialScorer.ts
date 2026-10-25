@@ -229,11 +229,22 @@ export class SocialScorerService {
       )
 
       // 格式化对话上下文
-      const chatText = messages.map((m) => `${m.senderName ?? '未知'}: ${m.content}`).join('\n')
+      const chatText = messages
+        .map(
+          (m) =>
+            `[平台:${m.platform} 账号:${m.accountId} 会话:${m.channelType}:${m.channelId} 发送者:${m.senderId}] ${m.senderName ?? '未知'}: ${m.content}`,
+        )
+        .join('\n')
 
       const channelType = messages[0]?.channelType ?? 'group'
       const channelId = messages[0]?.channelId ?? '未知'
-      const sessionName = channelType === 'private' ? '私聊' : `群${channelId}`
+      const addresses = new Set(
+        messages.map((m) => JSON.stringify([m.platform, m.accountId, m.channelType, m.channelId])),
+      )
+      const sessionName =
+        addresses.size > 1
+          ? '多个已标明来源的社交会话'
+          : `${messages[0]?.platform} · ${channelType === 'private' ? '私聊' : '群聊'} ${channelId}`
 
       // 获取反思模型配置
       const modelConfig = await this.getModelConfig()

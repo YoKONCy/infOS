@@ -1,4 +1,27 @@
 /* 业务区与传送到 body 的调试弹窗均直接使用主题令牌。 */
+.request-selection {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 10px 16px;
+  padding: 12px;
+  margin-bottom: 12px;
+  border: 1px solid var(--ui-border-default);
+  background: var(--app-reading-fill, var(--dash-panel-soft));
+}
+.request-selection select {
+  min-height: 32px;
+  border: 2px solid var(--ui-border-default);
+  border-radius: 0;
+  padding: 4px 10px;
+  color: var(--ui-text-primary);
+  background: var(--dash-input-bg);
+  font-family: var(--font-pixel), monospace;
+}
+.request-selection small,
+.request-selection p {
+  color: var(--ui-text-secondary);
+}
 .logs-tab,
 .debug-dialog-body {
   color: var(--ui-text-primary);

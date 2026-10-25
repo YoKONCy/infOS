@@ -1,6 +1,6 @@
 {
   "name": "@infos/social",
-  "version": "0.9.5-hotfix1",
+  "version": "0.9.6",
   "private": true,
   "type": "module",
   "scripts": {
@@ -9,11 +9,13 @@
   "dependencies": {
     "@infos/backend": "workspace:*",
     "@infos/shared": "workspace:*",
+    "discord.js": "14.27.0",
     "drizzle-orm": "^0.44.0",
+    "grammy": "1.46.0",
     "hono": "^4.7.0",
     "omggif": "1.0.10",
     "pngjs": "7.0.0",
-    "triviumdb": "0.8.9",
+    "triviumdb": "0.8.11",
     "uuid": "^14.0.0"
   },
   "devDependencies": {

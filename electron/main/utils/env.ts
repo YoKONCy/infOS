@@ -11,6 +11,7 @@ import path from 'node:path'
 import fs from 'node:fs'
 import { app } from 'electron'
 import { isPackagedRuntime } from './runtimeMode'
+import { stdioGuard } from './stdioGuard'
 
 // ─── 便携模式检测 ──────────────────────────────────────────
 // exe 同目录下存在 `.portable` 标记文件 → 便携模式
@@ -34,14 +35,19 @@ function resolveUserData(): string {
   if (isPortable) {
     // 便携模式：用户根位于 exe 同级，业务数据写入其 data/ 子目录。
     const dir = path.dirname(app.getPath('exe'))
-    console.log(__t('electron.logs.utils', '[Env] 便携模式，用户根目录: {0}', [dir]))
+    if (process.env.INFOS_LOG_STDIO === '1')
+      stdioGuard.write('stdout', () =>
+        console.log(__t('electron.logs.utils', '[Env] 便携模式，用户根目录: {0}', [dir])),
+      )
     return dir
   }
 
   if (isDev) {
     // 开发模式：Electron 与独立 Daemon 统一使用 ~/.infos。
     const devDir = path.join(app.getPath('home'), '.infos')
-    console.log(__t('electron.logs.utils', '[Env] 开发模式，数据目录: {0}', [devDir]))
+    stdioGuard.write('stdout', () =>
+      console.log(__t('electron.logs.utils', '[Env] 开发模式，数据目录: {0}', [devDir])),
+    )
     return devDir
   }
 

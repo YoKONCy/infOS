@@ -1,8 +1,12 @@
 import { t as __t } from '../runtime/i18n'
 import type { SocialStoragePort } from '@infos/shared'
 import type { StickerService } from '../runtime/stickerService'
+import { restoreSocialMessage } from '../runtime/socialMessageContext'
+import type { SocialMessageRecord } from '@infos/shared'
+import type { InboundMessage } from '../runtime/types'
 
 export interface StickerTurnScope {
+  platform?: string
   agentId: string
   accountId: string
   channelId: string
@@ -15,6 +19,7 @@ export async function executeSocialSticker(
   storage: SocialStoragePort,
   scope: StickerTurnScope,
   args: Record<string, unknown>,
+  decode: (row: SocialMessageRecord) => InboundMessage = restoreSocialMessage,
 ): Promise<string> {
   const action = String(args.action ?? '')
   let stage = 'preflight'
@@ -46,34 +51,26 @@ export async function executeSocialSticker(
     if (action === 'collect') {
       const messageId = String(args.message_id ?? '')
       if (!messageId || messageId.length > 100) throw new Error('收藏需要提供来源 message_id')
-      const row = await storage.getByMsgId(scope.agentId, messageId, scope.accountId)
+      const row = await storage.getByMsgId(scope.agentId, messageId, scope.accountId, scope)
       if (
         !row ||
-        row.platform !== 'qq' ||
+        (scope.platform !== undefined && row.platform !== scope.platform) ||
         row.channelId !== scope.channelId ||
         row.channelType !== scope.channelType
       )
         throw new Error('只能收藏当前会话中已收到的图片')
-      const event = JSON.parse(row.rawEventJson || '{}') as {
-        self_id?: string | number
-        message?: Array<{ type: string; data?: { url?: string } }>
-      }
-      const sourceAccount = row.accountId || String(event.self_id ?? '')
-      if (
-        sourceAccount !== scope.accountId ||
-        (event.self_id != null && String(event.self_id) !== scope.accountId)
-      )
-        throw new Error('来源图片不属于当前 QQ 账号')
-      const images = Array.isArray(event.message)
-        ? event.message.filter((item) => item.type === 'image')
-        : []
+      if (row.accountId !== scope.accountId) throw new Error('SOCIAL_MESSAGE_SOURCE_INVALID')
+      const images = (decode(row).attachments ?? []).filter((item) => item.type === 'image')
       const index = Number(args.image_index ?? 1)
       if (!Number.isInteger(index) || index < 1)
         throw new Error('image_index 必须是从 1 开始的整数')
-      const url = images[index - 1]?.data?.url
+      const url = images[index - 1]?.url
       if (!url)
         throw new Error(
-          '该消息中没有对应图片或原图链接已不可用；系统/商城表情可用 emoji_list 查询来源，不能据此断言 QQ 不支持收藏',
+          __t(
+            'errors.social',
+            '该消息中没有对应图片或原图链接已不可用；原生表情请使用当前平台提供的表情能力',
+          ),
         )
       stage = 'collect'
       const result = await service.collect(

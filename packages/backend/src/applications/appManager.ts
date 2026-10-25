@@ -45,7 +45,7 @@ import type { AgentManager } from '../services/agent/agentManager'
 import type { ModelConfig } from '../services/llm/llmService'
 import type { MemoryStoreRegistry } from '../repositories/storeRegistry'
 import type { SocialEventPort, SocialStoragePort } from './socialPorts'
-import { registerSocialNapcatAdapter } from './socialWsBridge'
+import { registerSocialTransport } from './socialWsBridge'
 import type { KernelScheduler } from '../kernel/kernelScheduler'
 import type { InboundRouteRepository } from '../repositories/inboundRoute.repo'
 import type { ConfigRepository } from '../repositories/config.repo'
@@ -155,6 +155,8 @@ export interface AppManager {
   }): Promise<AppInstance[]>
 
   executeCommand(params: {
+    correlationId?: string
+    execution?: import('@infos/shared').KernelExecutionDescriptor
     appId: string
     hostAgentId: string
     action: string
@@ -226,6 +228,9 @@ export interface AppManager {
   setStatusCardPort(port: import('@infos/shared').SocialStatusCardPort): void
   setResourcePort(port: import('@infos/shared').SocialResourcePort): void
   setCreativePort(port: import('@infos/shared').ApplicationCreativePort): void
+  setSocialHostCapabilityFactory(
+    factory: (realmId: string) => import('@infos/shared').SocialHostCapabilityPort,
+  ): void
 
   /**
    * 注册内置应用 runtime factory
@@ -336,6 +341,14 @@ export class AppManagerImpl implements AppManager {
   private statusCardPort?: import('@infos/shared').SocialStatusCardPort
   private resourcePort?: import('@infos/shared').SocialResourcePort
   private creativePort?: import('@infos/shared').ApplicationCreativePort
+  private socialHostCapabilityFactory?: (
+    realmId: string,
+  ) => import('@infos/shared').SocialHostCapabilityPort
+  setSocialHostCapabilityFactory(
+    factory: NonNullable<AppManagerImpl['socialHostCapabilityFactory']>,
+  ): void {
+    this.socialHostCapabilityFactory = factory
+  }
   setCreativePort(port: import('@infos/shared').ApplicationCreativePort): void {
     this.creativePort = port
   }
@@ -351,6 +364,26 @@ export class AppManagerImpl implements AppManager {
 
   setHostCommunicator(handler: NonNullable<AppManagerImpl['hostCommunicator']>): void {
     this.hostCommunicator = handler
+  }
+
+  /** 社交单实例可切换人格；委派、咨询和记忆回流都读取当前授权，不能沿用启动角色。 */
+  private async personaFor(
+    appId: string,
+    instanceId: string,
+    launchAgentId: string,
+  ): Promise<string | undefined> {
+    if (appId !== 'social') return launchAgentId
+    const grants = await this.grantRegistry.queryGrants({ holderId: instanceId, activeOnly: true })
+    const ids = new Set(
+      grants.flatMap((grant) =>
+        grant.resource.kind === 'persona' &&
+        grant.permissions.includes('read') &&
+        this.agentManager.getAgent(grant.resource.agentId)
+          ? [grant.resource.agentId]
+          : [],
+      ),
+    )
+    return ids.size === 1 ? [...ids][0] : undefined
   }
 
   /** 注入需要 Thread 生命周期的会话状态服务，避免扩大应用管理器构造参数。 */
@@ -650,8 +683,10 @@ export class AppManagerImpl implements AppManager {
           if (!this.hostCommunicator) {
             return { decision: 'host_unavailable', reason: '宿主通信服务尚未初始化' }
           }
+          const currentAgentId = await this.personaFor(appId, instanceId, hostAgentId)
+          if (!currentAgentId) throw new Error('SOCIAL_PERSONA_BINDING_INVALID')
           return this.hostCommunicator({
-            hostAgentId,
+            hostAgentId: currentAgentId,
             appId,
             instanceId,
             correlationId: request.correlationId,
@@ -671,6 +706,10 @@ export class AppManagerImpl implements AppManager {
         agentManager: this.agentManager,
         threadService: this.threadService!,
         resources: appId === 'social' ? this.resourcePort : undefined,
+        hostCapabilities:
+          appId === 'social'
+            ? this.socialHostCapabilityFactory?.(realm.descriptor.realmId)
+            : undefined,
         creative: appId === 'social' ? this.creativePort : undefined,
         flowStateService: this.flowStateService!,
         getAgentModel: this.getAgentModel,
@@ -681,7 +720,7 @@ export class AppManagerImpl implements AppManager {
         taskControl: appId === 'social' ? this.taskPorts?.control : undefined,
         statusCards: appId === 'social' ? this.statusCardPort : undefined,
         registerTaskDelivery: appId === 'social' ? this.taskPorts?.registerDelivery : undefined,
-        registerSocialTransport: appId === 'social' ? registerSocialNapcatAdapter : undefined,
+        registerSocialTransport: appId === 'social' ? registerSocialTransport : undefined,
         socialExecutions: this.kernelScheduler
           ? {
               run: async <T>(input: {
@@ -974,6 +1013,8 @@ export class AppManagerImpl implements AppManager {
   }
 
   async executeCommand(params: {
+    correlationId?: string
+    execution?: import('@infos/shared').KernelExecutionDescriptor
     appId: string
     hostAgentId: string
     action: string
@@ -988,10 +1029,23 @@ export class AppManagerImpl implements AppManager {
     if (!action || (action.mode !== 'command' && action.mode !== 'both')) {
       throw new Error(`应用 ${params.appId} 未声明一次性动作: ${params.action}`)
     }
-    const instance = [...this.runtimes.entries()].find(
-      ([, entry]) =>
-        entry.manifest.id === params.appId && entry.ctx.hostAgentId === params.hostAgentId,
+    const candidates = [...this.runtimes.entries()].filter(
+      ([, entry]) => entry.manifest.id === params.appId,
     )
+    let instance: (typeof candidates)[number] | undefined
+    for (const candidate of candidates) {
+      // 查询和取消按原任务主体校验，不需要唤醒或借用应用当前人格。
+      const taskControl =
+        params.appId === 'social' && ['get_task', 'cancel_task'].includes(params.action)
+      if (
+        !taskControl &&
+        (await this.personaFor(params.appId, candidate[0], candidate[1].ctx.hostAgentId)) !==
+          params.hostAgentId
+      )
+        continue
+      instance = candidate
+      break
+    }
     if (!instance) throw new Error(`应用未运行: ${params.appId}`)
     const [instanceId, entry] = instance
     if (!entry.runtime.executeCommand) throw new Error(`应用不支持主 Agent 委派: ${params.appId}`)
@@ -1001,7 +1055,8 @@ export class AppManagerImpl implements AppManager {
     ): Promise<AppCommandResult> => {
       params.signal?.throwIfAborted()
       const request: AppCommandRequest = {
-        correlationId: execution?.executionId ?? crypto.randomUUID(),
+        agentId: params.hostAgentId,
+        correlationId: params.correlationId ?? execution?.executionId ?? crypto.randomUUID(),
         executionId: execution?.executionId,
         processId: execution?.processId,
         action: params.action,
@@ -1022,6 +1077,7 @@ export class AppManagerImpl implements AppManager {
       )
       return entry.runtime.executeCommand!(request)
     }
+    if (params.execution) return invoke(params.execution, params.signal)
     if (!this.kernelScheduler) return invoke()
     let result: AppCommandResult | undefined
     const terminal = await this.kernelScheduler.submitAndWait({
@@ -1033,7 +1089,8 @@ export class AppManagerImpl implements AppManager {
       budget: { maxDurationMs: 10 * 60_000, maxLlmCalls: 24, maxToolCalls: 64, maxConcurrentIo: 8 },
       run: async ({ descriptor, signal }) => {
         result = await invoke(descriptor, signal)
-        if (result.status === 'failed') throw new Error(result.error ?? result.summary)
+        if (result.status === 'failed' && !['get_task', 'cancel_task'].includes(params.action))
+          throw new Error(result.error ?? result.summary)
       },
     })
     if (!result) throw new Error(`应用命令未返回结果: ${terminal.state}`)
@@ -1084,7 +1141,11 @@ export class AppManagerImpl implements AppManager {
     // 遍历所有运行中的实例（通过 runtimes Map，已过滤 stopped 实例）
     for (const [instanceId, entry] of this.runtimes) {
       // 仅收集指定主 Agent 下的应用
-      if (entry.ctx.hostAgentId !== hostAgentId) continue
+      if (
+        (await this.personaFor(entry.manifest.id, instanceId, entry.ctx.hostAgentId)) !==
+        hostAgentId
+      )
+        continue
 
       // 应用未实现 getDailySummaries 时跳过
       const runtime = entry.runtime

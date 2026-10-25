@@ -12,7 +12,7 @@
  * @module packages/backend/src/repositories/backgroundTask.repo
  */
 
-import { eq, desc, and, inArray, like, gte, lte, sql } from 'drizzle-orm'
+import { eq, desc, and, inArray, notInArray, like, gte, lte, sql } from 'drizzle-orm'
 import { backgroundTasks, kernelOutboxEvents } from '../database/schema'
 import { KernelOutboxRepository } from '../kernel/kernelOutboxRepository'
 import { AppError } from '../lib/appError'
@@ -63,6 +63,7 @@ export interface CreateBackgroundTaskInput {
 
 /** 分页查询参数 */
 export interface BackgroundTaskQuery {
+  parentTaskId?: string
   appId?: string
   category?: BackgroundTaskCategory
   agentId?: string
@@ -134,6 +135,7 @@ export class BackgroundTaskRepository {
   /** 分页查询（默认按创建时间倒序） */
   async query(params: BackgroundTaskQuery): Promise<BackgroundTaskPage<BackgroundTaskRow>> {
     const conditions = []
+    if (params.parentTaskId) conditions.push(eq(backgroundTasks.parentTaskId, params.parentTaskId))
     if (params.appId)
       conditions.push(
         sql`json_extract(${backgroundTasks.metadataJson}, '$.appId') = ${params.appId}`,
@@ -243,7 +245,7 @@ export class BackgroundTaskRepository {
         }
       }
       if (
-        ['completed', 'failed', 'blocked'].includes(to) ||
+        ['completed', 'failed', 'blocked', 'cancelled'].includes(to) ||
         (to === 'waiting_input' && row.lifecycleJson && JSON.parse(row.lifecycleJson).wait)
       ) {
         const outbox = new KernelOutboxRepository(this.db)
@@ -303,6 +305,7 @@ export class BackgroundTaskRepository {
       Pick<
         BackgroundTaskRow,
         | 'instruction'
+        | 'metadataJson'
         | 'title'
         | 'lifecycleJson'
         | 'checkpointJson'
@@ -334,6 +337,16 @@ export class BackgroundTaskRepository {
           inArray(backgroundTasks.status, ['waiting', 'waiting_input']),
         ),
       )
+      .all()
+  }
+
+  /** 取消意图与任务修订一同持久化；进程中断或应用离线后继续收口委派。 */
+  async listPendingCancellations(): Promise<BackgroundTaskRow[]> {
+    return this.db
+      .select()
+      .from(backgroundTasks)
+      .where(sql`json_extract(${backgroundTasks.metadataJson}, '$.cancellationPending') = 1`)
+      .limit(100)
       .all()
   }
 
@@ -487,6 +500,25 @@ export class BackgroundTaskRepository {
     })
     await this.update(created.id, { currentStage: '系统常驻 · 随服务运行' })
     return (await this.findById(created.id))!
+  }
+
+  /** 角色删除时仅回收常驻投影，普通任务及其交付历史保留。 */
+  async deleteResidentsForAgent(agentId: string): Promise<void> {
+    await this.db
+      .delete(backgroundTasks)
+      .where(and(eq(backgroundTasks.category, 'resident'), eq(backgroundTasks.agentId, agentId)))
+  }
+
+  /** 启动时清理旧版本遗留的孤立常驻记录；空角色列表也必须清理。 */
+  async pruneOrphanResidents(agentIds: string[]): Promise<void> {
+    await this.db
+      .delete(backgroundTasks)
+      .where(
+        and(
+          eq(backgroundTasks.category, 'resident'),
+          agentIds.length ? notInArray(backgroundTasks.agentId, agentIds) : undefined,
+        ),
+      )
   }
 
   /** 服务重启后的未完成任务恢复查询

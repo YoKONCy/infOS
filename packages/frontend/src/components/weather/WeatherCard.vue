@@ -4,12 +4,29 @@ import { t as __t } from '../../i18n/index'
 import { computed, ref, watch } from 'vue'
 import { PixelIcon, PCard, PInput, PButton } from '../pixel'
 import { useWeather } from '../../composables/useWeather'
+import {
+  registerSettingsParticipant,
+  useSystemSettingsPage,
+} from '../../composables/ui/useSystemSettingsPage'
 
 const props = withDefaults(defineProps<{ settings?: boolean }>(), { settings: false })
 const { status, loaded, saving, error, setLocation } = useWeather()
 const editing = ref(props.settings)
 const expanded = ref(false)
 const draft = ref('')
+const page = props.settings ? useSystemSettingsPage() : undefined
+registerSettingsParticipant(page, {
+  capture: () => {
+    const location = draft.value.trim()
+    if (location === status.value.query) return {}
+    return {
+      persist: async () => {
+        if (!(await setLocation(location)))
+          throw new Error(error.value || __t('ui.weather', '城市未保存，请检查地点或稍后重试'))
+      },
+    }
+  },
+})
 const snapshot = computed(() => status.value.snapshot)
 function localDateKey(date: Date): string {
   return `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}-${String(date.getDate()).padStart(2, '0')}`
@@ -34,8 +51,8 @@ const updated = computed(() => {
 })
 watch(
   () => status.value.query,
-  (value) => {
-    draft.value = value
+  (value, previous) => {
+    if (previous === undefined || draft.value === previous) draft.value = value
   },
   { immediate: true },
 )
@@ -44,10 +61,13 @@ function edit(): void {
   editing.value = !editing.value
 }
 async function save(): Promise<void> {
-  if (await setLocation(draft.value)) editing.value = props.settings
+  if (page ? await page.save() : await setLocation(draft.value)) editing.value = props.settings
 }
 async function clear(): Promise<void> {
-  if (await setLocation('')) draft.value = ''
+  if (page) {
+    draft.value = ''
+    await page.save()
+  } else if (await setLocation('')) draft.value = ''
 }
 const symbol = computed(() => {
   switch (snapshot.value?.kind) {
@@ -166,11 +186,15 @@ const symbol = computed(() => {
           v-model="draft"
           maxlength="80"
           :placeholder="__t('ui.weather', '如 上海、上海杨浦 或 31.23,121.47')"
-          :disabled="saving"
+          :disabled="saving || page?.disabled.value"
         />
       </label>
       <div class="weather-actions">
-        <PButton type="submit" :size="settings ? 'md' : 'sm'" :disabled="saving || !draft.trim()">
+        <PButton
+          type="submit"
+          :size="settings ? 'md' : 'sm'"
+          :disabled="saving || page?.disabled.value || !draft.trim()"
+        >
           {{ saving ? __t('ui.weather', '保存中…') : __t('ui.weather', '保存') }}
         </PButton>
         <PButton
@@ -178,7 +202,7 @@ const symbol = computed(() => {
           type="button"
           variant="secondary"
           :size="settings ? 'md' : 'sm'"
-          :disabled="saving"
+          :disabled="saving || page?.disabled.value"
           @click="clear"
         >
           {{ __t('ui.weather', '清除') }}

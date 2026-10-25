@@ -53,7 +53,7 @@ type FactOperationPayload =
   | FactDeleteOperationPayload
   | FactAliasOperationPayload
 
-type FactOperationKind = 'write' | 'supersede' | 'delete' | 'retract' | 'alias'
+type FactOperationKind = 'write' | 'supersede' | 'delete' | 'retract' | 'restore' | 'alias'
 
 export class FactsRepository {
   private manualEdits = new Map<string, Promise<FactRecord>>()
@@ -69,6 +69,73 @@ export class FactsRepository {
     private db: DrizzleDb,
     private stores: MemoryStoreRegistry,
   ) {}
+
+  hasActiveFacts(): boolean {
+    return Boolean(
+      this.db
+        .select({ id: factRecords.id })
+        .from(factRecords)
+        .where(
+          and(
+            eq(factRecords.status, 'active'),
+            sql`${factRecords.id} NOT IN
+        (SELECT target_id FROM privacy_deletions WHERE kind='fact')`,
+            sql`${factRecords.objectId} NOT IN
+        (SELECT target_id FROM privacy_deletions WHERE kind='fact')`,
+          ),
+        )
+        .limit(1)
+        .get(),
+    )
+  }
+
+  /** 自动召回只采纳对象明确出现或正文检索命中的有效事实，不复用零分候选。 */
+  recall(input: string, limit = 4): FactRecord[] {
+    const query = input.normalize('NFKC').toLocaleLowerCase().trim().slice(0, 800)
+    if (!query) return []
+    const store = this.stores.getSharedStore('facts')
+    const scores = new Map<number, number>()
+    store.buildTextIndex()
+    for (const hit of store.searchHybrid(this.zeroVector(), query, 30, 0, -1, 0)) {
+      if (hit.score > 0) scores.set(hit.id, hit.score)
+    }
+    const candidates: Array<{ record: FactRecord; score: number }> = []
+    for (const id of store.allNodeIds()) {
+      const object = store.get<FactObjectPayload | FactPayload>(id)?.payload
+      if (object?.kind !== 'fact_object' || this.privacy?.deleted('fact', object.id)) continue
+      const mentioned = [object.standardName, ...object.aliases].some((name) => {
+        const value = name.normalize('NFKC').toLocaleLowerCase().trim()
+        if (value.length < 2) return query === value
+        if (!/^[\p{Script=Latin}\d _-]+$/u.test(value)) return query.includes(value)
+        const escaped = value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
+        return new RegExp(`(?<![\\p{L}\\p{N}_])${escaped}(?![\\p{L}\\p{N}_])`, 'u').test(query)
+      })
+      for (const edge of store.getEdges(id).filter((item) => item.label === 'has_fact')) {
+        const fact = store.get<FactPayload>(edge.targetId)?.payload
+        if (
+          fact?.kind !== 'fact' ||
+          fact.status !== 'active' ||
+          this.privacy?.deleted('fact', fact.id)
+        )
+          continue
+        const score =
+          (mentioned ? 100 : 0) + (scores.get(id) ?? 0) + (scores.get(edge.targetId) ?? 0)
+        if (score > 0) {
+          const { kind: _kind, ...record } = fact
+          candidates.push({ record, score })
+        }
+      }
+    }
+    return candidates
+      .sort(
+        (a, b) =>
+          b.score - a.score ||
+          b.record.observedAt.localeCompare(a.record.observedAt) ||
+          a.record.id.localeCompare(b.record.id),
+      )
+      .slice(0, limit)
+      .map((item) => item.record)
+  }
 
   async query(name: string): Promise<FactQueryResult> {
     const normalized = this.normalize(name)
@@ -446,6 +513,59 @@ export class FactsRepository {
     await this.applyOperation(operationId, 'retract', payload)
   }
 
+  /** 仅还原撤回且未被替代的事实，永久删除与版本替代不能被此入口逆转。 */
+  async restoreFact(id: string, operationId: string = randomUUID()): Promise<void> {
+    const existing = await this.findOperation(operationId)
+    if (existing) {
+      if (
+        existing.operation !== 'restore' ||
+        (existing.payload as FactWriteOperationPayload).record.id !== id
+      )
+        throw new Error('ARCHIVE_RESTORE_CONFLICT')
+      await this.applyOperation(operationId, existing.operation, existing.payload)
+      return
+    }
+    if (this.privacy?.deleted('fact', id)) throw new Error('ARCHIVE_RESTORE_NOT_FOUND')
+    const row = await this.factRow(id)
+    if (!row) throw new Error('ARCHIVE_RESTORE_NOT_FOUND')
+    // SQL 已提交而索引写入失败时，新的 HTTP 重试也必须能修补索引。
+    if (!['active', 'retracted'].includes(row.status) || row.supersededBy)
+      throw new Error('ARCHIVE_RESTORE_CONFLICT')
+    const object = await this.findObject(row.objectId)
+    if (!object || this.privacy?.deleted('fact', object.id))
+      throw new Error('ARCHIVE_RESTORE_NOT_FOUND')
+    const payload: FactWriteOperationPayload = {
+      object,
+      record: { ...this.toFact(row, object.standardName), status: 'active' },
+      factTdbId: row.tdbId,
+    }
+    this.privacy?.assertPayload('fact', payload)
+    this.db.transaction((tx) => {
+      tx.insert(factMemoryOperations)
+        .values({
+          operationId,
+          operation: 'restore',
+          payloadJson: JSON.stringify(payload),
+          status: 'pending',
+          createdAt: new Date().toISOString(),
+        })
+        .run()
+      const changed = tx
+        .update(factRecords)
+        .set({ status: 'active' })
+        .where(
+          and(
+            eq(factRecords.id, id),
+            inArray(factRecords.status, ['active', 'retracted']),
+            isNull(factRecords.supersededBy),
+          ),
+        )
+        .run()
+      if (changed.changes !== 1) throw new Error('ARCHIVE_RESTORE_CONFLICT')
+    })
+    await this.applyOperation(operationId, 'restore', payload)
+  }
+
   async deleteFact(id: string, operationId: string = randomUUID()): Promise<void> {
     if (this.purge) return this.purge(id)
     const existing = await this.findOperation(operationId)
@@ -649,6 +769,16 @@ export class FactsRepository {
       } else if (operation === 'delete') {
         const deletion = payload as FactDeleteOperationPayload
         if (store.contains(deletion.factTdbId)) store.delete(deletion.factTdbId)
+      } else if (operation === 'restore') {
+        const restored = payload as FactWriteOperationPayload
+        const latest = await this.factRow(restored.record.id)
+        if (!latest) throw new Error('ARCHIVE_RESTORE_NOT_FOUND')
+        this.privacy?.assertPayload('fact', payload)
+        const record = this.toFact(latest, restored.object.standardName)
+        this.applyWrite(store, { ...restored, record })
+        store.updatePayload(restored.factTdbId, { ...record, kind: 'fact' } satisfies FactPayload)
+        store.indexText(restored.factTdbId, record.statement)
+        store.flush()
       } else if (operation === 'retract') {
         const retraction = payload as FactDeleteOperationPayload
         if (!store.contains(retraction.factTdbId)) throw new Error('待撤回事实的TDB节点不存在')
@@ -656,7 +786,7 @@ export class FactsRepository {
         if (!node) throw new Error('待撤回事实的TDB节点不存在')
         store.updatePayload(retraction.factTdbId, {
           ...node.payload,
-          status: 'retracted',
+          status: (await this.factRow(retraction.record.id))?.status ?? 'retracted',
         })
       } else {
         const alias = payload as FactAliasOperationPayload

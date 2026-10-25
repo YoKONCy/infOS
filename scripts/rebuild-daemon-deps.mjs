@@ -5,6 +5,7 @@ import path from 'node:path'
 import { fileURLToPath } from 'node:url'
 
 const require = createRequire(import.meta.url)
+const { configuredElectron } = require('./runtime-security.cjs')
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..')
 const cacheHome = path.join(root, '.pnpm-cache', 'electron-rebuild-home')
 const npmCache = path.join(root, '.pnpm-cache', 'npm')
@@ -18,7 +19,7 @@ const result = spawnSync(
   [
     rebuildCli,
     '--version',
-    '40.2.1',
+    configuredElectron(),
     '--module-dir',
     'dist-daemon',
     '--only',

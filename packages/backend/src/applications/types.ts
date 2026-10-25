@@ -418,6 +418,8 @@ export interface LaunchAppParams {
 // ─────────────────────────────────────────────
 
 export interface AppCommandRequest {
+  /** 宿主填写的真实调用主体，模型输入不能覆盖。 */
+  agentId?: string
   correlationId: string
   signal?: AbortSignal
   executionId?: import('@infos/shared').KernelExecutionId
@@ -430,7 +432,7 @@ export interface AppCommandRequest {
 
 export interface AppCommandResult {
   correlationId: string
-  status: 'completed' | 'failed'
+  status: 'completed' | 'waiting' | 'failed'
   summary: string
   output?: Record<string, unknown>
   error?: string

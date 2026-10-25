@@ -26,12 +26,15 @@ const stream = { getTracks: () => [track] }
 let monitor: FrameRequestCallback
 let getUserMedia: ReturnType<typeof vi.fn>
 let wrapper: ReturnType<typeof mount> | undefined
-function setup(onAudio = vi.fn().mockResolvedValue(undefined)) {
+function setup(
+  onAudio = vi.fn().mockResolvedValue(undefined),
+  options: Parameters<typeof usePetVoice>[2] = {},
+) {
   let voice!: ReturnType<typeof usePetVoice>
   wrapper = mount(
     defineComponent({
       setup() {
-        voice = usePetVoice(onAudio)
+        voice = usePetVoice(onAudio, undefined, options)
         return () => null
       },
     }),
@@ -71,6 +74,46 @@ afterEach(() => {
   vi.unstubAllGlobals()
 })
 describe('桌宠按住说话生命周期', () => {
+  it('输入栏停止后释放麦克风，处理仍可独立取消', async () => {
+    let resolve!: () => void
+    const onAudio = vi.fn().mockImplementation(
+      () =>
+        new Promise<void>((done) => {
+          resolve = done
+        }),
+    )
+    const { voice } = setup(onAudio, { releaseAfterCapture: true, discardSilence: false })
+    await voice.setMode('ptt')
+    voice.pttDown()
+    vi.advanceTimersByTime(250)
+    voice.pttUp()
+    await flushPromises()
+    expect(track.stop).toHaveBeenCalledOnce()
+    expect(voice.ready.value).toBe(false)
+    expect(voice.recognizing.value).toBe(true)
+    const signal = onAudio.mock.calls[0]![1] as AbortSignal
+    expect(signal.aborted).toBe(false)
+    await voice.setMode('off')
+    expect(signal.aborted).toBe(true)
+    resolve()
+    await flushPromises()
+    expect(voice.recognizing.value).toBe(false)
+  })
+  it('输入栏最长两分钟自动停止，静音也允许保留为原音', async () => {
+    const { voice, onAudio } = setup(undefined, {
+      releaseAfterCapture: true,
+      discardSilence: false,
+      maxDurationMs: 120000,
+    })
+    await voice.setMode('ptt')
+    voice.pttDown()
+    vi.advanceTimersByTime(120000)
+    await flushPromises()
+    expect(voice.isRecording.value).toBe(false)
+    expect(onAudio).toHaveBeenCalledOnce()
+    expect(onAudio.mock.calls[0]![0].durationMs).toBe(120000)
+    expect(track.stop).toHaveBeenCalledOnce()
+  })
   it('麦克风预先准备，松开只提交一次并保留 Recorder 实际格式', async () => {
     const { voice, onAudio } = setup()
     await voice.setMode('ptt')

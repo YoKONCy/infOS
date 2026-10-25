@@ -1,6 +1,6 @@
 import { t as __t } from './i18n'
 import { createHash } from 'node:crypto'
-import { SOCIAL_ACTIONS } from '@infos/shared'
+import { SOCIAL_BUSINESS_TOOLS, type SocialBusinessTool } from '@infos/shared'
 import { createLogger, safeModelDiagnostic } from '@infos/backend/applicationHostAbi'
 import type { InboundMessage, OutboundMessage } from './types'
 import { currentSocialRecovery, runSocialStep, socialDelay, socialFailure } from './socialRecovery'
@@ -73,6 +73,7 @@ export interface SocialActResult {
 }
 export interface SocialOrchestrationDeps {
   assertAllowed?(): Promise<void>
+  isReadOnly?(name: string, args: ObjectValue): boolean
   accountId: string
   channelId: string
   channelType: 'private' | 'group'
@@ -178,9 +179,13 @@ function watch(value: unknown): ObjectValue | undefined {
     result.senders !== undefined &&
     (!Array.isArray(result.senders) ||
       result.senders.length > 10 ||
-      result.senders.some((id) => typeof id !== 'string' || !/^[1-9]\d{4,19}$/.test(id)))
+      result.senders.some(
+        (id) =>
+          // eslint-disable-next-line no-control-regex -- 显式拦截控制字符，防止标识或路径混入不可见内容。
+          typeof id !== 'string' || !id.trim() || id.length > 200 || /[\u0000-\u001f]/.test(id),
+      ))
   )
-    throw new Error('观察发送者必须使用真实 QQ 号')
+    throw new Error('观察发送者必须使用有效的平台账号标识')
   if (
     result.events !== undefined &&
     (!Array.isArray(result.events) ||
@@ -258,9 +263,7 @@ export class SocialOrchestration {
     if (step.op !== 'call') return false
     const args =
       step.args === undefined ? { action: step.action, input: step.input ?? {} } : object(step.args)
-    return SOCIAL_ACTIONS.some(
-      (item) => item.tool === step.tool && item.action === args.action && !item.mutation,
-    )
+    return this.deps.isReadOnly?.(String(step.tool), args) === true
   }
 
   private normalize(input: ObjectValue, id: string): Plan {
@@ -482,9 +485,13 @@ export class SocialOrchestration {
       message.mentions !== undefined &&
       (!Array.isArray(message.mentions) ||
         message.mentions.length > 10 ||
-        message.mentions.some((id) => typeof id !== 'string' || !/^[1-9]\d{4,19}$/.test(id)))
+        message.mentions.some(
+          (id) =>
+            // eslint-disable-next-line no-control-regex -- 显式拦截控制字符，防止标识或路径混入不可见内容。
+            typeof id !== 'string' || !id.trim() || id.length > 200 || /[\u0000-\u001f]/.test(id),
+        ))
     )
-      throw new Error('mentions 必须是 QQ 号数组，不支持 @全体')
+      throw new Error('mentions 必须是有效的平台账号标识数组')
     if (message.attachments !== undefined) {
       const attachments = this.array(message.attachments)
       if (!attachments.length || attachments.length > 3)
@@ -715,7 +722,7 @@ export class SocialOrchestration {
           resolve(step.args ?? { action: step.action, input: step.input ?? {} }, plan.results),
         )
         const tool = String(step.tool)
-        if (SOCIAL_ACTIONS.some((item) => item.tool === tool)) {
+        if (SOCIAL_BUSINESS_TOOLS.includes(tool as SocialBusinessTool)) {
           const input = object(args.input ?? {})
           args.input = input
           if (['history_get', 'mark_read'].includes(String(args.action))) {
@@ -1085,11 +1092,10 @@ export function notifyOrchestrationInbound(
     )
   )
     return false
-  const raw = message.rawEvent as ObjectValue | undefined
   pending.event = {
     ...message,
     content: message.content.slice(0, 10000),
-    rawEvent: { message_id: raw?.message_id, self_id: raw?.self_id, time: raw?.time },
+    rawEvent: undefined,
   }
   if (pending.kind === 'delay')
     pending.decision = plan.onNewMessage === 'cancel' ? 'cancel' : 'reconsider'

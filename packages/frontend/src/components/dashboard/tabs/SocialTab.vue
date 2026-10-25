@@ -1,2254 +1,255 @@
 <script setup lang="ts">
-import { t as __t } from '../../../i18n/index'
-import { DEFAULT_SOCIAL_SCHEDULER_CONFIG, SOCIAL_GROUP_POLICY_LIMITS } from '@infos/shared'
-
-defineOptions({ name: 'SocialTab' })
-/**
- * SocialTab — Dashboard 社交适配器管理面板
- *
- * 可扩展的社交适配器管理中心，通过顶部卡片切换不同适配器。
- * 当前仅实现 NapCat (QQ) 适配器。
- *
- * 结构:
- * - 顶部: 适配器选择卡片 (NapCat / Discord / Telegram, 后两者预留)
- * - 中部: 选中适配器的配置 + 控制面板
- * - 底部: 终端日志 (复用 SocialAdapterTerminal)
- *
- * @module packages/frontend/src/components/dashboard/tabs/SocialTab
- */
-import { ref, onMounted, onUnmounted, computed } from 'vue'
-import { PixelIcon, PButton, PSwitch, PInputNumber, PDialog } from '../../pixel'
-import { useAgentStore, useCompositorStore, useNotificationStore } from '../../../stores'
-import { invoke, isElectron, listen } from '../../../utils/ipcAdapter'
+import { computed, onMounted, onUnmounted, ref, watch } from 'vue'
+import { t } from '../../../i18n'
+import { PixelIcon, PButton } from '../../pixel'
+import { useAgentStore } from '../../../stores'
 import {
   socialApi,
-  type SocialContactImpression,
-  type SocialClearScope,
-  type SocialModeConfig,
+  type SocialConnection,
+  type SocialPlatform,
 } from '../../../api/modules/socialApi'
-import { logger } from '../../../lib/logger'
-import SocialAdapterTerminal from '../../terminal/SocialAdapterTerminal.vue'
+import { useSocialConnectionStatus } from '../../../composables/social/useSocialConnectionStatus'
+import { socialPlatformDefinitions } from '../../social/platforms/registry'
+import SocialPlatformIcon from '../../social/platforms/SocialPlatformIcon.vue'
+import SocialCommonSettings from '../../social/SocialCommonSettings.vue'
+import SocialDataSettings from '../../social/SocialDataSettings.vue'
 import StatusCardDesigner from '../../social/StatusCardDesigner.vue'
 import AccountStickers from '../../social/AccountStickers.vue'
-import SocialTurnPanel from '../../social/SocialTurnPanel.vue'
-import PrivacyCleanupPanel from '../PrivacyCleanupPanel.vue'
-import IndexMaintenancePanel from '../IndexMaintenancePanel.vue'
-import { useSocialConnectionStatus } from '../../../composables/social/useSocialConnectionStatus'
 
+defineOptions({ name: 'SocialTab' })
 const agentStore = useAgentStore()
-const notification = useNotificationStore()
-const compositor = useCompositorStore()
-const contacts = ref<SocialContactImpression[]>([])
-const dataScope = ref<SocialClearScope>('channel')
-const dataChannelType = ref<'private' | 'group'>('private')
-const dataTargetId = ref('')
-const confirmAgentName = ref('')
-const dataBusy = ref(false)
-const selectedContactId = ref('')
-const confirmDialogVisible = ref(false)
-const modeSaving = ref(false)
-const modeConfig = ref<SocialModeConfig>({
-  ...DEFAULT_SOCIAL_SCHEDULER_CONFIG,
-  strangerPolicy: 'allow',
-  groupWhitelist: [],
-  groupBlacklist: [],
-  userBlacklist: [],
-  ownerPrivateOnlyAgentIds: [],
-  loopGuard: {
-    knownBotIds: [],
-    trustedHumanIds: [],
-    botMarks: [],
-    maxBotTurns: 4,
-    maxTurnsPerWindow: 20,
-    windowSeconds: 60,
-    maxModelRequests: 24,
-    maxSends: 16,
-    cooldownSeconds: 600,
-  },
-})
-const groupWhitelistText = ref('')
-const groupBlacklistText = ref('')
-const userBlacklistText = ref('')
-const knownBotText = ref('')
-const trustedHumanText = ref('')
-const selectedContact = computed(
-  () => contacts.value.find((item) => item.userId === selectedContactId.value) ?? null,
+const connections = ref<SocialConnection[]>([])
+const platforms = ref<SocialPlatform[]>([])
+const agentId = ref('')
+const selectedPlatform = ref('qq')
+const activeSection = ref('overview')
+const loading = ref(true)
+const error = ref('')
+const enabling = ref(false)
+const { adapters } = useSocialConnectionStatus()
+let alive = true
+let generation = 0
+const definition = computed(() =>
+  socialPlatformDefinitions.find((item) => item.platform === selectedPlatform.value),
 )
-const requiresStrongConfirmation = computed(() =>
-  ['all_messages', 'long_memory', 'all_social_data'].includes(dataScope.value),
+const connection = computed(() =>
+  connections.value.find((item) => item.adapter === definition.value?.adapter),
 )
-
-// ── 类型 ──
-
-interface AdapterCard {
-  id: string
-  name: string
-  platform: string
-  icon: string
-  description: string
-  available: boolean
-}
-
-// ── 适配器列表 ──
-
-const adapters: AdapterCard[] = [
-  {
-    id: 'napcat',
-    name: 'NapCat',
-    platform: 'qq',
-    icon: 'chat',
-    get description() {
-      return __t('ui.settings', 'QQ 机器人 (OneBot v11)')
-    },
-    available: true,
-  },
-  {
-    id: 'discord',
-    name: 'Discord',
-    platform: 'discord',
-    icon: 'terminal',
-    description: 'Discord Bot',
-    available: false,
-  },
-  {
-    id: 'telegram',
-    name: 'Telegram',
-    platform: 'telegram',
-    icon: 'flash',
-    description: 'Telegram Bot',
-    available: false,
-  },
-]
-
-// ── 状态 ──
-
-const selectedAdapter = ref('napcat')
-const activeSection = ref<'overview' | 'mode' | 'contacts' | 'data' | 'cards' | 'stickers'>(
-  'overview',
+const agentName = computed(
+  () => agentStore.agents.find((item) => item.id === agentId.value)?.name ?? '',
 )
-const sections = [
-  {
-    id: 'overview',
-    get label() {
-      return __t('ui.settings', '概览与账号')
-    },
-    icon: 'desktop',
-  },
-  {
-    id: 'mode',
-    get label() {
-      return __t('ui.settings', '社交模式')
-    },
-    icon: 'chat',
-  },
-  {
-    id: 'cards',
-    get label() {
-      return __t('ui.settings', '状态卡片')
-    },
-    icon: 'desktop',
-  },
-  {
-    id: 'stickers',
-    get label() {
-      return __t('ui.settings', '收藏表情')
-    },
-    icon: 'image',
-  },
-  {
-    id: 'contacts',
-    get label() {
-      return __t('ui.settings', '联系人')
-    },
-    icon: 'users',
-  },
-  {
-    id: 'data',
-    get label() {
-      return __t('ui.settings', '数据管理')
-    },
-    icon: 'alert',
-  },
-] as const
-const napcatInstalled = ref(false)
-const napcatRunning = ref(false)
-const napcatVersion = ref<string | null>(null)
-const napcatTargetVersion = ref('')
-const napcatUpdateAvailable = ref(false)
-const napcatBusy = ref(false)
-const napcatWebUi = ref('stopped')
-const napcatWebUiError = ref('')
-const logsOpen = ref(false)
-let unlistenNapCat: (() => void) | undefined
-let disposed = false
-function applyNapCatStatus(value: unknown) {
-  const status = value as {
-    running?: boolean
-    webUi?: string
-    webUiError?: string
-    version?: string | null
-    targetVersion?: string
-    updateAvailable?: boolean
-    installing?: boolean
-  } | null
-  if (!status || disposed) return
-  napcatRunning.value = status.running === true
-  napcatWebUi.value = status.webUi ?? (status.running ? napcatWebUi.value : 'stopped')
-  napcatWebUiError.value = status.webUiError ?? ''
-  napcatVersion.value = status.version ?? null
-  napcatTargetVersion.value = status.targetVersion ?? ''
-  napcatUpdateAvailable.value = status.updateAvailable === true
-  if (typeof status.installing === 'boolean') napcatInstalling.value = status.installing
-}
-const napcatChecking = ref(false)
-const napcatInstalling = ref(false)
-const {
-  connected: adapterConnected,
-  error: connectionError,
-  refresh: refreshConnection,
-} = useSocialConnectionStatus()
-
-/** 是否为 Electron 环境 (进程管理仅 Electron 可用) */
-const canManageProcess = isElectron()
-
-// ── 主人 QQ 配置 ──
-
-/** 主人 QQ 输入框绑定值 */
-const ownerQqInput = ref('')
-/** 当前单实例 Social 绑定的角色 */
-const socialAgentId = ref('')
-const socialAgentName = computed(
-  () => agentStore.agents.find((agent) => agent.id === socialAgentId.value)?.name ?? '',
+const platformName = computed(() =>
+  definition.value ? t('ui.social', definition.value.label) : t('ui.social', '通用设置'),
 )
-const agentSaving = ref(false)
-/** 配置加载中 */
-const configLoading = ref(false)
-/** 配置保存中 */
-const configSaving = ref(false)
-/** 配置已保存标记（用于显示成功提示） */
-const configSaved = ref(false)
-
-// ── 方法 ──
-
-/** 检查 NapCat 安装状态 */
-async function checkNapCat(): Promise<void> {
-  napcatChecking.value = true
+const canEnable = computed(() =>
+  platforms.value.some((item) => item.type === definition.value?.adapter),
+)
+const platformConnections = computed(() =>
+  connections.value.filter((item) => item.platform === selectedPlatform.value),
+)
+const sections = computed(() => [
+  { id: 'overview', label: t('ui.social', '连接与账号'), icon: 'desktop' },
+  ...(definition.value?.qqFeatures
+    ? [
+        { id: 'cards', label: t('ui.settings', '状态卡片'), icon: 'desktop' },
+        { id: 'stickers', label: t('ui.settings', '收藏表情'), icon: 'image' },
+      ]
+    : []),
+  { id: 'contacts', label: t('ui.settings', '联系人'), icon: 'users' },
+  { id: 'data', label: t('ui.social', '会话数据'), icon: 'settings' },
+])
+function state(platform: string) {
+  if (loading.value) return t('ui.social', '加载中…')
+  if (error.value) return t('ui.social', '状态不可用')
+  if (!connections.value.some((item) => item.platform === platform)) return t('ui.social', '未启用')
+  return adapters.value.find((item) => item.platform === platform)?.connected
+    ? t('ui.social', '已连接')
+    : t('ui.social', '未连接')
+}
+async function loadConnections() {
+  const current = ++generation
   try {
-    const installed = await invoke('check-napcat')
-    napcatInstalled.value = !!installed
-    applyNapCatStatus(await invoke('napcat-status'))
-
-    await refreshConnection()
-  } catch {
-    napcatInstalled.value = false
-  } finally {
-    napcatChecking.value = false
+    const [result, available] = await Promise.all([
+      socialApi.getConnections(),
+      socialApi.getPlatforms(),
+    ])
+    if (!alive || current !== generation) return
+    connections.value = result.data?.connections ?? []
+    platforms.value = available.data?.platforms ?? []
+    error.value = ''
+  } catch (cause) {
+    if (alive && current === generation)
+      error.value = cause instanceof Error ? cause.message : t('ui.social', '连接操作失败')
   }
 }
-
-/** 安装 NapCat */
-async function installNapCat(update = false): Promise<void> {
-  if (napcatInstalling.value || napcatBusy.value) return
-  napcatInstalling.value = true
+async function enablePlatform() {
+  const target = definition.value
+  if (enabling.value || !target || !canEnable.value) return
+  enabling.value = true
   try {
-    const result = await invoke(update ? 'update-napcat' : 'install-napcat')
-    if (!result)
-      throw new Error(
-        update ? 'NapCat 更新失败，请查看运行日志' : 'NapCat 安装失败，请查看运行日志',
-      )
-    napcatInstalled.value = true
-    applyNapCatStatus(await invoke('napcat-status'))
-    notification.toast(
-      update
-        ? __t('ui.settings', 'NapCat 已更新，可以启动了')
-        : __t('ui.settings', 'NapCat 已安装'),
-      { type: 'success' },
-    )
-  } catch (e) {
-    logger.error('SocialTab', __t('logs.frontend.settings', 'NapCat 安装或更新失败'), e)
-    notification.toast(
-      e instanceof Error ? e.message : __t('ui.settings', 'NapCat 安装或更新失败'),
-      { type: 'error' },
-    )
+    await socialApi.enablePlatform(target.adapter)
+    await loadConnections()
+  } catch (cause) {
+    if (alive) error.value = cause instanceof Error ? cause.message : t('ui.social', '连接操作失败')
   } finally {
-    napcatInstalling.value = false
+    enabling.value = false
   }
 }
-
-/** 启动 NapCat */
-async function startNapCat(): Promise<void> {
-  if (napcatBusy.value) return
-  napcatBusy.value = true
+async function initialize() {
+  loading.value = true
+  error.value = ''
   try {
-    if (!(await refreshConnection())) throw new Error(connectionError.value || '社交服务尚未就绪')
-    await invoke('start-napcat')
-    applyNapCatStatus(await invoke('napcat-status'))
-  } catch (e) {
-    logger.error('SocialTab', __t('logs.frontend.settings', 'NapCat 启动失败'), e)
-    notification.toast(e instanceof Error ? e.message : __t('ui.settings', 'NapCat 启动失败'), {
-      type: 'error',
-      get title() {
-        return __t('ui.settings', '启动失败')
-      },
-    })
-  } finally {
-    napcatBusy.value = false
-  }
-}
-
-async function openNapCatDashboard(): Promise<void> {
-  if (napcatBusy.value) return
-  napcatBusy.value = true
-  try {
-    await invoke('open-napcat-dashboard')
-    applyNapCatStatus(await invoke('napcat-status'))
-  } catch (e) {
-    notification.toast(e instanceof Error ? e.message : __t('ui.settings', '管理页打开失败'), {
-      type: 'error',
-      get title() {
-        return __t('ui.settings', '打开失败')
-      },
-    })
-  } finally {
-    napcatBusy.value = false
-  }
-}
-
-/** 停止 NapCat */
-async function stopNapCat(): Promise<void> {
-  if (napcatBusy.value) return
-  napcatBusy.value = true
-  try {
-    await invoke('stop-napcat')
-    napcatRunning.value = false
-    napcatWebUi.value = 'stopped'
-  } catch (e) {
-    logger.error('SocialTab', __t('logs.frontend.settings', 'NapCat 停止失败'), e)
-  } finally {
-    napcatBusy.value = false
-  }
-}
-
-// ── 主人 QQ 配置 ──
-
-/**
- * 加载社交配置
- *
- * 从后端 /api/configs/social 读取配置，回填主人 QQ 输入框。
- * 后端配置结构见 SocialConfig 类型。
- */
-async function loadSocialConfig(): Promise<void> {
-  configLoading.value = true
-  try {
-    const [cfg, agentConfig] = await Promise.all([
-      socialApi.getConfig(),
+    const [, config, agents] = await Promise.allSettled([
+      loadConnections(),
       socialApi.getAgentConfig(),
+      agentStore.agents.length ? Promise.resolve() : agentStore.fetchAgents(),
     ])
-    ownerQqInput.value = cfg.ownerQq ?? ''
-    socialAgentId.value = agentConfig.data?.agentId ?? cfg.agentId ?? 'pero'
-  } catch (e) {
-    logger.error('SocialTab', __t('logs.frontend.settings', '加载社交配置失败'), e)
+    if (config.status === 'rejected') throw config.reason
+    if (agents.status === 'rejected') throw agents.reason
+    if (alive) agentId.value = config.value.data?.agentId ?? 'pero'
+  } catch (cause) {
+    if (alive) error.value = cause instanceof Error ? cause.message : t('ui.social', '连接操作失败')
   } finally {
-    configLoading.value = false
+    if (alive) loading.value = false
   }
 }
-
-/** 切换当前社交角色并立即更新会话。 */
-async function saveSocialAgent(): Promise<void> {
-  if (!socialAgentId.value) return
-  agentSaving.value = true
-  try {
-    const response = await socialApi.saveAgentConfig(socialAgentId.value)
-    socialAgentId.value = response.data?.agentId ?? socialAgentId.value
-    await loadContacts()
-    notification.toast(__t('ui.settings', '社交角色已切换并立即生效'), {
-      type: 'success',
-      get title() {
-        return __t('ui.settings', '保存成功')
-      },
-    })
-  } catch (error) {
-    logger.error('SocialTab', __t('logs.frontend.settings', '切换社交角色失败'), error)
-    notification.toast(__t('ui.settings', '社交角色切换失败'), {
-      type: 'error',
-      get title() {
-        return __t('ui.settings', '保存失败')
-      },
-    })
-  } finally {
-    agentSaving.value = false
-  }
-}
-
-/** 保留其他配置，保存后由宿主通知社交运行时即时更新主人身份。 */
-async function saveOwnerQq(): Promise<void> {
-  const ownerQq = ownerQqInput.value.trim()
-  if (ownerQq && !/^[1-9]\d{4,19}$/.test(ownerQq)) {
-    notification.toast(__t('ui.settings', '请输入有效的 QQ 号'), {
-      type: 'error',
-      get title() {
-        return __t('ui.settings', '保存失败')
-      },
-    })
-    return
-  }
-  configSaving.value = true
-  configSaved.value = false
-  try {
-    // 读-改-写：保留其他字段
-    const existing = await socialApi.getConfig()
-    existing.ownerQq = ownerQq || undefined
-    await socialApi.saveConfig(existing)
-    configSaved.value = true
-    notification.toast(__t('ui.settings', '主人 QQ 已更新'), {
-      type: 'success',
-      get title() {
-        return __t('ui.settings', '保存成功')
-      },
-    })
-    // 2 秒后清除成功提示
-    setTimeout(() => {
-      configSaved.value = false
-    }, 2000)
-  } catch (e) {
-    logger.error('SocialTab', __t('logs.frontend.settings', '保存主人QQ配置失败'), e)
-    notification.toast(__t('ui.settings', '主人 QQ 配置保存失败'), {
-      type: 'error',
-      get title() {
-        return __t('ui.settings', '保存失败')
-      },
-    })
-  } finally {
-    configSaving.value = false
-  }
-}
-
-async function loadModeConfig(): Promise<void> {
-  try {
-    const response = await socialApi.getModeConfig()
-    if (response.data)
-      modeConfig.value = {
-        ...modeConfig.value,
-        ...response.data,
-        loopGuard: { ...modeConfig.value.loopGuard, ...response.data.loopGuard },
-      }
-    groupWhitelistText.value = modeConfig.value.groupWhitelist.join('\n')
-    groupBlacklistText.value = modeConfig.value.groupBlacklist.join('\n')
-    userBlacklistText.value = modeConfig.value.userBlacklist.join('\n')
-    knownBotText.value = modeConfig.value.loopGuard.knownBotIds.join('\n')
-    trustedHumanText.value = modeConfig.value.loopGuard.trustedHumanIds.join('\n')
-  } catch (error) {
-    logger.error('SocialTab', __t('logs.frontend.settings', '加载社交模式配置失败'), error)
-  }
-}
-
-function parseIdList(value: string): string[] {
-  return [
-    ...new Set(
-      value
-        .split(/[\s,，]+/)
-        .map((item) => item.trim())
-        .filter(Boolean),
-    ),
-  ]
-}
-
-async function saveModeConfig(): Promise<void> {
-  modeSaving.value = true
-  try {
-    modeConfig.value.groupWhitelist = parseIdList(groupWhitelistText.value)
-    modeConfig.value.groupBlacklist = parseIdList(groupBlacklistText.value)
-    modeConfig.value.userBlacklist = parseIdList(userBlacklistText.value)
-    modeConfig.value.loopGuard.knownBotIds = parseIdList(knownBotText.value)
-    modeConfig.value.loopGuard.trustedHumanIds = parseIdList(trustedHumanText.value)
-    const response = await socialApi.saveModeConfig(modeConfig.value)
-    if (response.data)
-      modeConfig.value = {
-        ...modeConfig.value,
-        ...response.data,
-        loopGuard: { ...modeConfig.value.loopGuard, ...response.data.loopGuard },
-      }
-    knownBotText.value = modeConfig.value.loopGuard.knownBotIds.join('\n')
-    trustedHumanText.value = modeConfig.value.loopGuard.trustedHumanIds.join('\n')
-    notification.toast(__t('ui.settings', '社交模式配置已保存并生效'), {
-      type: 'success',
-      get title() {
-        return __t('ui.settings', '保存成功')
-      },
-    })
-  } catch (error) {
-    logger.error('SocialTab', __t('logs.frontend.settings', '保存社交模式配置失败'), error)
-    notification.toast(__t('ui.settings', '社交模式配置保存失败'), {
-      type: 'error',
-      get title() {
-        return __t('ui.settings', '保存失败')
-      },
-    })
-  } finally {
-    modeSaving.value = false
-  }
-}
-
-function openClearDialog(scope: SocialClearScope, targetId = ''): void {
-  dataScope.value = scope
-  dataTargetId.value = targetId
-  confirmAgentName.value = ''
-  confirmDialogVisible.value = true
-}
-
-async function loadContacts(): Promise<void> {
-  const agentId = socialAgentId.value
-  if (!agentId) return
-  try {
-    const [response, projection] = await Promise.all([
-      socialApi.getContacts(agentId),
-      socialApi.getProjection(agentId),
-    ])
-    contacts.value = response.data?.contacts ?? []
-    if (projection.data) compositor.replaceProjection(projection.data)
-    if (
-      !selectedContactId.value ||
-      !contacts.value.some((item) => item.userId === selectedContactId.value)
-    ) {
-      selectedContactId.value = contacts.value[0]?.userId ?? ''
-    }
-  } catch (error) {
-    logger.error('SocialTab', __t('logs.frontend.settings', '加载联系人印象失败'), error)
-  }
-}
-
-async function clearSocialData(): Promise<void> {
-  const agentId = socialAgentId.value
-  if (!agentId) return
-  if (dataBusy.value) return
-  dataBusy.value = true
-  try {
-    await socialApi.clearData({
-      agentId,
-      scope: dataScope.value,
-      channelType: dataScope.value === 'channel' ? dataChannelType.value : undefined,
-      channelId: dataScope.value === 'channel' ? dataTargetId.value.trim() : undefined,
-      userId: dataScope.value === 'contact_impression' ? dataTargetId.value.trim() : undefined,
-      confirmAgentName: confirmAgentName.value,
-    })
-    dataTargetId.value = ''
-    confirmAgentName.value = ''
-    confirmDialogVisible.value = false
-    await loadContacts()
-  } catch (error) {
-    logger.error('SocialTab', __t('logs.frontend.settings', '清理社交数据失败'), error)
-    notification.toast((error as Error).message, 'error')
-  } finally {
-    dataBusy.value = false
-  }
-}
-
-// ── 初始化 ──
-
-onMounted(async () => {
-  if (!agentStore.agents.length) await agentStore.fetchAgents()
-
-  // 并行加载适配器状态和社交配置
-  const tasks: Promise<void>[] = []
-
-  if (canManageProcess) {
-    const stop = await listen('napcat-state-changed', applyNapCatStatus)
-    if (disposed) stop()
-    else unlistenNapCat = stop
-    tasks.push(checkNapCat())
-  }
-
-  // 加载主人 QQ 配置（Electron/Docker 通用）
-  tasks.push(loadSocialConfig())
-  tasks.push(loadModeConfig())
-  tasks.push(loadContacts())
-  if (!agentStore.agents.length) tasks.push(agentStore.fetchAgents())
-
-  await Promise.all(tasks)
+watch(selectedPlatform, () => {
+  activeSection.value = 'overview'
 })
+onMounted(initialize)
 onUnmounted(() => {
-  disposed = true
-  unlistenNapCat?.()
+  alive = false
+  generation++
 })
 </script>
 
 <template>
   <div class="social-panel">
-    <!-- 顶部：适配器选择卡片 -->
-    <div class="sp-header">
-      <div class="sp-header-title">
-        <PixelIcon name="chat" size="sm" class="sp-title-icon" />
-        <span class="sp-title-text">{{ __t('ui.settings', '社交适配器') }}</span>
-        <span class="sp-badge">SOCIAL</span>
-      </div>
-    </div>
-
-    <nav class="sp-sections" :aria-label="__t('ui.settings', '社交应用功能')">
-      <button
-        v-for="section in sections"
-        :key="section.id"
-        :class="['sp-section', activeSection === section.id && 'sp-section-active']"
-        @click="activeSection = section.id"
-      >
-        <PixelIcon :name="section.icon" size="xs" />
-        {{ section.label }}
-      </button>
-    </nav>
-
-    <StatusCardDesigner v-if="activeSection === 'cards'" :key="socialAgentId" />
-    <AccountStickers v-if="activeSection === 'stickers'" />
-    <SocialTurnPanel
-      v-if="activeSection === 'mode'"
-      class="sp-turn-panel"
-      :agent-id="socialAgentId"
-    />
-    <template v-if="activeSection === 'overview'">
-      <div class="sp-adapter-cards">
+    <div class="sp-workspace">
+      <header class="sp-page-heading">
+        <PixelIcon name="chat" size="sm" />
+        <h2>{{ t('ui.settings', '社交适配器') }}</h2>
+      </header>
+      <nav class="sp-platform-nav" :aria-label="t('ui.social', '社交平台')">
         <button
-          v-for="adapter in adapters"
-          :key="adapter.id"
-          :class="[
-            'sp-card',
-            selectedAdapter === adapter.id && 'sp-card-active',
-            !adapter.available && 'sp-card-disabled',
-          ]"
-          :disabled="!adapter.available"
-          @click="adapter.available && (selectedAdapter = adapter.id)"
+          v-for="item in socialPlatformDefinitions"
+          :key="item.platform"
+          type="button"
+          :data-platform="item.platform"
+          :style="{ '--platform-accent': item.color }"
+          :class="['sp-platform-tab', selectedPlatform === item.platform && 'is-selected']"
+          :aria-current="selectedPlatform === item.platform ? 'page' : undefined"
+          @click="selectedPlatform = item.platform"
         >
-          <div class="sp-card-icon"><PixelIcon :name="adapter.icon" size="sm" /></div>
-          <div class="sp-card-info">
-            <span class="sp-card-name">{{ adapter.name }}</span>
-            <span class="sp-card-desc">{{ adapter.description }}</span>
-          </div>
-          <div v-if="adapter.available" class="sp-card-status">
-            <span
-              v-if="adapter.id === 'napcat'"
-              :class="['sp-status-dot', adapterConnected ? 'sp-dot-on' : 'sp-dot-off']"
-            />
-          </div>
-          <span v-else class="sp-card-tag">{{ __t('ui.settings', '待实现') }}</span>
+          <span class="sp-platform-emblem"><SocialPlatformIcon :platform="item.platform" /></span>
+          <span class="sp-platform-tab-copy">
+            <strong>{{ t('ui.social', item.label) }}</strong>
+            <small>
+              <i
+                :class="{
+                  'is-online': adapters.find((a) => a.platform === item.platform)?.connected,
+                }"
+              />
+              {{ state(item.platform) }}
+            </small>
+          </span>
         </button>
-      </div>
-      <!-- Social 单实例角色与主人身份配置 -->
-      <div class="sp-owner-config">
-        <div class="sp-block-header">
-          <PixelIcon name="user" size="xs" />
-          <span>{{ __t('ui.settings', '社交身份') }}</span>
-        </div>
-        <div class="sp-owner-body">
-          <div class="sp-owner-row">
-            <select
-              v-model="socialAgentId"
-              class="sp-owner-input"
-              :disabled="configLoading || agentSaving"
-            >
-              <option v-for="agent in agentStore.enabledAgents" :key="agent.id" :value="agent.id">
-                {{ agent.name }}（{{ agent.id }}）
-              </option>
-            </select>
-            <PButton
-              size="sm"
-              variant="primary"
-              :disabled="configLoading || agentSaving || !socialAgentId"
-              @click="saveSocialAgent"
-            >
-              <PixelIcon name="save" size="xs" />
-              {{ agentSaving ? __t('ui.settings', '切换中...') : __t('ui.settings', '切换角色') }}
-            </PButton>
-          </div>
-          <div class="sp-hint">{{ __t('ui.settings', '选择负责社交回复的角色。') }}</div>
-          <div class="sp-owner-row">
-            <input
-              v-model="ownerQqInput"
-              class="sp-owner-input"
-              type="text"
-              :placeholder="__t('ui.settings', '输入主人的 QQ 号（用于权限识别）')"
-              :disabled="configLoading || configSaving"
-            />
-            <PButton
-              size="sm"
-              variant="primary"
-              :disabled="configLoading || configSaving"
-              @click="saveOwnerQq"
-            >
-              <PixelIcon name="save" size="xs" />
-              {{
-                configSaving
-                  ? __t('ui.settings', '保存中...')
-                  : configSaved
-                    ? __t('ui.settings', '已保存')
-                    : __t('ui.settings', '保存')
-              }}
-            </PButton>
-          </div>
-          <div class="sp-hint">
-            {{ __t('ui.settings', '用于识别主人；删除好友、修改设置等操作仅向主人开放。') }}
-          </div>
-        </div>
-      </div>
-
-      <!-- 中部：NapCat 配置面板 (仅 Electron) -->
-      <div v-if="selectedAdapter === 'napcat' && canManageProcess" class="sp-config">
-        <div class="sp-config-row">
-          <!-- 安装状态 -->
-          <div class="sp-config-block">
-            <div class="sp-block-header">
-              <PixelIcon name="download" size="xs" />
-              <span>{{ __t('ui.settings', '进程管理') }}</span>
-            </div>
-            <div class="sp-block-body">
-              <div class="sp-status-line">
-                <span class="sp-label">{{ __t('ui.settings', '安装状态') }}</span>
-                <span :class="['sp-value', napcatInstalled ? 'sp-ok' : 'sp-na']">
-                  {{
-                    napcatChecking
-                      ? __t('ui.settings', '检查中...')
-                      : napcatInstalled
-                        ? __t('ui.settings', '已安装')
-                        : __t('ui.settings', '未安装')
-                  }}
-                </span>
-              </div>
-              <div class="sp-status-line">
-                <span class="sp-label">{{ __t('ui.settings', '进程状态') }}</span>
-                <span :class="['sp-value', napcatRunning ? 'sp-ok' : 'sp-na']">
-                  {{ napcatRunning ? __t('ui.settings', '运行中') : __t('ui.settings', '已停止') }}
-                </span>
-              </div>
-              <div v-if="napcatInstalled" class="sp-status-line">
-                <span class="sp-label">{{ __t('ui.settings', '版本') }}</span>
-                <span class="sp-value">
-                  {{ napcatVersion ? `v${napcatVersion}` : __t('ui.settings', '未知') }}
-                </span>
-              </div>
-              <div class="sp-status-line">
-                <span class="sp-label">{{ __t('ui.settings', '管理页面') }}</span>
-                <span :class="['sp-value', napcatWebUi === 'ready' ? 'sp-ok' : 'sp-na']">
-                  {{
-                    napcatWebUi === 'ready'
-                      ? __t('ui.settings', '已就绪')
-                      : napcatWebUi === 'starting'
-                        ? __t('ui.settings', '准备中')
-                        : napcatWebUi === 'error'
-                          ? __t('ui.settings', '暂不可用')
-                          : __t('ui.settings', '未启动')
-                  }}
-                </span>
-              </div>
-              <div class="sp-status-line">
-                <span class="sp-label">{{ __t('ui.settings', 'Bot 连接') }}</span>
-                <span :class="['sp-value', adapterConnected ? 'sp-ok' : 'sp-na']">
-                  {{
-                    adapterConnected ? __t('ui.settings', '已连接') : __t('ui.settings', '未连接')
-                  }}
-                </span>
-              </div>
-              <p v-if="connectionError" role="alert" class="sp-na">{{ connectionError }}</p>
-              <p v-if="napcatWebUiError" role="alert" class="sp-na">{{ napcatWebUiError }}</p>
-              <div class="sp-actions">
-                <PButton
-                  v-if="!napcatInstalled"
-                  size="sm"
-                  :disabled="napcatInstalling || napcatChecking"
-                  @click="installNapCat()"
-                >
-                  <PixelIcon name="download" size="xs" />
-                  {{
-                    napcatInstalling
-                      ? __t('ui.settings', '安装中...')
-                      : __t('ui.settings', '一键安装')
-                  }}
-                </PButton>
-                <template v-else>
-                  <PButton
-                    v-if="!napcatRunning"
-                    size="sm"
-                    variant="primary"
-                    :disabled="napcatBusy || napcatInstalling"
-                    @click="startNapCat"
-                  >
-                    <PixelIcon name="flash" size="xs" />
-                    {{ __t('ui.settings', '启动') }}
-                  </PButton>
-                  <PButton
-                    v-else
-                    size="sm"
-                    variant="ghost"
-                    :disabled="napcatBusy"
-                    @click="stopNapCat"
-                  >
-                    <PixelIcon name="alert" size="xs" />
-                    {{ __t('ui.settings', '停止') }}
-                  </PButton>
-                  <PButton
-                    v-if="napcatRunning"
-                    size="sm"
-                    variant="secondary"
-                    :disabled="napcatBusy"
-                    @click="openNapCatDashboard"
-                  >
-                    <PixelIcon name="desktop" size="xs" />
-                    {{ __t('ui.settings', '打开管理页') }}
-                  </PButton>
-                </template>
-                <PButton
-                  v-if="napcatInstalled && napcatUpdateAvailable"
-                  size="sm"
-                  variant="secondary"
-                  :disabled="napcatRunning || napcatBusy || napcatInstalling"
-                  :title="
-                    napcatRunning
-                      ? __t('ui.settings', '停止 NapCat 后更新')
-                      : __t('ui.settings', '更新到 v{0}', [napcatTargetVersion])
-                  "
-                  @click="installNapCat(true)"
-                >
-                  <PixelIcon name="download" size="xs" />
-                  {{
-                    napcatInstalling
-                      ? __t('ui.settings', '更新中…')
-                      : __t('ui.settings', '更新至 v{0}', [napcatTargetVersion])
-                  }}
-                </PButton>
-                <PButton size="sm" variant="ghost" :disabled="napcatChecking" @click="checkNapCat">
-                  <PixelIcon name="refresh" size="xs" />
-                </PButton>
-              </div>
-            </div>
-          </div>
-
-          <!-- 连接信息 -->
-          <div class="sp-config-block">
-            <div class="sp-block-header">
-              <PixelIcon name="settings" size="xs" />
-              <span>{{ __t('ui.settings', '连接配置') }}</span>
-            </div>
-            <div class="sp-block-body">
-              <div class="sp-status-line">
-                <span class="sp-label">{{ __t('ui.settings', 'WS 端点') }}</span>
-                <span class="sp-value sp-mono">ws://127.0.0.1:9120/api/social/ws</span>
-              </div>
-              <div class="sp-status-line">
-                <span class="sp-label">{{ __t('ui.settings', '协议') }}</span>
-                <span class="sp-value">{{ __t('ui.settings', 'OneBot v11 (反向 WS)') }}</span>
-              </div>
-              <div class="sp-hint">
-                {{
-                  __t(
-                    'ui.settings',
-                    '本机 NapCat 会自动配置连接；QQ 登录与验证在管理标签页中完成。',
-                  )
-                }}
-              </div>
-            </div>
-          </div>
-        </div>
-      </div>
-
-      <!-- Docker 模式提示 -->
-      <div v-if="selectedAdapter === 'napcat' && !canManageProcess" class="sp-config">
-        <div class="sp-config-row">
-          <div class="sp-config-block sp-full">
-            <div class="sp-block-header">
-              <PixelIcon name="terminal" size="xs" />
-              <span>{{ __t('ui.settings', 'Docker 模式') }}</span>
-            </div>
-            <div class="sp-block-body">
-              <div class="sp-status-line">
-                <span class="sp-label">{{ __t('ui.settings', 'WS 端点') }}</span>
-                <span class="sp-value sp-mono">ws://&lt;host&gt;:9120/api/social/ws</span>
-              </div>
-              <div class="sp-status-line">
-                <span class="sp-label">{{ __t('ui.settings', '连接状态') }}</span>
-                <span :class="['sp-value', adapterConnected ? 'sp-ok' : 'sp-na']">
-                  {{
-                    adapterConnected
-                      ? __t('ui.settings', '已连接')
-                      : __t('ui.settings', '等待外部 NapCat 连接...')
-                  }}
-                </span>
-              </div>
-              <div class="sp-hint">
-                {{
-                  __t(
-                    'ui.settings',
-                    'Docker 模式下请在外部独立运行 NapCat，并配置反向 WS 连接到后端容器',
-                  )
-                }}
-              </div>
-            </div>
-          </div>
-        </div>
-      </div>
-
-      <!-- 适配器运行终端属于概览与账号 -->
-      <section class="sp-terminal" :class="{ 'sp-terminal-open': logsOpen }">
         <button
           type="button"
-          class="sp-block-header sp-terminal-toggle"
-          :aria-expanded="logsOpen"
-          aria-controls="social-adapter-terminal"
-          @click="logsOpen = !logsOpen"
+          :class="[
+            'sp-platform-tab',
+            'sp-shared-tab',
+            selectedPlatform === 'shared' && 'is-selected',
+          ]"
+          :aria-current="selectedPlatform === 'shared' ? 'page' : undefined"
+          @click="selectedPlatform = 'shared'"
         >
-          <PixelIcon name="terminal" size="xs" />
-          {{ __t('ui.settings', '运行日志与排障') }}
+          <span class="sp-platform-emblem"><PixelIcon name="settings" size="sm" /></span>
+          <span class="sp-platform-tab-copy">
+            <strong>{{ t('ui.social', '通用设置') }}</strong>
+            <small>{{ t('ui.social', '所有平台') }}</small>
+          </span>
         </button>
-        <div v-if="logsOpen" id="social-adapter-terminal" class="sp-terminal-content">
-          <SocialAdapterTerminal />
-        </div>
-      </section>
-    </template>
-
-    <div v-else-if="activeSection === 'mode'" class="sp-mode-grid">
-      <section class="sp-config-block sp-mode-wide">
-        <div class="sp-block-header">
-          <PixelIcon name="clock" size="xs" />
-          <span>{{ __t('ui.settings', '任务与恢复') }}</span>
-        </div>
-        <div class="sp-mode-body sp-number-row">
-          <PInputNumber
-            v-model="modeConfig.taskTimeoutMinutes"
-            :label="__t('ui.settings', '整轮上限（分钟）')"
-            :min="1"
-            :max="360"
-          />
-          <PInputNumber
-            v-model="modeConfig.modelIdleMinutes"
-            :label="__t('ui.settings', '无数据超时（分钟）')"
-            :min="1"
-            :max="60"
-          />
-          <PInputNumber
-            v-model="modeConfig.modelRequestMinutes"
-            :label="__t('ui.settings', '单次请求上限（分钟）')"
-            :min="modeConfig.modelIdleMinutes"
-            :max="360"
-          />
-          <PInputNumber
-            v-model="modeConfig.maxRetries"
-            :label="__t('ui.settings', '自动重试次数')"
-            :min="0"
-            :max="2"
-          />
-        </div>
-      </section>
-      <section class="sp-config-block">
-        <div class="sp-block-header">
-          <PixelIcon name="clock" size="xs" />
-          <span>{{ __t('ui.settings', '夜间静音') }}</span>
-        </div>
-        <div class="sp-mode-body">
-          <div class="sp-setting-line">
-            <div>
-              <strong>{{ __t('ui.settings', '安静时段') }}</strong>
-              <small>{{ __t('ui.settings', '静音期间不主动审视群聊') }}</small>
-            </div>
-            <PSwitch v-model="modeConfig.nightSilenceEnabled" />
-          </div>
-          <div class="sp-number-row">
-            <PInputNumber
-              v-model="modeConfig.nightSilenceStart"
-              :label="__t('ui.settings', '开始小时')"
-              :min="0"
-              :max="23"
-            />
-            <PInputNumber
-              v-model="modeConfig.nightSilenceEnd"
-              :label="__t('ui.settings', '结束小时')"
-              :min="0"
-              :max="23"
-            />
-          </div>
-        </div>
-      </section>
-      <section class="sp-config-block">
-        <div class="sp-block-header">
-          <PixelIcon name="chat" size="xs" />
-          <span>{{ __t('ui.settings', '群聊主动策略') }}</span>
-        </div>
-        <div class="sp-mode-body">
-          <div class="sp-setting-line">
-            <div>
-              <strong>{{ __t('ui.settings', '允许主动参与') }}</strong>
-              <small>
-                {{ __t('ui.settings', '各群独立观察与冷却，群内单独配置优先于默认策略') }}
-              </small>
-            </div>
-            <PSwitch v-model="modeConfig.proactiveGroupEnabled" />
-          </div>
-          <PInputNumber
-            v-model="modeConfig.minMessagesForReview"
-            :label="__t('ui.settings', '最少审视消息数')"
-            :min="SOCIAL_GROUP_POLICY_LIMITS.minMessagesForReview[0]"
-            :max="SOCIAL_GROUP_POLICY_LIMITS.minMessagesForReview[1]"
-          />
-          <PInputNumber
-            v-model="modeConfig.reviewIntervalSeconds"
-            :label="__t('ui.settings', '每群主动观察间隔（秒）')"
-            :min="SOCIAL_GROUP_POLICY_LIMITS.reviewIntervalSeconds[0]"
-            :max="SOCIAL_GROUP_POLICY_LIMITS.reviewIntervalSeconds[1]"
-          />
-        </div>
-      </section>
-      <section class="sp-config-block sp-mode-wide">
-        <div class="sp-block-header">
-          <PixelIcon name="users" size="xs" />
-          <span>{{ __t('ui.settings', '名单策略') }}</span>
-        </div>
-        <div class="sp-mode-body">
-          <div class="sp-setting-line">
-            <div>
-              <strong>{{ __t('ui.settings', '陌生人私聊') }}</strong>
-              <small>{{ __t('ui.settings', '忽略时仅主人私聊可进入处理链') }}</small>
-            </div>
-            <select v-model="modeConfig.strangerPolicy" class="sp-pixel-select">
-              <option value="allow">{{ __t('ui.settings', '允许') }}</option>
-              <option value="ignore">{{ __t('ui.settings', '忽略') }}</option>
-            </select>
-          </div>
-          <div class="sp-list-grid">
-            <label>
-              {{ __t('ui.settings', '群白名单') }}
-              <textarea
-                v-model="groupWhitelistText"
-                :placeholder="__t('ui.settings', '每行一个群号；留空表示不限制')"
-              />
-            </label>
-            <label>
-              {{ __t('ui.settings', '群黑名单') }}
-              <textarea
-                v-model="groupBlacklistText"
-                :placeholder="__t('ui.settings', '每行一个群号')"
-              />
-            </label>
-            <label>
-              {{ __t('ui.settings', '用户黑名单') }}
-              <textarea
-                v-model="userBlacklistText"
-                :placeholder="__t('ui.settings', '每行一个 QQ 号')"
-              />
-            </label>
-          </div>
-        </div>
-      </section>
-      <section class="sp-config-block sp-mode-wide">
-        <div class="sp-block-header">
-          <PixelIcon name="alert" size="xs" />
-          <span>{{ __t('ui.settings', '连续互聊保护') }}</span>
-        </div>
-        <div class="sp-mode-body">
-          <p>
-            {{
-              __t('ui.settings', '限制与机器人的连续互聊，避免循环回复。达到频率上限时自动等待。')
-            }}
-          </p>
-          <div class="sp-number-row">
-            <PInputNumber
-              v-model="modeConfig.loopGuard.maxBotTurns"
-              :label="__t('ui.settings', '同机器人连续发送回合')"
-              :min="1"
-              :max="20"
-            />
-            <PInputNumber
-              v-model="modeConfig.loopGuard.cooldownSeconds"
-              :label="__t('ui.settings', '机器人冷却／闲置重置（秒）')"
-              :min="30"
-              :max="86400"
-            />
-          </div>
-          <div class="sp-number-row">
-            <PInputNumber
-              v-model="modeConfig.loopGuard.windowSeconds"
-              :label="__t('ui.settings', '滑动窗口（秒）')"
-              :min="10"
-              :max="3600"
-            />
-            <PInputNumber
-              v-model="modeConfig.loopGuard.maxTurnsPerWindow"
-              :label="__t('ui.settings', '窗口内处理批次')"
-              :min="1"
-              :max="200"
-            />
-            <PInputNumber
-              v-model="modeConfig.loopGuard.maxModelRequests"
-              :label="__t('ui.settings', '窗口内模型请求')"
-              :min="1"
-              :max="100"
-            />
-            <PInputNumber
-              v-model="modeConfig.loopGuard.maxSends"
-              :label="__t('ui.settings', '窗口内发送条数')"
-              :min="1"
-              :max="100"
-            />
-          </div>
-          <div class="sp-list-grid">
-            <label>
-              {{ __t('ui.settings', '已知外部机器人') }}
-              <textarea
-                v-model="knownBotText"
-                :placeholder="__t('ui.settings', '每行一个 QQ 号；不按昵称猜测')"
-              />
-            </label>
-            <label>
-              {{ __t('ui.settings', '可信真人') }}
-              <textarea
-                v-model="trustedHumanText"
-                :placeholder="__t('ui.settings', '每行一个确认由真人使用的 QQ 号；主人自动包含')"
-              />
-            </label>
-          </div>
-          <div class="sp-bot-marks">
-            <div class="sp-setting-line">
-              <strong>{{ __t('ui.settings', '模型添加的机器人标记') }}</strong>
-              <PButton size="sm" variant="ghost" :disabled="modeSaving" @click="loadModeConfig">
-                {{ __t('ui.settings', '重新载入配置') }}
-              </PButton>
-            </div>
-            <small>
-              {{
-                __t(
-                  'ui.settings',
-                  '标记按 QQ 标记在所有群聊和私聊中生效。误标可移除，可信真人不会被自动标记。',
-                )
-              }}
-            </small>
-            <div
-              v-for="mark in modeConfig.loopGuard.botMarks"
-              :key="mark.userId"
-              class="sp-bot-mark"
-            >
-              <strong>QQ {{ mark.userId }}</strong>
-              <p>{{ mark.reason }}</p>
-              <small>
-                {{ __t('ui.settings', '由') }} {{ mark.agentId }} {{ __t('ui.settings', '判断 ·') }}
-                {{ mark.messageId ? __t('ui.settings', '佐证来自') : __t('ui.settings', '标记于') }}
-                {{
-                  mark.channelType === 'group'
-                    ? __t('ui.settings', '群聊')
-                    : __t('ui.settings', '私聊')
-                }}
-                {{ mark.channelId }}
-                <template v-if="mark.messageId">
-                  {{ __t('ui.settings', '· 消息') }} {{ mark.messageId }}
-                </template>
-                · {{ new Date(mark.createdAt).toLocaleString() }}
-              </small>
-            </div>
-            <small v-if="!modeConfig.loopGuard.botMarks?.length">
-              {{ __t('ui.settings', '暂无模型添加的标记') }}
-            </small>
-          </div>
-          <small>{{ __t('ui.settings', '可在社交回合中解除互聊限制。') }}</small>
-        </div>
-      </section>
-      <div class="sp-mode-actions">
-        <PButton size="sm" :loading="modeSaving" @click="saveModeConfig">
-          <PixelIcon name="save" size="xs" />
-          {{ __t('ui.settings', '保存社交模式') }}
+      </nav>
+      <div v-if="error" class="sp-page-error" role="alert">
+        <span>{{ error }}</span>
+        <PButton size="sm" variant="secondary" @click="initialize">
+          {{ t('ui.social', '重新加载') }}
         </PButton>
       </div>
-    </div>
-    <div v-else-if="activeSection === 'contacts'" class="sp-contact-master">
-      <aside class="sp-contact-sidebar">
-        <div class="sp-block-header">
-          <PixelIcon name="users" size="xs" />
-          <span>{{ __t('ui.settings', '联系人 ·') }} {{ contacts.length }}</span>
-        </div>
-        <button
-          v-for="contact in contacts"
-          :key="contact.userId"
-          :class="['sp-contact-row', selectedContactId === contact.userId && 'is-active']"
-          @click="selectedContactId = contact.userId"
+      <div v-if="loading" class="sp-page-loading" role="status">
+        {{ t('ui.social', '加载中…') }}
+      </div>
+      <SocialCommonSettings
+        v-else-if="selectedPlatform === 'shared'"
+        :agent-id="agentId"
+        :connections="connections"
+        @changed="agentId = $event"
+      />
+      <section
+        v-else-if="definition"
+        :key="selectedPlatform"
+        class="sp-platform-workspace"
+        :style="{ '--platform-accent': definition.color }"
+        :aria-label="platformName"
+      >
+        <header class="sp-platform-heading">
+          <div>
+            <h3>{{ platformName }}</h3>
+            <p>{{ t('ui.social', definition.description) }}</p>
+          </div>
+          <span class="sp-platform-summary">{{ state(selectedPlatform) }}</span>
+        </header>
+        <nav class="sp-sections" :aria-label="t('ui.social', '{0} 平台设置', [platformName])">
+          <button
+            v-for="section in sections"
+            :key="section.id"
+            type="button"
+            :aria-current="activeSection === section.id ? 'page' : undefined"
+            :class="['sp-section', activeSection === section.id && 'sp-section-active']"
+            @click="activeSection = section.id"
+          >
+            <PixelIcon :name="section.icon" size="xs" />
+            {{ section.label }}
+          </button>
+        </nav>
+        <p
+          v-if="activeSection === 'overview' && !error && !connection && !canEnable"
+          class="sp-page-error"
+          role="status"
         >
-          <span class="sp-contact-avatar">
-            {{ (contact.displayName || contact.userId).slice(0, 1) }}
-          </span>
-          <span>
-            <strong>{{ contact.displayName || contact.userId }}</strong>
-            <small>{{ contact.userId }}</small>
-          </span>
-        </button>
-        <div v-if="!contacts.length" class="sp-empty">
-          {{ __t('ui.settings', '还没有保存印象') }}
-        </div>
-      </aside>
-      <section class="sp-contact-detail">
-        <template v-if="selectedContact">
-          <div class="sp-contact-head">
-            <div>
-              <small>CONTACT MEMORY</small>
-              <h3>{{ selectedContact.displayName || selectedContact.userId }}</h3>
-              <span>{{ selectedContact.userId }}</span>
-            </div>
-            <button
-              class="sp-soft-action sp-soft-danger"
-              @click="openClearDialog('contact_impression', selectedContact.userId)"
-            >
-              <PixelIcon name="trash" size="xs" />
-              {{ __t('ui.settings', '清除印象') }}
-            </button>
-          </div>
-          <div v-if="selectedContact.identity" class="sp-impression-box">
-            <span>{{ __t('ui.settings', '身份信息') }}</span>
-            <p>{{ selectedContact.identity }}</p>
-          </div>
-          <div class="sp-impression-box">
-            <span>{{ __t('ui.settings', '当前印象') }}</span>
-            <p>{{ selectedContact.impression }}</p>
-          </div>
-          <dl class="sp-contact-meta">
-            <div>
-              <dt>{{ __t('ui.settings', '更新时间') }}</dt>
-              <dd>{{ selectedContact.updatedAt }}</dd>
-            </div>
-            <div>
-              <dt>{{ __t('ui.settings', '来源频道') }}</dt>
-              <dd>{{ selectedContact.sourceChannelId || __t('ui.settings', '未记录') }}</dd>
-            </div>
-          </dl>
-        </template>
-        <div v-else class="sp-empty sp-empty-detail">
-          {{ __t('ui.settings', '从左侧选择一位联系人吧') }}
-        </div>
+          {{ t('ui.social', '后端尚未提供此平台适配器，请更新后重试。') }}
+        </p>
+        <component
+          :is="definition.panel"
+          v-if="activeSection === 'overview' && !error && (connection || canEnable)"
+          :key="`${selectedPlatform}:${connection?.id ?? 'new'}`"
+          :connection="connection"
+          :enabling="enabling"
+          @enable="enablePlatform"
+          @changed="loadConnections"
+        />
+        <StatusCardDesigner
+          v-else-if="activeSection === 'cards' && definition.qqFeatures"
+          :key="agentId"
+        />
+        <AccountStickers
+          v-else-if="activeSection === 'stickers' && definition.qqFeatures"
+          :platform="selectedPlatform"
+        />
+        <SocialDataSettings
+          v-else-if="activeSection === 'contacts' || activeSection === 'data'"
+          :key="`${selectedPlatform}:${agentId}`"
+          :section="activeSection"
+          :platform="selectedPlatform"
+          :agent-id="agentId"
+          :agent-name="agentName"
+          :connections="platformConnections"
+          :allow-groups="definition.groups"
+        />
       </section>
     </div>
-    <div v-else-if="activeSection === 'data'" class="sp-danger-zone">
-      <IndexMaintenancePanel :social-agent-id="socialAgentId" />
-      <PrivacyCleanupPanel />
-      <header class="sp-danger-head">
-        <div>
-          <span>DATA MAINTENANCE</span>
-          <h3>{{ __t('ui.settings', '当前 Agent 的社交数据') }}</h3>
-          <p>{{ __t('ui.settings', '选择要清理的数据。') }}</p>
-        </div>
-        <PixelIcon name="alert" size="md" />
-      </header>
-      <div class="sp-danger-list">
-        <article>
-          <div>
-            <strong>{{ __t('ui.settings', '指定会话记录') }}</strong>
-            <span>{{ __t('ui.settings', '删除某位用户的私聊，或某个群的全部聊天记录。') }}</span>
-          </div>
-          <div class="sp-inline-target">
-            <select v-model="dataChannelType" class="sp-pixel-select">
-              <option value="private">{{ __t('ui.settings', '私聊') }}</option>
-              <option value="group">{{ __t('ui.settings', '群聊') }}</option>
-            </select>
-            <input
-              v-model="dataTargetId"
-              class="sp-pixel-input"
-              :placeholder="__t('ui.settings', 'QQ 用户或群号')"
-            />
-            <button class="sp-soft-action" @click="openClearDialog('channel', dataTargetId)">
-              {{ __t('ui.settings', '选择清理') }}
-            </button>
-          </div>
-        </article>
-        <article>
-          <div>
-            <strong>{{ __t('ui.settings', '全部聊天记录') }}</strong>
-            <span>{{ __t('ui.settings', '保留联系人印象和社交长记忆，只删除消息流水。') }}</span>
-          </div>
-          <button class="sp-soft-action sp-soft-danger" @click="openClearDialog('all_messages')">
-            {{ __t('ui.settings', '清除消息') }}
-          </button>
-        </article>
-        <article>
-          <div>
-            <strong>{{ __t('ui.settings', '全部社交长记忆') }}</strong>
-            <span>{{ __t('ui.settings', '删除社交长记忆，保留聊天和联系人印象。') }}</span>
-          </div>
-          <button class="sp-soft-action sp-soft-danger" @click="openClearDialog('long_memory')">
-            {{ __t('ui.settings', '清空长记忆') }}
-          </button>
-        </article>
-        <article class="is-critical">
-          <div>
-            <strong>{{ __t('ui.settings', '彻底清除社交数据') }}</strong>
-            <span>{{ __t('ui.settings', '同时删除消息、联系人印象和社交长记忆。') }}</span>
-          </div>
-          <button class="sp-soft-action sp-soft-danger" @click="openClearDialog('all_social_data')">
-            {{ __t('ui.settings', '彻底清除') }}
-          </button>
-        </article>
-      </div>
-    </div>
-
-    <PDialog
-      v-model="confirmDialogVisible"
-      :title="__t('ui.settings', '确认清理社交数据')"
-      :message="
-        requiresStrongConfirmation
-          ? __t('ui.settings', '此操作影响社交角色 {0}，请输入角色名后继续。', [socialAgentName])
-          : __t('ui.settings', '此操作不可撤销，请确认目标无误。')
-      "
-      :mode="requiresStrongConfirmation ? 'prompt' : 'confirm'"
-      :placeholder="requiresStrongConfirmation ? socialAgentName : ''"
-      :confirm-text="__t('ui.settings', '确认清理')"
-      confirm-variant="danger"
-      :loading="dataBusy"
-      :auto-close="false"
-      @confirm="
-        (value?: string) => {
-          if (value !== undefined) confirmAgentName = value
-          clearSocialData()
-        }
-      "
-    />
   </div>
 </template>
-
-<style scoped>
-/* ── 二级导航 ── */
-.sp-sections {
-  display: flex;
-  gap: 3px;
-  margin: 0 24px 14px;
-  border-bottom: 2px solid var(--color-sky-100, #e0f2fe);
-  flex-shrink: 0;
-  overflow-x: auto;
-}
-
-.sp-section {
-  position: relative;
-  display: inline-flex;
-  flex: 0 0 auto;
-  white-space: nowrap;
-  align-items: center;
-  gap: 7px;
-  padding: 8px 13px 10px;
-  margin-bottom: -2px;
-  border: 0;
-  border-bottom: 2px solid transparent;
-  background: transparent;
-  color: var(--text-muted, #94a3b8);
-  font-family: var(--ui-font-pixel), monospace;
-  font-size: 11px;
-  font-weight: 700;
-  cursor: pointer;
-}
-
-.sp-section::before {
-  content: '';
-  width: 4px;
-  height: 4px;
-  background: var(--color-sky-200, #bae6fd);
-}
-
-.sp-section:hover {
-  color: var(--color-sky-600, #0284c7);
-  background: rgba(224, 242, 254, 0.42);
-}
-.sp-section-active {
-  color: var(--color-sky-600, #0284c7);
-  border-bottom-color: var(--color-sky-400, #38bdf8);
-  background: linear-gradient(180deg, transparent, rgba(186, 230, 253, 0.24));
-}
-.sp-section-active::before {
-  background: var(--color-sky-400, #38bdf8);
-  box-shadow: 5px 0 0 var(--color-sky-200, #bae6fd);
-}
-
-.sp-mode-grid {
-  margin: 0 24px 16px;
-  display: grid;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
-  gap: 12px;
-  overflow: visible;
-}
-.sp-mode-wide,
-.sp-mode-actions {
-  grid-column: 1 / -1;
-}
-.sp-mode-body {
-  padding: 14px;
-  display: grid;
-  gap: 16px;
-}
-.sp-bot-marks {
-  display: grid;
-  gap: 10px;
-}
-.sp-bot-mark {
-  display: grid;
-  gap: 6px;
-  padding: 12px;
-  border: 1px solid var(--sp-border);
-  background: var(--sp-surface-soft);
-  color: var(--sp-text);
-  overflow-wrap: anywhere;
-}
-.sp-bot-mark p {
-  margin: 0;
-  line-height: 1.7;
-  white-space: pre-wrap;
-}
-.sp-setting-line {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 18px;
-}
-.sp-setting-line > div {
-  display: grid;
-  gap: 3px;
-}
-.sp-setting-line strong {
-  font-size: 12px;
-  color: var(--text-primary, #1e293b);
-}
-.sp-setting-line small {
-  font-size: 10px;
-  color: var(--text-muted, #94a3b8);
-}
-.sp-number-row {
-  display: grid;
-  grid-template-columns: 1fr 1fr;
-  gap: 12px;
-}
-.sp-list-grid {
-  display: grid;
-  grid-template-columns: repeat(3, 1fr);
-  gap: 10px;
-}
-.sp-list-grid label {
-  display: grid;
-  gap: 6px;
-  font-size: 10px;
-  font-weight: 800;
-  color: var(--text-muted, #94a3b8);
-}
-.sp-list-grid textarea {
-  min-height: 76px;
-  resize: vertical;
-  padding: 8px;
-  border: 2px solid var(--color-sky-100, #e0f2fe);
-  background: var(--color-sky-50, #f0f9ff);
-  color: var(--text-primary, #1e293b);
-  font:
-    11px Consolas,
-    monospace;
-  outline: none;
-}
-.sp-list-grid textarea:focus {
-  border-color: var(--color-sky-400, #38bdf8);
-}
-.sp-mode-actions {
-  display: flex;
-  justify-content: flex-end;
-}
-.sp-pixel-select,
-.sp-pixel-input {
-  height: 32px;
-  padding: 0 9px;
-  border: 2px solid var(--color-sky-100, #e0f2fe);
-  background: white;
-  color: var(--text-primary, #1e293b);
-  font:
-    11px var(--ui-font-pixel),
-    monospace;
-  outline: none;
-}
-.sp-pixel-select:focus,
-.sp-pixel-input:focus {
-  border-color: var(--color-sky-400, #38bdf8);
-}
-
-.sp-contact-master {
-  margin: 0 24px 16px;
-  min-height: 270px;
-  display: grid;
-  grid-template-columns: 250px 1fr;
-  border: 2px solid var(--color-sky-100, #e0f2fe);
-  background: white;
-  overflow: hidden;
-}
-.sp-contact-sidebar {
-  border-right: 2px solid var(--color-sky-100, #e0f2fe);
-  overflow: auto;
-}
-.sp-contact-row {
-  width: 100%;
-  display: flex;
-  align-items: center;
-  gap: 10px;
-  padding: 10px 12px;
-  border: 0;
-  border-bottom: 1px solid var(--color-sky-100, #e0f2fe);
-  background: white;
-  text-align: left;
-  cursor: pointer;
-}
-.sp-contact-row:hover,
-.sp-contact-row.is-active {
-  background: var(--color-sky-50, #f0f9ff);
-}
-.sp-contact-row.is-active {
-  box-shadow: inset 3px 0 0 var(--color-sky-400, #38bdf8);
-}
-.sp-contact-avatar {
-  width: 30px;
-  height: 30px;
-  display: grid;
-  place-items: center;
-  background: var(--color-sky-100, #e0f2fe);
-  color: var(--color-sky-600, #0284c7);
-  border: 1px solid var(--color-sky-200, #bae6fd);
-  font-weight: 800;
-}
-.sp-contact-row > span:last-child {
-  display: grid;
-  gap: 2px;
-}
-.sp-contact-row strong {
-  font-size: 11px;
-  color: var(--text-primary, #1e293b);
-}
-.sp-contact-row small {
-  font:
-    9px Consolas,
-    monospace;
-  color: var(--text-muted, #94a3b8);
-}
-.sp-contact-detail {
-  padding: 20px;
-}
-.sp-contact-head {
-  display: flex;
-  align-items: flex-start;
-  justify-content: space-between;
-}
-.sp-contact-head small {
-  color: var(--color-sky-500, #0ea5e9);
-  font-size: 9px;
-  letter-spacing: 0.12em;
-}
-.sp-contact-head h3 {
-  margin: 5px 0 2px;
-  font-size: 18px;
-  color: var(--text-primary, #1e293b);
-}
-.sp-contact-head span {
-  font:
-    10px Consolas,
-    monospace;
-  color: var(--text-muted, #94a3b8);
-}
-.sp-impression-box {
-  margin-top: 18px;
-  padding: 14px;
-  border-left: 3px solid var(--color-sky-300, #7dd3fc);
-  background: var(--color-sky-50, #f0f9ff);
-}
-.sp-impression-box span {
-  font-size: 9px;
-  font-weight: 800;
-  color: var(--color-sky-600, #0284c7);
-}
-.sp-impression-box p {
-  margin: 7px 0 0;
-  line-height: 1.7;
-  font-size: 12px;
-  color: var(--text-secondary, #475569);
-}
-.sp-contact-meta {
-  margin-top: 16px;
-  display: grid;
-  grid-template-columns: 1fr 1fr;
-  gap: 10px;
-}
-.sp-contact-meta div {
-  padding: 10px;
-  border: 1px solid var(--color-sky-100, #e0f2fe);
-}
-.sp-contact-meta dt {
-  font-size: 9px;
-  color: var(--text-muted, #94a3b8);
-}
-.sp-contact-meta dd {
-  margin: 4px 0 0;
-  font-size: 10px;
-  color: var(--text-primary, #1e293b);
-}
-.sp-empty {
-  padding: 28px;
-  text-align: center;
-  color: var(--text-muted, #94a3b8);
-}
-.sp-empty-detail {
-  margin-top: 72px;
-}
-
-.sp-danger-zone {
-  margin: 0 24px 16px;
-  border: 2px solid #fee2e2;
-  background: white;
-  overflow: auto;
-}
-.sp-danger-head {
-  padding: 16px;
-  display: flex;
-  justify-content: space-between;
-  color: #ef4444;
-  background: #fff7f7;
-  border-bottom: 1px solid #fee2e2;
-}
-.sp-danger-head span {
-  font-size: 9px;
-  font-weight: 800;
-  letter-spacing: 0.14em;
-}
-.sp-danger-head h3 {
-  margin: 4px 0;
-  color: var(--text-primary, #1e293b);
-  font-size: 15px;
-}
-.sp-danger-head p {
-  margin: 0;
-  color: var(--text-muted, #94a3b8);
-  font-size: 10px;
-}
-.sp-danger-list article {
-  min-height: 64px;
-  padding: 12px 16px;
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 16px;
-  border-bottom: 1px solid #f1f5f9;
-}
-.sp-danger-list article.is-critical {
-  background: #fffafa;
-}
-.sp-danger-list article > div:first-child {
-  display: grid;
-  gap: 4px;
-}
-.sp-danger-list strong {
-  font-size: 11px;
-  color: var(--text-primary, #1e293b);
-}
-.sp-danger-list span {
-  font-size: 10px;
-  color: var(--text-muted, #94a3b8);
-}
-.sp-inline-target {
-  display: flex !important;
-  grid-template: none !important;
-  gap: 6px !important;
-}
-.sp-pixel-input {
-  width: 155px;
-}
-.sp-soft-action {
-  display: inline-flex;
-  align-items: center;
-  gap: 5px;
-  height: 30px;
-  padding: 0 10px;
-  border: 1px solid var(--color-sky-200, #bae6fd);
-  background: var(--color-sky-50, #f0f9ff);
-  color: var(--color-sky-600, #0284c7);
-  font:
-    10px var(--ui-font-pixel),
-    monospace;
-  cursor: pointer;
-}
-.sp-soft-action:hover {
-  border-color: var(--color-sky-400, #38bdf8);
-}
-.sp-soft-danger {
-  color: #dc2626;
-  border-color: #fecaca;
-  background: #fff7f7;
-}
-.sp-soft-danger:hover {
-  border-color: #f87171;
-}
-
-/* ── 根容器 ── */
-.social-panel {
-  display: flex;
-  flex-direction: column;
-  height: 100%;
-  min-height: 0;
-  overflow-y: auto;
-  overflow-x: hidden;
-  background: linear-gradient(180deg, #f8fafc 0%, #f0f9ff 100%);
-}
-
-/* 页面负责纵向滚动，配置卡片不与消息、日志争抢剩余高度。 */
-.social-panel > * {
-  flex-shrink: 0;
-  min-width: 0;
-}
-.social-panel > .sp-turn-panel {
-  margin: 0 24px 16px;
-  max-height: clamp(200px, 40vh, 420px);
-  overflow-y: auto;
-  overflow-x: hidden;
-  overscroll-behavior: contain;
-}
-
-/* ── 头部 ── */
-.sp-header {
-  padding: 20px 24px 12px;
-  flex-shrink: 0;
-}
-
-.sp-header-title {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  margin-bottom: 16px;
-}
-
-.sp-title-icon {
-  color: var(--color-sky-500, #0ea5e9);
-}
-
-.sp-title-text {
-  font-size: 15px;
-  font-weight: 800;
-  color: var(--text-primary, #1e293b);
-  letter-spacing: 0.02em;
-}
-
-.sp-badge {
-  font-size: 9px;
-  font-weight: 700;
-  padding: 1px 6px;
-  background: rgba(14, 165, 233, 0.1);
-  color: var(--color-sky-500, #0ea5e9);
-  border: 1px solid rgba(14, 165, 233, 0.2);
-  letter-spacing: 0.1em;
-}
-
-/* ── 适配器卡片 ── */
-.sp-adapter-cards {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 10px;
-}
-
-.sp-card {
-  display: flex;
-  flex: 0 0 auto;
-  align-items: center;
-  gap: 10px;
-  padding: 10px 14px;
-  background: white;
-  border: 2px solid var(--color-sky-100, #e0f2fe);
-  cursor: pointer;
-  transition: all 0.2s;
-  min-width: 180px;
-  position: relative;
-}
-
-.sp-card:hover:not(.sp-card-disabled) {
-  border-color: var(--color-sky-300, #7dd3fc);
-  transform: translateY(-1px);
-  box-shadow: 0 4px 12px rgba(14, 165, 233, 0.1);
-}
-
-.sp-card-active {
-  border-color: var(--color-sky-400, #38bdf8) !important;
-  background: linear-gradient(135deg, #f0f9ff 0%, #e0f2fe 100%);
-  box-shadow: 0 4px 12px rgba(14, 165, 233, 0.15);
-}
-
-.sp-card-disabled {
-  opacity: 0.45;
-  cursor: not-allowed;
-}
-
-.sp-card-icon {
-  width: 32px;
-  height: 32px;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  background: var(--color-sky-50, #f0f9ff);
-  border: 1px solid var(--color-sky-100, #e0f2fe);
-  color: var(--color-sky-500, #0ea5e9);
-  flex-shrink: 0;
-}
-
-.sp-card-active .sp-card-icon {
-  background: var(--color-sky-400, #38bdf8);
-  color: white;
-  border-color: var(--color-sky-400, #38bdf8);
-}
-
-.sp-card-info {
-  display: flex;
-  flex-direction: column;
-  gap: 2px;
-}
-
-.sp-card-name {
-  font-size: 12px;
-  font-weight: 800;
-  color: var(--text-primary, #1e293b);
-}
-
-.sp-card-desc {
-  font-size: 10px;
-  color: var(--text-muted, #94a3b8);
-}
-
-.sp-card-status {
-  margin-left: auto;
-}
-
-.sp-status-dot {
-  display: block;
-  width: 8px;
-  height: 8px;
-}
-
-.sp-dot-on {
-  background: var(--emerald-face, #34d399);
-  animation: sp-pulse 2s ease-in-out infinite;
-}
-
-.sp-dot-off {
-  background: var(--text-muted, #94a3b8);
-}
-
-.sp-card-tag {
-  margin-left: auto;
-  font-size: 9px;
-  font-weight: 700;
-  color: var(--text-muted, #94a3b8);
-  background: var(--color-sky-50, #f0f9ff);
-  padding: 1px 6px;
-  border: 1px solid var(--color-sky-100, #e0f2fe);
-}
-
-/* ── 配置区 ── */
-.sp-config {
-  padding: 0 24px 12px;
-  flex-shrink: 0;
-}
-
-/* ── 主人 QQ 配置区 ── */
-.sp-owner-config {
-  margin: 0 24px 12px;
-  background: white;
-  border: 2px solid var(--color-sky-100, #e0f2fe);
-  overflow: hidden;
-  flex-shrink: 0;
-}
-
-.sp-owner-body {
-  padding: 10px 12px;
-  display: flex;
-  flex-direction: column;
-  gap: 6px;
-}
-
-.sp-owner-row {
-  display: flex;
-  gap: 8px;
-  align-items: center;
-}
-
-.sp-owner-input {
-  flex: 1;
-  min-width: 0;
-  height: 32px;
-  padding: 0 10px;
-  font-size: 12px;
-  font-family: 'Consolas', 'Monaco', monospace;
-  color: var(--text-primary, #1e293b);
-  background: var(--color-sky-50, #f0f9ff);
-  border: 1px solid var(--color-sky-200, #bae6fd);
-  outline: none;
-  transition: border-color 0.2s;
-}
-
-.sp-owner-input:focus {
-  border-color: var(--color-sky-400, #38bdf8);
-}
-
-.sp-owner-input:disabled {
-  opacity: 0.6;
-  cursor: not-allowed;
-}
-
-.sp-config-row {
-  display: flex;
-  gap: 12px;
-}
-
-.sp-config-block {
-  flex: 1;
-  min-width: 0;
-  background: white;
-  border: 2px solid var(--color-sky-100, #e0f2fe);
-  overflow: hidden;
-}
-
-.sp-config-block.sp-full {
-  flex: unset;
-  width: 100%;
-}
-
-.sp-block-header {
-  display: flex;
-  align-items: center;
-  gap: 6px;
-  padding: 8px 12px;
-  background: var(--color-sky-50, #f0f9ff);
-  border-bottom: 1px solid var(--color-sky-100, #e0f2fe);
-  font-size: 11px;
-  font-weight: 800;
-  color: var(--text-primary, #1e293b);
-  text-transform: uppercase;
-  letter-spacing: 0.05em;
-}
-
-.sp-block-header :deep(.pixel-icon) {
-  color: var(--color-sky-500, #0ea5e9);
-}
-
-.sp-block-body {
-  padding: 10px 12px;
-  display: flex;
-  flex-direction: column;
-  gap: 6px;
-}
-
-.sp-status-line {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 12px;
-  font-size: 11px;
-}
-
-.sp-label {
-  color: var(--text-muted, #94a3b8);
-  font-weight: 600;
-}
-
-.sp-value {
-  min-width: 0;
-  overflow-wrap: anywhere;
-  text-align: right;
-  font-weight: 700;
-  color: var(--text-primary, #1e293b);
-}
-
-.sp-value.sp-ok {
-  color: var(--emerald-face, #34d399);
-}
-
-.sp-value.sp-na {
-  color: var(--text-muted, #94a3b8);
-}
-
-.sp-value.sp-mono {
-  font-family: 'Consolas', 'Monaco', monospace;
-  font-size: 10px;
-  background: var(--color-sky-50, #f0f9ff);
-  padding: 1px 6px;
-  border: 1px solid var(--color-sky-100, #e0f2fe);
-}
-
-.sp-hint {
-  font-size: 10px;
-  color: var(--text-muted, #94a3b8);
-  padding: 4px 0 0;
-  border-top: 1px dashed var(--color-sky-100, #e0f2fe);
-  margin-top: 2px;
-}
-
-.sp-actions {
-  display: flex;
-  gap: 6px;
-  margin-top: 4px;
-}
-
-/* ── 终端区 ── */
-.sp-terminal {
-  display: flex;
-  flex-direction: column;
-  flex: 0 0 auto;
-  overflow: hidden;
-  margin: 0 24px 16px;
-  border: 2px solid var(--color-sky-100, #e0f2fe);
-}
-.sp-terminal:not(.sp-terminal-open) {
-  min-height: 0;
-}
-.sp-terminal-open {
-  height: clamp(260px, 45vh, 480px);
-}
-.sp-terminal-toggle {
-  width: 100%;
-  flex-shrink: 0;
-  border: 0;
-  border-bottom: 1px solid var(--sp-border-soft);
-  text-align: left;
-  font-family: inherit;
-  cursor: pointer;
-}
-.sp-terminal-content {
-  flex: 1;
-  min-height: 0;
-  overflow: hidden;
-}
-/* ── 统一主题与字体覆盖 ── */
-.social-panel {
-  --sp-surface: var(--ui-bg-surface);
-  --sp-surface-soft: var(--ui-bg-surface-soft);
-  --sp-hover: var(--ui-bg-hover);
-  --sp-active: var(--ui-bg-active);
-  --sp-border: var(--ui-border-default);
-  --sp-border-soft: var(--ui-border-subtle);
-  --sp-text: var(--ui-text-primary);
-  --sp-text-secondary: var(--ui-text-secondary);
-  --sp-text-muted: var(--ui-text-tertiary);
-  --sp-accent: var(--ui-accent-sky);
-  --sp-accent-soft: var(--ui-accent-sky-soft);
-  --sp-danger: var(--ui-danger);
-  --sp-danger-soft: var(--ui-danger-soft);
-  --sp-canvas: var(--ui-bg-surface-soft);
-  font-family: var(--ui-font-pixel), monospace;
-  color: var(--sp-text);
-  background:
-    linear-gradient(180deg, color-mix(in srgb, var(--sp-accent) 4%, transparent), transparent 38%),
-    var(--sp-canvas);
-}
-
-.social-panel button,
-.social-panel input,
-.social-panel select,
-.social-panel textarea {
-  font-family: inherit;
-}
-
-.sp-header {
-  padding-bottom: 7px;
-}
-.sp-header-title {
-  margin-bottom: 0;
-}
-.sp-sections {
-  border-color: var(--sp-border);
-}
-.sp-section {
-  color: var(--sp-text-muted);
-}
-.sp-section::before {
-  background: var(--sp-border);
-}
-.sp-section:hover {
-  color: var(--sp-accent);
-  background: var(--sp-hover);
-}
-.sp-section-active {
-  color: var(--sp-accent);
-  border-bottom-color: var(--sp-accent);
-  background: linear-gradient(180deg, transparent, var(--sp-accent-soft));
-}
-.sp-section-active::before {
-  background: var(--sp-accent);
-  box-shadow: 5px 0 0 color-mix(in srgb, var(--sp-accent) 38%, transparent);
-}
-
-.sp-adapter-cards {
-  margin: 0 24px 12px;
-}
-.sp-card,
-.sp-owner-config,
-.sp-config-block,
-.sp-contact-master,
-.sp-danger-zone {
-  background: var(--sp-surface);
-  border-color: var(--sp-border);
-}
-.sp-card-active {
-  border-color: var(--sp-accent) !important;
-  background: linear-gradient(135deg, var(--sp-surface), var(--sp-accent-soft));
-  box-shadow: 0 4px 14px color-mix(in srgb, var(--sp-accent) 14%, transparent);
-}
-.sp-card-icon,
-.sp-card-tag,
-.sp-block-header,
-.sp-owner-input,
-.sp-value.sp-mono,
-.sp-impression-box {
-  background: var(--sp-surface-soft);
-  border-color: var(--sp-border-soft);
-}
-.sp-card-name,
-.sp-title-text,
-.sp-block-header,
-.sp-value,
-.sp-setting-line strong,
-.sp-contact-row strong,
-.sp-contact-head h3,
-.sp-contact-meta dd,
-.sp-danger-head h3,
-.sp-danger-list strong {
-  color: var(--sp-text);
-}
-.sp-card-desc,
-.sp-label,
-.sp-hint,
-.sp-setting-line small,
-.sp-contact-row small,
-.sp-contact-head span,
-.sp-contact-meta dt,
-.sp-empty,
-.sp-danger-head p,
-.sp-danger-list span {
-  color: var(--sp-text-muted);
-}
-
-.sp-owner-input,
-.sp-pixel-input,
-.sp-pixel-select,
-.sp-list-grid textarea {
-  color: var(--sp-text);
-  background: var(--sp-surface-soft);
-  border-color: var(--sp-border);
-}
-.sp-owner-input:focus,
-.sp-pixel-input:focus,
-.sp-pixel-select:focus,
-.sp-list-grid textarea:focus {
-  border-color: var(--sp-accent);
-}
-.sp-hint {
-  border-color: var(--sp-border-soft);
-}
-
-.sp-mode-grid,
-.sp-contact-master,
-.sp-danger-zone {
-  flex: 0 0 auto;
-}
-.sp-mode-grid {
-  align-content: start;
-}
-.sp-mode-body {
-  background: var(--sp-surface);
-}
-.sp-list-grid label {
-  color: var(--sp-text-muted);
-}
-.sp-mode-actions {
-  padding-bottom: 2px;
-}
-
-.sp-contact-sidebar {
-  border-color: var(--sp-border);
-  background: var(--sp-surface-soft);
-}
-.sp-contact-row {
-  color: var(--sp-text);
-  background: transparent;
-  border-color: var(--sp-border-soft);
-}
-.sp-contact-row:hover,
-.sp-contact-row.is-active {
-  background: var(--sp-hover);
-}
-.sp-contact-row.is-active {
-  box-shadow: inset 3px 0 0 var(--sp-accent);
-}
-.sp-contact-avatar {
-  color: var(--sp-accent);
-  background: var(--sp-accent-soft);
-  border-color: color-mix(in srgb, var(--sp-accent) 35%, var(--sp-border));
-}
-.sp-contact-detail {
-  background: var(--sp-surface);
-}
-.sp-impression-box {
-  border-left-color: var(--sp-accent);
-}
-.sp-impression-box span {
-  color: var(--sp-accent);
-}
-.sp-impression-box p {
-  color: var(--sp-text-secondary);
-}
-.sp-contact-meta div {
-  border-color: var(--sp-border-soft);
-  background: var(--sp-surface-soft);
-}
-
-.sp-danger-zone {
-  border-color: color-mix(in srgb, var(--sp-danger) 34%, var(--sp-border));
-}
-.sp-danger-head {
-  color: var(--sp-danger);
-  background: var(--sp-danger-soft);
-  border-color: color-mix(in srgb, var(--sp-danger) 25%, var(--sp-border));
-}
-.sp-danger-list article {
-  border-color: var(--sp-border-soft);
-  background: var(--sp-surface);
-}
-.sp-danger-list article.is-critical {
-  background: color-mix(in srgb, var(--sp-danger) 6%, var(--sp-surface));
-}
-.sp-soft-action {
-  color: var(--sp-accent);
-  border-color: color-mix(in srgb, var(--sp-accent) 35%, var(--sp-border));
-  background: var(--sp-accent-soft);
-}
-.sp-soft-action:hover {
-  border-color: var(--sp-accent);
-  background: var(--sp-hover);
-}
-.sp-soft-danger {
-  color: var(--sp-danger);
-  border-color: color-mix(in srgb, var(--sp-danger) 36%, var(--sp-border));
-  background: var(--sp-danger-soft);
-}
-.sp-soft-danger:hover {
-  border-color: var(--sp-danger);
-}
-.sp-terminal {
-  border-color: var(--sp-border);
-  background: var(--sp-surface-soft);
-}
-
-@media (max-width: 900px) {
-  .sp-mode-grid {
-    grid-template-columns: 1fr;
-  }
-  .sp-mode-wide,
-  .sp-mode-actions {
-    grid-column: 1;
-  }
-  .sp-list-grid {
-    grid-template-columns: 1fr;
-  }
-  .sp-contact-master {
-    grid-template-columns: 210px 1fr;
-  }
-  .sp-danger-list article {
-    align-items: flex-start;
-    flex-direction: column;
-  }
-}
-
-/* ── 动画 ── */
-@keyframes sp-pulse {
-  0%,
-  100% {
-    opacity: 0.5;
-  }
-  50% {
-    opacity: 1;
-  }
-}
-</style>
+<style scoped src="../../social/socialPanel.css"></style>
+<style scoped src="../../social/socialWorkspace.css"></style>

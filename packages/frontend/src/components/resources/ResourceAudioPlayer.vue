@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, ref } from 'vue'
+import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import '@infos/shared/i18n/catalogs/mediaPlayer'
 import { t } from '../../i18n'
 import { PixelIcon } from '../pixel'
@@ -18,7 +18,35 @@ const controller = useMediaPlayer(
   audio,
   () => props.src,
   () => props.active,
+  { background: true },
 )
+let detachAudio: (() => void) | undefined
+onMounted(() => {
+  // 播放源独立于 DOM，切换标签或 KeepAlive 缓存页面不影响音乐。
+  const element = new Audio()
+  element.preload = 'metadata'
+  audio.value = element
+  for (const [name, handler] of Object.entries(controller.events))
+    element.addEventListener(name, handler)
+  detachAudio = () => {
+    for (const [name, handler] of Object.entries(controller.events))
+      element.removeEventListener(name, handler)
+  }
+  element.src = props.src
+})
+watch(
+  () => props.src,
+  (value) => {
+    if (audio.value) audio.value.src = value
+  },
+)
+onBeforeUnmount(() => {
+  detachAudio?.()
+  if (audio.value) {
+    audio.value.removeAttribute('src')
+    audio.value.load()
+  }
+})
 const { state } = controller
 const tr = (source: string) => t('ui.media-player', source)
 const title = computed(() => props.name.replace(/\.[a-z0-9]{1,7}$/i, '') || tr('音频'))
@@ -50,7 +78,6 @@ const status = computed(() =>
     :aria-description="tr('播放快捷键：空格播放或暂停，方向键快进或后退，M静音')"
     @keydown="controller.keyboard"
   >
-    <audio ref="audio" :src="src" preload="metadata" v-on="controller.events" />
     <div class="resource-audio__head">
       <div class="resource-audio__art" aria-hidden="true">
         <span class="resource-audio__spark resource-audio__spark--one">✦</span>

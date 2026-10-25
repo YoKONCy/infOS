@@ -6,10 +6,10 @@
   "entry": "index.ts",
   "toolDefinition": {
     "name": "manage_task",
-    "description": "创建可持续执行的后台任务，或查询、暂停、恢复、取消已有任务，以及回答任务的问题、处理审批和交付状态。普通当前会话工作不必转成后台任务；仅整理当前步骤请使用 update_plan。操作已有任务前先用 list/get 确认目标与 revision，再提交对应操作。仅工作模式可用，后台任务不能借此控制自身或派生新任务。",
+    "description": "创建、查询和管理持久任务。修改任务时携带当前 revision，可通过 list/get 查询；get 支持 resultOffset/resultLimit 分页读取完整结果。后台任务可创建受限子任务、读取自身，仅管理自己的子任务；使用 finish_task 的 task_result.waitForTaskId 等待子任务交付。",
     "display": {
       "label": "管理任务",
-      "description": "安排后台任务、查看进度，或暂停、恢复、取消任务及处理问答。仅工作模式可用。",
+      "description": "安排后台任务、查看结果，或暂停、恢复、取消任务及处理问答。聊天与工作模式可用。",
       "icon": "list",
       "color": "purple"
     },
@@ -126,6 +126,17 @@
         "planStepId": {
           "type": "string",
           "description": "create可选：交给后台执行的步骤ID。"
+        },
+        "resultOffset": {
+          "type": "integer",
+          "minimum": 0,
+          "description": "get 操作的结果字符偏移，默认 0"
+        },
+        "resultLimit": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 32000,
+          "description": "get 操作每页结果字符数，默认 12000"
         }
       },
       "required": ["action"],

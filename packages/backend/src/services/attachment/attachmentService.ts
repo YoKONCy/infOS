@@ -15,7 +15,11 @@ import {
   resourceFromToolResult,
   type ResourceOrigin,
   DOCUMENT_MAX_INPUT_BYTES,
-  isOfficeDocumentName,
+  classifyAttachmentUpload,
+  MAX_ATTACHMENT_UPLOAD_BYTES,
+  MAX_NATIVE_AUDIO_BYTES,
+  inspectAudio,
+  type AudioMetadata,
 } from '@infos/shared'
 import type { AttachmentKind } from '../../repositories/attachment.repo'
 import { tokenCounter } from '../tokenizer/tokenCounter'
@@ -23,29 +27,6 @@ import type { PdfParserService } from '../integrations/pdfParserService'
 import type { IntegrationSource } from '../integrations/integrationService'
 import { resourceMime } from './resourceSource'
 
-const IMAGE_MIMES = new Set(['image/png', 'image/jpeg', 'image/webp', 'image/gif'])
-const TEXT_MIMES = new Set([
-  'text/plain',
-  'text/markdown',
-  'text/csv',
-  'text/xml',
-  'application/json',
-  'application/xml',
-  'application/yaml',
-  'application/x-yaml',
-  'text/yaml',
-  'text/x-python',
-  'text/javascript',
-  'application/javascript',
-  'text/typescript',
-  'text/css',
-  'text/x-c',
-  'text/x-c++',
-  'text/x-java-source',
-  'application/sql',
-])
-const MAX_IMAGE_BYTES = 20 * 1024 * 1024
-const MAX_TEXT_BYTES = 2 * 1024 * 1024
 export const MAX_ATTACHMENT_TEXT_CHARS = 120_000
 export const MAX_ATTACHMENT_TEXT_TOKENS = 30_000
 
@@ -66,6 +47,8 @@ export interface AttachmentDto {
   error?: string
   caption?: string
   origin?: ResourceOrigin
+  contextMode?: 'inline' | 'reference'
+  audio?: AudioMetadata
 }
 
 export class AttachmentService {
@@ -94,6 +77,7 @@ export class AttachmentService {
         : { pdf: true, maxPdfBytes: DOCUMENT_MAX_INPUT_BYTES, sourceName: '内置文档读取' }),
       office: true,
       maxDocumentBytes: DOCUMENT_MAX_INPUT_BYTES,
+      maxUploadBytes: MAX_ATTACHMENT_UPLOAD_BYTES,
     }
   }
 
@@ -193,62 +177,52 @@ export class AttachmentService {
     return { row, filePath: this.resolveStoragePath(row.storageKey) }
   }
 
-  async upload(file: File, threadId: string): Promise<AttachmentDto> {
+  async upload(
+    file: File,
+    threadId: string,
+    options: { referenceOnly?: boolean } = {},
+  ): Promise<AttachmentDto> {
     if (!(await this.threadRepo.getThread(threadId)))
       throw new AppError('NOT_FOUND', { message: `Thread 不存在: ${threadId}` })
-    const mimeType = file.type.toLowerCase().split(';')[0]!
-    const kind =
-      mimeType === 'application/pdf' || /\.pdf$/i.test(file.name)
-        ? 'pdf'
-        : IMAGE_MIMES.has(mimeType)
-          ? 'image'
-          : TEXT_MIMES.has(mimeType)
-            ? 'text'
-            : isOfficeDocumentName(file.name)
-              ? 'file'
-              : null
-    if (!kind)
-      throw new AppError('UNSUPPORTED_MEDIA_TYPE', {
-        message: '不支持此附件类型，请选择图片、文本、PDF 或 Office 文档',
-      })
-    const pdfSource = kind === 'pdf' ? this.pdfParser?.capture() : undefined
-    if (pdfSource && this.pdfJobs.size >= 8)
-      throw new AppError('SERVICE_UNAVAILABLE', { message: '正在解析的 PDF 较多，请稍后上传' })
-    const max =
-      kind === 'pdf'
-        ? this.capabilities().maxPdfBytes
-        : kind === 'image'
-          ? MAX_IMAGE_BYTES
-          : kind === 'file'
-            ? DOCUMENT_MAX_INPUT_BYTES
-            : MAX_TEXT_BYTES
-    if (file.size > max)
+    if (file.size > MAX_ATTACHMENT_UPLOAD_BYTES)
       throw new AppError('BAD_REQUEST', {
-        message: `附件超过 ${max / 1024 / 1024}MB 限制`,
+        message: '附件不能超过 100MB',
       })
-
     const bytes = Buffer.from(await file.arrayBuffer())
-    if (kind === 'pdf' && bytes.subarray(0, 1024).indexOf(Buffer.from('%PDF-')) < 0)
-      throw new AppError('INVALID_FORMAT', { message: '文件不是有效的 PDF' })
+    let mimeType = resourceMime(file.name, file.type)
+    let kind = classifyAttachmentUpload(file.name, mimeType, bytes.length)
+    const audio = kind === 'audio' ? inspectAudio(bytes, mimeType, file.name) : null
+    if (kind === 'audio') {
+      if (audio) mimeType = audio.mimeType
+      else kind = 'file'
+    }
+    if (options.referenceOnly && kind !== 'audio') kind = 'file'
+    // 原件保留不依赖解析器；不合适的格式、体积与编码都只提供文件引用。
+    if (kind === 'pdf' && bytes.subarray(0, 1024).indexOf(Buffer.from('%PDF-')) < 0) kind = 'file'
+    const pdfSource =
+      kind === 'pdf' && this.pdfJobs.size < 8 && bytes.length <= this.capabilities().maxPdfBytes
+        ? this.pdfParser?.capture()
+        : undefined
     let extractedText: string | undefined
     let tokenEstimate: number | undefined
     if (kind === 'text') {
       try {
         extractedText = new TextDecoder('utf-8', { fatal: true }).decode(bytes)
       } catch {
-        throw new AppError('UNSUPPORTED_MEDIA_TYPE', {
-          message: '文本附件必须是有效 UTF-8，未知二进制内容不受支持',
-        })
+        kind = 'file'
       }
-      tokenEstimate = tokenCounter.countTokens(extractedText)
-      if (
-        extractedText.length > MAX_ATTACHMENT_TEXT_CHARS ||
-        tokenEstimate > MAX_ATTACHMENT_TEXT_TOKENS
-      ) {
-        throw new AppError('BAD_REQUEST', {
-          message: '文档内容超过首版上下文限制，首版暂不支持大文档，请缩小文件后重试',
-        })
+      if (extractedText !== undefined) {
+        if (extractedText.includes('\0') || extractedText.length > MAX_ATTACHMENT_TEXT_CHARS)
+          kind = 'file'
+        else {
+          tokenEstimate = tokenCounter.countTokens(extractedText)
+          if (tokenEstimate > MAX_ATTACHMENT_TEXT_TOKENS) kind = 'file'
+        }
       }
+    }
+    if (kind === 'file') {
+      extractedText = undefined
+      tokenEstimate = undefined
     }
 
     const id = randomUUID()
@@ -274,7 +248,20 @@ export class AttachmentService {
         extractedText,
         tokenEstimate,
         status: pdfSource ? 'processing' : 'uploaded',
-        metadataJson: pdfSource ? this.pdfMetadata(pdfSource) : '{}',
+        metadataJson: pdfSource
+          ? this.pdfMetadata(pdfSource)
+          : JSON.stringify({
+              ...(audio && kind === 'audio' ? { audio } : {}),
+              upload: {
+                contextMode:
+                  options.referenceOnly ||
+                  kind === 'file' ||
+                  kind === 'pdf' ||
+                  (kind === 'audio' && bytes.length > MAX_NATIVE_AUDIO_BYTES)
+                    ? 'reference'
+                    : 'inline',
+              },
+            }),
       })
       if (pdfSource) this.startPdf(row, bytes, pdfSource)
       return this.toDto(row)
@@ -376,13 +363,19 @@ export class AttachmentService {
   toDto(row: AttachmentRow): AttachmentDto {
     let error: string | undefined
     let resource: { caption?: string; origin?: ResourceOrigin } | undefined
+    let contextMode: 'inline' | 'reference' | undefined
+    let audio: AudioMetadata | undefined
     try {
       const metadata = JSON.parse(row.metadataJson) as {
         pdf?: { error?: string }
         resource?: typeof resource
+        upload?: { contextMode?: 'inline' | 'reference' }
+        audio?: AudioMetadata
       }
       error = metadata.pdf?.error
       resource = metadata.resource
+      contextMode = metadata.upload?.contextMode
+      audio = metadata.audio
     } catch {
       /* 旧附件没有解析元数据。 */
     }
@@ -403,6 +396,8 @@ export class AttachmentService {
       error,
       caption: resource?.caption,
       origin: resource?.origin,
+      contextMode,
+      audio,
     }
   }
 
@@ -436,30 +431,35 @@ export class AttachmentService {
         signal.throwIfAborted()
         const result = await this.pdfParser!.parse(bytes, row.originalName, source, signal)
         signal.throwIfAborted()
-        const tokenEstimate = tokenCounter.countTokens(result.text)
-        if (
+        const tokenEstimate =
+          result.text.length > MAX_ATTACHMENT_TEXT_CHARS
+            ? undefined
+            : tokenCounter.countTokens(result.text)
+        const referenceOnly =
           result.text.length > MAX_ATTACHMENT_TEXT_CHARS ||
-          tokenEstimate > MAX_ATTACHMENT_TEXT_TOKENS
-        )
-          throw new AppError('OUT_OF_RANGE', {
-            message: 'PDF 文字超过 30K Token 附件预算，请拆分文件后上传',
-          })
+          (tokenEstimate ?? 0) > MAX_ATTACHMENT_TEXT_TOKENS
         await this.repo.finishPdf(row.id, {
           status: 'uploaded',
-          extractedText: result.text,
-          tokenEstimate,
-          metadataJson: this.pdfMetadata(source),
+          extractedText: referenceOnly ? undefined : result.text,
+          tokenEstimate: referenceOnly ? undefined : tokenEstimate,
+          metadataJson: JSON.stringify({
+            pdf: { sourceId: source.id, provider: source.provider, sourceName: source.name },
+            upload: { contextMode: referenceOnly ? 'reference' : 'inline' },
+          }),
         })
       } catch (error) {
-        const message =
-          error instanceof AppError
-            ? error.message
-            : signal.aborted
-              ? '解析已中断或超时，请重试'
-              : 'PDF 解析失败，请检查来源配置或重试'
+        // 解析失败不撤销上传，原件仍可在工作模式按需读取。
         await this.repo.finishPdf(row.id, {
-          status: 'failed',
-          metadataJson: this.pdfMetadata(source, message),
+          status: 'uploaded',
+          metadataJson: JSON.stringify({
+            pdf: {
+              sourceId: source.id,
+              provider: source.provider,
+              sourceName: source.name,
+              diagnostic: error instanceof Error ? error.message : String(error),
+            },
+            upload: { contextMode: 'reference' },
+          }),
         })
       }
     })()

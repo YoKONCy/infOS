@@ -6,7 +6,7 @@
 
 import { apiClient } from '../client'
 import { getApiResourceUrl, requestApiResource } from '../transport'
-import type { WorkspaceFileDescriptor } from '@infos/shared'
+import type { CodeSearchNavigation, WorkspaceFileDescriptor } from '@infos/shared'
 
 export type ApprovalDecision = 'allow_once' | 'allow_session' | 'deny_once'
 
@@ -118,6 +118,11 @@ interface SessionRef {
 }
 
 export const workspaceApi = {
+  searchResultFile: (input: CodeSearchNavigation & { file: string; line?: number }) =>
+    apiClient.post<{ descriptor: WorkspaceFileDescriptor; read: WorkspaceReadResult }>(
+      '/workspace/search-result-file',
+      input,
+    ),
   describeFile: (session: SessionRef, path: string) =>
     apiClient.get<WorkspaceFileDescriptor>(
       `/workspace/file?${new URLSearchParams({ ...session, path })}`,

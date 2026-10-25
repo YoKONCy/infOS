@@ -1,0 +1,18 @@
+[
+  {
+    "advisory": "GHSA-ch52-4w7c-c8xp",
+    "module": "http-cache-semantics",
+    "version": "4.2.0",
+    "patch": "patches/http-cache-semantics@4.2.0.patch",
+    "sha256": "469bda12a3bab2a6f0d4e4f24149ee66484f4af7df9da81e7541f085a9249779",
+    "test": "packages/shared/tests/cacheSecurityPatch.test.ts"
+  },
+  {
+    "advisory": "GHSA-5v7r-6r5c-r473",
+    "module": "file-type",
+    "version": "16.5.4",
+    "patch": "patches/file-type@16.5.4.patch",
+    "sha256": "34adccb1846a83e2fec52097dc83eabd4545e4d1786c345be3dfc35f49edf319",
+    "test": "packages/shared/tests/imageParserSecurityPatch.test.ts"
+  }
+]

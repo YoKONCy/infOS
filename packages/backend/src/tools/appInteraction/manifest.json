@@ -14,7 +14,9 @@
       "type": "object",
       "properties": {
         "group_id": { "type": "string", "description": "目标群聊ID" },
-        "intent": { "type": "string", "description": "本次参与意图、希望关注的内容和行为边界" }
+        "intent": { "type": "string", "description": "本次参与意图、希望关注的内容和行为边界" },
+        "platform": { "type": "string", "description": "目标平台；多个平台连接时必须提供" },
+        "account_id": { "type": "string", "description": "目标发送账号；同平台多个账号时必须提供" }
       },
       "required": ["group_id"],
       "additionalProperties": false

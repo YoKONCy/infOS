@@ -1,16 +1,21 @@
 <script setup lang="ts">
-import { t as __t } from '../../i18n/index'
-
-import { computed, nextTick, onBeforeUnmount, onMounted, ref, shallowRef, watch } from 'vue'
-import { getDocument, GlobalWorkerOptions, PasswordResponses, TextLayer } from 'pdfjs-dist'
-import type {
-  PDFDocumentLoadingTask,
-  PDFDocumentProxy,
-  RenderTask,
-} from 'pdfjs-dist/types/src/display/api'
+import {
+  computed,
+  nextTick,
+  onBeforeUnmount,
+  onMounted,
+  ref,
+  shallowRef,
+  watch,
+  type ComponentPublicInstance,
+} from 'vue'
+import { getDocument, GlobalWorkerOptions, PasswordResponses } from 'pdfjs-dist'
+import type { PDFDocumentLoadingTask, PDFDocumentProxy } from 'pdfjs-dist/types/src/display/api'
 import workerUrl from 'pdfjs-dist/build/pdf.worker.min.mjs?url'
 import type { WorkspacePreviewState } from './workspacePreview'
+import WorkspacePdfPage from './WorkspacePdfPage.vue'
 import { getApiBaseUrl, getApiResourceHeaders } from '../../api/transport'
+import { t as __t } from '../../i18n/index'
 
 const props = defineProps<{ src: string; state: WorkspacePreviewState }>()
 const emit = defineEmits<{
@@ -19,14 +24,13 @@ const emit = defineEmits<{
 }>()
 GlobalWorkerOptions.workerSrc = workerUrl
 const pdf = shallowRef<PDFDocumentProxy | null>(null)
-const stage = ref<HTMLElement | null>(null),
-  canvas = ref<HTMLCanvasElement | null>(null),
-  textContainer = ref<HTMLElement | null>(null)
+const stage = ref<HTMLElement | null>(null)
 const loading = ref(true),
-  rendering = ref(false),
   pageCount = ref(0),
-  width = ref(0)
-const pageSize = ref({ width: 0, height: 0, scale: 1, totalScale: 1 })
+  width = ref(720)
+const firstSize = ref({ width: 595, height: 842 })
+const pageSizes = ref(new Map<number, { width: number; height: number }>())
+const nearbyPages = ref(new Set<number>())
 const password = ref(''),
   passwordRequired = ref(false),
   passwordError = ref(false)
@@ -34,152 +38,189 @@ const query = ref(''),
   searching = ref(false),
   searchMessage = ref('')
 const pageInput = ref(props.state.page)
-let passwordCallback: ((value: string) => void) | undefined
-let loadingTask: PDFDocumentLoadingTask | undefined,
-  renderTask: RenderTask | undefined,
-  textLayer: TextLayer | undefined
-let loadRevision = 0,
-  renderRevision = 0,
-  searchRevision = 0
-let observer: ResizeObserver | undefined
-let lastMatch: { term: string; page: number } | undefined
-const cachedText = new Map<number, string>()
+const layout = computed(() => props.state.pdfLayout ?? 'continuous')
+const pages = computed(() =>
+  !pdf.value
+    ? []
+    : layout.value === 'single'
+      ? [props.state.page]
+      : Array.from({ length: pageCount.value }, (_, index) => index + 1),
+)
 const zoomLabel = computed(() =>
   props.state.zoom ? `${Math.round(props.state.zoom * 100)}%` : __t('ui.workspace', '适应宽度'),
 )
+const pageElements = new Map<number, HTMLElement>()
+const cachedText = new Map<number, string>()
+let passwordCallback: ((value: string) => void) | undefined
+let loadingTask: PDFDocumentLoadingTask | undefined
+let loadRevision = 0,
+  searchRevision = 0,
+  navigationRevision = 0
+let observer: ResizeObserver | undefined
+let pageObserver: IntersectionObserver | undefined
+let scrollTimer: ReturnType<typeof setTimeout> | undefined
+let restoring = false
+let lastMatch: { term: string; page: number } | undefined
 
+function metrics(number: number) {
+  const original = pageSizes.value.get(number) ?? firstSize.value
+  const scale = props.state.zoom || Math.max(0.1, width.value / original.width)
+  return { width: original.width * scale, height: original.height * scale }
+}
+function setPageElement(number: number, element: Element | ComponentPublicInstance | null) {
+  const previous = pageElements.get(number)
+  if (previous === element) return
+  if (previous) pageObserver?.unobserve(previous)
+  if (element instanceof HTMLElement) {
+    pageElements.set(number, element)
+    pageObserver?.observe(element)
+  } else {
+    pageElements.delete(number)
+  }
+}
+function setPageSize(number: number, size: { width: number; height: number }) {
+  const previous = pageSizes.value.get(number)
+  if (previous?.width !== size.width || previous.height !== size.height)
+    pageSizes.value.set(number, size)
+}
+function recordScroll() {
+  const element = stage.value
+  if (!element || !pdf.value || restoring) return
+  let current = props.state.page
+  if (layout.value === 'continuous') {
+    const offset = element.scrollTop + Math.min(120, element.clientHeight / 4)
+    let low = 1,
+      high = pageCount.value
+    while (low <= high) {
+      const middle = Math.floor((low + high) / 2)
+      const top = pageElements.get(middle)?.offsetTop ?? Infinity
+      if (top <= offset) {
+        current = middle
+        low = middle + 1
+      } else high = middle - 1
+    }
+  }
+  emit('state', { page: current, pdfScrollTop: element.scrollTop })
+}
+function scrolled() {
+  if (scrollTimer || restoring) return
+  scrollTimer = setTimeout(() => {
+    scrollTimer = undefined
+    recordScroll()
+  }, 100)
+}
+async function go(number: number) {
+  if (!Number.isFinite(number) || !pageCount.value) return
+  const revision = ++navigationRevision
+  const target = Math.max(1, Math.min(pageCount.value, Math.trunc(number)))
+  restoring = true
+  emit('state', { page: target })
+  pageInput.value = target
+  await nextTick()
+  if (revision !== navigationRevision) return
+  if (stage.value) {
+    stage.value.scrollTop =
+      layout.value === 'continuous'
+        ? Math.max(0, (pageElements.get(target)?.offsetTop ?? 24) - 24)
+        : 0
+    stage.value.scrollLeft = 0
+    emit('state', { pdfScrollTop: stage.value.scrollTop })
+  }
+  restoring = false
+}
+function zoom(direction: number) {
+  const original = pageSizes.value.get(props.state.page) ?? firstSize.value
+  const current = props.state.zoom || Math.max(0.1, width.value / original.width)
+  emit('state', { zoom: Math.min(4, Math.max(0.25, current * (direction > 0 ? 1.25 : 0.8))) })
+}
+function changeLayout(event: Event) {
+  const value = (event.target as HTMLSelectElement).value
+  if (value === 'continuous' || value === 'single')
+    emit('state', { pdfLayout: value, pdfScrollTop: 0 })
+}
 async function load() {
   const revision = ++loadRevision
-  ++renderRevision
   ++searchRevision
-  renderTask?.cancel()
-  textLayer?.cancel()
+  ++navigationRevision
+  if (scrollTimer) clearTimeout(scrollTimer)
+  scrollTimer = undefined
+  restoring = true
   const previous = loadingTask
   loadingTask = undefined
   pdf.value = null
   pageCount.value = 0
   cachedText.clear()
+  pageSizes.value.clear()
+  nearbyPages.value = new Set()
+  lastMatch = undefined
+  searching.value = false
+  searchMessage.value = ''
   loading.value = true
   passwordRequired.value = false
   passwordCallback = undefined
   await previous?.destroy().catch(() => undefined)
   if (revision !== loadRevision) return
-  const assets = new URL('pdf-assets/', document.baseURI).href
-  const task = getDocument({
-    url: props.src,
-    httpHeaders: getApiResourceHeaders(props.src),
-    withCredentials: new URL(props.src, getApiBaseUrl()).origin === new URL(getApiBaseUrl()).origin,
-    cMapUrl: `${assets}cmaps/`,
-    cMapPacked: true,
-    standardFontDataUrl: `${assets}standard_fonts/`,
-    wasmUrl: `${assets}wasm/`,
-    iccUrl: `${assets}iccs/`,
-    disableStream: true,
-    disableAutoFetch: true,
-    enableXfa: false,
-    canvasMaxAreaInBytes: 64 * 1024 * 1024,
-  })
-  loadingTask = task
-  task.onPassword = (updatePassword: (value: string) => void, reason: number) => {
-    if (revision !== loadRevision) return
-    passwordCallback = updatePassword
-    passwordRequired.value = true
-    passwordError.value = reason === PasswordResponses.INCORRECT_PASSWORD
-    loading.value = false
-  }
   try {
+    const assets = new URL('pdf-assets/', document.baseURI).href
+    const task = getDocument({
+      url: props.src,
+      httpHeaders: getApiResourceHeaders(props.src),
+      withCredentials:
+        new URL(props.src, getApiBaseUrl()).origin === new URL(getApiBaseUrl()).origin,
+      cMapUrl: `${assets}cmaps/`,
+      cMapPacked: true,
+      standardFontDataUrl: `${assets}standard_fonts/`,
+      wasmUrl: `${assets}wasm/`,
+      iccUrl: `${assets}iccs/`,
+      disableStream: true,
+      disableAutoFetch: true,
+      enableXfa: false,
+      canvasMaxAreaInBytes: 64 * 1024 * 1024,
+    })
+    loadingTask = task
+    task.onPassword = (callback: (value: string) => void, reason: number) => {
+      if (revision !== loadRevision) return
+      passwordCallback = callback
+      passwordRequired.value = true
+      passwordError.value = reason === PasswordResponses.INCORRECT_PASSWORD
+      loading.value = false
+    }
     const documentProxy = await task.promise
     if (revision !== loadRevision) return
-    pdf.value = documentProxy
+    const firstPage = await documentProxy.getPage(1)
+    if (revision !== loadRevision) return
+    const viewport = firstPage.getViewport({ scale: 1 })
+    firstSize.value = { width: viewport.width, height: viewport.height }
     pageCount.value = documentProxy.numPages
     const page = Math.max(1, Math.min(pageCount.value, props.state.page))
+    const savedTop = props.state.pdfScrollTop
     emit('state', { page })
     pageInput.value = page
+    pdf.value = documentProxy
     loading.value = false
     passwordRequired.value = false
     password.value = ''
     passwordCallback = undefined
     await nextTick()
-    await render()
+    if (revision !== loadRevision) return
+    if (stage.value && savedTop !== undefined) {
+      stage.value.scrollTop = savedTop
+      restoring = false
+      recordScroll()
+    } else {
+      await go(page)
+    }
   } catch (error) {
     if (revision !== loadRevision) return
     loading.value = false
+    restoring = false
     emit(
       'error',
       error instanceof Error && /409/.test(error.message)
-        ? '文件已变化，请重新载入预览'
-        : 'PDF 无法读取，请重新载入或用系统应用打开',
+        ? __t('ui.workspace', '文件已变化，请重新载入预览')
+        : __t('ui.workspace', 'PDF 无法读取，请重新载入或用系统应用打开'),
     )
   }
-}
-
-async function render() {
-  const documentProxy = pdf.value
-  if (!documentProxy || !canvas.value || !textContainer.value) return
-  const revision = ++renderRevision
-  const previous = renderTask
-  previous?.cancel()
-  textLayer?.cancel()
-  rendering.value = true
-  try {
-    await previous?.promise.catch(() => undefined)
-    const page = await documentProxy.getPage(props.state.page)
-    if (revision !== renderRevision || !canvas.value || !textContainer.value) return
-    const original = page.getViewport({ scale: 1 })
-    const scale = props.state.zoom || Math.max(0.1, width.value / original.width)
-    const viewport = page.getViewport({ scale })
-    pageSize.value = {
-      width: viewport.width,
-      height: viewport.height,
-      scale: viewport.scale,
-      totalScale: viewport.scale * viewport.userUnit,
-    }
-    const ratio = Math.min(
-      window.devicePixelRatio || 1,
-      2,
-      Math.sqrt(16_000_000 / (viewport.width * viewport.height)),
-      8192 / viewport.width,
-      8192 / viewport.height,
-    )
-    const target = canvas.value
-    target.width = Math.max(1, Math.floor(viewport.width * ratio))
-    target.height = Math.max(1, Math.floor(viewport.height * ratio))
-    target.style.width = `${viewport.width}px`
-    target.style.height = `${viewport.height}px`
-    textContainer.value.replaceChildren()
-    const task = page.render({ canvas: target, viewport, transform: [ratio, 0, 0, ratio, 0, 0] })
-    renderTask = task
-    await task.promise
-    if (revision !== renderRevision || !textContainer.value) return
-    const layer = new TextLayer({
-      textContentSource: page.streamTextContent(),
-      container: textContainer.value,
-      viewport,
-    })
-    textLayer = layer
-    await layer.render()
-    if (revision === renderRevision) highlight()
-  } catch (error) {
-    if (
-      revision === renderRevision &&
-      !(error instanceof Error && error.name === 'RenderingCancelledException')
-    )
-      emit('error', 'PDF 页面无法显示，可重新载入后重试')
-  } finally {
-    if (revision === renderRevision) rendering.value = false
-  }
-}
-function go(page: number) {
-  if (!Number.isFinite(page) || !pageCount.value) return
-  const target = Math.max(1, Math.min(pageCount.value, Math.trunc(page)))
-  emit('state', { page: target })
-  pageInput.value = target
-  stage.value?.scrollTo({ top: 0, left: 0 })
-}
-function zoom(direction: number) {
-  emit('state', {
-    zoom: Math.min(4, Math.max(0.25, pageSize.value.scale * (direction > 0 ? 1.25 : 0.8))),
-  })
 }
 function unlock() {
   if (password.value && passwordCallback) {
@@ -190,14 +231,6 @@ function unlock() {
   }
 }
 const normalize = (value: string) => value.normalize('NFKC').toLocaleLowerCase().replace(/\s+/g, '')
-function highlight() {
-  const term = normalize(query.value)
-  for (const span of textContainer.value?.querySelectorAll('span') ?? [])
-    span.classList.toggle(
-      'workspace-pdf-match',
-      !!term && normalize(span.textContent ?? '').includes(term),
-    )
-}
 async function search(direction = 1) {
   const documentProxy = pdf.value,
     term = normalize(query.value)
@@ -223,15 +256,15 @@ async function search(direction = 1) {
       }
       if (text.includes(term)) {
         lastMatch = { term, page: candidate }
-        go(candidate)
-        highlight()
-        searchMessage.value = `第 ${candidate} 页`
+        await go(candidate)
+        if (revision === searchRevision)
+          searchMessage.value = __t('ui.workspace', '第 {0} 页', [candidate])
         return
       }
     }
-    searchMessage.value = '未找到'
+    searchMessage.value = __t('ui.workspace', '未找到')
   } catch {
-    if (revision === searchRevision) searchMessage.value = '查找失败'
+    if (revision === searchRevision) searchMessage.value = __t('ui.workspace', '查找失败')
   } finally {
     if (revision === searchRevision) searching.value = false
   }
@@ -241,21 +274,35 @@ watch(query, () => {
   searching.value = false
   searchMessage.value = ''
   lastMatch = undefined
-  highlight()
 })
 watch(
   () => props.state.page,
-  () => {
-    pageInput.value = props.state.page
-    void render()
+  (page) => {
+    pageInput.value = page
   },
 )
-watch(
-  () => props.state.zoom,
-  () => void render(),
-)
-watch(width, () => {
-  if (!props.state.zoom) void render()
+watch([width, () => props.state.zoom, layout], async (_value, previous) => {
+  if (!pdf.value || restoring) return
+  const current = props.state.page
+  const anchor = pageElements.get(current)
+  const sameLayout = layout.value === previous[2]
+  const fraction =
+    anchor && stage.value && sameLayout
+      ? (stage.value.scrollTop - anchor.offsetTop) / Math.max(1, anchor.offsetHeight)
+      : 0
+  const revision = ++navigationRevision
+  restoring = true
+  await nextTick()
+  if (revision !== navigationRevision) return
+  const updated = pageElements.get(current)
+  if (stage.value && updated) {
+    stage.value.scrollTop = Math.max(
+      0,
+      updated.offsetTop + (sameLayout ? fraction * updated.offsetHeight : -24),
+    )
+    emit('state', { pdfScrollTop: stage.value.scrollTop })
+  }
+  restoring = false
 })
 watch(
   () => props.src,
@@ -264,17 +311,33 @@ watch(
 )
 onMounted(() => {
   observer = new ResizeObserver(([entry]) => {
-    if (entry) width.value = entry.contentRect.width
+    if (entry?.contentRect.width) width.value = Math.max(1, entry.contentRect.width)
   })
   if (stage.value) observer.observe(stage.value)
+  if (typeof IntersectionObserver !== 'undefined') {
+    pageObserver = new IntersectionObserver(
+      (entries) => {
+        const next = new Set(nearbyPages.value)
+        for (const entry of entries) {
+          const number = Number((entry.target as HTMLElement).dataset.page)
+          if (entry.isIntersecting) next.add(number)
+          else next.delete(number)
+        }
+        nearbyPages.value = next
+      },
+      { root: stage.value, rootMargin: '600px 0px' },
+    )
+    for (const element of pageElements.values()) pageObserver.observe(element)
+  }
 })
 onBeforeUnmount(() => {
+  recordScroll()
   ++loadRevision
-  ++renderRevision
   ++searchRevision
+  ++navigationRevision
+  if (scrollTimer) clearTimeout(scrollTimer)
   observer?.disconnect()
-  renderTask?.cancel()
-  textLayer?.cancel()
+  pageObserver?.disconnect()
   void loadingTask?.destroy().catch(() => undefined)
   passwordCallback = undefined
 })
@@ -309,6 +372,15 @@ onBeforeUnmount(() => {
       >
         ›
       </button>
+      <select
+        :value="layout"
+        :disabled="!pdf"
+        :aria-label="__t('ui.workspace', '阅读布局')"
+        @change="changeLayout"
+      >
+        <option value="continuous">{{ __t('ui.workspace', '连续滚动') }}</option>
+        <option value="single">{{ __t('ui.workspace', '单页浏览') }}</option>
+      </select>
       <button
         type="button"
         :disabled="!pdf"
@@ -343,7 +415,7 @@ onBeforeUnmount(() => {
       </form>
       <small v-if="searchMessage">{{ searchMessage }}</small>
     </div>
-    <div ref="stage" class="workspace-pdf__stage">
+    <div ref="stage" class="workspace-pdf__stage" @scroll.passive="scrolled">
       <form
         v-if="passwordRequired"
         class="file-view-state file-view-password"
@@ -368,21 +440,25 @@ onBeforeUnmount(() => {
       </form>
       <div v-if="loading" class="file-view-state">{{ __t('ui.workspace', '正在读取 PDF…') }}</div>
       <div
-        v-show="pdf && !loading"
+        v-for="number in pages"
+        :key="number"
+        :ref="(element) => setPageElement(number, element)"
         class="workspace-pdf__sheet"
-        :style="{
-          width: `${pageSize.width}px`,
-          height: `${pageSize.height}px`,
-          '--total-scale-factor': pageSize.totalScale,
-          '--scale-factor': pageSize.scale,
-        }"
+        :data-page="number"
+        :aria-label="__t('ui.workspace', '第 {0} 页', [number])"
+        :style="{ width: `${metrics(number).width}px`, height: `${metrics(number).height}px` }"
       >
-        <canvas ref="canvas" />
-        <div ref="textContainer" class="workspace-pdf__text textLayer" />
+        <WorkspacePdfPage
+          v-if="layout === 'single' || nearbyPages.has(number) || number === state.page"
+          :document="pdf!"
+          :page="number"
+          :width="width"
+          :zoom="state.zoom"
+          :query="query"
+          @size="setPageSize(number, $event)"
+        />
+        <span v-else class="workspace-pdf__placeholder" aria-hidden="true">{{ number }}</span>
       </div>
-      <span v-if="rendering && !loading" class="workspace-pdf__rendering">
-        {{ __t('ui.workspace', '正在绘制…') }}
-      </span>
     </div>
   </div>
 </template>
@@ -390,6 +466,7 @@ onBeforeUnmount(() => {
 .workspace-pdf {
   display: flex;
   min-height: 0;
+  min-width: 0;
   flex: 1;
   flex-direction: column;
 }
@@ -407,30 +484,29 @@ onBeforeUnmount(() => {
   flex: 1;
   padding: 24px;
   overflow: auto;
+  overscroll-behavior: contain;
   background: var(--ui-bg-surface-soft);
 }
 .workspace-pdf__sheet {
-  --scale-round-x: 1px;
-  --scale-round-y: 1px;
   position: relative;
-  margin: 0 auto;
+  flex-shrink: 0;
+  margin: 0 auto 20px;
   background: white;
   color-scheme: only light;
   box-shadow:
     1px 2px 0 var(--ui-border-default),
     3px 4px 0 var(--ui-border-subtle);
 }
-.workspace-pdf__sheet canvas {
-  display: block;
+.workspace-pdf__sheet:last-child {
+  margin-bottom: 0;
 }
-.workspace-pdf__rendering {
-  position: sticky;
-  left: 8px;
-  bottom: 8px;
-  padding: 4px 8px;
-  background: var(--ui-bg-elevated);
-  color: var(--ui-text-tertiary);
-  font: 9px var(--ui-font-mono);
+.workspace-pdf__placeholder {
+  position: absolute;
+  inset: 0;
+  display: grid;
+  place-items: center;
+  color: #adb4c0;
+  font: 12px var(--ui-font-mono);
 }
 .workspace-pdf__unlock {
   padding: 5px 14px;
@@ -438,56 +514,5 @@ onBeforeUnmount(() => {
   background: var(--ui-accent-sky-soft);
   color: var(--ui-accent-sky);
   cursor: pointer;
-}
-/* 文字层遵循 PDF.js 的缩放坐标，保留复制能力，且不执行文档脚本。 */
-.workspace-pdf__text {
-  position: absolute;
-  inset: 0;
-  overflow: clip;
-  text-align: initial;
-  line-height: 1;
-  letter-spacing: normal;
-  word-spacing: normal;
-  text-size-adjust: none;
-  transform-origin: 0 0;
-  --min-font-size: 1;
-  --text-scale-factor: calc(var(--total-scale-factor) * var(--min-font-size));
-  --min-font-size-inv: calc(1 / var(--min-font-size));
-}
-.workspace-pdf__text :deep(:is(span, br)) {
-  position: absolute;
-  color: transparent;
-  white-space: pre;
-  cursor: text;
-  transform-origin: 0 0;
-  user-select: text;
-}
-.workspace-pdf__text :deep(> :not(.markedContent)),
-.workspace-pdf__text :deep(.markedContent span:not(.markedContent)) {
-  z-index: 1;
-  --font-height: 0;
-  --scale-x: 1;
-  --rotate: 0deg;
-  font-size: calc(var(--text-scale-factor) * var(--font-height));
-  transform: rotate(var(--rotate)) scaleX(var(--scale-x)) scale(var(--min-font-size-inv));
-}
-.workspace-pdf__text :deep(.markedContent) {
-  display: contents;
-}
-.workspace-pdf__text[data-main-rotation='90'] {
-  transform: rotate(90deg) translateY(-100%);
-}
-.workspace-pdf__text[data-main-rotation='180'] {
-  transform: rotate(180deg) translate(-100%, -100%);
-}
-.workspace-pdf__text[data-main-rotation='270'] {
-  transform: rotate(270deg) translateX(-100%);
-}
-.workspace-pdf__text :deep(::selection) {
-  background: #35b6ef55;
-  color: transparent;
-}
-.workspace-pdf__text :deep(.workspace-pdf-match) {
-  background: #ffc85766;
 }
 </style>

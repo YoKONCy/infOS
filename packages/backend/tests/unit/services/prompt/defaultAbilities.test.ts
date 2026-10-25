@@ -43,6 +43,30 @@ function abilityBody(text: string): string {
 }
 
 describe('默认能力槽位与协议组件', () => {
+  it('资料与事实分别放入本轮动态 XML，空结果不渲染标签', async () => {
+    const { workspace } = await setup()
+    const snapshot = workspace.snapshot()
+    const empty = workspace.assemble(snapshot, 'desktop', 'pero', variables).messages
+    expect(JSON.stringify(empty)).not.toContain('<knowledge_context>')
+    expect(JSON.stringify(empty)).not.toContain('<facts_context>')
+    const result = workspace.assemble(snapshot, 'desktop', 'pero', {
+      ...variables,
+      memory_context: '<memory_context kind="event_notes">个人经历</memory_context>',
+      knowledge_context: '<document>文档摘要</document>',
+      facts_context: '<fact>共享事实</fact>',
+    }).messages
+    const dynamic = result.find((message) => message.content.includes('<turn_context>'))!
+    expect(dynamic.role).toBe('user')
+    expect(dynamic.content).toContain('<long_term_memory>')
+    expect(dynamic.content).toContain('<knowledge_context>\n<document>文档摘要</document>')
+    expect(dynamic.content).toContain('<facts_context>\n<fact>共享事实</fact>')
+    expect(
+      result
+        .filter((message) => message.role === 'system')
+        .map((message) => message.content)
+        .join(''),
+    ).not.toContain('文档摘要')
+  })
   it('默认框架只保留一个能力槽位，两个协议均为可编辑组件', async () => {
     const { workspace } = await setup()
     const defaults = workspace.defaults()
@@ -95,6 +119,12 @@ describe('默认能力槽位与协议组件', () => {
     const text = workspace
       .assemble(workspace.snapshot(), 'social', 'pero', {
         agent_name: 'Pero',
+        current_time: variables.current_time,
+        mood: '测试心情',
+        vibe: '测试表现',
+        mind: '测试心声',
+        memory_context: '社交记忆',
+        social_context: '<cross_session_private_chat>私聊补充</cross_session_private_chat>',
         flow_state: variables.flow_state,
         stickers_available: false,
       })
@@ -103,6 +133,28 @@ describe('默认能力槽位与协议组件', () => {
     expect(abilityBody(text)).toContain('<private_flow_protocol>')
     expect(text).not.toContain('<task_plan>')
     expect(text).not.toContain('<Reminder>')
+    expect(text).toContain(variables.current_time)
+    expect(text).toContain('社交记忆')
+    expect(text).toContain('私聊补充')
+    for (const field of [
+      '上次记录的心情',
+      '外在表现',
+      '角色心声',
+      '测试心情',
+      '测试表现',
+      '测试心声',
+    ])
+      expect(text).not.toContain(field)
+    const desktopState = workspace
+      .assemble(workspace.snapshot(), 'desktop', 'pero', {
+        ...variables,
+        mood: '测试心情',
+        vibe: '测试表现',
+        mind: '测试心声',
+      })
+      .messages.map((message) => message.content)
+      .join('\n')
+    for (const field of ['测试心情', '测试表现', '测试心声']) expect(desktopState).toContain(field)
   })
 
   it('没有状态和能力时不输出空壳，计划启用但尚未创建时仍提供使用规则', () => {

@@ -8,14 +8,14 @@ import PixelIcon from '../pixel/PixelIcon.vue'
 import { useNotificationStore } from '../../stores/useNotificationStore'
 import { useSelectionSpeech } from '../../composables/chat/useSelectionSpeech'
 
-const props = defineProps<{ streaming: boolean; identity: string }>()
+const props = defineProps<{ streaming: boolean; identity: string; agentId?: string }>()
 const root = ref<HTMLElement | null>(null),
   menu = ref<HTMLElement | null>(null)
 const selection = ref(''),
   open = ref(false),
   position = ref({ left: '0px', top: '0px' })
 const notifications = useNotificationStore()
-const speech = useSelectionSpeech()
+const speech = useSelectionSpeech(() => props.agentId)
 const close = () => {
   open.value = false
 }

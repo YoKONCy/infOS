@@ -1,5 +1,6 @@
 import {
   normalizeReasoningEffort,
+  nativeAudioEnabled,
   type ReasoningEffort,
   type ThreadModelSettings,
 } from '@infos/shared'
@@ -44,6 +45,7 @@ export class ThreadModelService {
           normalizeReasoningEffort(modelId, thread.reasoningEffort ?? inheritedEffort) ?? null,
         enableVision: row?.enableVision ?? config?.enableVision ?? false,
         enableAudioInput: row?.enableAudioInput ?? config?.enableAudioInput ?? false,
+        nativeAudioAvailable: nativeAudioEnabled(config),
       },
       models: models.map((item) => ({
         id: item.id,

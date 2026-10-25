@@ -86,7 +86,7 @@
   "tools": [
     {
       "name": "browser_open_url",
-      "description": "在 infOS 内置浏览器中打开网站，或预览当前工作区生成的 HTML/Three.js 页面。url 可传 HTTP/HTTPS 网址、HTML 相对或绝对路径、workspace: 或 attachment: 引用；本地文件通过受权预览入口打开，不启动系统应用、不抢占桌面鼠标键盘。打开后可使用 browser_screenshot 检查真实渲染。",
+      "description": "在内置浏览器打开网站或预览工作区 HTML/Three.js 页面。url 接受 HTTP/HTTPS、HTML 相对或绝对路径、workspace: 或 attachment: 引用；本地文件通过授权预览入口打开。可用 browser_screenshot 检查渲染，浏览器操作不占用桌面鼠标键盘。",
       "display": { "label": "打开网页", "icon": "globe", "color": "sky", "style": "browser" },
       "parameters": {
         "type": "object",
@@ -187,13 +187,13 @@
     },
     {
       "name": "browser_screenshot",
-      "description": "仅截取内置浏览器窗口内容。仅在当前模型具备视觉能力或可用视觉转述模型时注册。",
+      "description": "截取当前内置浏览器窗口内容。",
       "display": { "label": "浏览器截图", "icon": "camera", "color": "sky", "style": "browser" },
       "parameters": { "type": "object", "properties": {} }
     },
     {
       "name": "browser_page_image",
-      "description": "按Grounded页面视图中的IMG短ID或元素句柄截取单个正文图片/视频画面。受视觉模型能力门控。",
+      "description": "按页面快照中的 IMG 短 ID 或元素句柄截取正文图片或视频画面。",
       "display": { "label": "读取网页图片", "icon": "image", "color": "sky", "style": "browser" },
       "parameters": {
         "type": "object",
@@ -279,7 +279,7 @@
     },
     {
       "name": "browser_dialog",
-      "description": "接受或拒绝当前 JavaScript Dialog，可为 prompt 提供受审计文本。",
+      "description": "处理页面 JavaScript 对话框：接受、拒绝或填写 prompt 文本。",
       "parameters": {
         "type": "object",
         "properties": {

@@ -1,0 +1,32 @@
+{
+  "id": "runtimeDebug",
+  "name": "运行时调试",
+  "version": "1.0.0",
+  "type": "tool",
+  "entry": "index.ts",
+  "category": "system",
+  "tools": [
+    {
+      "name": "runtime_debug",
+      "description": "统一运行时调试会话。仅当前桌面工作会话明确开启调试时可用。留空 code 获取运行现场和接口说明；code 是使用 debug 对象的 JavaScript 脚本。先备份并只修改候选资源，禁止自行应用、重载、重启或授权。debug.load 只准备候选，正式生效由用户管理入口发起。脚本遵守现有审批。",
+      "display": {
+        "label": "运行时调试",
+        "description": "查看现场、准备修正候选并保留恢复记录。",
+        "icon": "terminal",
+        "color": "orange"
+      },
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "code": {
+            "type": "string",
+            "description": "JavaScript，支持 await 和 return；留空读取现场。",
+            "maxLength": 64000
+          },
+          "timeoutMs": { "type": "number", "minimum": 100, "maximum": 60000 }
+        },
+        "additionalProperties": false
+      }
+    }
+  ]
+}

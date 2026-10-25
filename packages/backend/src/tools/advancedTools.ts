@@ -37,7 +37,13 @@ export const ADVANCED_TOOL_PACKAGES = {
     'browser_evaluate',
     'browser_status',
   ],
-  computerUse: ['automation_execute', 'get_mouse_position'],
+  computerUse: [
+    'automation_execute',
+    'get_mouse_position',
+    'open_application',
+    'get_active_windows',
+    'activate_window',
+  ],
   remoteTerminal: [
     'remote_terminal_nodes',
     'remote_terminal_create',

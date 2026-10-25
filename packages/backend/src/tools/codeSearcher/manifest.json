@@ -11,7 +11,7 @@
 
   "toolDefinition": {
     "name": "code_search",
-    "description": "搜索文件中的文本或正则，返回匹配位置与所在行。",
+    "description": "搜索文件中的文本或正则，返回最多 50 处匹配位置与所在行；跳过二进制和超过 10MB 的文件。",
     "display": {
       "label": "搜索代码",
       "description": "在项目中查找与某个功能或问题相关的代码。",
@@ -25,10 +25,23 @@
         "query": { "type": "string", "description": "搜索关键词或正则表达式" },
         "path": {
           "type": "string",
-          "description": "搜索目录路径。相对路径以Agent工作区为基准；未提供时默认搜索Agent工作区；可显式传入设备绝对路径。"
+          "description": "搜索文件或目录。相对路径以当前执行工作区为基准，不跟随终端 cd；未提供时搜索当前工作区，可显式传入设备绝对路径。"
         },
         "is_regex": { "type": "boolean", "description": "是否为正则模式 (默认 false)" },
-        "file_type": { "type": "string", "description": "限定文件类型，如 \"ts\", \"py\", \"go\"" }
+        "file_type": {
+          "type": "string",
+          "description": "限定文件扩展名或类型，如 ts、typescript、*.ts、py、go"
+        },
+        "respect_gitignore": {
+          "type": "boolean",
+          "default": true,
+          "description": "是否遵守 Git 忽略规则，默认 true；false 时也搜索被 Git 忽略的文件"
+        },
+        "include_hidden": {
+          "type": "boolean",
+          "default": false,
+          "description": "是否搜索隐藏文件和目录，默认 false；.git 元数据始终跳过"
+        }
       },
       "required": ["query"]
     }

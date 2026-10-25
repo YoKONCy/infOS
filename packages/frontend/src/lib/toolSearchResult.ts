@@ -1,4 +1,5 @@
 import { t as __t } from '../i18n/index'
+import type { CodeSearchNavigation } from '@infos/shared'
 export interface ToolSearchRow {
   file: string
   kind: 'file' | 'directory'
@@ -15,6 +16,9 @@ export interface ToolSearchResult {
   truncated: boolean
   previewTruncated: boolean
   auditOnly: boolean
+  searchRoot?: string
+  respectGitIgnore?: boolean
+  navigation?: CodeSearchNavigation
 }
 
 function count(value: unknown): number | undefined {
@@ -41,6 +45,10 @@ export function parseToolSearchResult(raw?: string): ToolSearchResult | undefine
       truncated: data.truncated === true,
       previewTruncated: data.previewTruncated === true,
       auditOnly: false,
+      searchRoot: typeof data.searchRoot === 'string' ? data.searchRoot : undefined,
+      respectGitIgnore:
+        typeof data.respectGitIgnore === 'boolean' ? data.respectGitIgnore : undefined,
+      navigation: navigation(data.navigation),
     }
     if (Array.isArray(data.files)) {
       const files = paths(data.files)
@@ -94,10 +102,29 @@ export function parseToolSearchResult(raw?: string): ToolSearchResult | undefine
   }
 }
 
+function navigation(value: unknown): CodeSearchNavigation | undefined {
+  if (!value || typeof value !== 'object') return
+  const source = value as Record<string, unknown>
+  if (
+    typeof source.resultRef !== 'string' ||
+    typeof source.agentId !== 'string' ||
+    typeof source.threadId !== 'string'
+  )
+    return
+  return {
+    resultRef: source.resultRef,
+    agentId: source.agentId,
+    threadId: source.threadId,
+    taskId: typeof source.taskId === 'string' ? source.taskId : undefined,
+  }
+}
+
 export function toolSearchSummary(result: ToolSearchResult): string {
-  const counts = [`${result.fileCount} 个文件`]
-  if (result.directoryCount) counts.push(`${result.directoryCount} 个目录`)
-  if (result.matchCount !== undefined) counts.push(`${result.matchCount} 处匹配`)
+  const counts = [__t('ui.toolSearchResult', '{0} 个文件', [result.fileCount])]
+  if (result.directoryCount)
+    counts.push(__t('ui.toolSearchResult', '{0} 个目录', [result.directoryCount]))
+  if (result.matchCount !== undefined)
+    counts.push(__t('ui.toolSearchResult', '{0} 处匹配', [result.matchCount]))
   return __t('ui.toolSearchResult', '找到{0}{1}', [
     result.truncated ? __t('ui.toolSearchResult', '至少 ') : ' ',
     counts.join(' · '),

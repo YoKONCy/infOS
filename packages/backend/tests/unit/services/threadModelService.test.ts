@@ -51,6 +51,18 @@ beforeEach(async () => {
 afterEach(() => closeDrizzleConnection(connection))
 
 describe('会话模型和思考强度', () => {
+  it('音频能力从所选卡片手动声明读取，不根据 Gemini 模型名称开启', async () => {
+    await service.update('a', { modelConfigId: otherId, reasoningEffort: null })
+    expect((await service.settings('a')).effective.nativeAudioAvailable).toBe(false)
+    await models.update(otherId, { enableAudioInput: true })
+    expect((await service.settings('a')).effective.nativeAudioAvailable).toBe(true)
+    await models.update(mainId, { enableAudioInput: true })
+    await service.update('a', { modelConfigId: mainId, reasoningEffort: null })
+    expect((await service.settings('a')).effective).toMatchObject({
+      enableAudioInput: true,
+      nativeAudioAvailable: false,
+    })
+  })
   it('未配置时跟随全局主模型，配置后隔离会话且不修改模型卡片', async () => {
     expect(await service.resolve('a', 'pero')).toMatchObject({
       configId: mainId,

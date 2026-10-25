@@ -26,6 +26,127 @@ function fixture() {
   return { db, stores, repo: new FactsRepository(db, stores) }
 }
 
+describe('事实的归档还原', () => {
+  it('自动召回匹配对象和别名，只返回有效事实，无关问题不取零分候选', async () => {
+    const { db, stores, repo } = fixture()
+    try {
+      expect(repo.hasActiveFacts()).toBe(false)
+      const old = await repo.write({
+        standardName: '小林',
+        aliases: ['林同学'],
+        statement: '喜欢红茶',
+        observedAt: '2026-10-25T01:00:00Z',
+        createdByAgentId: 'pero',
+      })
+      expect(repo.hasActiveFacts()).toBe(true)
+      expect(repo.recall('林同学喜欢什么饮料？').map((item) => item.id)).toContain(old.id)
+      expect(repo.recall('量子纠缠与宇宙膨胀的关系')).toEqual([])
+      const current = await repo.supersede(old.objectId, old.id, {
+        statement: '喜欢绿茶',
+        observedAt: old.observedAt,
+        createdByAgentId: 'pero',
+      })
+      expect(repo.recall('小林的饮料偏好').map((item) => item.id)).toEqual([current.id])
+      await repo.retractFact(current.id)
+      expect(repo.hasActiveFacts()).toBe(false)
+      expect(repo.recall('小林的偏好')).toEqual([])
+    } finally {
+      stores.closeAll()
+      closeDrizzleConnection(db)
+    }
+  })
+  it('撤回后还原同一记录，保留原始时间、来源与记录者，恢复查询', async () => {
+    const { db, stores, repo } = fixture()
+    try {
+      const fact = await repo.write({
+        standardName: '小林',
+        statement: '喜欢红茶',
+        source: '对话',
+        createdByAgentId: 'pero',
+        observedAt: '2026-10-21T04:00:00.000Z',
+      })
+      await repo.retractFact(fact.id, 'retract-before-restore')
+      expect((await repo.query('小林')).exactMatch?.activeFacts).toEqual([])
+      await repo.restoreFact(fact.id, 'restore-once')
+      expect((await repo.query('小林')).exactMatch?.activeFacts).toEqual([fact])
+      await repo.retractFact(fact.id, 'retract-after-restore')
+      await repo.restoreFact(fact.id, 'restore-once')
+      expect((await repo.query('小林')).exactMatch?.activeFacts).toEqual([])
+      await repo.restoreFact(fact.id, 'restore-again')
+      await repo.retractFact(fact.id, 'retract-before-restore')
+      expect((await repo.query('小林')).exactMatch?.activeFacts).toEqual([fact])
+    } finally {
+      stores.closeAll()
+      closeDrizzleConnection(db)
+    }
+  })
+
+  it('版本替代不能还原，永久删除后连旧还原操作也不能重建记录', async () => {
+    const { db, stores, repo } = fixture()
+    try {
+      const old = await repo.write({
+        standardName: '偏好',
+        statement: '红茶',
+        observedAt: '2026-10-21T04:00:00.000Z',
+        createdByAgentId: 'pero',
+      })
+      const current = await repo.supersede(old.objectId, old.id, {
+        statement: '绿茶',
+        observedAt: old.observedAt,
+        createdByAgentId: 'pero',
+      })
+      await expect(repo.restoreFact(old.id)).rejects.toThrow('ARCHIVE_RESTORE_CONFLICT')
+      await repo.retractFact(current.id)
+      await repo.restoreFact(current.id, 'restore-before-delete')
+      await repo.deleteFact(current.id)
+      await expect(repo.restoreFact(current.id)).rejects.toThrow('ARCHIVE_RESTORE_NOT_FOUND')
+      await expect(repo.restoreFact(current.id, 'restore-before-delete')).rejects.toThrow(
+        'ARCHIVE_RESTORE_NOT_FOUND',
+      )
+      expect((await repo.query('偏好')).exactMatch?.activeFacts).toEqual([])
+    } finally {
+      stores.closeAll()
+      closeDrizzleConnection(db)
+    }
+  })
+
+  it('TDB 写入中断可重试，但稍后的永久遗忘标记阻止还原重放', async () => {
+    const { db, stores, repo } = fixture()
+    try {
+      const fact = await repo.write({
+        standardName: '行程',
+        statement: '周五复盘',
+        observedAt: '2026-10-21T04:00:00.000Z',
+        createdByAgentId: 'pero',
+      })
+      await repo.retractFact(fact.id)
+      const store = stores.getSharedStore('facts')
+      const update = vi.spyOn(store, 'updatePayload').mockImplementationOnce(() => {
+        throw new Error('模拟磁盘故障')
+      })
+      await expect(repo.restoreFact(fact.id, 'restore-failure')).rejects.toThrow('模拟磁盘故障')
+      update.mockRestore()
+      await repo.restoreFact(fact.id)
+      await repo.restoreFact(fact.id, 'restore-failure')
+      expect((await repo.query('行程')).exactMatch?.activeFacts).toEqual([fact])
+      repo.setPrivacyPolicy(
+        {
+          deleted: (_kind: string, id: string) => id === fact.id,
+          assertPayload: () => {
+            throw new Error('已永久遗忘')
+          },
+        } as never,
+        vi.fn(),
+      )
+      await expect(repo.restoreFact(fact.id)).rejects.toThrow('ARCHIVE_RESTORE_NOT_FOUND')
+      await expect(repo.restoreFact(fact.id, 'restore-failure')).rejects.toThrow('已永久遗忘')
+    } finally {
+      stores.closeAll()
+      closeDrizzleConnection(db)
+    }
+  })
+})
+
 describe('事实的人工修订', () => {
   it('保留原记录者、观察时间与历史关系，人工修改单独留痕并支持重试', async () => {
     const { db, stores, repo } = fixture()

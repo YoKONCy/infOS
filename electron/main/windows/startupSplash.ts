@@ -8,10 +8,13 @@ import { APPLICATION_NAME, applyWindowIdentity } from '../utils/appIdentity'
 import { loadSystemIcon } from '../utils/appIcon'
 import { logger } from '../utils/logger'
 import { isPackagedRuntime } from '../utils/runtimeMode'
+import { guardTransparentWindowMaterial } from './windowConfig'
+import { clientConnection, type ConnectionInput } from '../services/clientConnection'
 import type {
   StartupFailureKind,
   StartupPhase,
   StartupSplashState,
+  StartupConnectionView,
 } from '../../shared/startupSplash'
 
 interface SplashActions {
@@ -33,6 +36,16 @@ export class StartupSplash {
   private openTimer: ReturnType<typeof setTimeout> | undefined
   private nativeFailureVisible = false
   private nativeDialogController: AbortController | undefined
+  private connection: StartupConnectionView | null = null
+  private connectionError = ''
+  private connectionSequence = 0
+  private selection: {
+    activate: boolean
+    controller: AbortController
+    promise: Promise<void>
+    resolve: () => void
+    reject: (error: Error) => void
+  } | null = null
   private readonly stopLocale: () => void
 
   constructor(private readonly actions: SplashActions) {
@@ -43,6 +56,7 @@ export class StartupSplash {
     ipcMain.on('startup-splash:painted', this.onPainted)
     ipcMain.on('startup-splash:render-failed', this.onRenderFailed)
     ipcMain.on('startup-splash:action', this.onAction)
+    ipcMain.handle('startup-splash:save-connection', this.saveConnection)
     this.stopLocale = onLocaleChange(() => this.publish())
   }
 
@@ -66,6 +80,38 @@ export class StartupSplash {
       revision: this.revision,
       phase: this.phase,
       language: getLocale(),
+      connection: this.connection
+        ? {
+            ...this.connection,
+            error: this.connectionError ? t(scope, this.connectionError) : '',
+          }
+        : null,
+      connectionLabels: Object.fromEntries(
+        [
+          '选择运行方式',
+          '本机运行，或连接已有的 infOS 服务。',
+          '本地运行',
+          '连接服务器',
+          '在这台设备启动服务端',
+          '只启动客户端与本机能力',
+          '服务器地址',
+          '访问令牌',
+          '能力通道地址',
+          '留空时使用服务器同域的 9121 端口',
+          '高级连接选项',
+          '启动本地服务',
+          '验证并连接',
+          '保存并重启',
+          '取消',
+          '正在验证连接…',
+          '正在保存…',
+          '显示令牌',
+          '隐藏令牌',
+          '连接设置保存在本机，原有存档保持不变。',
+          '修改将在客户端重启后生效。',
+          '连接失败，请检查地址、令牌和网络。',
+        ].map((source) => [source, t(scope, source)]),
+      ),
       labels: {
         loading: t(scope, '正在启动 infOS'),
         title: t(scope, '启动遇到问题'),
@@ -73,7 +119,7 @@ export class StartupSplash {
         retry: t(scope, '重试'),
         logs: t(scope, '查看日志'),
         quit: t(scope, '退出'),
-        close: t(scope, '关闭'),
+        close: t(scope, this.selection && !this.selection.activate ? '取消' : '关闭'),
       },
     }
   }
@@ -92,6 +138,95 @@ export class StartupSplash {
   setPhase(phase: StartupPhase): void {
     this.phase = phase
     this.publish()
+  }
+
+  /** 连接选择与加载进度在同一张开屏中切换；保存前不会放行启动链。 */
+  selectConnection(activate = true, error = ''): Promise<void> {
+    if (this.disposed) return Promise.reject(new Error('startup-splash-disposed'))
+    if (this.selection) {
+      this.focus()
+      return this.selection.promise
+    }
+    const profile = clientConnection().current
+    let resolve!: () => void
+    let reject!: (reason: Error) => void
+    const promise = new Promise<void>((done, fail) => {
+      resolve = done
+      reject = fail
+    })
+    this.selection = { activate, controller: new AbortController(), promise, resolve, reject }
+    this.connection = {
+      id: ++this.connectionSequence,
+      mode: profile?.mode ?? 'local',
+      origin: profile?.origin ?? '',
+      capabilityEndpoint: profile?.capabilityEndpoint ?? '',
+      busy: false,
+      error: '',
+      restartRequired: !activate,
+    }
+    this.connectionError = error
+    this.setPhase('connection')
+    void this.open().catch((reason: unknown) => {
+      this.cancelSelection(reason instanceof Error ? reason : new Error(String(reason)))
+    })
+    return promise
+  }
+
+  focusConnection(): boolean {
+    if (!this.selection) return false
+    this.focus()
+    return true
+  }
+
+  private cancelSelection(error = new Error('CONNECTION_CANCELLED')): void {
+    const selection = this.selection
+    if (!selection) return
+    this.selection = null
+    this.connection = null
+    this.connectionError = ''
+    selection.controller.abort()
+    selection.reject(error)
+    if (!selection.activate) this.hide()
+  }
+
+  private readonly saveConnection = async (
+    event: Electron.IpcMainInvokeEvent,
+    input: ConnectionInput,
+  ): Promise<{ ok: boolean }> => {
+    const selection = this.selection
+    if (!this.trusted(event) || !selection || this.connection?.busy) return { ok: false }
+    this.connection!.busy = true
+    this.connectionError = ''
+    this.publish()
+    try {
+      await clientConnection().save(input, selection.activate, selection.controller.signal)
+      if (selection !== this.selection || selection.controller.signal.aborted) return { ok: false }
+      this.selection = null
+      this.connection = null
+      this.setPhase('opening')
+      selection.resolve()
+      if (!selection.activate) this.hide()
+      return { ok: true }
+    } catch (error) {
+      if (selection !== this.selection) return { ok: false }
+      this.connectionError =
+        error instanceof Error && error.message === 'CONNECTION_ENCRYPTION_UNAVAILABLE'
+          ? '无法安全保存凭据，请检查系统密钥服务。'
+          : '连接失败，请检查地址、令牌和网络。'
+      return { ok: false }
+    } finally {
+      if (selection === this.selection && this.connection) {
+        this.connection.busy = false
+        this.publish()
+      }
+    }
+  }
+
+  /** 业务页面就绪后回收开屏渲染器，保留同一宿主供设置入口再次使用。 */
+  hide(): void {
+    this.win?.destroy()
+    this.win = null
+    this.painted = false
   }
 
   focus(): void {
@@ -137,6 +272,7 @@ export class StartupSplash {
       },
     })
     this.win = win
+    guardTransparentWindowMaterial(win)
     applyWindowIdentity(win)
     win.setMenu(null)
     win.webContents.setWindowOpenHandler(() => ({ action: 'deny' }))
@@ -144,7 +280,8 @@ export class StartupSplash {
     win.on('close', (event) => {
       if (!this.disposed) {
         event.preventDefault()
-        this.actions.quit()
+        if (this.selection && !this.selection.activate) this.cancelSelection()
+        else this.actions.quit()
       }
     })
     win.on('closed', () => {
@@ -153,6 +290,7 @@ export class StartupSplash {
         this.painted = false
       }
       this.rejectOpen?.(new Error('startup-splash-closed'))
+      this.cancelSelection(new Error('CONNECTION_CANCELLED'))
     })
     this.openPromise = new Promise<void>((resolve, reject) => {
       this.resolveOpen = resolve
@@ -167,6 +305,10 @@ export class StartupSplash {
     })
     win.webContents.on('render-process-gone', () => {
       this.painted = false
+      if (this.selection) {
+        this.cancelSelection(new Error('startup-splash-renderer-gone'))
+        return
+      }
       if (this.rejectOpen) this.rejectOpen(new Error('startup-splash-renderer-gone'))
       else if (!this.disposed) this.showNativeFailure()
     })
@@ -195,8 +337,12 @@ export class StartupSplash {
 
   private readonly onAction = (event: Electron.IpcMainEvent, action: unknown): void => {
     if (!this.trusted(event) || this.disposed) return
-    if (action === 'quit') this.actions.quit()
-    else if (action === 'retry' && this.phase === 'failed') this.actions.retry()
+    if (action === 'cancel-connection' && this.selection && !this.selection.activate)
+      this.cancelSelection()
+    else if (action === 'quit') {
+      if (this.selection && !this.selection.activate) this.cancelSelection()
+      else this.actions.quit()
+    } else if (action === 'retry' && this.phase === 'failed') this.actions.retry()
     else if (action === 'logs' && this.phase === 'failed') void this.openLogs()
   }
 
@@ -305,10 +451,12 @@ export class StartupSplash {
     if (this.disposed) return
     this.disposed = true
     this.nativeDialogController?.abort()
+    this.cancelSelection(new Error('startup-splash-disposed'))
     this.rejectOpen?.(new Error('startup-splash-disposed'))
     clearTimeout(this.openTimer)
     this.stopLocale()
     ipcMain.removeHandler('startup-splash:state')
+    ipcMain.removeHandler('startup-splash:save-connection')
     ipcMain.off('startup-splash:painted', this.onPainted)
     ipcMain.off('startup-splash:render-failed', this.onRenderFailed)
     ipcMain.off('startup-splash:action', this.onAction)

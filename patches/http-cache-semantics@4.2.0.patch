@@ -1,0 +1,15 @@
+diff --git a/index.js b/index.js
+--- a/index.js
++++ b/index.js
+@@ -394,6 +394,11 @@
+     evaluateRequest(req) {
+         this._assertRequestHasHeaders(req);
+ 
++        // 安全原因被清零的条目必须重新验证，客户端 max-stale 不能重新启用它。
++        if (!this.storable() || this.maxAge() === 0) {
++            return this._evaluateRequestMissResult(req);
++        }
++
+         // In all circumstances, a cache MUST NOT ignore the must-revalidate directive
+         if (this._rescc['must-revalidate']) {
+             return this._evaluateRequestMissResult(req);

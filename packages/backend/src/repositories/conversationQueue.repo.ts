@@ -12,6 +12,7 @@ import {
   threadMessages,
 } from '../database/schema'
 import { AppError } from '../lib/appError'
+import { t as __t } from '../lib/i18n'
 
 type Row = typeof items.$inferSelect
 const visibleStates = ['queued', 'running']
@@ -110,6 +111,10 @@ export class ConversationQueueRepository {
         throw new AppError('NOT_FOUND', { message: '队列消息不存在' })
       if (entry.revision !== revision)
         throw new AppError('CONFLICT', { message: '队列已在另一客户端更新，请刷新后重试' })
+      if (entry.input.taskResultEvent && !change.cancel)
+        throw new AppError('CONFLICT', {
+          message: __t('server.task', '任务交付事件不能改写为用户消息，只能取消本次唤醒'),
+        })
       if (entry.state === 'running' || entry.immediate)
         throw new AppError('CONFLICT', { message: '消息已开始执行' })
       if (!visibleStates.includes(entry.state) && !(entry.state === 'draft' && change.cancel))

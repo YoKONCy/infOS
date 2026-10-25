@@ -5,12 +5,11 @@ import { t as __t } from './i18n'
  * 提供:
  * - GET  /api/social/status   适配器连接状态
  * - POST /api/social/send     手动发送消息 (调试用)
- * - GET  /api/social/ws       NapCat 反向 WebSocket 端点 (由主入口 WS 升级)
+ * - GET  /api/social/ws       平台 WebSocket 传输端点 (由主入口 WS 升级)
  *
  * 注意: WS 升级在不同运行时 (Bun/Node) 有不同的 API,
  * 因此 WS 端点的实际 upgrade 逻辑由 app 入口层处理。
- * 本 Router 通过 handleWsMessage / handleWsOpen / handleWsClose 暴露
- * WS 事件处理器给入口层调用。
+ * 本 Router 负责业务管理端点；宿主按传输注册表完成 WS 升级。
  *
  * @module packages/apps/social/runtime/social.router
  */
@@ -18,7 +17,6 @@ import { t as __t } from './i18n'
 import { Hono, type Context } from 'hono'
 import type { ContentfulStatusCode } from 'hono/utils/http-status'
 import { AppError } from '@infos/backend/applicationHostAbi'
-import type { NapcatAdapter, WsSender } from '../adapters/napcat'
 import type { SocialBridge } from './socialBridge'
 import type { SocialDataService } from './socialDataService'
 import type { SocialStatusCardService } from './statusCardService'
@@ -49,6 +47,17 @@ export function createSocialRouter(
     statusCards?: SocialStatusCardService
     stickers?: StickerService
     getStickerAccounts?: () => string[]
+    resolveStickers?: (platform?: string) => StickerService | undefined
+    getStickerConnections?: () => Array<{ platform: string; accountId: string }>
+    getPlatforms?: () => Array<{ type: string; platform: string }>
+    enablePlatform?: (type: string) => Promise<void>
+    management?: (
+      id: string,
+      action?: string,
+      input?: Record<string, unknown>,
+    ) => Promise<Record<string, unknown>>
+    getConnections?: () => unknown[]
+    updateOwner?: (connectionId: string, ownerId: string) => Promise<void>
     getHostAgentId?: () => string
     dataService: SocialDataService
     getModeConfig: () => Record<string, unknown>
@@ -58,6 +67,91 @@ export function createSocialRouter(
   },
 ) {
   const router = new Hono()
+  const managementFailure = (error: unknown) =>
+    new AppError('EXTERNAL_ERROR', {
+      message: __t(
+        'errors.social',
+        error instanceof Error && /^SOCIAL_[A-Z_]+$/.test(error.message)
+          ? error.message
+          : 'SOCIAL_CONNECTION_FAILED',
+      ),
+    })
+  router.get('/platforms', (c) =>
+    c.json({ code: 'OK', data: { platforms: deps?.getPlatforms?.() ?? [] } }),
+  )
+  router.post('/platforms/:type/enable', async (c) => {
+    if (!deps?.enablePlatform) throw new AppError('SERVICE_UNAVAILABLE')
+    try {
+      await deps.enablePlatform(c.req.param('type'))
+      return c.json({ code: 'OK' })
+    } catch (error) {
+      throw managementFailure(error)
+    }
+  })
+  router.get('/connections/:id/management', async (c) => {
+    if (!deps?.management) throw new AppError('SERVICE_UNAVAILABLE')
+    c.header('Cache-Control', 'no-store')
+    try {
+      return c.json({ code: 'OK', data: await deps.management(c.req.param('id')) })
+    } catch (error) {
+      throw managementFailure(error)
+    }
+  })
+  router.post('/connections/:id/management', async (c) => {
+    const body = await c.req.json<Record<string, unknown> | null>().catch(() => null)
+    if (
+      !body ||
+      typeof body.action !== 'string' ||
+      !deps?.management ||
+      ![
+        'account_add',
+        'account_remove',
+        'account_reconnect',
+        'login_start',
+        'login_poll',
+        'login_verify',
+        'login_cancel',
+      ].includes(body.action) ||
+      !body.input ||
+      typeof body.input !== 'object' ||
+      Array.isArray(body.input) ||
+      JSON.stringify(body.input).length > 4096
+    )
+      throw new AppError('INVALID_PARAMETER')
+    c.header('Cache-Control', 'no-store')
+    try {
+      return c.json({
+        code: 'OK',
+        data: await deps.management(
+          c.req.param('id'),
+          body.action,
+          body.input as Record<string, unknown>,
+        ),
+      })
+    } catch (error) {
+      throw managementFailure(error)
+    }
+  })
+
+  router.get('/connections', (c) =>
+    c.json({ code: 'OK', data: { connections: deps?.getConnections?.() ?? [] } }),
+  )
+  router.put('/connections/:id/owner', async (c) => {
+    const body = await c.req.json<Record<string, unknown> | null>().catch(() => null)
+    if (!body || typeof body.ownerId !== 'string' || !deps?.updateOwner)
+      throw new AppError('INVALID_PARAMETER')
+    try {
+      await deps.updateOwner(c.req.param('id'), body.ownerId.trim())
+    } catch (error) {
+      if (
+        error instanceof Error &&
+        ['SOCIAL_OWNER_INVALID', 'SOCIAL_CONNECTION_INVALID'].includes(error.message)
+      )
+        throw new AppError('INVALID_PARAMETER', { message: __t('errors.social', error.message) })
+      throw error
+    }
+    return c.json({ code: 'OK' })
+  })
   router.get('/turns/:agentId', async (c) => {
     const kind = c.req.query('kind')
     if (kind !== undefined && kind !== 'task' && kind !== 'conversation')
@@ -85,17 +179,41 @@ export function createSocialRouter(
     return c.json({ code: 'OK' })
   })
   router.get('/stickers/accounts', (c) =>
-    c.json({ code: 'OK', data: { accounts: deps?.getStickerAccounts?.() ?? [] } }),
+    c.json({
+      code: 'OK',
+      data: {
+        accounts: deps?.getStickerAccounts?.() ?? [],
+        connections: deps?.getStickerConnections?.() ?? [],
+      },
+    }),
   )
   router.get('/stickers/:accountId', async (c) => {
     const accountId = c.req.param('accountId')
-    if (!deps?.stickers || !deps.getStickerAccounts?.().includes(accountId))
+    const matches = deps
+      ?.getStickerConnections?.()
+      .filter(
+        (item) =>
+          item.accountId === accountId &&
+          (!c.req.query('platform') || item.platform === c.req.query('platform')),
+      )
+    const service = deps?.resolveStickers
+      ? matches?.length === 1
+        ? deps.resolveStickers(matches[0]!.platform)
+        : undefined
+      : deps?.stickers
+    if (
+      !service ||
+      (!deps?.getStickerConnections && !deps?.getStickerAccounts?.().includes(accountId))
+    )
       return c.json(
-        { code: 'SERVICE_UNAVAILABLE', message: __t('apps.social.ui', '该 QQ 账号未连接') },
+        {
+          code: 'SERVICE_UNAVAILABLE',
+          message: __t('apps.social.ui', '所选平台账号未连接或不支持收藏表情'),
+        },
         503,
       )
     try {
-      const data = await deps.stickers.list(
+      const data = await service.list(
         accountId,
         (c.req.query('query') ?? '').slice(0, 200),
         Number(c.req.query('offset') ?? 0),
@@ -115,13 +233,31 @@ export function createSocialRouter(
   })
   router.get('/stickers/:accountId/:stickerId/image', async (c) => {
     const accountId = c.req.param('accountId')
-    if (!deps?.stickers || !deps.getStickerAccounts?.().includes(accountId))
+    const matches = deps
+      ?.getStickerConnections?.()
+      .filter(
+        (item) =>
+          item.accountId === accountId &&
+          (!c.req.query('platform') || item.platform === c.req.query('platform')),
+      )
+    const service = deps?.resolveStickers
+      ? matches?.length === 1
+        ? deps.resolveStickers(matches[0]!.platform)
+        : undefined
+      : deps?.stickers
+    if (
+      !service ||
+      (!deps?.getStickerConnections && !deps?.getStickerAccounts?.().includes(accountId))
+    )
       return c.json(
-        { code: 'SERVICE_UNAVAILABLE', message: __t('apps.social.ui', '该 QQ 账号未连接') },
+        {
+          code: 'SERVICE_UNAVAILABLE',
+          message: __t('apps.social.ui', '所选平台账号未连接或不支持收藏表情'),
+        },
         503,
       )
     try {
-      const image = await deps.stickers.read(accountId, c.req.param('stickerId'))
+      const image = await service.read(accountId, c.req.param('stickerId'))
       c.header('Cache-Control', 'no-store')
       return c.json({
         code: 'OK',
@@ -133,9 +269,27 @@ export function createSocialRouter(
   })
   router.post('/stickers/:accountId', async (c) => {
     const accountId = c.req.param('accountId')
-    if (!deps?.stickers || !deps.getStickerAccounts?.().includes(accountId))
+    const matches = deps
+      ?.getStickerConnections?.()
+      .filter(
+        (item) =>
+          item.accountId === accountId &&
+          (!c.req.query('platform') || item.platform === c.req.query('platform')),
+      )
+    const service = deps?.resolveStickers
+      ? matches?.length === 1
+        ? deps.resolveStickers(matches[0]!.platform)
+        : undefined
+      : deps?.stickers
+    if (
+      !service ||
+      (!deps?.getStickerConnections && !deps?.getStickerAccounts?.().includes(accountId))
+    )
       return c.json(
-        { code: 'SERVICE_UNAVAILABLE', message: __t('apps.social.ui', '该 QQ 账号未连接') },
+        {
+          code: 'SERVICE_UNAVAILABLE',
+          message: __t('apps.social.ui', '所选平台账号未连接或不支持收藏表情'),
+        },
         503,
       )
     try {
@@ -151,11 +305,11 @@ export function createSocialRouter(
       )
         throw new AppError('INVALID_PARAMETER', { message: '请提供有效的表情 ID' })
       if (body.action === 'describe' && typeof body.description === 'string') {
-        const sticker = await deps.stickers.describe(accountId, body.stickerId, body.description)
+        const sticker = await service.describe(accountId, body.stickerId, body.description)
         return c.json({ code: 'OK', data: { id: sticker.id, description: sticker.description } })
       }
       if (body.action === 'delete')
-        return c.json({ code: 'OK', data: await deps.stickers.remove(accountId, body.stickerId) })
+        return c.json({ code: 'OK', data: await service.remove(accountId, body.stickerId) })
       throw new AppError('INVALID_PARAMETER', { message: '表情操作无效' })
     } catch (error) {
       return stickerFailure(c, error)
@@ -223,12 +377,19 @@ export function createSocialRouter(
   // ── POST /api/social/send — 手动发送消息 (调试) ──
   router.post('/send', async (c) => {
     const body = (await c.req.json().catch(() => ({}))) as Record<string, unknown>
-    const platform = (body.platform as string) ?? 'qq'
+    const statuses = await socialBridge.getAllStatus()
+    const platform =
+      typeof body.platform === 'string'
+        ? body.platform
+        : statuses.length === 1
+          ? String(statuses[0]!.platform)
+          : undefined
+    if (!platform) throw new AppError('INVALID_PARAMETER')
     const channelId = body.channelId as string
     const channelType = (body.channelType as string) ?? 'private'
     const content = body.content as string
 
-    if (!channelId || !content) {
+    if (!channelId || !content || !['private', 'group'].includes(channelType)) {
       return c.json(
         { code: 'BAD_REQUEST', message: __t('apps.social.ui', '缺少 channelId 或 content') },
         400,
@@ -236,6 +397,7 @@ export function createSocialRouter(
     }
 
     await socialBridge.sendReply(platform, {
+      accountId: typeof body.accountId === 'string' ? body.accountId : undefined,
       channelId,
       channelType: channelType as 'private' | 'group',
       content,
@@ -261,14 +423,18 @@ export function createSocialRouter(
     const body = (await c.req.json().catch(() => null)) as Record<string, unknown> | null
     if (
       !body ||
-      !/^[1-9]\d{4,19}$/.test(String(body.accountId ?? '')) ||
-      !/^[1-9]\d{4,19}$/.test(String(body.channelId ?? '')) ||
+      typeof body.accountId !== 'string' ||
+      !body.accountId.trim() ||
+      body.accountId.length > 200 ||
+      typeof body.channelId !== 'string' ||
+      !body.channelId.trim() ||
+      body.channelId.length > 200 ||
       !['private', 'group'].includes(String(body.channelType))
     )
       return c.json(
         {
           code: 'INVALID_PARAMETER',
-          message: __t('apps.social.ui', '请提供已连接账号、会话类型和会话 QQ 号'),
+          message: __t('apps.social.ui', '请提供平台、已连接账号、会话类型和会话标识'),
         },
         400,
       )
@@ -276,6 +442,7 @@ export function createSocialRouter(
       String(body.accountId),
       body.channelType as 'private' | 'group',
       String(body.channelId),
+      typeof body.platform === 'string' ? body.platform : undefined,
     )
     return c.json({
       code: 'OK',
@@ -387,29 +554,4 @@ export function createSocialRouter(
   })
 
   return router
-}
-
-// ─────────────────────────────────────────────
-// WS 事件处理辅助 (供入口层调用)
-// ─────────────────────────────────────────────
-
-/**
- * 获取 NapCat 适配器引用
- *
- * 供入口层（如 Bun.serve 的 websocket 回调）在 WS 连接时使用。
- */
-export function getNapcatAdapter(socialBridge: SocialBridge): NapcatAdapter | undefined {
-  return socialBridge.getAdapter('qq') as NapcatAdapter | undefined
-}
-
-/**
- * 创建 WsSender 包装器
- *
- * 将运行时特定的 WebSocket 实例包装为统一的 WsSender 接口。
- */
-export function createWsSender(ws: { send: (data: string) => void; close: () => void }): WsSender {
-  return {
-    send: (data: string) => ws.send(data),
-    close: () => ws.close(),
-  }
 }

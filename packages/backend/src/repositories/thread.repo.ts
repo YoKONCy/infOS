@@ -511,6 +511,25 @@ export class ThreadRepository {
     return recent.reverse()
   }
 
+  /** 从会话起点读取用户时间索引，不加载正文；追加边界之外的消息不参与本次计算。 */
+  async queryConversationUserTimes(
+    threadId: string,
+    throughMessageId: number,
+  ): Promise<Array<{ id: number; timestamp: string | null }>> {
+    return this.db
+      .select({ id: threadMessages.id, timestamp: threadMessages.timestamp })
+      .from(threadMessages)
+      .where(
+        and(
+          eq(threadMessages.threadId, threadId),
+          eq(threadMessages.role, 'user'),
+          inArray(threadMessages.status, ['active', 'failed', 'interrupted']),
+          sql`${threadMessages.id} <= ${throughMessageId}`,
+        ),
+      )
+      .orderBy(asc(threadMessages.id))
+  }
+
   async findMessagesByPairIds(threadId: string, pairIds: string[]): Promise<ThreadMessageRow[]> {
     if (pairIds.length === 0) return []
     return this.db

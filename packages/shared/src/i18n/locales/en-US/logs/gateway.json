@@ -25,5 +25,10 @@
   "NapCat 反向 WS 连接断开: selfId={0}": "NapCat reverse WS connection disconnected: selfId={0}",
   "NapCat WS 错误: {0}": "NapCat WS Error: {0}",
   "社交 WS 端点已挂载: {0}": "Social WS endpoint is mounted: {0}",
-  "Gateway WS 端点已挂载: {0}": "Gateway WS endpoint is mounted: {0}"
+  "Gateway WS 端点已挂载: {0}": "Gateway WS endpoint is mounted: {0}",
+  "社交 WS 未找到唯一可用的平台传输，关闭连接": "No unique social transport is available; closing the connection",
+  "社交 WS 连接建立: accountId={0}": "Social WS connected: accountId={0}",
+  "社交 WS 连接断开: accountId={0}": "Social WS disconnected: accountId={0}",
+  "社交平台事件处理失败: {0}": "Social platform event failed: {0}",
+  "社交 WS 错误: {0}": "Social WS error: {0}"
 }

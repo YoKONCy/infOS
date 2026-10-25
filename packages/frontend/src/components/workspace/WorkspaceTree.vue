@@ -7,18 +7,26 @@ import { PDialog, PixelIcon } from '../pixel'
 import WorkspaceTreeBranch, { type WorkspaceTreeNode } from './WorkspaceTreeBranch.vue'
 import { workspaceApi, type WorkspaceFileNode } from '../../api/modules/approvalsApi'
 import { useNotificationStore } from '../../stores'
+import { useWorkspaceTreeData } from '../../composables/workspace/useWorkspaceTreeData'
 
-const props = defineProps<{ agentId: string; agentName: string; threadId: string }>()
+const props = withDefaults(
+  defineProps<{
+    agentId: string
+    agentName: string
+    threadId: string
+    active?: boolean
+    opening?: boolean
+  }>(),
+  { active: true, opening: false },
+)
 const emit = defineEmits<{
   select: [node: WorkspaceFileNode]
   renamed: [payload: { oldPath: string; newPath: string; name: string }]
   deleted: [path: string]
+  reveal: []
 }>()
 const notification = useNotificationStore()
 
-const roots = ref<WorkspaceTreeNode[]>([])
-const rootPath = ref('')
-const loading = ref(false)
 const search = ref('')
 const mode = ref<'files' | 'search'>('files')
 const searchResults = ref<Array<{ file: string; line: number; content: string }>>([])
@@ -26,58 +34,31 @@ const contextMenu = ref<{ x: number; y: number; node: WorkspaceTreeNode } | null
 const pendingRename = ref<WorkspaceTreeNode | null>(null)
 const pendingDelete = ref<WorkspaceTreeNode | null>(null)
 const fileOperationPending = ref(false)
-
-/** 收集已展开目录，以便自动刷新后恢复用户浏览状态。 */
-function collectExpanded(nodes: WorkspaceTreeNode[], output = new Set<string>()): Set<string> {
-  for (const node of nodes) {
-    if (node.type === 'directory' && node.expanded) {
-      output.add(node.path)
-      if (node.children) collectExpanded(node.children, output)
-    }
-  }
-  return output
-}
-
-/** 按路径递归恢复已展开目录内容。 */
-async function restoreExpanded(nodes: WorkspaceTreeNode[], expanded: Set<string>): Promise<void> {
-  for (const node of nodes) {
-    if (node.type !== 'directory' || !expanded.has(node.path)) continue
-    node.expanded = true
-    const res = await workspaceApi.listDir(props, node.path)
-    node.children = res.data?.nodes ?? []
-    await restoreExpanded(node.children, expanded)
-  }
-}
-
-async function loadRoot(): Promise<void> {
-  if (!props.agentId || !props.threadId) return
-  const expanded = collectExpanded(roots.value)
-  loading.value = true
-  try {
-    const res = await workspaceApi.listDir(props, undefined)
-    roots.value = res.data?.nodes ?? []
-    rootPath.value = res.data?.root ?? ''
-    await restoreExpanded(roots.value, expanded)
-  } finally {
-    loading.value = false
-  }
-}
+let searchRevision = 0
+const {
+  roots,
+  rootPath,
+  loading,
+  error: refreshError,
+  refresh: loadRoot,
+  toggle: toggleDirectory,
+} = useWorkspaceTreeData(
+  () => ({ agentId: props.agentId, threadId: props.threadId }),
+  () =>
+    props.active &&
+    mode.value === 'files' &&
+    !fileOperationPending.value &&
+    !pendingRename.value &&
+    !pendingDelete.value &&
+    !contextMenu.value,
+)
 
 async function toggle(node: WorkspaceTreeNode): Promise<void> {
   if (node.type === 'file') {
     emit('select', node)
     return
   }
-  node.expanded = !node.expanded
-  if (node.expanded && !node.children) {
-    node.loading = true
-    try {
-      const res = await workspaceApi.listDir(props, node.path)
-      node.children = res.data?.nodes ?? []
-    } finally {
-      node.loading = false
-    }
-  }
+  await toggleDirectory(node)
 }
 
 async function runSearch(): Promise<void> {
@@ -86,8 +67,22 @@ async function runSearch(): Promise<void> {
     searchResults.value = []
     return
   }
-  const res = await workspaceApi.search(props, { query })
-  searchResults.value = res.data?.matches ?? []
+  const request = ++searchRevision
+  const scope = { agentId: props.agentId, threadId: props.threadId }
+  try {
+    const res = await workspaceApi.search(scope, { query })
+    if (
+      request === searchRevision &&
+      scope.agentId === props.agentId &&
+      scope.threadId === props.threadId &&
+      mode.value === 'search' &&
+      query === search.value.trim()
+    )
+      searchResults.value = res.data?.matches ?? []
+  } catch {
+    if (request === searchRevision)
+      notification.toast(__t('ui.workspace', '搜索失败，请稍后重试'), { type: 'error' })
+  }
 }
 
 function selectMode(nextMode: 'files' | 'search'): void {
@@ -129,8 +124,10 @@ async function confirmRename(value?: string): Promise<void> {
     return
   }
   fileOperationPending.value = true
+  const scope = { agentId: props.agentId, threadId: props.threadId }
   try {
-    const res = await workspaceApi.renameFile(props, { path: node.path, newName })
+    const res = await workspaceApi.renameFile(scope, { path: node.path, newName })
+    if (scope.agentId !== props.agentId || scope.threadId !== props.threadId) return
     if (!res.data) throw new Error('重命名接口未返回文件信息')
     const { oldPath, newPath } = res.data
     const remap = (nodes: WorkspaceTreeNode[]) => {
@@ -164,8 +161,10 @@ async function confirmDelete(): Promise<void> {
   const node = pendingDelete.value
   if (!node || fileOperationPending.value) return
   fileOperationPending.value = true
+  const scope = { agentId: props.agentId, threadId: props.threadId }
   try {
-    const res = await workspaceApi.deleteFile(props, { path: node.path })
+    const res = await workspaceApi.deleteFile(scope, { path: node.path })
+    if (scope.agentId !== props.agentId || scope.threadId !== props.threadId) return
     if (!res.data) throw new Error('删除接口未返回文件信息')
     emit('deleted', node.path)
     await loadRoot()
@@ -194,11 +193,21 @@ defineExpose({ refresh: loadRoot })
 window.addEventListener('click', closeContextMenu)
 window.addEventListener('blur', closeContextMenu)
 onBeforeUnmount(() => {
+  ++searchRevision
   window.removeEventListener('click', closeContextMenu)
   window.removeEventListener('blur', closeContextMenu)
 })
 
-watch(() => [props.agentId, props.threadId], loadRoot, { immediate: true })
+watch(
+  () => [props.agentId, props.threadId],
+  () => {
+    ++searchRevision
+    contextMenu.value = null
+    pendingRename.value = null
+    pendingDelete.value = null
+    searchResults.value = []
+  },
+)
 </script>
 
 <template>
@@ -208,13 +217,24 @@ watch(() => [props.agentId, props.threadId], loadRoot, { immediate: true })
         <span class="workspace-tree__eyebrow">RESOURCE RAIL</span>
         <strong>{{ agentName }} {{ __t('ui.workspace', '的工作区') }}</strong>
       </div>
-      <button
-        class="workspace-tree__icon-button"
-        :title="__t('ui.workspace', '刷新资源')"
-        @click="loadRoot"
-      >
-        <PixelIcon name="refresh" size="xs" :animation="loading ? 'spin' : ''" />
-      </button>
+      <div class="workspace-tree__actions">
+        <button
+          class="workspace-tree__icon-button"
+          :title="__t('ui.workspace', '在系统文件管理器中打开工作区')"
+          :aria-label="__t('ui.workspace', '在系统文件管理器中打开工作区')"
+          :disabled="opening || !rootPath"
+          @click="emit('reveal')"
+        >
+          <PixelIcon name="folder" size="xs" :animation="opening ? 'pulse' : ''" />
+        </button>
+        <button
+          class="workspace-tree__icon-button"
+          :title="__t('ui.workspace', '刷新资源')"
+          @click="loadRoot"
+        >
+          <PixelIcon name="refresh" size="xs" :animation="loading ? 'spin' : ''" />
+        </button>
+      </div>
     </header>
 
     <nav class="workspace-tree__modes" :aria-label="__t('ui.workspace', '资源栏模式')">
@@ -246,6 +266,9 @@ watch(() => [props.agentId, props.threadId], loadRoot, { immediate: true })
       </button>
     </form>
 
+    <p v-if="refreshError" class="workspace-tree__refresh-error" role="status">
+      {{ refreshError }}
+    </p>
     <div class="workspace-tree__body workspace-tree__scrollbar">
       <template v-if="mode === 'search'">
         <div class="workspace-tree__section-title">
@@ -381,6 +404,21 @@ watch(() => [props.agentId, props.threadId], loadRoot, { immediate: true })
   gap: 8px;
   padding: 10px 10px 8px 12px;
   border-bottom: 1px solid var(--ui-border-subtle);
+}
+.workspace-tree__actions {
+  display: flex;
+  flex-shrink: 0;
+  gap: 2px;
+}
+.workspace-tree__icon-button:disabled {
+  opacity: 0.4;
+  cursor: default;
+}
+.workspace-tree__refresh-error {
+  margin: 0;
+  padding: 8px 12px;
+  color: var(--ui-text-tertiary);
+  font-size: 11px;
 }
 .workspace-tree__identity {
   display: flex;

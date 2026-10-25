@@ -1,4 +1,9 @@
 import { t as __t } from './lib/i18n'
+import { createRuntimeDebugRouter } from './routers/runtimeDebug.router'
+import { createResourceVersionsRouter } from './routers/resourceVersions.router'
+import { ResourceVersions } from '@infos/shared/resource-versions'
+import { createPackagesRouter } from './routers/packages.router'
+import { createUserAvatarRouter } from './routers/userAvatar.router'
 /**
  * Hono 应用入口
  *
@@ -211,11 +216,21 @@ export function createApp(ctx: AppContext) {
   app.route('/api/configs', createConfigRouter(ctx))
   app.route('/api/models', createModelRouter(ctx))
   app.route('/api/system', createSystemRouter(ctx))
+  app.route('/api/system/user-avatar', createUserAvatarRouter(ctx))
   app.route('/api/tarot', createTarotRouter(ctx))
   app.route('/api/integrations', createIntegrationsRouter(ctx))
+  app.route(
+    '/api/packages',
+    createPackagesRouter(ctx.packageManagement, ctx.packageUi, ctx.packageAssets),
+  )
   app.route('/api/distributed', createDistributedRouter(ctx))
   app.route('/api/agents', createAgentRouter(ctx))
   app.route('/api/runtime', createRuntimeRouter(ctx))
+  app.route('/api/runtime-debug', createRuntimeDebugRouter(ctx.runtimeDebug))
+  app.route(
+    '/api/resource-versions',
+    createResourceVersionsRouter(new ResourceVersions(ctx.pathResolver.getRoot('@data')!)),
+  )
   app.route('/api/approvals', createApprovalRouter(ctx))
   app.route('/api/agent-inputs', createAgentInputRouter(ctx))
   app.route('/api/surfaces', createSurfaceRouter(ctx))

@@ -137,5 +137,7 @@
   "未写入的预览": "unwritten preview",
   "变更预览": "change preview",
   "正在生成修改": "is generating modifications\nRecorded starting from",
-  "行数待确认": "row number to be confirmed"
+  "行数待确认": "row number to be confirmed",
+  "在任务中心查看任务": "View task in task center",
+  "查看任务": "View task"
 }

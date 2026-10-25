@@ -11,7 +11,7 @@
         <span class="title-chip">✦ BLUEPRINT ✦</span>
         <span class="title-text">infOS-TS 全栈智能体操作系统架构拓扑</span>
       </div>
-      <div class="header-badge">v0.9.5-hotfix1</div>
+      <div class="header-badge">v0.9.6</div>
     </div>
 
     <!-- 架构主舞台 -->
@@ -50,7 +50,9 @@
       <div class="blueprint-bus">
         <div class="bus-line">
           <span class="bus-arrow">↕</span>
-          <span class="bus-text">Gateway Hub (WebSocket / Protobuf 二进制流 / HTTP REST 全双工总线)</span>
+          <span class="bus-text">
+            Gateway Hub (WebSocket / Protobuf 二进制流 / HTTP REST 全双工总线)
+          </span>
           <span class="bus-arrow">↕</span>
         </div>
       </div>
@@ -223,9 +225,15 @@
   border: 1.5px solid var(--moe-cocoa-brown, #2d1b1e);
 }
 
-.dot-pink { background: #f472b6; }
-.dot-yellow { background: #fde047; }
-.dot-blue { background: #38bdf8; }
+.dot-pink {
+  background: #f472b6;
+}
+.dot-yellow {
+  background: #fde047;
+}
+.dot-blue {
+  background: #38bdf8;
+}
 
 .header-title {
   display: flex;
@@ -382,13 +390,24 @@
   gap: 8px;
 }
 
-.cols-3 { grid-template-columns: repeat(3, 1fr); }
-.cols-4 { grid-template-columns: repeat(4, 1fr); }
-.cols-5 { grid-template-columns: repeat(5, 1fr); }
-.cols-6 { grid-template-columns: repeat(6, 1fr); }
+.cols-3 {
+  grid-template-columns: repeat(3, 1fr);
+}
+.cols-4 {
+  grid-template-columns: repeat(4, 1fr);
+}
+.cols-5 {
+  grid-template-columns: repeat(5, 1fr);
+}
+.cols-6 {
+  grid-template-columns: repeat(6, 1fr);
+}
 
 @media (max-width: 768px) {
-  .cols-3, .cols-4, .cols-5, .cols-6 {
+  .cols-3,
+  .cols-4,
+  .cols-5,
+  .cols-6 {
     grid-template-columns: repeat(2, 1fr);
   }
 }

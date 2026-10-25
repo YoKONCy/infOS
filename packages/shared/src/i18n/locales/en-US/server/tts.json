@@ -1,0 +1,13 @@
+{
+  "语音服务请求失败（HTTP {0}）": "Speech service request failed (HTTP {0})",
+  "语音配置无效，请检查字段与引用": "Invalid speech configuration; check fields and references",
+  "语音服务返回无效音频或错误结果": "The speech service returned invalid audio or an error",
+  "语音配置不完整或参数不受支持": "Speech configuration is incomplete or parameters are unsupported",
+  "参考音频应大于 0 且不超过 7MB": "Reference audio must be nonempty and no larger than 7MB",
+  "请选择 WAV 或 MP3 参考音频": "Select a WAV or MP3 reference audio file",
+  "语音请求过多，请稍后重试": "Too many speech requests; try again later",
+  "语音合成已关闭": "Speech synthesis is disabled",
+  "朗读文本为空或超过模型长度限制": "Speech text is empty or exceeds the model limit",
+  "语音合成已取消或超时": "Speech synthesis was cancelled or timed out",
+  "语音合成失败，请检查服务配置": "Speech synthesis failed; check service configuration"
+}

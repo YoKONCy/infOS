@@ -1,10 +1,10 @@
 # 多目标部署架构
 
-> **版本**：0.9.5-hotfix1 · **更新时间**：2026-10-17
+> **版本**：0.9.6 · **更新时间**：2026-10-17
 > **适用范围**：infOS 全项目部署策略
 > **依赖规范**：[A07_CROSS_PLATFORM](./A07_CROSS_PLATFORM.md)、[A08_DEVOPS](./A08_DEVOPS.md)
 >
-> **当前阶段**：生产基线是单个 Control Authority Server 对接多个 Client/Capability Node。Electron/Steam/便携版客户端强制绑定同设备内置 Daemon；浏览器、CLI、移动端等远程纯客户端可连接用户选择的 Server。多 Server 只规划手动完整快照同步，不实施实时 Federation、跨 Server Replica 或自动 Command Route。
+> **当前阶段**：生产基线是单个 Control Authority Server 对接多个 Client/Capability Node。Electron/Steam/便携版在启动后台之前选择本地或远程模式；远程模式只启动客户端与本机能力，不拉起本地 Daemon。多 Server 只规划手动完整快照同步，不实施实时 Federation、跨 Server Replica 或自动 Command Route。
 
 ---
 
@@ -14,7 +14,7 @@ infOS 的核心后端是纯 Node Daemon；Electron 是业务客户端和桌面�
 
 | 形态                              | Daemon 生命周期                                                 | Electron / 客户端职责              | 适用场景             |
 | --------------------------------- | --------------------------------------------------------------- | ---------------------------------- | -------------------- |
-| Electron 标准版、Steam 版、便携版 | 打包后由 Electron 启动内置 daemon bundle，并注入统一 `@data` 根 | GUI、3D、Steam、平台注册能力       | 普通桌面用户         |
+| Electron 标准版、Steam 版、便携版 | 本地模式启动内置 Daemon；远程模式跳过本机后台并连接所选服务器 | GUI、3D、Steam、平台注册能力       | 普通桌面用户         |
 | 开发环境                          | 可由开发脚本独立启动或统一编排                                  | 连接 HTTP/SSE/WS 服务              | 本地开发             |
 | Docker / 服务器                   | 独立运行                                                        | Web/CLI/Electron 等客户端连接      | 长时间运行与远程访问 |
 | 远程纯客户端                      | 连接指定 Control Authority Daemon                               | GUI、Input Seat、可选能力 Provider | 多节点接入           |
@@ -23,9 +23,9 @@ infOS 的核心后端是纯 Node Daemon；Electron 是业务客户端和桌面�
 
 ### Electron 壳层开屏
 
-Electron 首次启动先显示独立本地透明开屏，再准备资源与内置 Daemon。后端健康检查和 Launcher 主框架首帧握手全部通过后才解除显窗门控；失败时保留开屏上的重试、日志与退出入口。二次启动与激活不会绕过门控，退出会取消未完成的启动链。
+Electron 首次启动先显示本地透明开屏，并在同一窗口内选择本地或远程模式；连接验证通过或本地配置保存后，再准备资源与所选后端。已有有效配置时直接进入启动进度，远程验证失败则原地展开连接设置。后端健康检查和 Launcher 主框架首帧握手全部通过后才解除显窗门控；失败时保留开屏上的重试、日志与退出入口。二次启动与激活不会绕过门控，退出会取消未完成的启动链。托盘与分布式设置复用此开屏编辑下次配置，取消时返回客户端，保存后重启。
 
-定稿母稿见 [开屏资源归档](./design/startup-splash/README.md)。安装包只携带 `electron/splash/` 中的透明 PNG、HTML、CSS 和 JS，以及独立编译的开屏预加载脚本；SVG 母稿不参与运行时。进度条以整个窗口居中，使用独立 CSS 与 SVG 动效。标准版、Steam 版与便携版共用基础资源清单，浏览器与 Docker 入口不使用此过渡。
+设计母稿与预览临时保存在 `TEMP/design/`，该目录被 Git 忽略，不随仓库分发。安装包只携带 `electron/splash/` 中的透明 PNG、HTML、CSS 和 JS，以及独立编译的开屏预加载脚本；SVG 母稿不参与运行时。进度条以整个窗口居中，使用独立 CSS 与 SVG 动效。标准版、Steam 版与便携版共用基础资源清单，浏览器与 Docker 入口不使用此过渡。
 
 ---
 
@@ -67,7 +67,7 @@ Daemon
 
 Electron 启动 Daemon 是桌面全包发行的进程编排方式，不改变 Daemon 的纯 Node 边界；Daemon 必须能在 Docker/服务器形态独立运行。
 
-**客户端绑定规则**：Electron 标准版、Steam 版和便携版 Renderer 的业务 HTTP/SSE/WS 地址固定为同设备内置 Daemon，只访问本机回环地址，不提供远程 Server 切换功能。它们可以通过本机 Daemon 管理远程 Server、生成/接收完整同步包和观察 Capability Node，但不能把自身业务入口改指远程 Server。只有浏览器、CLI、移动端或未来明确标记为“远程纯客户端”的产品形态可以在“分布式”Tab选择当前 Server。
+**客户端连接规则**：Electron 标准版、Steam 版和便携版在本地开屏后、任何 Daemon 拉起之前读取用户根目录的 `client-connection.json`。首次启动或远程验证失败时显示本地 HTML 连接页；本地模式按原有链路启动，远程模式校验服务器身份后统一切换业务 HTTP/SSE/WS 和能力通道，失败不能自动回退本地。凭据经系统密钥服务加密。托盘与“分布式”Tab 均可打开连接页，运行中修改只写下次启动配置并重启，旧窗口和退出清理继续使用原连接。远程退出不停止服务器上的共享子应用。远程模式禁用本机 Steam 业务快照上传和恢复，服务器数据由服务器备份；设备身份、连接配置和凭据不进入业务快照。
 
 ### 3.2 Docker 后端版
 

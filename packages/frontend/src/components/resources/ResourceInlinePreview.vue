@@ -29,6 +29,16 @@ const enabled = computed(() => visible.value && props.active)
 const kind = computed(() => resourcePreviewKind(props.resource))
 const url = computed(() => resourceUrl(props.resource))
 const playable = computed(() => enabled.value && !resourcePreview.value)
+const audioLoaded = ref(false)
+watch(
+  [enabled, url, kind],
+  ([ready, source, type], previous) => {
+    if (source !== previous?.[1]) audioLoaded.value = false
+    // 首次进入视口才准备音频；之后离屏保留播放器，关闭卡片时再清理。
+    if (ready && type === 'audio') audioLoaded.value = true
+  },
+  { immediate: true },
+)
 const mediaHeight = ref(0)
 let sizeObserver: ResizeObserver | undefined
 onMounted(() => {
@@ -109,7 +119,7 @@ onBeforeUnmount(() => {
   >
     <template v-if="kind === 'audio'">
       <ResourceAudioPlayer
-        v-if="enabled"
+        v-if="audioLoaded"
         :key="url"
         :src="url"
         :name="resource.name"

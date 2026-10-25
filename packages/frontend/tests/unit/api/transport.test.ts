@@ -39,6 +39,35 @@ describe('transport runtime helpers', () => {
     expect(getGatewayWsUrl()).toBe(`${ELECTRON_BACKEND_ORIGIN.replace(/^http/, 'ws')}/ws/gateway`)
     expect(getApiBaseUrl()).toBe(`${ELECTRON_BACKEND_ORIGIN}/api`)
   })
+
+  it('远程 Electron 的业务请求、网关与资源鉴权统一使用已选服务器', async () => {
+    const request = vi.fn<typeof fetch>(
+      async () => new Response(JSON.stringify({ code: 'OK', data: [] })),
+    )
+    vi.stubGlobal('fetch', request)
+    setWindow({
+      electron: {
+        backendOrigin: () => 'https://remote.example',
+        clientCredential: () => 'remote-token',
+        invoke: vi.fn(),
+      },
+    })
+    const api = await importTransport()
+    expect(api.getApiBaseUrl()).toBe('https://remote.example/api')
+    expect(api.getGatewayWsUrl()).toBe('wss://remote.example/ws/gateway?token=remote-token')
+    expect(api.getApiResourceHeaders('https://remote.example/api/files/document')).toEqual({
+      Authorization: 'Bearer remote-token',
+    })
+    expect(api.getApiResourceHeaders('http://localhost:9120/api/files/document')).toEqual({})
+    await api.transport.request('/agents')
+    expect(request).toHaveBeenCalledWith(
+      'https://remote.example/api/agents',
+      expect.objectContaining({ headers: expect.any(Headers) }),
+    )
+    expect(new Headers(request.mock.calls[0]![1]?.headers).get('Authorization')).toBe(
+      'Bearer remote-token',
+    )
+  })
 })
 
 describe('transport singleton', () => {

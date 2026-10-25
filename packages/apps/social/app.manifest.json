@@ -2,14 +2,14 @@
   "id": "social",
   "name": "Social Bridge",
   "description": "对外社交平台桥接应用（QQ/Discord 等），管理社交会话、缓冲、调度与回复。独立编译上下文，不依赖主 Agent 的 chat pipeline。",
-  "version": "0.9.5-hotfix1",
+  "version": "0.9.6",
   "author": "infOS",
   "icon": "icon.png",
   "frontendEntry": "./frontend/index.js",
   "actions": [
     {
       "name": "chat_in_group",
-      "description": "读取指定 QQ 群近期上下文，由社交 Agent 单次判断并自然参与聊天。",
+      "description": "读取指定平台群聊的近期上下文，由社交 Agent 单次判断并自然参与聊天。",
       "mode": "command",
       "defaultCommunicationBudget": 8,
       "parameters": {
@@ -17,16 +17,52 @@
         "properties": {
           "group_id": {
             "type": "string",
-            "description": "目标 QQ 群号"
+            "description": "目标平台的会话标识"
           },
           "intent": {
             "type": "string",
             "description": "参与意图与边界"
+          },
+          "platform": {
+            "type": "string",
+            "description": "目标平台；有多个平台时必须指定"
+          },
+          "account_id": {
+            "type": "string",
+            "description": "发送账号；该平台有多个账号时必须指定"
           }
         },
-        "required": [
-          "group_id"
-        ]
+        "required": ["group_id"]
+      }
+    },
+    {
+      "name": "get_task",
+      "mode": "command",
+      "description": "查询持久社交委派的实际执行和交付结果",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "task_id": {
+            "type": "string"
+          }
+        },
+        "required": ["task_id"],
+        "additionalProperties": false
+      }
+    },
+    {
+      "name": "cancel_task",
+      "mode": "command",
+      "description": "取消持久社交委派",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "task_id": {
+            "type": "string"
+          }
+        },
+        "required": ["task_id"],
+        "additionalProperties": false
       }
     }
   ],
@@ -46,10 +82,7 @@
         },
         "type": "object",
         "additionalProperties": false,
-        "required": [
-          "action",
-          "input"
-        ]
+        "required": ["action", "input"]
       },
       "name": "social",
       "description": "日常社交"
@@ -69,10 +102,7 @@
         },
         "type": "object",
         "additionalProperties": false,
-        "required": [
-          "action",
-          "input"
-        ]
+        "required": ["action", "input"]
       },
       "name": "social_group",
       "description": "群聊事务"
@@ -92,10 +122,7 @@
         },
         "type": "object",
         "additionalProperties": false,
-        "required": [
-          "action",
-          "input"
-        ]
+        "required": ["action", "input"]
       },
       "name": "social_account",
       "description": "账号与空间"

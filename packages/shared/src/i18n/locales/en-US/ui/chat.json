@@ -345,5 +345,8 @@
   "暂无可用能力": "currently has no available capabilities",
   "当前可用": "is currently available",
   "当前模型不支持": "is not supported by the current model",
-  "尚未配置": "has not been configured yet"
+  "尚未配置": "has not been configured yet",
+  "处理后台任务结果": "Processing a background task result",
+  "后台任务结果已到达，等待当前对话结束后处理。": "A background task result is ready and will be handled after this turn.",
+  "取消自动处理": "Cancel automatic processing"
 }

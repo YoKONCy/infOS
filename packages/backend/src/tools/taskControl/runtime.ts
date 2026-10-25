@@ -1,6 +1,16 @@
-import type { TaskControlInput, TaskSegmentResult } from '@infos/shared'
+import type { TaskControlContext, TaskControlInput, TaskSegmentResult } from '@infos/shared'
+import type { ToolContext } from '../../services/agent/toolRegistry'
 export interface TaskToolRuntime {
-  control(agentId: string, input: TaskControlInput, threadId?: string): Promise<unknown>
+  delegateSocial?(
+    input: { group_id: string; intent?: string; platform?: string; account_id?: string },
+    context: ToolContext,
+  ): Promise<unknown>
+  control(
+    agentId: string,
+    input: TaskControlInput,
+    threadId?: string,
+    context?: TaskControlContext,
+  ): Promise<unknown>
   submitSegment(
     taskId: string,
     executionId: string | undefined,

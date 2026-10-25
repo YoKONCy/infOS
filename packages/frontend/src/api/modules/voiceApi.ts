@@ -12,6 +12,7 @@ import { clientFetch } from '../transport'
 import { apiClient } from '../client'
 import { getBaseUrl } from '../transportUtils'
 import { requestApiBinary } from '../transport'
+import type { TtsWorkspace, TtsSynthesisInput } from '@infos/shared'
 
 /** ASR 识别结果 */
 export interface AsrResult {
@@ -28,18 +29,24 @@ export interface VoiceStatus {
 }
 
 export const voiceApi = {
+  getTtsConfig: () => apiClient.get<TtsWorkspace>('/voice/tts/config'),
+  saveTtsConfig: (config: TtsWorkspace) => apiClient.put<TtsWorkspace>('/voice/tts/config', config),
+  uploadTtsReference: async (file: File): Promise<{ assetId: string; name: string }> => {
+    const body = new FormData()
+    body.set('audio', file)
+    const response = await clientFetch(`${getBaseUrl()}/api/voice/tts/references`, {
+      method: 'POST',
+      body,
+    })
+    const result = await response.json()
+    if (!response.ok || result.code !== 'OK')
+      throw new Error(result.message ?? __t('ui.tts', '参考音频上传失败'))
+    return result.data
+  },
   /**
    * TTS 合成 — 返回 ArrayBuffer 音频数据
    */
-  synthesize: async (
-    params: {
-      text: string
-      voice?: string
-      speed?: number
-      format?: 'mp3' | 'opus' | 'aac' | 'pcm'
-    },
-    signal?: AbortSignal,
-  ): Promise<ArrayBuffer> => {
+  synthesize: async (params: TtsSynthesisInput, signal?: AbortSignal): Promise<ArrayBuffer> => {
     return requestApiBinary('/voice/tts', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },

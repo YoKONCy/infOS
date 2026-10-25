@@ -1,6 +1,6 @@
 import { createCipheriv, createDecipheriv, createHash, randomBytes, randomUUID } from 'node:crypto'
 import { existsSync } from 'node:fs'
-import { mkdir, readFile, readdir, rename, rm, writeFile, copyFile } from 'node:fs/promises'
+import { mkdir, readFile, readdir, rename, rm, writeFile, copyFile, cp } from 'node:fs/promises'
 import path from 'node:path'
 import type { DrizzleDb } from '../../database'
 import type { MemoryStoreRegistry } from '../../repositories/storeRegistry'
@@ -11,7 +11,7 @@ import {
   TRIVIUM_VERSION,
 } from '../../repositories/triviumFiles'
 
-const APP_VERSION = '0.9.5-hotfix1'
+const APP_VERSION = '0.9.6'
 const BUNDLE_VERSION = 2
 const SCHEMA_VERSION = 1
 const MAX_FILE_COUNT = 100_000
@@ -32,6 +32,7 @@ const MACHINE_PATHS = new Set([
   'electron-node-id.txt',
 ])
 const EXCLUDED_ROOTS = new Set([
+  'resource-versions',
   'logs',
   'temp',
   'cache',
@@ -374,6 +375,7 @@ export class DistributedSyncService {
       const normalized = next.replaceAll('\\', '/')
       if (MACHINE_PATHS.has(normalized)) continue
       if (!relative && EXCLUDED_ROOTS.has(entry.name)) continue
+      if (!relative && entry.name.startsWith('.resource-')) continue
       // 重建暂存区不是业务数据，不能将回滚用的旧正文带进同步快照。
       if (/^agent_[\w-]+$/.test(relative) && /^\.index-[a-f0-9-]+$/i.test(entry.name)) continue
       if (entry.name.endsWith('-wal') || entry.name.endsWith('-shm') || entry.isSymbolicLink())
@@ -543,6 +545,12 @@ export class DistributedSyncService {
     await mkdir(incoming, { recursive: true })
     for (const descriptor of bundle.manifest.files) {
       const normalized = descriptor.path.replaceAll('\\', '/')
+      // 资源恢复记录属于本机，不能导入远端的启动标记、锁或待执行操作。
+      if (
+        normalized.split('/')[0] === 'resource-versions' ||
+        normalized.split('/')[0]?.startsWith('.resource-')
+      )
+        continue
       if (MACHINE_PATHS.has(normalized)) throw new Error('同步快照不能包含本机凭据')
       if (
         !normalized ||
@@ -567,6 +575,13 @@ export class DistributedSyncService {
       await mkdir(path.dirname(target), { recursive: true })
       await copyFile(source, target)
     }
+    const localVersions = path.join(dataDir, 'resource-versions')
+    if (existsSync(localVersions))
+      await cp(localVersions, path.join(incoming, 'resource-versions'), {
+        recursive: true,
+        dereference: false,
+        filter: (file) => path.basename(file) !== 'state.lock',
+      })
     await mkdir(path.dirname(backup), { recursive: true })
     if (existsSync(dataDir)) await rename(dataDir, backup)
     try {

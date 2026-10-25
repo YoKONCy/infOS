@@ -22,9 +22,9 @@
 .integrations-page .integration-heading p {
   margin: 4px 0 0;
   color: var(--ui-text-tertiary);
-  font-family: var(--ui-font-pixel);
-  font-size: 10px;
-  letter-spacing: 0.15em;
+  /* 与提示词页保持同一英文副标题规格，避免小号像素字显得细碎。 */
+  font: 400 11px/1.6 var(--ui-font-mono);
+  letter-spacing: 0.08em;
 }
 .integrations-page .integration-tabs {
   display: flex;

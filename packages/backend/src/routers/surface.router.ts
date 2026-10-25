@@ -28,7 +28,7 @@ const inputSchema = z.object({
     })
     .optional(),
   action: z.enum(['approval.resolve', 'agent-input.resolve', 'background-task.submit-input']),
-  payload: z.record(z.unknown()),
+  payload: z.record(z.string(), z.unknown()),
 })
 
 /** Internal Surface 的统一用户输入入口。 */

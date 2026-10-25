@@ -127,7 +127,7 @@
 }
 .hud-anchor {
   position: absolute;
-  /* 外层 transform 会创建层叠上下文，入口必须整体高于操作面。 */
+  /* 光点只在操作面收起时显示，独立定位不会遮挡展开后的表单。 */
   z-index: 130;
   width: 44px;
   height: 44px;
@@ -285,18 +285,6 @@ button:disabled {
   box-shadow:
     0 0 20px rgba(255, 255, 255, 1),
     0 0 40px rgba(255, 255, 255, 0.6);
-}
-.floating-trigger.active .trigger-core {
-  transform: rotate(45deg);
-}
-.floating-trigger.active .core-dot {
-  background: #ff88aa;
-  border-color: #ffccdd;
-  box-shadow: 0 0 15px rgba(255, 136, 170, 0.6);
-}
-.floating-trigger.active .pulse-ring {
-  border-color: rgba(255, 136, 170, 0.5);
-  animation-duration: 1.5s;
 }
 .hud-notices {
   position: absolute;

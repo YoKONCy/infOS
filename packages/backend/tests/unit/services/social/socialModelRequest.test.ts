@@ -7,6 +7,46 @@ const model = { provider: 'openai', modelId: 'social-test', apiKey: 'test', stre
 afterEach(() => vi.useRealTimers())
 
 describe('社交模型请求与流式草稿隔离', () => {
+  it.each(['once', 'continuous'] as const)(
+    '社交链路复用统一编译计划并正确处理续轮：%s',
+    async (mode) => {
+      const messages: ChatMessage[] = [
+        {
+          role: 'user',
+          content: '你好',
+          promptPlan: {
+            assistantPrefill: { content: '我先', mode, source: 'system.assistantPrefill' },
+          },
+        },
+      ]
+      const chat = vi.fn().mockImplementation(async () => ({
+        choices: [{ message: { role: 'assistant', content: '确认。' }, finishReason: 'stop' }],
+      }))
+      const first = await requestSocialModel(
+        { chat } as never,
+        { ...model, stream: false },
+        messages,
+        { usageContext: { step: 1 } } as never,
+      )
+      expect(chat.mock.calls[0]?.[1].at(-1)).toMatchObject({
+        role: 'assistant',
+        content: '我先',
+        promptSegment: 'assistant_prefill',
+      })
+      expect(first.choices[0]?.message.content).toBe('我先确认。')
+      const second = await requestSocialModel(
+        { chat } as never,
+        { ...model, stream: false },
+        messages,
+        { usageContext: { step: 2 } } as never,
+      )
+      expect(second.choices[0]?.message.content).toBe(
+        mode === 'continuous' ? '我先确认。' : '确认。',
+      )
+      expect(messages).toHaveLength(1)
+    },
+  )
+
   it('多级回退丢弃旧模型的正文、思考、工具参数和用量，不混入新调用', async () => {
     const onRetry = vi.fn()
     const chatConfigured = vi.fn(async function* () {

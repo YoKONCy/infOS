@@ -2,6 +2,7 @@ import { createHash, verify } from 'node:crypto'
 import { existsSync, mkdirSync, readFileSync, readdirSync, statSync, writeFileSync } from 'node:fs'
 import path from 'node:path'
 import type { PackageManifest, PackagePermission } from '@infos/shared'
+import { packageDigest } from './packageFiles'
 
 export interface TrustedPackagePublisher {
   publisherId: string
@@ -14,6 +15,8 @@ export interface TrustedPackagePublisher {
 export interface PackagePermissionGrant {
   packageId: string
   version: string
+  contentHash?: string
+  publisherId?: string
   permissions: PackagePermission[]
   grantedBy: 'user' | 'system'
   grantedAt: string
@@ -54,6 +57,10 @@ export class PackageSecurityAuthority {
     if (!current || current.revokedAt) return false
     current.revokedAt = new Date().toISOString()
     this.persist()
+    for (const grant of this.grants.values()) {
+      if (!grant.revokedAt && grant.publisherId === publisherId)
+        for (const listener of this.revocationListeners) listener(grant.packageId)
+    }
     return true
   }
 
@@ -81,17 +88,64 @@ export class PackageSecurityAuthority {
   }
 
   assertInstallAllowed(manifest: PackageManifest, rootDir?: string): void {
-    if (manifest.trust === 'official') return
+    if (manifest.trust === 'official') {
+      if (rootDir) throw new Error('PACKAGE_OFFICIAL_SOURCE_UNTRUSTED')
+      return
+    }
     if (!rootDir) throw new Error('PACKAGE_ROOT_REQUIRED')
     if (manifest.trust === 'signed') this.verifySignature(manifest, rootDir)
-    else this.assertIsolatedContributions(manifest)
+    else if (!this.hasCodeGrant(manifest)) this.assertIsolatedContributions(manifest)
     this.assertPermissions(manifest)
   }
 
-  assertActivationAllowed(manifest: PackageManifest): void {
-    if (manifest.trust === 'official') return
+  verifyInstallSource(manifest: PackageManifest, rootDir: string): void {
+    if (manifest.trust === 'official') throw new Error('PACKAGE_OFFICIAL_SOURCE_UNTRUSTED')
+    if (manifest.trust === 'signed') this.verifySignature(manifest, rootDir)
+    const platform =
+      process.platform === 'win32' ? 'windows' : process.platform === 'darwin' ? 'darwin' : 'linux'
+    if (
+      manifest.platforms?.length &&
+      !manifest.platforms.includes(platform) &&
+      !(process.env.INFOS_DOCKER && manifest.platforms.includes('docker'))
+    )
+      throw new Error('PACKAGE_PLATFORM_UNSUPPORTED')
+  }
+
+  assertActivationAllowed(manifest: PackageManifest, rootDir?: string): void {
+    if (manifest.trust === 'official') {
+      if (rootDir) throw new Error('PACKAGE_OFFICIAL_SOURCE_UNTRUSTED')
+      return
+    }
+    if (manifest.trust === 'signed') {
+      const signature = manifest.signature
+      const publisher =
+        signature && this.publishers.get(publisherKey(signature.publisherId, signature.keyId))
+      if (!publisher || publisher.revokedAt) throw new Error('PACKAGE_PUBLISHER_UNTRUSTED')
+    }
     this.assertPermissions(manifest)
-    if (manifest.trust !== 'signed') this.assertIsolatedContributions(manifest)
+    if (!this.hasCodeGrant(manifest) && manifest.trust !== 'signed')
+      this.assertIsolatedContributions(manifest)
+  }
+
+  async assertSourceAllowed(manifest: PackageManifest, rootDir?: string): Promise<void> {
+    if (!rootDir) return
+    const grant = this.grants.get(manifest.packageId)
+    if (
+      this.hasCodeGrant(manifest) &&
+      (!grant?.contentHash || grant.contentHash !== (await packageDigest(rootDir)))
+    )
+      throw new Error('PACKAGE_SOURCE_CHANGED')
+  }
+
+  hasCodeGrant(manifest: PackageManifest): boolean {
+    const grant = this.grants.get(manifest.packageId)
+    return (
+      !!grant &&
+      !grant.revokedAt &&
+      grant.version === manifest.version &&
+      grant.permissions.includes('runtime:execute') &&
+      !!grant.contentHash
+    )
   }
 
   assertUpgradeAllowed(current: PackageManifest, next: PackageManifest): void {
@@ -138,7 +192,7 @@ export class PackageSecurityAuthority {
     const requested = [...new Set(manifest.permissions ?? [])].sort()
     if (!requested.length) return
     const grant = this.grants.get(manifest.packageId)
-    if (!grant || grant.revokedAt || compareVersions(grant.version, manifest.version) < 0) {
+    if (!grant || grant.revokedAt || grant.version !== manifest.version) {
       throw new Error('PACKAGE_PERMISSION_GRANT_REQUIRED')
     }
     if (requested.some((permission) => !grant.permissions.includes(permission))) {

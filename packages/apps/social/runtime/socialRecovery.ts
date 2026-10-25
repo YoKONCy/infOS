@@ -14,6 +14,8 @@ export const SOCIAL_TURN_DURATION_MS = 6 * 60 * 60_000
 
 /** 每个固定消息批次共用恢复预算和取消信号，工具与发送共享同一执行现场。 */
 export interface SocialRecovery {
+  executionId?: string
+  processId?: string
   record: SocialTurnRecord
   signal: AbortSignal
   save(): Promise<void>

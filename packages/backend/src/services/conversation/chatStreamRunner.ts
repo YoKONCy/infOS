@@ -14,7 +14,8 @@ export type ChatStreamInput = Pick<
   | 'workspaceContext'
   | 'generationType'
   | 'queueMessageId'
->
+> &
+  Pick<import('@infos/shared').QueuedConversationInput, 'taskResultEvent'>
 
 /** 普通 SSE 与持久消息队列共用同一执行、Surface 和结算路径。调用方先取得 Thread 占用。 */
 export async function runChatStream(
@@ -64,6 +65,7 @@ export async function runChatStream(
       agentId,
       content,
       queueMessageId: body.queueMessageId,
+      ...(body.taskResultEvent ? { inputPersistence: 'ephemeral' as const, proactive: true } : {}),
       attachmentIds: body.attachmentIds,
       imageMode: body.imageMode,
       workspaceContext: body.workspaceContext,

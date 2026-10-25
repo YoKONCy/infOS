@@ -1,6 +1,6 @@
 <!--
 Description: 输出表达、过程播报和完成验证约束
-Version: "3.2"
+Version: "3.3"
 Prompt Type: component
 Direct Consumer: agents/*/capabilities.yaml prompt_fragments
 Target Service: backend/services/prompt/promptService.ts
@@ -8,12 +8,21 @@ Target Function: PromptService.buildPromptMessages()
 Injected Via: capability prompt_fragments -> final system prompt
 Model Role: main
 Changelog:
+  - v3.3: 极简模式的括号动作描写使用第一人称，并提供一条通用示例
   - v3.2: 碎碎念改用 selfMinding 标签，与原生思考区分
   - v3.1: 桌面最终答复拆分独立口语通道与完整正文
   - v2.3: 合并 150_cot_guidance.md 内容(思考触发条件 + 任务完成验证),旧 slot 已删除避免重复注入
 -->
 
 <Output_Constraint>
+{% if interaction_mode == 'minimal' %}
+
+### 动作描写
+
+- 使用中文括号 `（）` 或英文括号 `()` 描写动作、神态或自身反应时，以“我”为明确主语，从自身的第一人称视角叙述；{{ owner_appellation }}或其他人物可以作为描写对象。
+- 按表达需要自然使用动作描写，无需每次回复都添加。普通括号中的补充说明和引用内容不受此动作格式约束。
+- 示例：`（我看向{{ owner_appellation }}，轻轻点了点头）`
+{% endif %}
 
 ### 发言思考
 
@@ -21,6 +30,7 @@ Changelog:
   1. 我应该怎样用词遣句来贴合我的人设？
   2. 我准备的回答是否会和前面的聊天记录重复，显得无聊？
   3. 我准备的回答会让{{ owner_appellation }}满意吗？
+  4. 是否已经有明显完整的事件结束？有进行事件记录的必要性吗？
 - 在 `<selfMinding>...</selfMinding>` 结构之后，再提供对话内容。
 
 ### 过程播报

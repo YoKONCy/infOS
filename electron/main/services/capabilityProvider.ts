@@ -3,6 +3,7 @@ import { randomUUID } from 'node:crypto'
 import fs from 'node:fs'
 import path from 'node:path'
 import { app } from 'electron'
+import { runtimeDiagnostics } from './runtimeDiagnostics'
 import WebSocket from 'ws'
 import type {
   DaemonToNodeMessage,
@@ -14,6 +15,7 @@ import type {
   WebPageOperation,
 } from '@infos/shared'
 import { logger } from '../utils/logger'
+import { windowManager } from '../windows/manager'
 import { launchApplication } from './applicationLauncher'
 import { listWindows, mousePosition } from './desktopAutomation'
 import { browserRuntime } from './browserRuntime'
@@ -24,6 +26,7 @@ import { windowsDesktop } from './windowsDesktop'
 import { completionAlerts } from './completionAlerts'
 import { isApplicationFocused } from './notificationVisibility'
 import { renderDocumentPdf } from './documentPdf'
+import { getCapabilityEndpoint, isRemoteConnection, clientConnection } from './clientConnection'
 
 const CAPABILITY_PORT = Number(process.env.PERO_CAPABILITY_PORT ?? 9121)
 const DAEMON_HOST = process.env.PERO_DAEMON_HOST ?? '127.0.0.1'
@@ -72,6 +75,7 @@ const WEB_OPERATIONS: readonly WebPageOperation[] = [
   'runtimeStatus',
 ]
 const DESKTOP_OPERATIONS = [
+  'runtimeDiagnostics',
   'control',
   'statusCard',
   'screenCapture',
@@ -113,7 +117,7 @@ class ElectronCapabilityProvider {
     this.stopped = false
     desktopControl.initialize()
     this.nodeId = this.getNodeId()
-    this.connect()
+    void this.connect()
   }
 
   async stop(): Promise<void> {
@@ -130,9 +134,21 @@ class ElectronCapabilityProvider {
     logger.info('CapabilityProvider', __t('electron.logs.capabilityProvider', '已停止'))
   }
 
-  private connect(): void {
+  private async connect(): Promise<void> {
     if (this.stopped) return
-    const url = `ws://${DAEMON_HOST}:${CAPABILITY_PORT}`
+    const url = getCapabilityEndpoint()
+    let token = this.loadDeviceToken(url)
+    try {
+      if (!token && isRemoteConnection()) {
+        token = await clientConnection().capabilityPairingCode()
+      } else if (isRemoteConnection()) {
+        await clientConnection().verify()
+      }
+    } catch {
+      if (!this.stopped) this.scheduleReconnect()
+      return
+    }
+    if (this.stopped) return
     logger.info(
       'CapabilityProvider',
       __t('electron.logs.capabilityProvider', '正在连接 Daemon: {0}', [url]),
@@ -143,10 +159,7 @@ class ElectronCapabilityProvider {
       const message: OutboundCapabilityMessage = {
         type: 'authenticate',
         token:
-          this.loadDeviceToken(DAEMON_HOST, CAPABILITY_PORT) ||
-          process.env.INFOS_CAPABILITY_PAIRING_CODE ||
-          process.env.INFOS_API_TOKEN ||
-          '',
+          token || process.env.INFOS_CAPABILITY_PAIRING_CODE || process.env.INFOS_API_TOKEN || '',
       }
       this.send(message)
     })
@@ -180,7 +193,7 @@ class ElectronCapabilityProvider {
     }
     if (message.type === 'authenticated') {
       if (message.deviceToken) {
-        this.saveDeviceToken(DAEMON_HOST, CAPABILITY_PORT, message.deviceToken)
+        this.saveDeviceToken(getCapabilityEndpoint(), message.deviceToken)
       }
       this.sendHello()
       return
@@ -203,11 +216,21 @@ class ElectronCapabilityProvider {
       this.invocations.delete(message.invocationId)
       return
     }
-    if (message.type === 'error')
+    if (message.type === 'error') {
+      if (isRemoteConnection() && /CAPABILITY_AUTH_(FAILED|REQUIRED)/.test(message.message)) {
+        // 设备凭据撤销后重新申请一次性配对，不将业务访问令牌发给能力通道。
+        try {
+          fs.rmSync(this.credentialFile(), { force: true })
+        } catch {
+          /* 下次连接仍按服务端鉴权结果处理。 */
+        }
+        this.socket?.close()
+      }
       logger.error(
         'CapabilityProvider',
         __t('electron.logs.capabilityProvider', 'Daemon错误: {0}', [message.message]),
       )
+    }
   }
 
   private sendHello(): void {
@@ -321,17 +344,21 @@ class ElectronCapabilityProvider {
           envelope.principalId,
         )
       } else if (envelope.operation.startsWith('desktop.environment/')) {
-        output =
-          operation === 'statusCard'
-            ? await renderStatusCard(
-                envelope.payload.input as Record<string, unknown>,
-                controller.signal,
-              )
-            : await this.invokeDesktop(
-                operation,
-                envelope.payload.input as Record<string, unknown>,
-                controller.signal,
-              )
+        if (operation === 'runtimeDiagnostics') {
+          output = await runtimeDiagnostics(controller.signal)
+        } else {
+          output =
+            operation === 'statusCard'
+              ? await renderStatusCard(
+                  envelope.payload.input as Record<string, unknown>,
+                  controller.signal,
+                )
+              : await this.invokeDesktop(
+                  operation,
+                  envelope.payload.input as Record<string, unknown>,
+                  controller.signal,
+                )
+        }
       } else if (envelope.operation.startsWith('audio.output/')) {
         output = await this.invokeAudioOutput(
           operation,
@@ -384,8 +411,11 @@ class ElectronCapabilityProvider {
       return { playbackId, ...(this.playbackStates.get(playbackId) ?? { state: 'cancelled' }) }
     }
     if (operation === 'stop') {
-      const windows = (await import('../windows/manager')).windowManager
-      for (const win of [windows.petWin, windows.dashboardWin, windows.launcherWin]) {
+      for (const win of [
+        windowManager.petWin,
+        windowManager.dashboardWin,
+        windowManager.launcherWin,
+      ]) {
         if (win && !win.isDestroyed()) win.webContents.send('audio-output:stop', { playbackId })
       }
       this.completePlayback(playbackId, 'cancelled')
@@ -398,9 +428,11 @@ class ElectronCapabilityProvider {
     }
     this.playbackStates.set(playbackId, { state: 'playing', startedAt: new Date().toISOString() })
     if (signal.aborted) throw new Error('CAPABILITY_CANCELLED: 播放已取消')
-    const windows = (await import('../windows/manager')).windowManager
     const targetWindow =
-      windows.petWin ?? windows.chatWin ?? windows.dashboardWin ?? windows.launcherWin
+      windowManager.petWin ??
+      windowManager.chatWin ??
+      windowManager.dashboardWin ??
+      windowManager.launcherWin
     targetWindow?.webContents.send('audio-output:play', {
       playbackId,
       assetUrl,
@@ -436,13 +468,22 @@ class ElectronCapabilityProvider {
         resolve(state)
       }
       const onAbort = () => {
-        const windowsPromise = import('../windows/manager')
-        void windowsPromise.then(({ windowManager: windows }) => {
-          const targetWindow =
-            windows.petWin ?? windows.chatWin ?? windows.dashboardWin ?? windows.launcherWin
-          targetWindow?.webContents.send('audio-output:stop', { playbackId })
-        })
-        this.completePlayback(playbackId, 'cancelled')
+        const targetWindow =
+          windowManager.petWin ??
+          windowManager.chatWin ??
+          windowManager.dashboardWin ??
+          windowManager.launcherWin
+        try {
+          if (
+            targetWindow &&
+            !targetWindow.isDestroyed() &&
+            !targetWindow.webContents.isDestroyed()
+          )
+            targetWindow.webContents.send('audio-output:stop', { playbackId })
+        } finally {
+          // 窗口失效时也要结束回执等待，避免取消操作遗留计时器。
+          this.completePlayback(playbackId, 'cancelled')
+        }
       }
       const timer = setTimeout(() => this.completePlayback(playbackId, 'cancelled'), 5 * 60_000)
       timer.unref?.()
@@ -507,7 +548,7 @@ class ElectronCapabilityProvider {
     }
     if (operation === 'clipboardRead') return readClipboard()
     if (operation === 'clipboardWrite') {
-      writeClipboard(String(input.text ?? ''))
+      await writeClipboard(String(input.text ?? ''))
       return { success: true }
     }
     if (operation === 'activeWindow')
@@ -609,7 +650,7 @@ class ElectronCapabilityProvider {
     if (this.stopped || this.reconnectTimer) return
     this.reconnectTimer = setTimeout(() => {
       this.reconnectTimer = null
-      this.connect()
+      void this.connect()
     }, RECONNECT_INTERVAL_MS)
   }
 
@@ -623,25 +664,45 @@ class ElectronCapabilityProvider {
     return path.join(app.getPath('userData'), DEVICE_CREDENTIAL_FILE)
   }
 
-  private loadDeviceToken(host: string, port: number): string {
+  private loadDeviceToken(endpoint: string): string {
     try {
       const file = this.credentialFile()
       if (!fs.existsSync(file)) return ''
       const parsed = JSON.parse(fs.readFileSync(file, 'utf8')) as {
         endpoint?: string
         token?: string
+        serverId?: string
+        secret?: string
       }
-      return parsed.endpoint === `${host}:${port}` ? (parsed.token ?? '') : ''
+      const legacy =
+        !isRemoteConnection() && parsed.endpoint === `${DAEMON_HOST}:${CAPABILITY_PORT}`
+      const sameServer =
+        !isRemoteConnection() || parsed.serverId === clientConnection().current?.serverId
+      if (!sameServer || (parsed.endpoint !== endpoint && !legacy)) return ''
+      return parsed.secret
+        ? clientConnection().revealSecret(parsed.secret)
+        : !isRemoteConnection()
+          ? (parsed.token ?? '')
+          : ''
     } catch {
       return ''
     }
   }
 
-  private saveDeviceToken(host: string, port: number, token: string): void {
+  private saveDeviceToken(endpoint: string, token: string): void {
     try {
       fs.writeFileSync(
         this.credentialFile(),
-        JSON.stringify({ version: 1, endpoint: `${host}:${port}`, token }, null, 2),
+        JSON.stringify(
+          {
+            version: 3,
+            endpoint,
+            serverId: isRemoteConnection() ? clientConnection().current?.serverId : 'local',
+            secret: clientConnection().protectSecret(token),
+          },
+          null,
+          2,
+        ),
         { encoding: 'utf8', mode: 0o600 },
       )
       logger.info(

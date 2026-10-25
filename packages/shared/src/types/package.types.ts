@@ -3,6 +3,7 @@
 export type PlatformId = 'windows' | 'linux' | 'darwin' | 'docker'
 
 export type PackagePermission =
+  | 'runtime:execute'
   | 'filesystem:read'
   | 'filesystem:write'
   | 'network:local'
@@ -47,6 +48,8 @@ export type PackageContributionKind =
   | 'event-subscriber'
   | 'presenter'
   | 'asset'
+  | 'context-provider'
+  | 'agent-flow'
 
 export interface PackageContribution {
   id: string

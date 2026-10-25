@@ -7,10 +7,14 @@ import type {
   KnowledgeDocumentList,
   KnowledgeSearchInput,
   KnowledgeSearchResult,
+  KnowledgeRecallSettings,
 } from '@infos/shared'
 import { apiClient } from '../client'
 
 export const knowledgeApi = {
+  recallSettings: () => apiClient.get<KnowledgeRecallSettings>('/knowledge/recall-settings'),
+  saveRecallSettings: (settings: KnowledgeRecallSettings) =>
+    apiClient.put<KnowledgeRecallSettings>('/knowledge/recall-settings', settings),
   editFact: (id: string, input: FactManualEditInput) =>
     apiClient.patch<FactRecord>(`/knowledge/facts/${encodeURIComponent(id)}`, input),
   facts: (query = '') => {
@@ -23,6 +27,8 @@ export const knowledgeApi = {
   /** 撤回事实，保留节点和历史关系边 */
   retractFact: (id: string) =>
     apiClient.post<void>(`/knowledge/facts/${encodeURIComponent(id)}/retract`),
+  restoreFact: (id: string) =>
+    apiClient.post<void>(`/knowledge/facts/${encodeURIComponent(id)}/restore`),
   deleteFact: (id: string) => apiClient.delete<void>(`/knowledge/facts/${encodeURIComponent(id)}`),
 
   documents: (query = '', page = 1) =>

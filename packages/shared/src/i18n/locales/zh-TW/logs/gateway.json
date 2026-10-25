@@ -25,5 +25,10 @@
   "NapCat 反向 WS 连接断开: selfId={0}": "NapCat 反向 WS 連接斷開: selfId={0}",
   "NapCat WS 错误: {0}": "NapCat WS 錯誤: {0}",
   "社交 WS 端点已挂载: {0}": "社交 WS 端點已掛載: {0}",
-  "Gateway WS 端点已挂载: {0}": "Gateway WS 端點已掛載: {0}"
+  "Gateway WS 端点已挂载: {0}": "Gateway WS 端點已掛載: {0}",
+  "社交 WS 未找到唯一可用的平台传输，关闭连接": "社交 WS 未找到唯一可用的平台傳輸，關閉連線",
+  "社交 WS 连接建立: accountId={0}": "社交 WS 連線建立: accountId={0}",
+  "社交 WS 连接断开: accountId={0}": "社交 WS 連線中斷: accountId={0}",
+  "社交平台事件处理失败: {0}": "社交平台事件處理失敗: {0}",
+  "社交 WS 错误: {0}": "社交 WS 錯誤: {0}"
 }

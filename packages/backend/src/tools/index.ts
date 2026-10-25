@@ -22,7 +22,6 @@ import { createLogger } from '../lib/logger'
 
 import taskControlManifest from './taskControl/manifest.json'
 import { manageTaskTool } from './taskControl'
-import hostCommunicationManifest from './hostCommunication/manifest.json'
 import appInteractionManifest from './appInteraction/manifest.json'
 import codeSearcherManifest from './codeSearcher/manifest.json'
 import desktopAutomationManifest from './desktopAutomation/manifest.json'
@@ -54,6 +53,8 @@ import workspaceProductivityManifest from './workspaceProductivity/manifest.json
 import sendFileManifest from './sendFile/manifest.json'
 import { sendFileTool } from './sendFile'
 import documentManifest from './document/manifest.json'
+import runtimeDebugManifest from './runtimeDebug/manifest.json'
+import { runtimeDebugTool } from './runtimeDebug'
 import { documentTool } from './document'
 
 const logger = createLogger('BuiltinTools')
@@ -102,7 +103,6 @@ export interface BuiltinTool {
 // 静态导入所有内置工具
 // ─────────────────────────────────────────────
 
-import { communicateWithHostTool } from './hostCommunication'
 import { interactWithSocialTool } from './appInteraction'
 import { updateFlowStateTool } from './flowState'
 import { askUserTool } from './askUser'
@@ -194,11 +194,11 @@ const ALL_BUILTIN_TOOLS: BuiltinTool[] = [
   askUserTool,
   updateStateTool,
   interactWithSocialTool,
-  communicateWithHostTool,
 
   // ── 文件系统 ──
   sendFileTool,
   documentTool,
+  runtimeDebugTool,
   readFileTool,
   readImageTool,
   writeFileTool,
@@ -430,7 +430,6 @@ function collectManifestDefinitions(manifest: ToolManifest): ToolDefinition[] {
 
 for (const manifest of [
   taskControlManifest,
-  hostCommunicationManifest,
   appInteractionManifest,
   codeSearcherManifest,
   desktopAutomationManifest,
@@ -460,6 +459,7 @@ for (const manifest of [
   workspaceProductivityManifest,
   sendFileManifest,
   documentManifest,
+  runtimeDebugManifest,
 ] satisfies ToolManifest[]) {
   for (const definition of collectManifestDefinitions(manifest)) {
     MANIFEST_DEFINITIONS.set(definition.name, definition)

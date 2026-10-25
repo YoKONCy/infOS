@@ -6,7 +6,7 @@ import type { IntegrationService, IntegrationSource } from './integrationService
 import { apiUrl, integrationFetch, integrationJson, publicArtifactUrl } from './integrationHttp'
 
 const MAX_TEXT_BYTES = 4 * 1024 * 1024
-const envelope = z.object({ code: z.number(), data: z.record(z.unknown()).optional() })
+const envelope = z.object({ code: z.number(), data: z.record(z.string(), z.unknown()).optional() })
 
 export interface PdfParseResult {
   text: string
@@ -175,7 +175,7 @@ export class PdfParserService {
         throw new AppError('SERVICE_UNAVAILABLE', { message: 'MinerU 解析状态查询失败' })
       const item = lightweight
         ? status.data
-        : z.array(z.record(z.unknown())).parse(status.data.extract_result)[0]
+        : z.array(z.record(z.string(), z.unknown())).parse(status.data.extract_result)[0]
       if (!item)
         throw new AppError('SERVICE_UNAVAILABLE', { message: 'MinerU 没有返回文件解析状态' })
       if (item.state === 'failed')

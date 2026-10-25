@@ -15,6 +15,26 @@ describe('ThreadRepository 最近会话用途隔离', () => {
 
   afterEach(() => closeDrizzleConnection(db))
 
+  it('历史时间索引从会话起点读取，仅返回用户时间且遵守会话、删除状态和追加边界', async () => {
+    sqlite.exec(`
+      INSERT INTO threads (id, agent_id, channel) VALUES
+        ('time-thread', 'pero', 'desktop'), ('other-time-thread', 'pero', 'desktop');
+      INSERT INTO thread_messages (id, thread_id, role, content, timestamp, status) VALUES
+        (1, 'time-thread', 'user', '历史正文', '2026-10-22 11:04:00', 'active'),
+        (2, 'time-thread', 'assistant', '助手回复', '2026-10-22 11:05:00', 'active'),
+        (3, 'other-time-thread', 'user', '其他会话', '2026-10-25 06:00:00', 'active'),
+        (4, 'time-thread', 'user', '已删除', '2026-10-25 06:01:00', 'deleted'),
+        (5, 'time-thread', 'user', '恢复聊天', '2026-10-25 07:02:00', 'active'),
+        (6, 'time-thread', 'user', '稍后消息', '2026-10-25 09:02:00', 'active');
+    `)
+    const repo = new ThreadRepository(db)
+    expect(await repo.queryConversationUserTimes('time-thread', 5)).toEqual([
+      { id: 1, timestamp: '2026-10-22 11:04:00' },
+      { id: 5, timestamp: '2026-10-25 07:02:00' },
+    ])
+    expect(await repo.queryConversationUserTimes('time-thread', 0)).toEqual([])
+  })
+
   it('工作历史分页包含失败和中断回合，排除删除记录，普通窗口维持原行为', async () => {
     sqlite.exec(`
       INSERT INTO threads (id, agent_id, channel) VALUES ('work', 'pero', 'desktop');

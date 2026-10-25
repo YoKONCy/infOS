@@ -5,6 +5,7 @@
  * 非直观的状态转换、失败恢复与安全边界应在本模块内完成，避免泄漏实现细节。
  */
 import type { ToolPermission } from '../../capabilities/types'
+import { t } from '../../lib/i18n'
 
 export interface BrowserIntentPolicyInput {
   summary: string
@@ -110,6 +111,7 @@ const BROWSER_SENSITIVE_CLICK =
  * 因此任意命令执行必须逐次审批，不能仅依赖命令文本审计或路径参数检查。
  */
 export const ALWAYS_APPROVE_EACH_CALL_TOOLS = new Set([
+  'runtime_debug',
   'terminal_execute',
   'terminal_create',
   'terminal_write',
@@ -222,14 +224,18 @@ export class PolicyEngine {
       }
     }
     if (ALWAYS_APPROVE_EACH_CALL_TOOLS.has(context.toolName)) {
+      if (context.toolName === 'runtime_debug' && !String(context.args.code ?? '').trim())
+        return { action: 'allow' }
       const reason =
-        context.toolName === 'open_application'
-          ? '启动或激活本机应用会改变用户桌面状态，需要用户确认'
-          : context.toolName === 'activate_window'
-            ? '切换本机窗口会改变用户当前桌面焦点，需要用户确认'
-            : context.toolName === 'delete_file'
-              ? '删除文件会永久移除服务端数据，需要用户确认'
-              : `工具 ${context.toolName} 可执行系统操作，必须逐次由用户确认`
+        context.toolName === 'runtime_debug'
+          ? t('server.runtime-debug', '调试脚本具有本机 Node 权限，本次执行需要审批')
+          : context.toolName === 'open_application'
+            ? '启动或激活本机应用会改变用户桌面状态，需要用户确认'
+            : context.toolName === 'activate_window'
+              ? '切换本机窗口会改变用户当前桌面焦点，需要用户确认'
+              : context.toolName === 'delete_file'
+                ? '删除文件会永久移除服务端数据，需要用户确认'
+                : `工具 ${context.toolName} 可执行系统操作，必须逐次由用户确认`
       return {
         action: 'require_approval',
         reason,

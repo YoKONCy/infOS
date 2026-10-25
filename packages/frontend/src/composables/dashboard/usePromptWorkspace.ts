@@ -13,6 +13,7 @@ import type {
   PromptWorkspaceView,
   PromptFormat,
   SillyTavernImport,
+  PromptPreset,
 } from '@infos/shared'
 import { promptFormat, PROMPT_FORMATS, ST_MARKER_BINDINGS } from '@infos/shared'
 import { promptApi } from '../../api/modules/promptApi'
@@ -20,6 +21,7 @@ import { useNotificationStore } from '../../stores/useNotificationStore'
 import { ApiError } from '../../api/errors'
 import { isPromptBundle, isPromptFramework } from '../../lib/promptDraft'
 import { getApiBaseUrl } from '../../api/transport'
+import { createPromptPreset, parsePromptPreset, preparePromptPreset } from '../../lib/promptPreset'
 
 export type PromptSection = 'framework' | PromptKind | 'assignments' | 'versions'
 const empty = (): PromptBundle => ({ documents: [], frameworks: [], assignments: [] })
@@ -38,6 +40,9 @@ export function usePromptWorkspace() {
   const formatFilter = ref<PromptFormat | ''>('')
   const stImport = ref<SillyTavernImport | null>(null)
   const stImportOpen = ref(false)
+  const presetExportOpen = ref(false)
+  const presetImportOpen = ref(false)
+  const presetImport = ref<{ preset: PromptPreset; issues: PromptIssue[] } | null>(null)
   let stImportInput: unknown
   let stImportFile = ''
   const selectedId = ref('builtin.main')
@@ -617,18 +622,75 @@ export function usePromptWorkspace() {
       },
     )
   }
-  function exportBundle() {
-    if (!applySource()) return
-    const url = URL.createObjectURL(
-      new Blob([JSON.stringify({ format: 'infos-prompts-v1', bundle: bundle.value }, null, 2)], {
-        type: 'application/json',
-      }),
-    )
+  function downloadJson(value: unknown, filename: string) {
+    const blob = new Blob([JSON.stringify(value, null, 2)], { type: 'application/json' })
+    if (blob.size > 4_000_000)
+      throw new Error(__t('ui.prompt-presets', '预设超过 4 MB，请减少内容后重试'))
+    const url = URL.createObjectURL(blob)
     const link = window.document.createElement('a')
     link.href = url
-    link.download = 'infos-prompts.json'
-    link.click()
-    setTimeout(() => URL.revokeObjectURL(url), 1000)
+    link.download = filename
+    try {
+      window.document.body.append(link)
+      link.click()
+    } finally {
+      link.remove()
+      setTimeout(() => URL.revokeObjectURL(url), 1000)
+    }
+  }
+  async function exportBundle() {
+    if (!applySource()) return
+    await action(async () => {
+      downloadJson({ format: 'infos-prompts-v1', bundle: bundle.value }, 'infos-prompts.json')
+      presetExportOpen.value = false
+    })
+  }
+  async function exportPreset(frameworkId: string) {
+    if (!applySource()) return
+    await action(async () => {
+      const preset = createPromptPreset(clone(bundle.value), frameworkId)
+      const validation = await promptApi.validate({
+        documents: preset.documents,
+        frameworks: [preset.framework],
+        assignments: [{ agentId: '', channel: '', frameworkId, overrides: {} }],
+      })
+      issues.value = validation.data ?? []
+      if (issues.value.some((issue) => issue.level === 'error'))
+        throw new Error(
+          __t('ui.prompt-presets', '预设校验未通过，请先修复提示问题，或导出完整备份'),
+        )
+      // eslint-disable-next-line no-control-regex -- 显式拦截控制字符，防止标识或路径混入不可见内容。
+      const name = preset.name.replace(/[<>:"/\\|?*\u0000-\u001f]/g, '_').slice(0, 80)
+      downloadJson(preset, `infos-${name || 'prompt'}.preset.json`)
+      presetExportOpen.value = false
+    })
+  }
+  async function commitPresetImport(options: {
+    scope: 'all' | 'range' | 'later'
+    agentId: string
+    channel: string
+  }) {
+    const pending = presetImport.value
+    if (!pending || !pending.preset.name.trim() || !applySource()) return
+    await action(async () => {
+      const before = JSON.stringify(bundle.value)
+      const prepared = preparePromptPreset(pending.preset, createClientUuid())
+      const candidate: PromptBundle = {
+        ...clone(bundle.value),
+        documents: [...clone(bundle.value.documents), ...prepared.documents],
+        frameworks: [...clone(bundle.value.frameworks), prepared.framework],
+      }
+      const result = await promptApi.validate(candidate)
+      if (presetImport.value !== pending || !presetImportOpen.value) return
+      if (JSON.stringify(bundle.value) !== before)
+        throw new Error(__t('ui.prompt-presets', '草稿已变化，请重新确认导入'))
+      bundle.value.documents.push(...prepared.documents)
+      addFramework(prepared.framework, options)
+      issues.value = result.data ?? []
+      presetImportOpen.value = false
+      presetImport.value = null
+      notify.toast(__t('ui.settings', '已导入草稿，发布后生效'), 'success')
+    })
   }
   async function parseStImport(profile?: number) {
     const result = await promptApi.importSillyTavern(
@@ -679,8 +741,28 @@ export function usePromptWorkspace() {
   async function importBundle(file?: File) {
     if (!file) return
     await action(async () => {
-      if (file.size > 4_000_000) throw new Error('配置不能超过 4 MB')
-      const input = JSON.parse(await file.text()) as { bundle?: PromptBundle }
+      if (file.size > 4_000_000)
+        throw new Error(__t('ui.prompt-presets', '预设超过 4 MB，请减少内容后重试'))
+      let input: Record<string, unknown>
+      try {
+        const value: unknown = JSON.parse((await file.text()).replace(/^\uFEFF/, ''))
+        if (!value || typeof value !== 'object' || Array.isArray(value)) throw new Error()
+        input = value as Record<string, unknown>
+      } catch {
+        throw new Error(__t('ui.prompt-presets', '请选择有效的 JSON 预设文件'))
+      }
+      if (input.format === 'infos-prompt-preset') {
+        const preset = parsePromptPreset(input)
+        const prepared = preparePromptPreset(preset, createClientUuid())
+        const result = await promptApi.validate({
+          ...clone(bundle.value),
+          documents: [...clone(bundle.value.documents), ...prepared.documents],
+          frameworks: [...clone(bundle.value.frameworks), prepared.framework],
+        })
+        presetImport.value = { preset, issues: result.data ?? [] }
+        presetImportOpen.value = true
+        return
+      }
       if (
         input &&
         typeof input === 'object' &&
@@ -695,14 +777,18 @@ export function usePromptWorkspace() {
         await parseStImport()
         return
       }
-      const candidate = input.bundle ?? (input as unknown as PromptBundle)
-      if (!isPromptBundle(candidate)) throw new Error('不是有效的提示词配置')
+      if (input.format !== undefined && input.format !== 'infos-prompts-v1')
+        throw new Error(__t('ui.prompt-presets', '不支持此预设格式或版本'))
+      const candidate = input.bundle ?? input
+      if (!isPromptBundle(candidate))
+        throw new Error(__t('ui.prompt-presets', '不是有效的 infOS 提示词预设'))
       const result = await promptApi.validate(candidate)
       issues.value = result.data ?? []
       confirm(
         __t('ui.settings', '导入配置'),
         __t('ui.settings', '替换当前草稿，发布后生效。'),
         () => {
+          if (!applySource()) return
           bundle.value = candidate
           mode.value = 'visual'
           setSection('framework')
@@ -773,6 +859,11 @@ export function usePromptWorkspace() {
     setFormatFilter,
     stImport,
     stImportOpen,
+    presetExportOpen,
+    presetImportOpen,
+    presetImport,
+    exportPreset,
+    commitPresetImport,
     reloadStImport,
     commitStImport,
     exportStPreset,

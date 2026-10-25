@@ -4,13 +4,12 @@ import { t as __t } from '../../lib/i18n'
  *
  * 跨平台能力:
  * - get_system_info    → 系统信息 (os 模块，跨平台)
- * - open_application   → 启动应用 (open 命令抽象，跨平台)
+ * - open_application   → 启动应用 (客户端能力)
  * - get_active_windows → 列出窗口 (平台适配)
  * - activate_window    → 切换窗口 (平台适配)
  *
- * 核心逻辑使用 Node.js 原生 os/process/child_process，
- * 窗口列表/激活等 GUI 操作通过可选的 WindowProvider 注入，
- * 不依赖 native addon，降级到 shell 命令。
+ * 系统查询使用 Node.js 原生能力；窗口列表允许只读命令降级。
+ * 应用启动与窗口激活必须委托已注入的客户端能力，缺少提供者时拒绝执行。
  *
  * @module packages/backend/src/tools/systemInfo
  */
@@ -223,53 +222,29 @@ export const activateWindowTool: BuiltinTool = {
   name: 'activate_window',
 
   async execute(args, context) {
-    const target = (args.target as string)?.trim()
+    const target = typeof args.target === 'string' ? args.target.trim() : ''
     if (!target) {
-      return JSON.stringify({ error: '请提供窗口名称' })
+      return errorResult('WINDOW_TARGET_REQUIRED', __t('server.tools', '请提供窗口名称'))
     }
 
-    // 优先使用注入的 WindowProvider
-    if (_windowProvider) {
-      try {
-        const result = await _windowProvider.activateWindow(target, context)
-        return JSON.stringify({ success: true, message: result })
-      } catch (err) {
-        const errMsg = err instanceof Error ? err.message : String(err)
-        return JSON.stringify({ error: `切换窗口失败: ${errMsg}` })
-      }
+    // 窗口名称只作为数据传给客户端；缺少提供者时不得降级为本机 Shell 或脚本。
+    const provider = _windowProvider
+    if (!provider) {
+      return errorResult(
+        'WINDOW_ACTIVATION_UNAVAILABLE',
+        __t('server.tools', '窗口切换能力不可用，请连接支持窗口操作的客户端'),
+      )
     }
-
-    // 降级: 平台 shell 命令
-    const platform = os.platform()
 
     try {
-      if (platform === 'win32') {
-        // PowerShell: 使用 AppActivate (简单但有效)
-        const script = `
-          Add-Type -AssemblyName Microsoft.VisualBasic
-          [Microsoft.VisualBasic.Interaction]::AppActivate("${target.replace(/"/g, '`"')}")
-        `
-        execSync(`powershell -Command "${script}"`, { timeout: 5000 })
-        return JSON.stringify({
-          success: true,
-          message: __t('server.tools', '已切换到窗口: {0}', [target]),
-        })
-      } else if (platform === 'darwin') {
-        execSync(`osascript -e 'tell application "${target}" to activate'`, { timeout: 5000 })
-        return JSON.stringify({
-          success: true,
-          message: __t('server.tools', '已切换到窗口: {0}', [target]),
-        })
-      } else {
-        execSync(`wmctrl -a "${target}" 2>/dev/null`, { timeout: 5000 })
-        return JSON.stringify({
-          success: true,
-          message: __t('server.tools', '已切换到窗口: {0}', [target]),
-        })
-      }
+      const result = await provider.activateWindow(target, context)
+      return JSON.stringify({ success: true, message: result })
     } catch (err) {
       const errMsg = err instanceof Error ? err.message : String(err)
-      return JSON.stringify({ error: `切换窗口失败: ${errMsg}` })
+      return errorResult(
+        'WINDOW_ACTIVATION_FAILED',
+        __t('server.tools', '切换窗口失败: {0}', [errMsg]),
+      )
     }
   },
 }

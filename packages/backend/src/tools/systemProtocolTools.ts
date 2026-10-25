@@ -11,16 +11,19 @@ export const SYSTEM_PROTOCOL_TOOLS = new Set([
   'skill_list_resources',
   'skill_read_resource',
   'interact_with_social',
-  'communicate_with_host',
 ])
 
 /** 可由用户关闭、仅工作模式开放的协调工具，不属于系统必需项。 */
-export const WORK_CONTROL_TOOLS = new Set(['expand_advanced_tools', 'update_plan', 'manage_task'])
+export const WORK_CONTROL_TOOLS = new Set(['expand_advanced_tools', 'update_plan'])
 
 /** 协调动作不算实际业务成果，不能单独解锁任务完成或作为交付证据。 */
 export function isTaskCoordinationTool(name: string): boolean {
   // NIT 编排实际业务工具，不因菜单归入系统协议就被当作纯状态协调动作。
-  return (SYSTEM_PROTOCOL_TOOLS.has(name) && name !== 'run_script') || WORK_CONTROL_TOOLS.has(name)
+  return (
+    name === 'manage_task' ||
+    (SYSTEM_PROTOCOL_TOOLS.has(name) && name !== 'run_script') ||
+    WORK_CONTROL_TOOLS.has(name)
+  )
 }
 
 /** 据点group通道除固定执行协议外，仅开放据点空间状态机工具。 */

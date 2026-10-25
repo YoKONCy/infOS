@@ -1,0 +1,9 @@
+{
+  "调试": "Debug",
+  "调试模式切换失败": "Unable to change debugging mode",
+  "工作模式下可开启调试": "Debugging is available in work mode",
+  "关闭当前会话调试": "Close debugging for this conversation",
+  "开启当前会话调试": "Enable debugging for this conversation",
+  "调试工具已启用": "Debug tools are enabled",
+  "为当前会话启用调试工具": "Enable debug tools for this conversation"
+}

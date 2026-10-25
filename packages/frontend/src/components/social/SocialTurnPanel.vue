@@ -134,7 +134,12 @@ function acknowledgeAll(): void {
 }
 function allowConversation(record: SocialTurnListItem): void {
   void act(record.id, async () => {
-    await socialApi.allowLimitedConversation(record.accountId, record.channelType, record.channelId)
+    await socialApi.allowLimitedConversation(
+      record.accountId,
+      record.channelType,
+      record.channelId,
+      record.platform,
+    )
     await socialApi.acknowledgeTurn(record.id)
   })
 }

@@ -29,7 +29,7 @@ describe('code_search Node fallback', () => {
     expect(truncated).toBe(false)
     // 第 2 行 'const target = alpha'：'target' 从第 7 列开始（1-based）
     expect(matches).toEqual([
-      expect.objectContaining({ file: path.join('src', 'a.ts'), line: 2, column: 7 }),
+      expect.objectContaining({ file: path.join(root, 'src', 'a.ts'), line: 2, column: 7 }),
     ])
   })
 
@@ -75,5 +75,79 @@ describe('code_search Node fallback', () => {
     })
     expect(matches).toHaveLength(50)
     expect(truncated).toBe(true)
+  })
+})
+
+describe.each(['node', 'ripgrep'] as const)('code_search %s 引擎契约', (engine) => {
+  const search =
+    engine === 'node'
+      ? __codeSearchInternals.searchWithNode
+      : __codeSearchInternals.searchWithRipgrep
+  it('默认遵守 Git 忽略规则，关闭后包含忽略项，隐藏项独立控制', async (context) => {
+    await mkdir(path.join(root, '.git'))
+    await mkdir(path.join(root, 'generated'))
+    await mkdir(path.join(root, '.config'))
+    await writeFile(path.join(root, '.gitignore'), 'generated/\n*.log\n')
+    await writeFile(path.join(root, 'generated', 'a.ts'), 'scope_token')
+    await writeFile(path.join(root, '.config', 'a.ts'), 'scope_token')
+    await writeFile(path.join(root, 'visible.ts'), 'scope_token')
+    const input = { query: 'scope_token', isRegex: false, searchPath: root }
+    const normal = await search(input)
+    if ('available' in normal && !normal.available) {
+      context.skip()
+      return
+    }
+    expect(normal.matches.map((match) => path.basename(match.file))).toEqual(['visible.ts'])
+    const unignored = await search({ ...input, respectGitIgnore: false })
+    expect(unignored.matches).toHaveLength(2)
+    expect(unignored.matches.some((match) => match.file.includes('.config'))).toBe(false)
+    const hidden = await search({ ...input, respectGitIgnore: false, includeHidden: true })
+    expect(hidden.matches).toHaveLength(3)
+  })
+
+  it('支持子目录规则与否定规则', async (context) => {
+    await mkdir(path.join(root, '.git'))
+    await mkdir(path.join(root, '.git', 'info'))
+    await writeFile(path.join(root, '.git', 'info', 'exclude'), 'local.ts\n')
+    await writeFile(path.join(root, 'local.ts'), 'rules_token')
+    await writeFile(path.join(root, '.gitignore'), '*.log\n!keep.log\n')
+    await writeFile(path.join(root, 'hide.log'), 'rules_token')
+    await writeFile(path.join(root, 'keep.log'), 'rules_token')
+    await writeFile(path.join(root, 'src', '.gitignore'), 'skip.ts\n')
+    await writeFile(path.join(root, 'src', 'skip.ts'), 'rules_token')
+    const result = await search({ query: 'rules_token', isRegex: false, searchPath: root })
+    if ('available' in result && !result.available) {
+      context.skip()
+      return
+    }
+    expect(result.matches.map((match) => path.basename(match.file))).toEqual(['keep.log'])
+  })
+
+  it('类型别名与扩展名一致，单文件中文和表情前缀列号正确', async (context) => {
+    const file = path.join(root, 'unicode.ts')
+    await writeFile(file, '中文😀 target\n')
+    for (const fileType of ['ts', 'typescript', '*.ts', '.ts']) {
+      const result = await search({ query: 'target', isRegex: false, fileType, searchPath: file })
+      if ('available' in result && !result.available) {
+        context.skip()
+        return
+      }
+      expect(result.matches).toEqual([expect.objectContaining({ file, line: 1, column: 6 })])
+    }
+  })
+
+  it('没有命中时返回空列表，取消不会伪装成空结果', async (context) => {
+    const result = await search({ query: 'no_such_token', isRegex: false, searchPath: root })
+    if ('available' in result && !result.available) {
+      context.skip()
+      return
+    }
+    expect(result.matches).toEqual([])
+    expect(result.truncated).toBe(false)
+    const controller = new AbortController()
+    controller.abort(new Error('测试取消'))
+    await expect(
+      search({ query: 'target', isRegex: false, searchPath: root, signal: controller.signal }),
+    ).rejects.toThrow('测试取消')
   })
 })

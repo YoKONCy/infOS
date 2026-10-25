@@ -28,7 +28,7 @@ import type { GatewayHub } from '../gateway/gatewayHub'
 import type { ThreadService } from '../thread/threadService'
 import type { ConversationTurnService } from '../conversation/conversationTurnService'
 import { createLogger } from '../../lib/logger'
-import { cleanTextForTts } from './spokenReply'
+import { prepareTtsText } from './spokenReply'
 
 const logger = createLogger('RealtimeSession')
 
@@ -193,7 +193,7 @@ export class RealtimeSessionManager {
       logger.info(__t('logs.voice', 'Agent 回复: "{0}..." ({1}ms)', [reply.slice(0, 50), agentMs]))
 
       // ── 阶段 3: 文本清洗 (ReAct 过滤) ──
-      const ttsText = cleanTextForTts(spokenReply)
+      const ttsText = prepareTtsText(spokenReply)
 
       // ── 阶段 4: TTS 语音合成 ──
       await this.broadcastState(sessionId, 'speaking')
@@ -207,7 +207,7 @@ export class RealtimeSessionManager {
         const voiceParams = detectVoiceParams(ttsText)
         const endTtsIo = scheduled.beginIo()
         try {
-          audio = await this.runTts(ttsText, config?.voice, voiceParams)
+          audio = await this.runTts(ttsText, config?.voice, voiceParams, agentId, scheduled.signal)
         } finally {
           endTtsIo()
         }
@@ -311,9 +311,17 @@ export class RealtimeSessionManager {
   }
 
   /** 执行 TTS */
-  private async runTts(text: string, voice?: string, params?: VoiceParams): Promise<TtsResult> {
+  private async runTts(
+    text: string,
+    voice?: string,
+    params?: VoiceParams,
+    agentId?: string,
+    signal?: AbortSignal,
+  ): Promise<TtsResult> {
     return this.deps.ttsService.synthesize({
       text,
+      agentId,
+      signal,
       voice,
       speed: params?.speed,
       pitch: params?.pitch,

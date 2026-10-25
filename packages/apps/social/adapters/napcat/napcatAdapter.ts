@@ -17,6 +17,12 @@ import { t as __t } from '../../runtime/i18n'
 import { v4 as uuidv4 } from 'uuid'
 import { currentSocialRecovery } from '../../runtime/socialRecovery'
 import { AbstractSocialAdapter } from '../ISocialAdapter'
+import { NapcatOperations, socialImageData } from './napcatOperations'
+import { NapcatStickers } from './napcatStickers'
+import { StickerService } from '../../runtime/stickerService'
+import { NativeEmojiService } from './nativeEmoji'
+import type { SocialOperationDependencies } from '../../runtime/socialOperations'
+import type { SocialMessageRecord, SocialStoragePort } from '@infos/shared'
 import type {
   OutboundMessage,
   InboundMessage,
@@ -43,6 +49,8 @@ const logger = createLogger('NapcatAdapter')
 
 /** NapCat 适配器配置 */
 export interface NapcatConfig {
+  legacyConfiguration?: boolean
+  connectionId?: string
   /** 单实例 Social 当前绑定的 Agent ID */
   defaultAgentId: string
   /** 好友请求自动接受 */
@@ -72,6 +80,101 @@ export interface WsSender {
 // ─────────────────────────────────────────────
 
 export class NapcatAdapter extends AbstractSocialAdapter {
+  private accountStickerService?: StickerService
+  get legacyConfiguration(): boolean {
+    return this.config.legacyConfiguration === true
+  }
+  get connectionId(): string {
+    return this.config.connectionId ?? 'qq'
+  }
+  get displayName(): string {
+    return 'QQ'
+  }
+  get adapterType(): string {
+    return 'napcat'
+  }
+  mediaHeaders(url: string): Record<string, string> | undefined {
+    const host = new URL(url).hostname.toLowerCase()
+    return host === 'qq.com' || host.endsWith('.qq.com') || host.endsWith('.qq.com.cn')
+      ? { 'User-Agent': 'Mozilla/5.0', Referer: 'https://qq.com' }
+      : undefined
+  }
+  validateOwnerId(ownerId: string): boolean {
+    return !ownerId || /^[1-9]\d{4,19}$/.test(ownerId)
+  }
+  get capabilities(): readonly string[] {
+    return ['history', 'message_lookup', 'contacts', 'groups', 'stickers', 'native_emoji']
+  }
+  promptVariables(): Record<string, unknown> {
+    return { owner_qq: this.config.ownerQq || '未配置' }
+  }
+  getOwnerId(): string | undefined {
+    return this.config.ownerQq
+  }
+  async getOwnerDestination(
+    _accountId: string,
+  ): Promise<{ channelId: string; channelType: 'private' }> {
+    if (!this.config.ownerQq) throw new Error('SOCIAL_OWNER_REQUIRED')
+    return { channelId: this.config.ownerQq, channelType: 'private' }
+  }
+  prepareImage(filePath: string): Promise<string> {
+    return socialImageData(filePath)
+  }
+  setOwnerId(ownerId: string | undefined): void {
+    this.setOwnerQq(ownerId)
+  }
+  configure(config: Record<string, unknown>): void {
+    const owner = String(config.ownerId ?? config.ownerQq ?? '').trim()
+    this.setOwnerId(/^[1-9]\d{4,19}$/.test(owner) ? owner : undefined)
+  }
+  normalizeInbound(message: InboundMessage): InboundMessage {
+    const raw = message.rawEvent as Record<string, unknown> | undefined
+    return {
+      ...super.normalizeInbound(message),
+      messageId: message.messageId ?? String(raw?.message_id ?? ''),
+      accountId: message.accountId ?? String(raw?.self_id ?? ''),
+      timestampMs:
+        message.timestampMs ?? (Number(raw?.time) > 0 ? Number(raw?.time) * 1000 : undefined),
+      isMentioned: message.isMentioned === true || raw?._isMentioned === true,
+    }
+  }
+  getStickerService(): StickerService {
+    return (this.accountStickerService ??= new StickerService(
+      new NapcatStickers(async (...args) => {
+        if (!args[3] || !this.getConnectedAccountIds().includes(args[3]))
+          throw new Error('SOCIAL_ACCOUNT_NOT_CONNECTED')
+        return this.callApi(...args)
+      }),
+    ))
+  }
+  createOperations(deps: SocialOperationDependencies): NapcatOperations {
+    return new NapcatOperations({ ...deps, adapter: () => this })
+  }
+  createNativeEmojiProvider(
+    storage: SocialStoragePort,
+    config: SocialOperationDependencies['config'],
+  ) {
+    return new NativeEmojiService(storage, config)
+  }
+  getWebSocketTransport() {
+    return {
+      accountHeader: 'x-self-id',
+      registerConnection: this.registerConnection.bind(this),
+      unregisterConnection: this.unregisterConnection.bind(this),
+      handleRawEvent: this.handleRawEvent.bind(this),
+    }
+  }
+  restoreMessage(row: SocialMessageRecord): InboundMessage {
+    const message = super.restoreMessage(row)
+    const raw = message.rawEvent as Record<string, unknown>
+    const segments = Array.isArray(raw.message) ? (raw.message as OneBotSegment[]) : []
+    return this.normalizeInbound({
+      ...message,
+      attachments: message.attachments ?? extractAttachments(segments),
+      replyTo: message.replyTo ?? extractReplyId(segments),
+      rawEvent: { ...raw, self_id: row.accountId, message_id: row.msgId },
+    })
+  }
   readonly platform = 'qq'
 
   private config: NapcatConfig
@@ -221,7 +324,9 @@ export class NapcatAdapter extends AbstractSocialAdapter {
       connected,
       platform: 'qq',
       latencyMs,
-      accountInfo: firstBotInfo as Record<string, unknown> | undefined,
+      accountInfo: firstBotInfo
+        ? { ...firstBotInfo, id: String(firstBotInfo.user_id), name: firstBotInfo.nickname }
+        : undefined,
     }
   }
 
@@ -239,13 +344,35 @@ export class NapcatAdapter extends AbstractSocialAdapter {
     this.config.defaultAgentId = agentId
   }
 
+  async getHistoryPage(input: {
+    channelId: string
+    channelType: 'private' | 'group'
+    accountId: string
+    limit: number
+    cursor?: string
+  }) {
+    const messages = await this.getMessageHistory(
+      input.channelId,
+      input.channelType,
+      input.limit,
+      input.cursor === undefined ? undefined : Number(input.cursor),
+      input.accountId,
+    )
+    if (messages.length < input.limit) return { messages }
+    const sequences = messages.flatMap((message) =>
+      message.messageSeq !== undefined ? [message.messageSeq] : [],
+    )
+    if (!sequences.length) throw new Error('SOCIAL_HISTORY_CURSOR_MISSING')
+    return { messages, nextCursor: String(Math.min(...sequences)) }
+  }
+
   async getMessageHistory(
     channelId: string,
     channelType: 'private' | 'group',
     limit: number,
     beforeMessageSeq?: number,
     requestedAccountId?: string,
-  ): Promise<SocialHistoryMessageRecord[]> {
+  ): Promise<Array<SocialHistoryMessageRecord & { messageSeq?: number }>> {
     const action = channelType === 'group' ? 'get_group_msg_history' : 'get_friend_msg_history'
     const idKey = channelType === 'group' ? 'group_id' : 'user_id'
     const params: Record<string, unknown> = {
@@ -288,7 +415,7 @@ export class NapcatAdapter extends AbstractSocialAdapter {
           content: cleanCQCodes(rawContent),
           timestamp: Number(event.time ?? 0),
           rawEvent: event,
-        } satisfies SocialHistoryMessageRecord
+        } satisfies SocialHistoryMessageRecord & { messageSeq?: number }
       })
       .filter((message) => message.msgId && message.timestamp > 0)
       .sort((a, b) => a.timestamp - b.timestamp)
@@ -324,6 +451,10 @@ export class NapcatAdapter extends AbstractSocialAdapter {
     }
     return {
       platform: this.platform,
+      messageId,
+      accountId,
+      connectionId: this.connectionId,
+      timestampMs: Number(event.time) * 1000 || undefined,
       agentId: this.config.defaultAgentId,
       channelId,
       channelType,
@@ -692,8 +823,11 @@ export class NapcatAdapter extends AbstractSocialAdapter {
   // ── Layer 2 新增: 联系人/群组查询 (OneBot v11 API Bridge) ──
 
   /** 拉取好友列表，并适配为社交工具层统一的联系人结构。 */
-  async getContacts(): Promise<import('../../tools').SocialContact[]> {
-    const resp = (await this.callApi('get_friend_list', {})) as Record<string, unknown>
+  async getContacts(accountId?: string): Promise<import('../../tools').SocialContact[]> {
+    const resp = (await this.callApi('get_friend_list', {}, undefined, accountId)) as Record<
+      string,
+      unknown
+    >
     const data = resp?.data as Array<Record<string, unknown>> | undefined
     if (!Array.isArray(data)) return []
 
@@ -706,8 +840,11 @@ export class NapcatAdapter extends AbstractSocialAdapter {
   }
 
   /** 拉取群列表，并把 OneBot 字段归一化为社交工具层使用的群结构。 */
-  async getGroups(): Promise<import('../../tools').SocialGroup[]> {
-    const resp = (await this.callApi('get_group_list', {})) as Record<string, unknown>
+  async getGroups(accountId?: string): Promise<import('../../tools').SocialGroup[]> {
+    const resp = (await this.callApi('get_group_list', {}, undefined, accountId)) as Record<
+      string,
+      unknown
+    >
     const data = resp?.data as Array<Record<string, unknown>> | undefined
     if (!Array.isArray(data)) return []
 
@@ -720,12 +857,17 @@ export class NapcatAdapter extends AbstractSocialAdapter {
   }
 
   /** 查询单个 QQ 用户资料；OneBot 失败时返回 null，让上层工具自行决定降级展示。 */
-  async getContactInfo(userId: string): Promise<import('../../tools').SocialContact | null> {
+  async getContactInfo(
+    userId: string,
+    accountId?: string,
+  ): Promise<import('../../tools').SocialContact | null> {
     try {
-      const resp = (await this.callApi('get_stranger_info', { user_id: Number(userId) })) as Record<
-        string,
-        unknown
-      >
+      const resp = (await this.callApi(
+        'get_stranger_info',
+        { user_id: Number(userId) },
+        undefined,
+        accountId,
+      )) as Record<string, unknown>
       const data = resp?.data as Record<string, unknown> | undefined
       if (!data) return null
 
@@ -741,12 +883,17 @@ export class NapcatAdapter extends AbstractSocialAdapter {
   }
 
   /** 查询单个群资料；接口不可用或群不存在时返回 null。 */
-  async getGroupInfo(groupId: string): Promise<import('../../tools').SocialGroup | null> {
+  async getGroupInfo(
+    groupId: string,
+    accountId?: string,
+  ): Promise<import('../../tools').SocialGroup | null> {
     try {
-      const resp = (await this.callApi('get_group_info', { group_id: Number(groupId) })) as Record<
-        string,
-        unknown
-      >
+      const resp = (await this.callApi(
+        'get_group_info',
+        { group_id: Number(groupId) },
+        undefined,
+        accountId,
+      )) as Record<string, unknown>
       const data = resp?.data as Record<string, unknown> | undefined
       if (!data) return null
 
@@ -762,11 +909,19 @@ export class NapcatAdapter extends AbstractSocialAdapter {
   }
 
   /** 拉取群成员列表；OneBot 字段 card 优先作为群名片，nickname 作为兜底名称。 */
-  async getGroupMembers(groupId: string): Promise<import('../../tools').SocialContact[]> {
+  async getGroupMembers(
+    groupId: string,
+    accountId?: string,
+  ): Promise<import('../../tools').SocialContact[]> {
     try {
-      const resp = (await this.callApi('get_group_member_list', {
-        group_id: Number(groupId),
-      })) as Record<string, unknown>
+      const resp = (await this.callApi(
+        'get_group_member_list',
+        {
+          group_id: Number(groupId),
+        },
+        undefined,
+        accountId,
+      )) as Record<string, unknown>
       const data = resp?.data as Array<Record<string, unknown>> | undefined
       if (!Array.isArray(data)) return []
 
@@ -782,17 +937,27 @@ export class NapcatAdapter extends AbstractSocialAdapter {
   }
 
   /** 手动处理好友请求，供社交工具或管理界面调用。 */
-  async handleFriendRequest(flag: string, approve: boolean, remark?: string): Promise<void> {
-    await this.callApi('set_friend_add_request', {
-      flag,
-      approve,
-      ...(remark ? { remark } : {}),
-    })
+  async handleFriendRequest(
+    flag: string,
+    approve: boolean,
+    remark?: string,
+    accountId?: string,
+  ): Promise<void> {
+    await this.callApi(
+      'set_friend_add_request',
+      {
+        flag,
+        approve,
+        ...(remark ? { remark } : {}),
+      },
+      undefined,
+      accountId,
+    )
   }
 
   /** 删除 QQ 好友；这里仅做 OneBot API 转发，不维护额外本地联系人缓存。 */
-  async removeFriend(userId: string): Promise<void> {
-    await this.callApi('delete_friend', { user_id: Number(userId) })
+  async removeFriend(userId: string, accountId?: string): Promise<void> {
+    await this.callApi('delete_friend', { user_id: Number(userId) }, undefined, accountId)
   }
 
   /**
@@ -806,7 +971,10 @@ export class NapcatAdapter extends AbstractSocialAdapter {
    *
    * @param forwardId 转发消息 ID（resId）
    */
-  async getForwardMsg(forwardId: string): Promise<
+  async getForwardMsg(
+    forwardId: string,
+    accountId?: string,
+  ): Promise<
     Array<{
       senderName: string
       senderId: string
@@ -814,9 +982,14 @@ export class NapcatAdapter extends AbstractSocialAdapter {
       hasNestedForward: boolean
     }>
   > {
-    const resp = (await this.callApi('get_forward_msg', {
-      message_id: forwardId,
-    })) as Record<string, unknown>
+    const resp = (await this.callApi(
+      'get_forward_msg',
+      {
+        message_id: forwardId,
+      },
+      undefined,
+      accountId,
+    )) as Record<string, unknown>
 
     // resp.data 类型是 unknown，需先断言为对象再访问 .messages
     const data = resp?.data as Record<string, unknown> | undefined

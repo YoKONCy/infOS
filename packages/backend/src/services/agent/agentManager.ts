@@ -36,10 +36,19 @@ import { createLogger } from '../../lib/logger'
 const logger = createLogger('AgentManager')
 
 /** 旧版官方头像指纹，仅识别未被用户更换的默认资源副本。 */
-const LEGACY_BUILTIN_AVATAR_SHA256: Readonly<Record<string, string>> = {
-  pero: '23bc63e925972e716098d69fc529e58653e83d69cc7ab2e9a2412005f3cdb22e',
-  nana: '78583973e0532d3943833803de713c8e0866f0303f120f1fef30d353fd9f2d8c',
-  tsukinaga: 'af312b624567d25a93ed802cbf8ab99619d55ecfb6b12b521aaf45912559a8f1',
+const LEGACY_BUILTIN_AVATAR_SHA256: Readonly<Record<string, readonly string[]>> = {
+  pero: [
+    '23bc63e925972e716098d69fc529e58653e83d69cc7ab2e9a2412005f3cdb22e',
+    'b892ac785eed8997c7ccef8c6c2bbf593d0952a698c19270046a014494b78d31',
+  ],
+  nana: [
+    '78583973e0532d3943833803de713c8e0866f0303f120f1fef30d353fd9f2d8c',
+    '59456d85570dacf73f10e8d219ded2244c12289b6546551741caf55f30a6037d',
+  ],
+  tsukinaga: [
+    'af312b624567d25a93ed802cbf8ab99619d55ecfb6b12b521aaf45912559a8f1',
+    '5033ff41e1c6c983db2b4241825aa050a9c56675731c4cf47801ebf907038416',
+  ],
 }
 
 /**
@@ -202,6 +211,7 @@ export class AgentManager {
     if (existsSync(builtinDir)) this.scanAgents(builtinDir)
 
     // 2. Workshop Agent（订阅包可采用 agents/、assets/agents/ 或 item 根布局）
+    // 角色清单与人设是声明式资源，恢复模式只暂停第三方运行代码，不隐藏角色资料。
     const workshopRoots =
       (this.pathResolver as PathResolver & { getRoots?: (prefix: string) => string[] }).getRoots?.(
         '@workshop',
@@ -939,8 +949,8 @@ export class AgentManager {
       if (!existsSync(filePath)) continue
 
       const id = path.basename(agentDir).toLowerCase()
-      const legacyHash = LEGACY_BUILTIN_AVATAR_SHA256[id]
-      if (legacyHash) {
+      const legacyHashes = LEGACY_BUILTIN_AVATAR_SHA256[id]
+      if (legacyHashes) {
         const builtinAvatar = path.join(
           this.pathResolver.resolve('@app/backend/src/assets/agents'),
           id,
@@ -950,7 +960,7 @@ export class AgentManager {
         if (
           filePath !== builtinAvatar &&
           existsSync(builtinAvatar) &&
-          createHash('sha256').update(readFileSync(filePath)).digest('hex') === legacyHash
+          legacyHashes.includes(createHash('sha256').update(readFileSync(filePath)).digest('hex'))
         ) {
           return builtinAvatar
         }

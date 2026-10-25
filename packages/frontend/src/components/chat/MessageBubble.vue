@@ -21,6 +21,7 @@ import ConversationSurface from '../compositor/ConversationSurface.vue'
 import { attachmentsApi } from '../../api/modules/attachmentsApi'
 import type { CompositorSurface } from '../../stores'
 import AgentStateHover from '../agent/AgentStateHover.vue'
+import UserAvatar from '../user/UserAvatar.vue'
 import ReplySelection from './ReplySelection.vue'
 
 export interface ChatMessage {
@@ -43,6 +44,8 @@ export interface ChatMessage {
 }
 
 interface Props {
+  /** 由会话入口确认身份，不能将社交联系人的 user 消息套用本地用户头像。 */
+  isOwnerMessage?: boolean
   message: ChatMessage
   agentId?: string
   agentName?: string
@@ -68,6 +71,7 @@ interface Props {
 }
 
 const props = withDefaults(defineProps<Props>(), {
+  isOwnerMessage: false,
   agentName: '助手',
   agentId: '',
   agentAvatarUrl: '',
@@ -202,6 +206,7 @@ function formatTime(ts?: number): string {
   <div
     v-else-if="message.role === 'user'"
     class="msg-row msg-row-user"
+    :class="{ 'msg-row-user--owner': isOwnerMessage }"
     :data-message-id="message.id"
     :data-surface-id="message.surface?.surfaceId"
   >
@@ -284,6 +289,7 @@ function formatTime(ts?: number): string {
         </button>
       </div>
     </div>
+    <UserAvatar v-if="isOwnerMessage" :size="36" />
   </div>
 
   <!-- 助手消息 -->
@@ -296,7 +302,7 @@ function formatTime(ts?: number): string {
   >
     <!-- 头像 -->
     <AgentStateHover
-      class="msg-avatar"
+      class="msg-avatar agent-portrait"
       :agent-id="agentId || message.senderId || message.surface?.principalId"
       :agent-name="agentName"
     >
@@ -401,6 +407,7 @@ function formatTime(ts?: number): string {
 
       <!-- 消息体 -->
       <ReplySelection
+        :agent-id="agentId || message.senderId || message.surface?.principalId"
         class="msg-bubble msg-bubble-assistant"
         :streaming="isStreaming"
         :identity="message.id"
@@ -746,6 +753,9 @@ function formatTime(ts?: number): string {
   min-height: 0;
   justify-content: flex-end;
 }
+.msg-row-user--owner {
+  gap: 12px;
+}
 .msg-user-container {
   position: relative;
   display: flex;
@@ -982,55 +992,24 @@ function formatTime(ts?: number): string {
   box-shadow: var(--ui-shadow-md);
 }
 
-/* 头像: 像素边框仅用于 AI 头像(品牌锚点) */
+/* 消息头像沿用共享相框，仅保留紧凑尺寸与状态标识。 */
 .msg-avatar {
   width: 36px;
   height: 36px;
-  flex-shrink: 0;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  background: linear-gradient(135deg, var(--ui-accent-sky), var(--ui-accent-purple));
-  color: white;
-  font-weight: 900;
-  font-size: 14px;
-  position: relative;
-  border-radius: 4px;
-  text-shadow: 0 1px 0 rgba(0, 0, 0, 0.2);
-  /* 像素边框 */
-  box-shadow:
-    -2px 0 0 0 var(--color-moe-cocoa),
-    2px 0 0 0 var(--color-moe-cocoa),
-    0 -2px 0 0 var(--color-moe-cocoa),
-    0 2px 0 0 var(--color-moe-cocoa);
-  transition: all var(--ui-duration-fast);
-}
-
-[data-theme='dark'] .msg-avatar {
-  box-shadow:
-    -2px 0 0 0 var(--ui-accent-purple),
-    2px 0 0 0 var(--ui-accent-purple),
-    0 -2px 0 0 var(--ui-accent-purple),
-    0 2px 0 0 var(--ui-accent-purple),
-    0 0 10px rgba(167, 139, 250, 0.3);
-}
-
-.msg-avatar-image {
-  width: 100%;
-  height: 100%;
-  object-fit: cover;
-  image-rendering: auto;
+  padding: 1px;
 }
 
 .msg-avatar-status {
   position: absolute;
-  bottom: -1px;
-  right: -1px;
-  width: 10px;
-  height: 10px;
+  z-index: 2;
+  bottom: -3px;
+  right: -3px;
+  width: 8px;
+  height: 8px;
   background: var(--ui-success);
   border: 2px solid var(--ui-bg-surface);
-  border-radius: 50%;
+  border-radius: 0;
+  pointer-events: none;
 }
 
 .msg-avatar-text {

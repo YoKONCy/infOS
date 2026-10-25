@@ -45,6 +45,8 @@ const searchSchema = sessionSchema.extend({
   isRegex: z.boolean().optional(),
   fileType: z.string().optional(),
   path: z.string().optional(),
+  respectGitIgnore: z.boolean().optional(),
+  includeHidden: z.boolean().optional(),
 })
 
 /** Workspace浏览器API：严格绑定Agent的执行会话根目录。 */
@@ -53,6 +55,23 @@ export function createWorkspaceRouter(ctx: AppContext) {
   const runtime = ctx.productivityRuntime
   const resolve = (agentId: string, threadId: string) =>
     ctx.workspaceBrowserService.session(agentId, threadId)
+
+  router.post(
+    '/search-result-file',
+    zValidator(
+      'json',
+      sessionSchema.extend({
+        resultRef: z.string().regex(/^tool-result:[0-9a-f-]{36}$/i),
+        taskId: z.string().optional(),
+        file: z.string().min(1),
+        line: z.number().int().min(1).optional(),
+      }),
+    ),
+    async (c) => {
+      const data = await ctx.workspaceBrowserService.searchResultFile(c.req.valid('json'))
+      return c.json({ code: 'OK', data })
+    },
+  )
 
   /** 目录树（单层懒加载，前端点目录再深入） */
   router.get(

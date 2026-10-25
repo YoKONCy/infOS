@@ -516,10 +516,10 @@ watch([() => threadStore.threadId, threadHistory], () => {
                 <!-- 像素光轨 -->
                 <div v-if="activeAgent?.id === agent.id" class="chat-agent-trail" />
 
-                <!-- 像素头像 -->
+                <!-- 角色头像与共享相框 -->
                 <div
-                  class="chat-agent-avatar"
-                  :class="{ 'chat-agent-avatar--active': activeAgent?.id === agent.id }"
+                  class="chat-agent-avatar agent-portrait"
+                  :class="{ 'agent-portrait--selected': activeAgent?.id === agent.id }"
                 >
                   <img
                     v-if="getAgentAvatarUrl(agent.id)"
@@ -685,7 +685,7 @@ watch([() => threadStore.threadId, threadHistory], () => {
               <Transition name="identity-swap">
                 <AgentStateHover
                   :key="activeAgent?.id || 'empty'"
-                  class="chat-main-avatar"
+                  class="chat-main-avatar agent-portrait agent-portrait--current"
                   :thread-id="threadStore.threadId"
                   :agent-id="activeAgent?.id"
                   :agent-name="activeAgent?.name"
@@ -1146,69 +1146,6 @@ watch([() => threadStore.threadId, threadHistory], () => {
   box-shadow: 0 0 8px rgba(167, 139, 250, 0.5);
 }
 
-/* 像素头像 */
-.chat-agent-avatar {
-  width: 36px;
-  height: 36px;
-  flex-shrink: 0;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  font-size: 14px;
-  font-weight: 900;
-  color: white;
-  border-radius: 4px;
-  background: linear-gradient(135deg, var(--ui-accent-sky), #7dd3fc);
-  text-shadow: 0 1px 0 rgba(0, 0, 0, 0.2);
-  /* 像素边框 */
-  box-shadow:
-    -2px 0 0 0 var(--color-moe-cocoa),
-    2px 0 0 0 var(--color-moe-cocoa),
-    0 -2px 0 0 var(--color-moe-cocoa),
-    0 2px 0 0 var(--color-moe-cocoa);
-  transition:
-    background-color var(--ui-duration-fast) var(--ui-ease-standard),
-    border-color var(--ui-duration-fast) var(--ui-ease-standard),
-    color var(--ui-duration-fast) var(--ui-ease-standard),
-    box-shadow var(--ui-duration-fast) var(--ui-ease-standard),
-    opacity var(--ui-duration-fast) var(--ui-ease-standard),
-    transform var(--ui-duration-fast) var(--ui-ease-standard);
-}
-
-.chat-agent-avatar img,
-.chat-main-avatar img {
-  width: 100%;
-  height: 100%;
-  object-fit: cover;
-}
-
-.chat-agent-avatar--active {
-  background: linear-gradient(135deg, var(--ui-accent-primary), var(--ui-accent-purple));
-  box-shadow:
-    -2px 0 0 0 var(--color-moe-cocoa),
-    2px 0 0 0 var(--color-moe-cocoa),
-    0 -2px 0 0 var(--color-moe-cocoa),
-    0 2px 0 0 var(--color-moe-cocoa),
-    0 0 10px rgba(236, 72, 153, 0.3);
-}
-
-[data-theme='dark'] .chat-agent-avatar {
-  box-shadow:
-    -2px 0 0 0 var(--ui-accent-purple),
-    2px 0 0 0 var(--ui-accent-purple),
-    0 -2px 0 0 var(--ui-accent-purple),
-    0 2px 0 0 var(--ui-accent-purple);
-}
-
-[data-theme='dark'] .chat-agent-avatar--active {
-  box-shadow:
-    -2px 0 0 0 var(--ui-accent-purple),
-    2px 0 0 0 var(--ui-accent-purple),
-    0 -2px 0 0 var(--ui-accent-purple),
-    0 2px 0 0 var(--ui-accent-purple),
-    0 0 10px rgba(167, 139, 250, 0.4);
-}
-
 .chat-agent-info {
   min-width: 0;
   flex: 1;
@@ -1660,34 +1597,6 @@ watch([() => threadStore.threadId, threadHistory], () => {
   display: flex;
   align-items: center;
   gap: 12px;
-}
-
-.chat-main-avatar {
-  width: 36px;
-  height: 36px;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  font-size: 14px;
-  font-weight: 900;
-  color: white;
-  border-radius: 4px;
-  background: linear-gradient(135deg, var(--ui-accent-primary), var(--ui-accent-purple));
-  /* 像素边框 */
-  box-shadow:
-    -2px 0 0 0 var(--color-moe-cocoa),
-    2px 0 0 0 var(--color-moe-cocoa),
-    0 -2px 0 0 var(--color-moe-cocoa),
-    0 2px 0 0 var(--color-moe-cocoa);
-}
-
-[data-theme='dark'] .chat-main-avatar {
-  box-shadow:
-    -2px 0 0 0 var(--ui-accent-purple),
-    2px 0 0 0 var(--ui-accent-purple),
-    0 -2px 0 0 var(--ui-accent-purple),
-    0 2px 0 0 var(--ui-accent-purple),
-    0 0 12px rgba(167, 139, 250, 0.3);
 }
 
 .chat-main-info {

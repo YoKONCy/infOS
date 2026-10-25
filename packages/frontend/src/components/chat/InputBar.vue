@@ -13,15 +13,18 @@ import {
   EXECUTION_MODE_OPTIONS,
   resolveExecutionMode,
   type ExecutionMode,
-  DOCUMENT_OFFICE_EXTENSIONS,
-  DOCUMENT_MAX_INPUT_BYTES,
-  isOfficeDocumentName,
+  MAX_ATTACHMENT_UPLOAD_BYTES,
+  classifyAttachmentUpload,
+  MAX_NATIVE_AUDIO_BYTES,
+  MAX_AUDIO_RECORDING_MS,
 } from '@infos/shared'
 import PixelIcon from '../pixel/PixelIcon.vue'
 import { attachmentsApi, type AttachmentInfo } from '../../api/modules/attachmentsApi'
 import { ApiError } from '../../api/errors'
 import { configApi } from '../../api/modules/configApi'
 import ThreadModelControls from './ThreadModelControls.vue'
+import RuntimeDebugToggle from './RuntimeDebugToggle.vue'
+import InputBarFoldout from './InputBarFoldout.vue'
 import { voiceApi } from '../../api/modules/voiceApi'
 import { useAgentStore, useNotificationStore, useThreadStore } from '../../stores'
 import {
@@ -35,6 +38,11 @@ import { toolDisplayColor, toolDisplayIcon } from '../../composables/tools/useTo
 import { logger } from '../../lib/logger'
 import { sortThreadTools } from '../../lib/threadToolOrder'
 import { useMobileLayout } from '../../composables/ui/useMobileLayout'
+import { useFileDrop } from '../../composables/chat/useFileDrop'
+import { useAudioCapture, type VoiceClip } from '../../composables/audio/useAudioCapture'
+import { recordingWave } from '../../lib/recordingAudio'
+import AudioRecordingHud from './AudioRecordingHud.vue'
+import ResourceAudioPlayer from '../resources/ResourceAudioPlayer.vue'
 
 /** 可被 @ 的成员候选（group 模式 @ 弹窗数据源）。 */
 export interface MentionCandidate {
@@ -99,6 +107,7 @@ interface PendingAttachment extends AttachmentInfo {
   uploadState: 'uploading' | 'checking' | 'processing' | 'success' | 'failed'
   localKey: string
   previewUrl?: string
+  sourceFile?: File
   error?: string
 }
 
@@ -148,10 +157,6 @@ const submittedAttachments = new Set<PendingAttachment>()
 let attachmentDraftVersion = 0
 const pdfAvailable = ref(false)
 const maxPdfBytes = ref(0)
-const fileAccept = computed(
-  () =>
-    `image/png,image/jpeg,image/webp,image/gif,text/*,application/json,application/xml,application/yaml,application/x-yaml,application/javascript,application/sql,.txt,.md,.csv,.json,.xml,.yaml,.yml,.js,.ts,.py,.css,.c,.cpp,.java,.sql,${DOCUMENT_OFFICE_EXTENSIONS.map((extension) => `.${extension}`).join(',')}${pdfAvailable.value ? ',.pdf,application/pdf' : ''}`,
-)
 async function loadPdfCapabilities(): Promise<void> {
   try {
     const response = await attachmentsApi.capabilities()
@@ -221,10 +226,25 @@ const interactionModeOptions: Array<{
     },
   },
 ]
-const modeIndicatorIndex = computed(() =>
-  interactionModeOptions.findIndex(
-    (option) => option.value === (pendingInteractionMode.value ?? threadStore.interactionMode),
-  ),
+const currentInteractionMode = computed(
+  () =>
+    interactionModeOptions.find(
+      (option) => option.value === (pendingInteractionMode.value ?? threadStore.interactionMode),
+    ) ?? interactionModeOptions[1]!,
+)
+const interactionAccent = computed(
+  () =>
+    ({
+      minimal: 'var(--ui-success)',
+      chat: 'var(--ui-accent-primary)',
+      work: 'var(--ui-accent-sky)',
+    })[currentInteractionMode.value.value],
+)
+const debugStatus = ref({ enabled: false, busy: false })
+const sessionModeMenu = ref<InstanceType<typeof InputBarFoldout> | null>(null)
+const mediaInputMenu = ref<InstanceType<typeof InputBarFoldout> | null>(null)
+const inputScope = computed(
+  () => `${agentStore.activeAgentId}:${threadStore.threadId}:${props.channel}`,
 )
 const modeStatusLabel = computed(() => {
   const option = interactionModeOptions.find(
@@ -250,63 +270,30 @@ const executionModeIcons: Record<ExecutionMode, string> = {
   full: 'sparkle',
 }
 const toolQuery = ref('')
-const imageModeOpen = ref(false)
 const imageMode = ref<'auto' | 'native' | 'relay'>('auto')
 const relayAvailable = ref(false)
-/** 识图方式弹层的触发按钮引用，用于 fixed 定位计算真实坐标（避免被 .deck-tools 的 overflow 裁剪）。 */
-const imageModeToggleRef = ref<HTMLElement | null>(null)
-/** 识图方式弹层的 fixed 定位样式（相对视口计算）。 */
-const imageModePopoverStyle = ref({ left: '0px', bottom: '0px' })
-const audioInputOpen = ref(false)
-const audioInputToggleRef = ref<HTMLElement | null>(null)
-const audioInputPopoverStyle = ref({ left: '0px', bottom: '0px' })
-
-/** 弹层挂到 body，按真实按钮定位并保留视口边距，窄工作区也不会被裁剪。 */
-function inputPopoverStyle(element: HTMLElement | null) {
-  if (!element) return { left: '8px', bottom: '8px' }
-  const rect = element.getBoundingClientRect()
-  return {
-    left: `${Math.max(8, Math.min(rect.left, window.innerWidth - 258))}px`,
-    bottom: `${Math.max(8, window.innerHeight - rect.top + 6)}px`,
-    maxHeight: `${Math.max(48, rect.top - 14)}px`,
-  }
-}
 
 function closeInputPopovers() {
-  imageModeOpen.value = false
-  audioInputOpen.value = false
+  sessionModeMenu.value?.close()
+  mediaInputMenu.value?.close()
 }
 
-function onInputPopoverScroll(event: Event) {
-  if (
-    event.target instanceof Element &&
-    event.target.closest('.image-mode-popover, .audio-input-popover')
-  )
-    return
-  closeInputPopovers()
+function onFoldoutOpened(): void {
+  commandOpen.value = false
+  toolOpen.value = false
+  flowOpen.value = false
 }
 
-async function toggleAudioInputPopover() {
-  const opening = !audioInputOpen.value
-  closeInputPopovers()
-  audioInputOpen.value = opening
-  if (opening) {
-    await nextTick()
-    audioInputPopoverStyle.value = inputPopoverStyle(audioInputToggleRef.value)
-  }
+async function selectInteractionMode(mode: InteractionMode): Promise<void> {
+  if (modeSwitchDisabled.value) return
+  await switchInteractionMode(mode)
+  if (threadStore.interactionMode === mode) sessionModeMenu.value?.close(true)
 }
 
 async function selectAudioInput(mode: 'asr' | 'native') {
-  audioInputOpen.value = false
-  if (mode === 'asr') await startAsr()
-  else nativeAudioNotice()
-}
-
-function onInputPopoverKeydown(event: KeyboardEvent) {
-  if (event.key !== 'Escape' || (!imageModeOpen.value && !audioInputOpen.value)) return
-  const trigger = audioInputOpen.value ? audioInputToggleRef.value : imageModeToggleRef.value
-  closeInputPopovers()
-  trigger?.focus()
+  mediaInputMenu.value?.close(true)
+  recordingMode.value = mode
+  await startRecording(mode)
 }
 
 /** 识图方式按钮文案：跟随当前选择实时切换。 */
@@ -316,37 +303,16 @@ const imageModeLabel = computed(() => {
   return __t('ui.chat', '自动识图')
 })
 
-/** 切换识图方式弹层：打开时按触发按钮的真实位置计算 fixed 坐标。 */
-function toggleImageModePopover() {
-  audioInputOpen.value = false
-  imageModeOpen.value = !imageModeOpen.value
-  if (imageModeOpen.value) {
-    nextTick(() => {
-      imageModePopoverStyle.value = inputPopoverStyle(imageModeToggleRef.value)
-    })
-  }
-}
-
 /** 选择某个识图方式后：更新模式并收起弹层。 */
 function selectImageMode(mode: 'auto' | 'native' | 'relay') {
   imageMode.value = mode
-  imageModeOpen.value = false
-}
-
-/** 点击弹层与触发按钮以外的区域时收起弹层。 */
-function onDocumentClick(event: MouseEvent) {
-  const target = event.target
-  if (!(target instanceof Node)) return
-  const element = target instanceof Element ? target : target.parentElement
-  if (!imageModeToggleRef.value?.contains(target) && !element?.closest('.image-mode-popover'))
-    imageModeOpen.value = false
-  if (!audioInputToggleRef.value?.contains(target) && !element?.closest('.audio-input-popover'))
-    audioInputOpen.value = false
+  mediaInputMenu.value?.close(true)
 }
 
 const commandQuery = ref('')
 const enableVision = ref(false)
 const enableAudioInput = ref(false)
+const nativeAudioAvailable = ref(false)
 const modelSettingsBusy = ref(false)
 let capabilitiesRequest = 0
 
@@ -354,6 +320,7 @@ function onThreadModelChanged(settings: ThreadModelSettings): void {
   if (settings.threadId !== threadStore.threadId) return
   enableVision.value = settings.effective.enableVision
   enableAudioInput.value = settings.effective.enableAudioInput
+  nativeAudioAvailable.value = settings.effective.nativeAudioAvailable === true
   tokenBudget.value = null
   scheduleTokenBudgetRefresh()
   void loadCapabilities()
@@ -368,13 +335,45 @@ watch(
     if (imageMode.value === 'relay' && !relayAvailable.value) imageMode.value = 'auto'
   },
 )
-const isRecording = ref(false)
-const isTranscribing = ref(false)
-const recordingSeconds = ref(0)
-let recorder: MediaRecorder | null = null
-let mediaStream: MediaStream | null = null
-let recordingTimer: ReturnType<typeof setInterval> | null = null
-let audioChunks: Blob[] = []
+const recordingMode = ref<'asr' | 'native'>('native')
+const preferredRecordingMode = computed(() =>
+  asrAvailable.value && (recordingMode.value === 'asr' || !nativeAudioAvailable.value)
+    ? 'asr'
+    : 'native',
+)
+const capture = useAudioCapture(handleVoiceClip, undefined, {
+  maxDurationMs: MAX_AUDIO_RECORDING_MS,
+  discardSilence: false,
+  releaseAfterCapture: true,
+})
+const {
+  isRecording,
+  recognizing: isTranscribing,
+  preparing: preparingRecording,
+  audioLevel,
+  error: recordingError,
+} = capture
+let recordTarget: {
+  agentId: string
+  threadId: string
+  version: number
+  mode: 'asr' | 'native'
+} | null = null
+const voiceBusy = computed(
+  () => isRecording.value || isTranscribing.value || preparingRecording.value,
+)
+const recordingSeconds = computed(() => Math.floor(capture.elapsedMs.value / 1000))
+const recordState = computed(() =>
+  recordingError.value
+    ? 'error'
+    : preparingRecording.value
+      ? 'preparing'
+      : isRecording.value
+        ? 'recording'
+        : isTranscribing.value
+          ? 'processing'
+          : 'idle',
+)
 
 const activeAgent = computed(() => agentStore.currentAgent)
 const isGroupChannel = computed(() => props.channel === 'group')
@@ -798,19 +797,23 @@ async function loadCapabilities(): Promise<void> {
   const threadId = threadStore.threadId
   const request = ++capabilitiesRequest
   try {
-    const [modelRes, voiceRes, relayRes] = await Promise.all([
+    const [modelResult, voiceResult, relayResult] = await Promise.allSettled([
       threadId ? threadsApi.getModelSettings(threadId) : Promise.resolve(null),
       voiceApi.getStatus(),
       configApi.batch(['multimodalRelay.enabled', 'multimodalRelay.modelConfigId']),
     ])
     if (request !== capabilitiesRequest || threadId !== threadStore.threadId) return
-    const relayConfig = relayRes.data ?? {}
+    const modelRes = modelResult.status === 'fulfilled' ? modelResult.value : null
+    const voiceRes = voiceResult.status === 'fulfilled' ? voiceResult.value : null
+    const relayRes = relayResult.status === 'fulfilled' ? relayResult.value : null
+    const relayConfig = relayRes?.data ?? {}
     relayAvailable.value =
       relayConfig['multimodalRelay.enabled'] === 'true' &&
       Boolean(relayConfig['multimodalRelay.modelConfigId'])
-    asrAvailable.value = voiceRes.data?.asr?.available === true
+    asrAvailable.value = voiceRes?.data?.asr?.available === true
     enableVision.value = modelRes?.data?.effective.enableVision === true
     enableAudioInput.value = modelRes?.data?.effective.enableAudioInput === true
+    nativeAudioAvailable.value = modelRes?.data?.effective.nativeAudioAvailable === true
   } catch (error) {
     logger.error('InputBar', __t('logs.frontend.chat', '读取输入能力状态失败'), error)
   }
@@ -948,97 +951,42 @@ async function ensureThread(): Promise<string> {
   return threadStore.threadId
 }
 
-function validateFile(file: File): 'image' | 'text' | 'pdf' | 'file' | null {
-  if (file.type === 'application/pdf' || /\.pdf$/i.test(file.name)) {
-    if (!pdfAvailable.value) {
-      notify.toast(__t('ui.chat', '请先在工具与扩展 → 拓展功能 → PDF 解析中启用解析来源'), {
-        type: 'warning',
-      })
-      return null
-    }
-    if (file.size > maxPdfBytes.value) {
-      notify.toast(
-        __t('ui.chat', '当前 PDF 来源最多支持 {0}MB', [maxPdfBytes.value / 1024 / 1024]),
-        {
-          type: 'warning',
-        },
-      )
-      return null
-    }
-    return 'pdf'
+function validateFile(file: File): 'image' | 'text' | 'pdf' | 'audio' | 'file' | null {
+  if (file.size > MAX_ATTACHMENT_UPLOAD_BYTES) {
+    notify.toast(__t('ui.attachments', '附件不能超过 100MB'), { type: 'warning' })
+    return null
   }
-  if (isOfficeDocumentName(file.name)) {
-    if (file.size > DOCUMENT_MAX_INPUT_BYTES) {
-      notify.toast(__t('ui.chat', '文档不能超过 20MB'), { type: 'warning' })
-      return null
-    }
-    return 'file'
-  }
-  const imageTypes = new Set(['image/png', 'image/jpeg', 'image/webp', 'image/gif'])
-  const textTypes = new Set([
-    'text/plain',
-    'text/markdown',
-    'text/csv',
-    'text/xml',
-    'application/json',
-    'application/xml',
-    'application/yaml',
-    'application/x-yaml',
-    'text/yaml',
-    'text/x-python',
-    'text/javascript',
-    'application/javascript',
-    'text/typescript',
-    'text/css',
-    'text/x-c',
-    'text/x-c++',
-    'text/x-java-source',
-    'application/sql',
-  ])
-  if (imageTypes.has(file.type)) {
-    if (file.size > 20 * 1024 * 1024) {
-      notify.toast(__t('ui.chat', '图片不能超过 20MB'), { type: 'warning' })
-      return null
-    }
-    return 'image'
-  }
-  if (textTypes.has(file.type)) {
-    if (file.size > 2 * 1024 * 1024) {
-      notify.toast(__t('ui.chat', '文本附件不能超过 2MB'), { type: 'warning' })
-      return null
-    }
-    return 'text'
-  }
-  notify.toast(__t('ui.chat', '请选择图片、文本、PDF 或 Office 文档'), {
-    type: 'warning',
-  })
-  return null
+  return classifyAttachmentUpload(file.name, file.type, file.size)
 }
 
-async function uploadFile(file: File) {
+async function uploadFile(file: File, signal?: AbortSignal) {
+  if (props.disabled || isGroupChannel.value) return
+  const version = attachmentDraftVersion,
+    agentId = agentStore.activeAgentId
+  const validDraft = () =>
+    !signal?.aborted &&
+    version === attachmentDraftVersion &&
+    agentId === agentStore.activeAgentId &&
+    !props.disabled
   if (file.type === 'application/pdf' || /\.pdf$/i.test(file.name)) await loadPdfCapabilities()
   const kind = validateFile(file)
   if (!kind) return
   // 模型配置可能由设置页或其他窗口刚刚更新；上传前复核权威能力，避免使用陈旧快照。
   if (kind === 'image') await loadCapabilities()
-  if (kind === 'image' && !enableVision.value && !relayAvailable.value) {
-    notify.toast(__t('ui.chat', '主模型不支持视觉，且尚未配置多模态转述模型'), { type: 'warning' })
-    return
-  }
-  if (kind === 'image' && imageMode.value === 'native' && !enableVision.value) {
-    notify.toast(__t('ui.chat', '当前主模型不支持原生识图，请改用多模态转述'), { type: 'warning' })
-    return
-  }
-  if (kind === 'image' && imageMode.value === 'relay' && !relayAvailable.value) {
-    notify.toast(__t('ui.chat', '多模态转述模型尚未配置'), { type: 'warning' })
-    return
-  }
+  if (!validDraft()) return
+  const referenceOnly =
+    kind === 'file' ||
+    (kind === 'pdf' && (!pdfAvailable.value || file.size > maxPdfBytes.value)) ||
+    (kind === 'image' &&
+      ((!enableVision.value && !relayAvailable.value) ||
+        (imageMode.value === 'native' && !enableVision.value) ||
+        (imageMode.value === 'relay' && !relayAvailable.value)))
   if (pendingAttachments.value.length >= 5) {
     notify.toast(__t('ui.chat', '每轮最多添加 5 个附件'), { type: 'warning' })
     return
   }
   const localKey = `${Date.now()}-${Math.random()}`
-  const previewUrl = kind === 'image' ? URL.createObjectURL(file) : undefined
+  const previewUrl = kind === 'image' || kind === 'audio' ? URL.createObjectURL(file) : undefined
   const pending: PendingAttachment = {
     id: '',
     threadId: '',
@@ -1052,13 +1000,26 @@ async function uploadFile(file: File) {
     uploadState: 'uploading',
     localKey,
     previewUrl,
+    sourceFile: file,
   }
   pendingAttachments.value.push(pending)
   try {
     const threadId = await ensureThread()
-    const response = await attachmentsApi.upload(file, threadId)
+    if (!validDraft() || threadStore.threadId !== threadId) {
+      detachAttachment(pending)
+      return
+    }
+    const response = await attachmentsApi.upload(file, threadId, {
+      referenceOnly,
+      ...(signal ? { signal } : {}),
+    })
     if (!response.data) throw new Error('服务端未返回附件信息')
-    if (!pendingAttachments.value.some((item) => item.localKey === localKey)) {
+    if (
+      !validDraft() ||
+      threadStore.threadId !== threadId ||
+      !pendingAttachments.value.some((item) => item.localKey === localKey)
+    ) {
+      detachAttachment(pending)
       await cleanupPendingAttachment(response.data)
       return
     }
@@ -1070,6 +1031,10 @@ async function uploadFile(file: File) {
     }
     pendingAttachments.value = [...pendingAttachments.value]
   } catch (error) {
+    if (signal?.aborted) {
+      detachAttachment(pending)
+      return
+    }
     failPendingAttachment(pending, error)
   }
 }
@@ -1084,9 +1049,43 @@ function failPendingAttachment(item: PendingAttachment, cause: unknown): void {
 
 async function handleFiles(event: Event) {
   const input = event.target as HTMLInputElement
-  for (const file of Array.from(input.files ?? [])) await uploadFile(file)
+  await uploadFiles(Array.from(input.files ?? []))
   input.value = ''
 }
+
+let uploadQueue = Promise.resolve()
+function uploadFiles(files: File[]): Promise<void> {
+  const version = attachmentDraftVersion,
+    agentId = agentStore.activeAgentId
+  const operation = uploadQueue
+    .catch(() => undefined)
+    .then(async () => {
+      for (const file of files) {
+        if (
+          version !== attachmentDraftVersion ||
+          agentId !== agentStore.activeAgentId ||
+          props.disabled ||
+          isGroupChannel.value
+        )
+          break
+        if (pendingAttachments.value.length >= 5) {
+          notify.toast(__t('ui.chat', '每轮最多添加 5 个附件'), { type: 'warning' })
+          break
+        }
+        await uploadFile(file)
+      }
+    })
+  uploadQueue = operation
+  return operation
+}
+const fileDrop = useFileDrop({
+  enabled: () => !props.disabled && !isGroupChannel.value,
+  files: uploadFiles,
+  unavailable: () =>
+    notify.toast(__t('ui.attachments', '当前会话暂不支持上传附件'), { type: 'warning' }),
+  directory: () =>
+    notify.toast(__t('ui.attachments', '请拖入文件，文件夹请先压缩'), { type: 'warning' }),
+})
 
 async function onPaste(event: ClipboardEvent) {
   // group 通道目前只接收文本，禁止粘贴文件时隐式创建 desktop Thread。
@@ -1094,7 +1093,7 @@ async function onPaste(event: ClipboardEvent) {
   const files = Array.from(event.clipboardData?.files ?? [])
   if (!files.length) return
   event.preventDefault()
-  for (const file of files) await uploadFile(file)
+  await uploadFiles(files)
 }
 
 function releaseAttachmentPreview(item: PendingAttachment): void {
@@ -1365,6 +1364,8 @@ const mentionOverlayHtml = computed(() => {
 
 function send() {
   if (
+    voiceBusy.value ||
+    startingVoice.value ||
     modelSettingsBusy.value ||
     modeSaving.value ||
     submitting.value ||
@@ -1375,6 +1376,18 @@ function send() {
     return
   const text = inputText.value.trim()
   if ((!text && !successfulAttachments.value.length) || hasUploading.value) return
+  const audioBytes = successfulAttachments.value
+    .filter(
+      (item) =>
+        item.kind === 'audio' &&
+        item.sizeBytes <= MAX_NATIVE_AUDIO_BYTES &&
+        item.contextMode !== 'reference',
+    )
+    .reduce((sum, item) => sum + item.sizeBytes, 0)
+  if (nativeAudioAvailable.value && audioBytes > MAX_NATIVE_AUDIO_BYTES) {
+    notify.toast(__t('ui.audio-input', '单轮原生音频不能超过 12MB'), { type: 'warning' })
+    return
+  }
   const mentions = isGroupChannel.value ? resolveMentions(inputText.value) : []
   const ids = successfulAttachments.value.map((item) => item.id)
   const sentAttachments = [...successfulAttachments.value]
@@ -1403,6 +1416,7 @@ function send() {
         uploadState: _uploadState,
         localKey: _localKey,
         previewUrl: _previewUrl,
+        sourceFile: _sourceFile,
         error: _error,
         ...item
       }) => item,
@@ -1450,83 +1464,111 @@ async function executeCommand(id: string) {
   }
 }
 
-async function startAsr() {
-  if (!asrAvailable.value) {
-    notify.toast(__t('ui.chat', 'ASR 当前不可用，请先在语音配置中启用并配置服务'), {
-      type: 'warning',
-    })
-    return
-  }
-  if (!window.isSecureContext || !navigator.mediaDevices?.getUserMedia) {
-    notify.toast(
-      __t('ui.chat', '手机麦克风需要通过 HTTPS 访问 infOS；当前可继续使用文字与文件输入'),
-      {
-        type: 'warning',
-      },
-    )
-    return
-  }
-  try {
-    mediaStream = await navigator.mediaDevices.getUserMedia({ audio: true })
-    recorder = new MediaRecorder(mediaStream)
-    audioChunks = []
-    recorder.ondataavailable = (event) => {
-      if (event.data.size) audioChunks.push(event.data)
-    }
-    recorder.start()
-    isRecording.value = true
-    recordingSeconds.value = 0
-    recordingTimer = setInterval(() => recordingSeconds.value++, 1000)
-  } catch (error) {
-    notify.toast(__t('ui.chat', '无法使用麦克风：{0}', [(error as Error).message]), {
-      type: 'error',
-    })
-    cleanupRecorder()
-  }
-}
+const startingVoice = ref(false)
+let recordingRequest = 0
 
-function stopAsr(cancel = false) {
-  if (!recorder || recorder.state === 'inactive') return
-  const current = recorder
-  current.onstop = async () => {
-    const blob = new Blob(audioChunks, { type: current.mimeType || 'audio/webm' })
-    cleanupRecorder()
-    if (cancel) return
-    isTranscribing.value = true
-    try {
-      const result = await voiceApi.recognize(await blob.arrayBuffer(), blob.type)
-      const transcript = result.text?.trim()
-      if (transcript)
-        inputText.value = [inputText.value.trim(), transcript].filter(Boolean).join('\n')
-      else notify.toast(__t('ui.chat', '未识别到有效语音内容'), { type: 'warning' })
-      await nextTick(autoResize)
-    } catch (error) {
-      notify.toast(__t('ui.chat', '语音转写失败：{0}', [(error as Error).message]), {
-        type: 'error',
-      })
-    } finally {
-      isTranscribing.value = false
-    }
-  }
-  current.stop()
-}
-
-function cleanupRecorder() {
-  if (recordingTimer) clearInterval(recordingTimer)
-  recordingTimer = null
-  mediaStream?.getTracks().forEach((track) => track.stop())
-  mediaStream = null
-  recorder = null
-  isRecording.value = false
-}
-
-function nativeAudioNotice() {
-  notify.toast(
-    enableAudioInput.value
-      ? __t('ui.chat', '原生音频输入暂未接入，当前为预留入口，暂不能发送音频')
-      : __t('ui.chat', '原生音频输入暂未接入，且当前主模型未声明音频输入能力'),
-    { type: 'warning' },
+function currentRecordingTarget(target: NonNullable<typeof recordTarget>): boolean {
+  return (
+    target.agentId === agentStore.activeAgentId &&
+    target.threadId === threadStore.threadId &&
+    target.version === attachmentDraftVersion &&
+    !props.disabled &&
+    !isGroupChannel.value
   )
+}
+
+async function startRecording(mode: 'asr' | 'native' | 'auto'): Promise<void> {
+  if (voiceBusy.value || startingVoice.value || props.disabled || isGroupChannel.value) return
+  const request = ++recordingRequest
+  const agentId = agentStore.activeAgentId
+  startingVoice.value = true
+  recordingError.value = ''
+  try {
+    if (!window.isSecureContext || !navigator.mediaDevices?.getUserMedia)
+      throw new Error(__t('ui.audio-input', '麦克风需要 HTTPS 或本地客户端环境'))
+    const threadId = await ensureThread()
+    await loadCapabilities()
+    if (
+      request !== recordingRequest ||
+      agentId !== agentStore.activeAgentId ||
+      threadId !== threadStore.threadId
+    )
+      return
+    const resolvedMode = mode === 'auto' ? preferredRecordingMode.value : mode
+    if (resolvedMode === 'native' && !nativeAudioAvailable.value)
+      throw new Error(__t('ui.audio-input', '请使用 Gemini 协议并手动开启模型卡片的原生音频输入'))
+    if (resolvedMode === 'asr' && !asrAvailable.value)
+      throw new Error(__t('ui.audio-input', '语音转文字服务尚未启用'))
+    recordTarget = { agentId, threadId, version: attachmentDraftVersion, mode: resolvedMode }
+    recordingMode.value = resolvedMode
+    await capture.setMode('ptt')
+    if (request === recordingRequest && recordTarget && currentRecordingTarget(recordTarget))
+      capture.pttDown()
+  } catch (cause) {
+    if (request === recordingRequest)
+      recordingError.value =
+        cause instanceof Error ? cause.message : __t('ui.audio-input', '无法开启麦克风')
+  } finally {
+    if (request === recordingRequest) startingVoice.value = false
+  }
+}
+
+async function handleVoiceClip(clip: VoiceClip, signal: AbortSignal): Promise<void> {
+  const target = recordTarget
+  if (!target || signal.aborted || !currentRecordingTarget(target)) return
+  if (target.mode === 'native') {
+    const audio = await recordingWave(clip.audio, signal)
+    if (signal.aborted || !currentRecordingTarget(target)) return
+    const file = new File(
+      [audio],
+      __t('ui.audio-input', '录音 {0}.wav', [new Date().toISOString().replace(/[:.]/g, '-')]),
+      { type: 'audio/wav' },
+    )
+    await uploadFile(file, signal)
+  } else {
+    const result = await voiceApi.recognize(clip.audio, clip.mimeType, signal)
+    if (signal.aborted || !currentRecordingTarget(target)) return
+    const text = result.text?.trim()
+    if (!text) throw new Error(__t('ui.audio-input', '未识别到有效语音内容'))
+    inputText.value = [inputText.value.trim(), text].filter(Boolean).join('\n')
+    await nextTick(autoResize)
+  }
+  if (recordTarget === target) recordTarget = null
+}
+
+function cancelRecording(): void {
+  recordingRequest++
+  recordTarget = null
+  startingVoice.value = false
+  void capture.setMode('off')
+}
+
+watch(inputScope, () => {
+  if (recordTarget && !currentRecordingTarget(recordTarget)) cancelRecording()
+})
+watch(
+  () => props.disabled || isGroupChannel.value,
+  (disabled) => {
+    if (disabled) cancelRecording()
+  },
+)
+
+function audioAttachmentLabel(item: PendingAttachment): string {
+  if (item.sizeBytes > MAX_NATIVE_AUDIO_BYTES)
+    return __t('ui.audio-input', '超过 12MB，仅保存原件引用')
+  if (item.contextMode === 'reference') return __t('ui.audio-input', '仅保存原件引用')
+  if (!enableAudioInput.value) return __t('ui.audio-input', '原生音频输入未开启，本轮仅发送引用')
+  if (!nativeAudioAvailable.value)
+    return __t('ui.audio-input', '当前连接不是 Gemini 协议，本轮仅发送引用')
+  return __t('ui.audio-input', 'Gemini 将直接听取原音')
+}
+
+async function retryUpload(item: PendingAttachment): Promise<void> {
+  const file = item.sourceFile
+  if (!file) return
+  detachAttachment(item)
+  await cleanupPendingAttachment(item)
+  await uploadFile(file)
 }
 
 function formatSize(bytes: number) {
@@ -1539,25 +1581,16 @@ onMounted(() => {
   void loadPdfCapabilities()
   window.addEventListener('infos:integrations-changed', onIntegrationsChanged)
   window.addEventListener('focus', onIntegrationsChanged)
-  // 识图与语音菜单共享关闭规则，卸载时释放全部监听。
-  document.addEventListener('click', onDocumentClick)
-  document.addEventListener('keydown', onInputPopoverKeydown)
-  document.addEventListener('scroll', onInputPopoverScroll, true)
-  window.addEventListener('resize', closeInputPopovers)
   window.addEventListener('infos:model-capabilities-changed', onModelCapabilitiesChanged)
 })
 
 onBeforeUnmount(() => {
   window.removeEventListener('infos:integrations-changed', onIntegrationsChanged)
   window.removeEventListener('focus', onIntegrationsChanged)
-  document.removeEventListener('click', onDocumentClick)
-  document.removeEventListener('keydown', onInputPopoverKeydown)
-  document.removeEventListener('scroll', onInputPopoverScroll, true)
-  window.removeEventListener('resize', closeInputPopovers)
   window.removeEventListener('infos:model-capabilities-changed', onModelCapabilitiesChanged)
   if (tokenBudgetTimer) clearTimeout(tokenBudgetTimer)
   tokenBudgetRequest++
-  cleanupRecorder()
+  cancelRecording()
   void clearPendingAttachments()
 })
 
@@ -1629,11 +1662,24 @@ defineExpose({
   focus: () => textareaRef.value?.focus(),
   clearPendingAttachments,
   restoreQueuedDraft,
+  uploadFiles,
 })
 </script>
 
 <template>
-  <div class="deck" :class="{ 'deck--sending': isSending, 'deck--compact': compact }">
+  <div
+    class="deck"
+    :class="{
+      'deck--sending': isSending,
+      'deck--compact': compact,
+      'deck--file-dragging': fileDrop.dragging.value,
+    }"
+    @keydown.esc="(voiceBusy || startingVoice || recordingError) && cancelRecording()"
+    @dragenter="fileDrop.enter"
+    @dragover="fileDrop.over"
+    @dragleave="fileDrop.leave"
+    @drop="fileDrop.drop"
+  >
     <div class="deck-status">
       <span class="deck-brand">CHAR OPS</span>
       <template v-if="isGroupChannel">
@@ -1691,9 +1737,12 @@ defineExpose({
         v-for="item in pendingAttachments"
         :key="item.localKey"
         class="attachment-card"
-        :class="{ 'attachment-card--image': item.previewUrl }"
+        :class="{
+          'attachment-card--image': item.kind === 'image' && item.previewUrl,
+          'attachment-card--audio': item.kind === 'audio',
+        }"
       >
-        <template v-if="item.previewUrl">
+        <template v-if="item.kind === 'image' && item.previewUrl">
           <img :src="item.previewUrl" :alt="__t('ui.chat', '待发送图片')" />
           <span
             class="attachment-image-state"
@@ -1710,6 +1759,22 @@ defineExpose({
             "
           />
         </template>
+        <div v-else-if="item.kind === 'audio'" class="attachment-audio">
+          <ResourceAudioPlayer
+            v-if="item.previewUrl || item.id"
+            :src="item.previewUrl || attachmentsApi.contentUrl(item.id)"
+            :name="item.originalName"
+            compact
+          />
+          <span class="attachment-audio__mode">
+            {{
+              item.uploadState === 'uploading'
+                ? __t('ui.audio-input', '正在上传音频…')
+                : audioAttachmentLabel(item)
+            }}
+          </span>
+          <span v-if="item.error" class="attachment-error">{{ item.error }}</span>
+        </div>
         <template v-else>
           <PixelIcon name="file" size="md" />
           <div class="attachment-info">
@@ -1731,8 +1796,23 @@ defineExpose({
               }}
             </span>
             <span v-if="item.error" class="attachment-error">{{ item.error }}</span>
+            <span
+              v-else-if="item.uploadState === 'success' && item.contextMode === 'reference'"
+              class="attachment-reference"
+            >
+              {{ __t('ui.attachments', '已保存原件，可按需读取') }}
+            </span>
           </div>
         </template>
+        <button
+          v-if="item.uploadState === 'failed' && item.sourceFile"
+          type="button"
+          :aria-label="__t('ui.audio-input', '重新上传')"
+          :title="__t('ui.audio-input', '重新上传')"
+          @click="retryUpload(item)"
+        >
+          <PixelIcon name="refresh" size="xs" />
+        </button>
         <button
           v-if="item.kind === 'pdf' && item.uploadState === 'failed' && item.id"
           :title="__t('ui.chat', '重试解析')"
@@ -1793,51 +1873,131 @@ defineExpose({
       </div>
     </div>
 
-    <div v-if="!isGroupChannel && (isRecording || isTranscribing)" class="record-strip">
-      <template v-if="isRecording">
-        <span class="record-dot" />
-        {{ __t('ui.chat', '正在录音') }} {{ recordingSeconds }}s
-        <button @click="stopAsr(false)">{{ __t('ui.chat', '停止并转写') }}</button>
-        <button @click="stopAsr(true)">{{ __t('ui.chat', '取消') }}</button>
-      </template>
-      <template v-else>
-        <PixelIcon name="refresh" size="xs" animation="spin" />
-        {{ __t('ui.chat', '正在转写，请稍候…') }}
-      </template>
-    </div>
+    <AudioRecordingHud
+      v-if="!isGroupChannel"
+      :state="startingVoice ? 'preparing' : recordState"
+      :mode="recordingMode"
+      :seconds="recordingSeconds"
+      :level="audioLevel"
+      :error="recordingError"
+      @stop="capture.pttUp()"
+      @cancel="cancelRecording"
+    />
 
     <div class="deck-footer">
       <div v-if="!isGroupChannel" class="deck-tools">
         <ThreadModelControls
+          :compact="compact"
           :thread-id="threadStore.threadId"
           :disabled="disabled || isSending || modeSaving || submissionBusy || submitting"
           @changed="onThreadModelChanged"
           @busy="modelSettingsBusy = $event"
+          @open="onFoldoutOpened"
         />
-        <button :title="__t('ui.chat', '命令')" @click="commandOpen = !commandOpen">
-          <PixelIcon name="terminal" size="xs" class="deck-tool-icon" />
-          <span class="pixel-label">/ CMD</span>
-        </button>
-        <div class="image-mode-control">
-          <!-- 识图方式按钮永远可点击；即使能力未配置，也应允许用户打开菜单查看原因。 -->
-          <button
-            ref="imageModeToggleRef"
-            class="image-mode-selector"
-            :title="__t('ui.chat', '选择识图方式')"
-            @click.stop="toggleImageModePopover"
+        <InputBarFoldout
+          ref="sessionModeMenu"
+          :label="currentInteractionMode.label"
+          :title="__t('ui.chat', '会话模式')"
+          :icon="currentInteractionMode.icon"
+          :accent="interactionAccent"
+          :busy="modeSaving || debugStatus.busy"
+          :badge="
+            debugStatus.enabled && threadStore.interactionMode === 'work'
+              ? __t('ui.runtime-debug', '调试')
+              : undefined
+          "
+          :compact="compact"
+          :scope-key="inputScope"
+          @open="onFoldoutOpened"
+        >
+          <div
+            class="input-choice-list session-mode-choices"
+            role="group"
+            :aria-label="__t('ui.chat', '会话模式')"
+            :aria-busy="modeSaving"
           >
-            <PixelIcon name="image" size="xs" />
-            {{ imageModeLabel }}
-            <span class="image-mode-chevron">⌄</span>
-          </button>
-          <Teleport to="body">
-            <div
-              v-if="imageModeOpen"
-              class="deck-popover image-mode-popover"
-              :style="imageModePopoverStyle"
-              @click.stop
+            <button
+              v-for="mode in interactionModeOptions"
+              :key="mode.value"
+              type="button"
+              class="input-choice"
+              :class="{
+                'is-selected':
+                  !pendingInteractionMode && threadStore.interactionMode === mode.value,
+                'is-pending': pendingInteractionMode === mode.value,
+              }"
+              :data-interaction-mode="mode.value"
+              :aria-pressed="threadStore.interactionMode === mode.value"
+              :disabled="modeSwitchDisabled"
+              :title="mode.title"
+              @click="selectInteractionMode(mode.value)"
             >
-              <strong>{{ __t('ui.chat', '识图方式') }}</strong>
+              <span class="input-choice__icon" aria-hidden="true">
+                <PixelIcon
+                  :name="pendingInteractionMode === mode.value ? 'refresh' : mode.icon"
+                  :animation="pendingInteractionMode === mode.value ? 'spin' : undefined"
+                  size="xs"
+                  aria-hidden="true"
+                />
+              </span>
+              <span class="input-choice__copy">
+                <strong>{{ mode.label }}</strong>
+                <small>
+                  {{
+                    __t(
+                      'ui.input-controls',
+                      mode.value === 'minimal'
+                        ? '轻量对话与日常工具'
+                        : mode.value === 'chat'
+                          ? '自然交流与角色互动'
+                          : '使用工具处理任务',
+                    )
+                  }}
+                </small>
+              </span>
+              <span class="input-choice__check" aria-hidden="true">
+                <PixelIcon
+                  v-if="!pendingInteractionMode && threadStore.interactionMode === mode.value"
+                  name="check"
+                  size="xs"
+                />
+              </span>
+            </button>
+          </div>
+          <div class="input-debug-section">
+            <RuntimeDebugToggle
+              layout="menu"
+              :thread-id="threadStore.threadId"
+              :mode="threadStore.interactionMode"
+              :disabled="modeSwitchDisabled"
+              :ensure-thread="ensureThread"
+              @state="debugStatus = $event"
+              @change="loadThreadTools"
+            />
+          </div>
+          <span class="sr-only" role="status">{{ modeStatusLabel }}</span>
+        </InputBarFoldout>
+        <InputBarFoldout
+          ref="mediaInputMenu"
+          :label="__t('ui.input-controls', '输入')"
+          :title="__t('ui.input-controls', '图片与语音输入')"
+          :summary="imageModeLabel"
+          :compact="compact"
+          :scope-key="inputScope"
+          icon="image"
+          accent="var(--ui-accent-sky)"
+          :width="340"
+          @open="onFoldoutOpened"
+        >
+          <section class="input-choice-section" :aria-label="__t('ui.chat', '识图方式')">
+            <header class="input-choice-section__head">
+              <span>
+                <PixelIcon name="image" size="xs" />
+                {{ __t('ui.chat', '识图方式') }}
+              </span>
+              <small>{{ imageModeLabel }}</small>
+            </header>
+            <div class="input-choice-list" role="group" :aria-label="__t('ui.chat', '识图方式')">
               <button
                 v-for="option in [
                   {
@@ -1863,102 +2023,106 @@ defineExpose({
                   },
                 ]"
                 :key="option.value"
+                type="button"
+                class="input-choice"
+                :class="{ 'is-selected': imageMode === option.value }"
+                :aria-pressed="imageMode === option.value"
+                :data-image-mode="option.value"
                 :disabled="
                   (option.value === 'native' && !enableVision) ||
                   (option.value === 'relay' && !relayAvailable)
                 "
                 @click="selectImageMode(option.value as 'auto' | 'native' | 'relay')"
               >
-                <span>{{ imageMode === option.value ? '✓' : '·' }} {{ option.label }}</span>
-                <small>{{ option.hint }}</small>
+                <span class="input-choice__icon" aria-hidden="true">
+                  <PixelIcon
+                    :name="
+                      option.value === 'auto'
+                        ? 'sparkle'
+                        : option.value === 'native'
+                          ? 'eye'
+                          : 'network'
+                    "
+                    size="xs"
+                  />
+                </span>
+                <span class="input-choice__copy">
+                  <strong>{{ option.label }}</strong>
+                  <small>{{ option.hint }}</small>
+                </span>
+                <span class="input-choice__check" aria-hidden="true">
+                  <PixelIcon v-if="imageMode === option.value" name="check" size="xs" />
+                </span>
               </button>
             </div>
-          </Teleport>
-        </div>
-        <button
-          :title="
-            pdfAvailable
-              ? __t('ui.chat', '添加图片、文本或 PDF 文件')
-              : __t('ui.chat', '添加图片或文本文件')
-          "
-          @click="fileInputRef?.click()"
-        >
-          <PixelIcon name="file" size="xs" />
-          {{ __t('ui.chat', '文件') }}
-        </button>
-        <div class="audio-input-control">
-          <button
-            ref="audioInputToggleRef"
-            class="audio-input-selector"
-            :disabled="disabled || isRecording || isTranscribing"
-            :title="__t('ui.chat', '选择语音输入方式')"
-            :aria-label="__t('ui.chat', '选择语音输入方式')"
-            aria-haspopup="menu"
-            :aria-expanded="audioInputOpen"
-            @click.stop="toggleAudioInputPopover"
+          </section>
+          <section
+            class="input-choice-section input-choice-section--voice"
+            :aria-label="__t('ui.chat', '语音输入')"
           >
-            <PixelIcon name="volume" size="xs" />
-            {{ __t('ui.chat', '语音') }}
-            <span class="image-mode-chevron">⌄</span>
-          </button>
-          <Teleport to="body">
-            <div
-              v-if="audioInputOpen"
-              class="deck-popover audio-input-popover"
-              :style="audioInputPopoverStyle"
-              role="menu"
-              :aria-label="__t('ui.chat', '语音输入方式')"
-              @click.stop
+            <header class="input-choice-section__head">
+              <span>
+                <PixelIcon name="mic" size="xs" />
+                {{ __t('ui.chat', '语音输入') }}
+              </span>
+              <small>{{ __t('ui.input-controls', '录音') }}</small>
+            </header>
+            <button
+              type="button"
+              class="input-choice"
+              data-audio-input="asr"
+              :disabled="disabled || voiceBusy || startingVoice"
+              @click="selectAudioInput('asr')"
             >
-              <strong>{{ __t('ui.chat', '语音输入') }}</strong>
-              <button role="menuitem" @click="selectAudioInput('asr')">
-                <span>{{ __t('ui.chat', '语音转写') }}</span>
+              <span class="input-choice__icon" aria-hidden="true">
+                <PixelIcon name="mic" size="xs" />
+              </span>
+              <span class="input-choice__copy">
+                <strong>
+                  {{ __t('ui.chat', '语音转写') }}
+                  <em v-if="!asrAvailable">{{ __t('ui.chat', '未配置') }}</em>
+                </strong>
+                <small>{{ __t('ui.chat', '录音转成文字，可编辑后发送') }}</small>
+              </span>
+              <PixelIcon
+                name="chevron-right"
+                size="xs"
+                class="input-choice__arrow"
+                aria-hidden="true"
+              />
+            </button>
+            <button
+              type="button"
+              class="input-choice"
+              data-audio-input="native"
+              :disabled="
+                disabled ||
+                voiceBusy ||
+                startingVoice ||
+                (!nativeAudioAvailable && Boolean(threadStore.threadId))
+              "
+              @click="selectAudioInput('native')"
+            >
+              <span class="input-choice__icon" aria-hidden="true">
+                <PixelIcon name="volume" size="xs" />
+              </span>
+              <span class="input-choice__copy">
+                <strong>
+                  {{ __t('ui.chat', '原生音频') }}
+                  <em>Gemini</em>
+                </strong>
                 <small>
                   {{
-                    asrAvailable
-                      ? __t('ui.chat', '录音转成文字，可编辑后发送')
-                      : __t('ui.chat', '未配置')
+                    nativeAudioAvailable
+                      ? __t('ui.audio-input', '录制原音，试听后发送')
+                      : __t('ui.audio-input', '请在 Gemini 模型卡片中手动开启音频输入')
                   }}
                 </small>
-              </button>
-              <button role="menuitem" @click="selectAudioInput('native')">
-                <span>{{ __t('ui.chat', '原生音频') }}</span>
-                <small>{{ __t('ui.chat', '预留功能，点击查看说明') }}</small>
-              </button>
-            </div>
-          </Teleport>
-        </div>
-        <div
-          class="deck-mode"
-          :class="{ 'is-saving': modeSaving }"
-          :style="{ '--mode-index': modeIndicatorIndex }"
-          role="group"
-          :aria-label="__t('ui.chat', '会话模式')"
-          :aria-busy="modeSaving"
-        >
-          <button
-            v-for="mode in interactionModeOptions"
-            :key="mode.value"
-            type="button"
-            :class="{
-              'is-active': !pendingInteractionMode && threadStore.interactionMode === mode.value,
-              'is-pending': pendingInteractionMode === mode.value,
-            }"
-            :aria-pressed="threadStore.interactionMode === mode.value"
-            :disabled="modeSwitchDisabled"
-            :title="mode.title"
-            @click="switchInteractionMode(mode.value)"
-          >
-            <PixelIcon
-              :name="pendingInteractionMode === mode.value ? 'refresh' : mode.icon"
-              :animation="pendingInteractionMode === mode.value ? 'spin' : undefined"
-              size="xs"
-              aria-hidden="true"
-            />
-            {{ mode.label }}
-          </button>
-          <span class="sr-only" role="status">{{ modeStatusLabel }}</span>
-        </div>
+              </span>
+              <PixelIcon name="info" size="xs" class="input-choice__arrow" aria-hidden="true" />
+            </button>
+          </section>
+        </InputBarFoldout>
         <button
           :title="__t('ui.chat', '管理本会话可用工具')"
           :disabled="modeSaving"
@@ -1970,6 +2134,20 @@ defineExpose({
           <span v-if="threadTools.length" class="tool-count">
             {{ enabledToolCount }}/{{ availableToolCount }}
           </span>
+        </button>
+        <button :title="__t('ui.chat', '命令')" @click="commandOpen = !commandOpen">
+          <PixelIcon name="terminal" size="xs" class="deck-tool-icon" />
+          <span class="pixel-label">/ CMD</span>
+        </button>
+        <button
+          type="button"
+          class="deck-add-file"
+          :title="__t('ui.attachments', '添加文件')"
+          :aria-label="__t('ui.attachments', '添加文件')"
+          :disabled="disabled"
+          @click="fileInputRef?.click()"
+        >
+          <PixelIcon name="plus" size="sm" aria-hidden="true" />
         </button>
       </div>
       <div v-else-if="isGroupChannel" class="group-footer-tools">
@@ -1984,6 +2162,40 @@ defineExpose({
         </button>
       </div>
       <div class="deck-actions">
+        <button
+          v-if="!isGroupChannel"
+          class="record-btn"
+          :class="{ 'is-recording': isRecording }"
+          type="button"
+          :disabled="
+            disabled ||
+            isTranscribing ||
+            startingVoice ||
+            preparingRecording ||
+            (!isRecording &&
+              !nativeAudioAvailable &&
+              !asrAvailable &&
+              Boolean(threadStore.threadId))
+          "
+          :aria-pressed="isRecording"
+          :aria-label="
+            isRecording
+              ? __t('ui.audio-input', '停止录音')
+              : preferredRecordingMode === 'native'
+                ? __t('ui.audio-input', '录制原音')
+                : __t('ui.audio-input', '语音转文字')
+          "
+          :title="
+            isRecording
+              ? __t('ui.audio-input', '停止录音')
+              : preferredRecordingMode === 'native'
+                ? __t('ui.audio-input', '录制原音')
+                : __t('ui.audio-input', '语音转文字')
+          "
+          @click="isRecording ? capture.pttUp() : startRecording('auto')"
+        >
+          <PixelIcon :name="isRecording ? 'square' : 'mic'" size="sm" />
+        </button>
         <button
           v-if="isSending && !isGroupChannel"
           type="button"
@@ -2005,6 +2217,8 @@ defineExpose({
           :aria-busy="submitting || submissionBusy"
           :disabled="
             disabled ||
+            voiceBusy ||
+            startingVoice ||
             (isSending && !queueEnabled) ||
             submitting ||
             submissionBusy ||
@@ -2219,17 +2433,64 @@ defineExpose({
       <footer v-if="isSending">{{ __t('ui.chat', '助手工作期间暂不能修改功能设置') }}</footer>
     </div>
 
-    <input
-      ref="fileInputRef"
-      hidden
-      type="file"
-      :accept="fileAccept"
-      multiple
-      @change="handleFiles"
-    />
+    <input ref="fileInputRef" hidden type="file" multiple @change="handleFiles" />
   </div>
 </template>
 
+<style scoped src="./input-bar-choices.css"></style>
+<style scoped>
+.record-btn {
+  display: grid;
+  place-items: center;
+  width: 36px;
+  height: 36px;
+  flex-shrink: 0;
+  border: 1px solid var(--ui-border-default);
+  border-radius: var(--ui-radius-xs);
+  background: var(--ui-bg-surface);
+  color: var(--ui-text-secondary);
+  cursor: pointer;
+}
+.record-btn:hover:not(:disabled) {
+  color: var(--ui-accent-sky);
+  background: var(--ui-accent-sky-soft);
+  border-color: var(--ui-accent-sky);
+}
+.record-btn.is-recording {
+  background: var(--ui-danger-soft);
+  color: var(--ui-danger);
+  border-color: var(--ui-danger);
+}
+.record-btn:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+}
+.record-btn:focus-visible {
+  outline: 2px solid var(--ui-accent-sky);
+  outline-offset: 3px;
+}
+.attachment-card--audio {
+  width: min(360px, 100%);
+  min-width: 0;
+  align-items: flex-start;
+}
+.attachment-audio {
+  display: grid;
+  gap: 7px;
+  min-width: 0;
+  flex: 1;
+}
+.attachment-audio__mode {
+  font: 11px/1.6 var(--ui-font-sans);
+  color: var(--ui-text-tertiary);
+}
+@media (max-width: 640px) {
+  .record-btn {
+    width: 42px;
+    height: 42px;
+  }
+}
+</style>
 <style scoped>
 .deck {
   position: relative;
@@ -2240,6 +2501,13 @@ defineExpose({
   transition:
     border-color var(--ui-duration-fast) var(--ui-ease-standard),
     box-shadow var(--ui-duration-fast) var(--ui-ease-standard);
+}
+.deck--file-dragging {
+  outline: 2px solid var(--ui-accent-cyan);
+  outline-offset: -2px;
+}
+.attachment-info .attachment-reference {
+  color: var(--ui-text-tertiary);
 }
 .deck:focus-within,
 .deck--sending {
@@ -2575,148 +2843,9 @@ button {
   gap: 5px;
   overflow-x: auto;
 }
-.deck-mode {
-  position: relative;
-  display: inline-grid;
-  grid-template-columns: repeat(3, minmax(58px, 1fr));
-  flex: 0 0 auto;
-  align-items: stretch;
-  gap: 0;
-  padding: 2px;
-  border: 1px solid var(--ui-border-subtle);
-  background: var(--ui-bg-surface-soft);
-  box-shadow: inset 1px 1px 0 color-mix(in srgb, var(--ui-text-primary) 5%, transparent);
-}
-.deck-mode::before {
-  content: '';
-  position: absolute;
-  top: 2px;
-  bottom: 2px;
-  left: 2px;
-  width: calc((100% - 4px) / 3);
-  border: 1px solid color-mix(in srgb, var(--ui-accent-primary) 40%, var(--ui-border-subtle));
-  background: var(--ui-accent-primary-soft);
-  box-shadow: inset 0 -2px 0 color-mix(in srgb, var(--ui-accent-primary) 32%, transparent);
-  transform: translateX(calc(var(--mode-index, 1) * 100%));
-  transition: transform var(--ui-duration-normal) var(--ui-ease-standard);
-  pointer-events: none;
-}
-.deck-tools .deck-mode button {
-  position: relative;
-  z-index: 1;
-  justify-content: center;
-  border-radius: 0;
-  min-height: 24px;
-  padding: 0 7px;
-  border-color: transparent;
-  background: transparent;
-  font-family: var(--font-pixel);
-  box-shadow: none;
-  transition:
-    color var(--ui-duration-fast) var(--ui-ease-standard),
-    transform var(--ui-duration-fast) var(--ui-ease-standard);
-}
-.deck-tools .deck-mode button.is-active,
-.deck-tools .deck-mode button.is-pending {
-  color: var(--ui-accent-primary);
-}
-.deck-tools .deck-mode button:not(:disabled):hover {
-  color: var(--ui-accent-primary);
-  border-color: transparent;
-  transform: translateY(-1px);
-}
-.deck-tools .deck-mode button:not(:disabled):active {
-  transform: scale(var(--ui-motion-scale-press));
-}
-.deck-mode.is-saving::before {
-  border-style: dashed;
-}
-.deck-tools .deck-mode button:focus-visible {
-  outline: 1px solid var(--ui-accent-primary);
-  outline-offset: 2px;
-}
-.deck-tools .deck-mode button.is-active:disabled,
-.deck-tools .deck-mode button.is-pending:disabled {
-  opacity: 0.8;
-}
-.image-mode-control,
-.audio-input-control {
-  position: relative;
-  display: inline-flex;
-}
-
-.image-mode-chevron {
-  margin-left: 2px;
-  color: var(--ui-text-muted);
-}
-
-.deck-popover.image-mode-popover,
-.deck-popover.audio-input-popover {
-  /* Teleport 到 body 后彻底脱离 .deck-tools 的 overflow 裁剪上下文。 */
-  position: fixed;
-  z-index: 1000;
-  width: 250px;
-  max-width: calc(100vw - 16px);
-  box-sizing: border-box;
-  overflow-y: auto;
-  padding: 8px;
-}
-
-.image-mode-popover > strong,
-.audio-input-popover > strong {
-  display: block;
-  padding: 4px 8px 8px;
-  color: var(--ui-text-primary);
-  font-size: 11px;
-}
-
-.image-mode-popover button,
-.audio-input-popover button {
-  width: 100%;
-  display: flex;
-  justify-content: space-between;
-  align-items: center;
-  min-height: 38px;
-  padding: 8px;
-  border: 0;
-  border-top: 1px solid var(--ui-border-subtle);
-  background: transparent;
-  color: var(--ui-text-primary);
-  cursor: pointer;
-}
-
-.image-mode-popover button:hover:not(:disabled),
-.audio-input-popover button:hover:not(:disabled) {
-  background: var(--ui-bg-hover);
-}
-
-.image-mode-popover button:disabled,
-.audio-input-popover button:disabled {
-  cursor: not-allowed;
-  opacity: 0.45;
-}
-
-.image-mode-popover small,
-.audio-input-popover small {
-  color: var(--ui-text-muted);
-}
-
-.audio-input-popover button {
-  align-items: flex-start;
-  flex-direction: column;
-  gap: 5px;
-  text-align: left;
-}
-
-.audio-input-popover small {
-  font-size: 11px;
-  line-height: 1.5;
-}
-
 .deck-tools button,
 .stop-btn,
-.send-btn,
-.record-strip button {
+.send-btn {
   display: inline-flex;
   flex: 0 0 auto;
   align-items: center;
@@ -2748,6 +2877,14 @@ button {
 }
 .deck-tools .reserved {
   color: var(--ui-accent-purple);
+}
+.deck-tools > .deck-add-file {
+  width: 30px;
+  height: 30px;
+  padding: 0;
+  border-radius: 0;
+  border-color: var(--ui-border-default);
+  box-shadow: inset 0 1px 0 color-mix(in srgb, var(--ui-text-primary) 5%, transparent);
 }
 /* 据点群聊的 @ 提及按钮：品牌色描边，突出 @ 符号 */
 .group-footer-tools {
@@ -2873,22 +3010,6 @@ button {
   flex: 0 0 auto;
   border-radius: 2px;
   background: currentColor;
-}
-.record-strip {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  padding: 7px 12px;
-  background: var(--ui-accent-red-soft);
-  color: var(--ui-danger);
-  font-size: 11px;
-}
-.record-dot {
-  width: 7px;
-  height: 7px;
-  border-radius: 50%;
-  background: var(--ui-danger);
-  animation: pulse 1s infinite;
 }
 .flow-popover {
   width: min(430px, calc(100% - 20px));
@@ -3502,9 +3623,7 @@ button {
   display: none;
 }
 /* 工具按钮统一收窄为 30px 等宽图标钮 */
-.deck--compact .deck-tools > button,
-.deck--compact .deck-tools .image-mode-selector,
-.deck--compact .deck-tools .audio-input-selector {
+.deck--compact .deck-tools > button {
   width: 30px;
   min-width: 30px;
   height: 30px;
@@ -3532,19 +3651,9 @@ button {
   transform: scale(0.82);
   transform-origin: right bottom;
 }
-/* 选择器在窄工作区保持紧凑，弹层统一挂载到 body。 */
-.deck--compact .deck-tools > .image-mode-control {
-  display: inline-flex;
-  width: auto;
-  min-width: 0;
-  gap: 4px;
-}
 .deck--compact .deck-tools button :deep(.pixel-icon) {
   flex-shrink: 0;
   font-size: initial;
-}
-.deck--compact .image-mode-chevron {
-  display: none;
 }
 .deck--compact .deck-actions > button {
   width: 34px;
@@ -3568,9 +3677,6 @@ button {
   }
   .deck-tools button:not(:first-child) {
     font-size: 0;
-  }
-  .deck-tools .deck-mode button {
-    font-size: 10px;
   }
   .deck-tools button :deep(.pixel-icon) {
     font-size: initial;

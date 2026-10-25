@@ -14,6 +14,7 @@ import { computed, nextTick, ref, watch } from 'vue'
 import { useMessageVisibility } from '../../composables/chat/useMessageVisibility'
 import { useChatScroll } from '../../composables/chat/useChatScroll'
 import MessageBubble from '../chat/MessageBubble.vue'
+import { isLocalOwnerMessage } from '../../lib/userMessageIdentity'
 import SurfaceTransition from '../motion/SurfaceTransition.vue'
 import InputBar, { type MentionCandidate } from '../chat/InputBar.vue'
 import PixelIcon from '../pixel/PixelIcon.vue'
@@ -236,6 +237,14 @@ watch(
           :key="message.id"
           v-memo="[message, isSending]"
           :message="message"
+          :is-owner-message="
+            isLocalOwnerMessage({
+              role: message.role,
+              channel: 'group',
+              platform: 'stronghold',
+              senderId: message.senderId,
+            })
+          "
           :agent-id="message.senderId"
           :agent-name="message.agentName"
           :agent-avatar-url="message.agentAvatarUrl"

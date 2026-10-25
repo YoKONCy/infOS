@@ -12,6 +12,7 @@ export interface InstalledPackage {
 }
 
 export interface PackageActivationContext {
+  host?: import('@infos/shared').PackageHostContext
   manifest: PackageManifest
   rootDir?: string
   contribution: PackageContribution

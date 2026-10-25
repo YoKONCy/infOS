@@ -19,6 +19,7 @@ import { getSocialTurnKind, SOCIAL_DELEGATED_TURN_PREFIX, type SocialTurnKind } 
  */
 
 import type { AbstractSocialAdapter } from '../adapters/ISocialAdapter'
+import { currentSocialScope, scopedSocialStorage, withSocialScope } from './socialStorageScope'
 import { createHash, randomUUID } from 'node:crypto'
 import {
   assertSocialActive,
@@ -36,6 +37,7 @@ import type {
   SocialEventPort,
   SocialExecutionPort,
   SocialStoragePort,
+  SocialMessageRecord,
   SocialTurnRecord,
   SocialTurnListItem,
 } from '@infos/shared'
@@ -77,21 +79,27 @@ export interface SocialBridgeDeps {
   imageCacheManager?: ImageCacheManager
   /** 表情包服务 (可选) */
   stickerService?: StickerService
+  getStickerService?: (platform: string) => StickerService | undefined
   resolveNativeEmoji?: (scope: NativeEmojiScope, reference: string) => Promise<Attachment>
   loopGuard?: SocialLoopGuard
   /** 入站路由表 Repository (可选，第七阶段 #7：外部消息按来源+标识查询归属 Agent) */
   inboundRouteRepo?: InboundRouteRepository
   /** 入站策略过滤；返回 false 时不持久化、不缓冲、不回复。 */
   shouldAcceptInbound?: (message: InboundMessage) => boolean
-  getOwnerId?: () => string | undefined
+  getOwnerId?: (platform?: string) => string | undefined
+  legacyPlatform?: () => string | undefined
   getAgentId?: () => string
   /** 发送前再次核验会话是否仍允许激活，阻止锁定前已启动的并发回复漏发。 */
   shouldAllowSession?: (
-    session: Pick<SocialSession, 'agentId' | 'channelType' | 'channelId'>,
+    session: Pick<
+      SocialSession,
+      'agentId' | 'channelType' | 'channelId' | 'platform' | 'peerId'
+    > & { checkpoint?: Record<string, unknown> },
   ) => boolean
   onMessagePersisted?: (agentId: string) => Promise<void>
   /** 回复生成回调：由 SocialAppRuntime 使用当前角色自己的主模型与 ReAct 执行。 */
   generateReply: (params: {
+    platform?: string
     signal?: AbortSignal
     taskOrigin?: import('@infos/shared').TaskOrigin
     agentId: string
@@ -104,7 +112,7 @@ export interface SocialBridgeDeps {
     routeChannel?: string
     routeThreadId?: string
     /**
-     * 本次主要对话对象是否为当前配置的主人，由触发者 QQ 严格比对。
+     * 本次主要对话对象是否为当前配置的主人，由触发者平台账号 严格比对。
      */
     isOwner?: boolean
     /**
@@ -135,17 +143,17 @@ export interface SocialBridgeDeps {
     images?: string[]
     imageSources?: string[]
     /**
-     * Bot 自身 QQ 号（从适配器 accountInfo 获取）
+     * Bot 自身 平台账号（从适配器 accountInfo 获取）
      *
      * 注入到 system prompt 的 <session_context> 中，
-     * 让 Agent 知道自己的 QQ 号，用于身份识别和消息归属判断。
+     * 让 Agent 知道自己的 平台账号，用于身份识别和消息归属判断。
      */
     botSelfId?: string
     /**
      * Bot 自身昵称（从适配器 accountInfo 获取）
      *
      * 注入到 system prompt 的 <session_context> 中，
-     * 让 Agent 知道自己在 QQ 平台上的昵称。
+     * 让 Agent 知道自己在所属平台上的昵称。
      */
     botNickname?: string
   }) => Promise<SocialTurnOutcome>
@@ -175,6 +183,12 @@ export class SocialBridge {
   private imageCache: ImageCacheManager | null
   /** 表情包服务 */
   private stickerService: StickerService | null
+  private stickersFor(platform: string): StickerService | undefined {
+    return (
+      this.deps.getStickerService?.(platform) ??
+      (this.adapters.size === 1 ? (this.stickerService ?? undefined) : undefined)
+    )
+  }
   /** 同一平台只允许一个历史同步任务，避免重连风暴重复补拉。 */
   private historySyncs = new Map<string, Promise<void>>()
   /** 调度器 */
@@ -184,7 +198,7 @@ export class SocialBridge {
   private resumingPlans = false
 
   constructor(deps: SocialBridgeDeps) {
-    this.deps = deps
+    this.deps = { ...deps, socialMessageRepo: scopedSocialStorage(deps.socialMessageRepo) }
     this.imageCache = deps.imageCacheManager ?? null
     this.stickerService = deps.stickerService ?? null
 
@@ -193,13 +207,24 @@ export class SocialBridge {
       (session, messages, reason, signal) => this.onFlush(session, messages, reason, signal),
       undefined,
       (session) =>
-        this.scheduler.getGroupPolicy(session.agentId, session.accountId, session.channelId),
+        this.scheduler.getGroupPolicy(
+          session.agentId,
+          session.accountId,
+          session.channelId,
+          session.platform,
+        ),
     )
 
     // 初始化 Scheduler：管理各群独立观察时钟与到期唤醒，不调用第二个决策模型。
     this.scheduler = new SocialScheduler({
       sessionManager: this.sessionManager,
       executions: deps.executions,
+      legacyPlatform: deps.legacyPlatform,
+      allowObservation: (session) =>
+        this.getAdapter(session.platform ?? '')?.canObserveGroup(
+          session.accountId ?? '',
+          session.channelId,
+        ) !== false,
       allowSession: (session) => this.deps.shouldAllowSession?.(session) ?? true,
       maintain: async () => {
         const agentId = this.deps.getAgentId?.()
@@ -233,22 +258,26 @@ export class SocialBridge {
     this.scheduler.updateGroupPolicies(policies)
   }
 
-  getGroupState(agentId: string, accountId: string, groupId: string) {
+  getGroupState(agentId: string, accountId: string, groupId: string, platform?: string) {
+    if (!platform && this.adapters.size > 1) throw new Error('SOCIAL_PLATFORM_REQUIRED')
+    platform ??= this.adapters.size === 1 ? this.adapters.keys().next().value : undefined
     const session = this.sessionManager
       .listSessions()
       .find(
         (item) =>
           item.agentId === agentId &&
+          (!platform || item.platform === platform) &&
           item.accountId === accountId &&
           item.channelType === 'group' &&
           item.channelId === groupId,
       )
-    const policyGate = this.scheduler.policyGate(agentId, accountId, groupId)
+    const policyGate = this.scheduler.policyGate(agentId, accountId, groupId, platform)
     return {
+      platform,
       agentId,
       accountId,
       groupId,
-      policy: this.scheduler.getGroupPolicy(agentId, accountId, groupId),
+      policy: this.scheduler.getGroupPolicy(agentId, accountId, groupId, platform),
       phase: session?.phase ?? 'ready',
       participation: session?.participation ?? 'idle',
       pendingMessages: session?.pendingMessages.length ?? 0,
@@ -259,6 +288,7 @@ export class SocialBridge {
         this.deps.shouldAllowSession &&
         !this.deps.shouldAllowSession({
           agentId,
+          platform,
           channelType: 'group',
           channelId: groupId,
         })
@@ -276,12 +306,22 @@ export class SocialBridge {
   /** 注册一个社交适配器 */
   registerAdapter(adapter: AbstractSocialAdapter): void {
     const platform = adapter.platform
-    if (this.adapters.has(platform)) {
-      logger.warn(__t('apps.social.logs', '适配器 {0} 已存在, 将替换', [platform]))
-      this.unregisterAdapter(platform)
-    }
+    if (this.adapters.has(platform)) throw new Error('SOCIAL_PLATFORM_DUPLICATE')
 
     this.adapters.set(platform, adapter)
+    adapter.bindInboundReceiver(
+      (message) =>
+        new Promise<void>((resolve, reject) => {
+          let committed = false
+          void this.handleInbound(message, () => {
+            committed = true
+            resolve()
+          }).catch((error) => {
+            if (!committed) reject(error)
+            else logger.error(__t('apps.social.logs', '处理入站消息失败: {0}', [String(error)]))
+          })
+        }),
+    )
 
     // 监听消息事件 → SessionManager 缓冲
     adapter.on('message', (msg: InboundMessage) => {
@@ -318,6 +358,7 @@ export class SocialBridge {
   unregisterAdapter(platform: string): void {
     const adapter = this.adapters.get(platform)
     if (adapter) {
+      adapter.bindInboundReceiver(undefined)
       adapter.removeAllListeners()
       this.adapters.delete(platform)
       logger.info(__t('apps.social.logs', '社交适配器已注销: {0}', [platform]))
@@ -341,11 +382,9 @@ export class SocialBridge {
 
   private async performOfflineHistorySync(platform: string): Promise<void> {
     const adapter = this.adapters.get(platform)
-    if (!adapter) return
+    if (!adapter || !adapter.capabilities.includes('history')) return
     const accountIds = adapter.getConnectedAccountIds()
     if (accountIds.length === 0) return
-    const channels = await this.deps.socialMessageRepo.getRecentChannelsForPlatform(platform, 100)
-    if (channels.length === 0) return
 
     for (const accountId of accountIds) {
       const agentId = adapter.resolveAgentId(accountId)
@@ -355,7 +394,11 @@ export class SocialBridge {
         )
         continue
       }
-      const accountChannels = channels.filter((channel) => channel.agentId === agentId)
+      const accountChannels = await this.deps.socialMessageRepo.getRecentChannelsForPlatform(
+        platform,
+        100,
+        { agentId, accountId },
+      )
       if (accountChannels.length === 0) continue
       const startedAt = Math.floor(Date.now() / 1000)
       const cursor = await this.deps.socialMessageRepo.getSyncCursor(agentId, platform, accountId)
@@ -367,16 +410,17 @@ export class SocialBridge {
       await this.deps.socialMessageRepo.markSyncStarted(agentId, platform, accountId, startedAt)
       try {
         for (const channel of accountChannels.filter((item) => item.agentId === agentId)) {
-          let beforeMessageSeq: number | undefined
-          const seenPageStarts = new Set<number>()
+          let pageCursor: string | undefined
+          const seenPageStarts = new Set<string>()
           while (this.running) {
-            const history = await adapter.getMessageHistory(
-              channel.channelId,
-              channel.channelType as 'private' | 'group',
-              100,
-              beforeMessageSeq,
+            const page = await adapter.getHistoryPage({
+              channelId: channel.channelId,
+              channelType: channel.channelType as 'private' | 'group',
+              limit: 100,
+              cursor: pageCursor,
               accountId,
-            )
+            })
+            const history = page.messages
             if (history.length === 0) break
             for (const message of history) {
               if (message.timestamp <= cursor.lastSuccessfulSyncAt || message.timestamp > startedAt)
@@ -412,25 +456,11 @@ export class SocialBridge {
 
             const oldestTimestamp = Math.min(...history.map((message) => message.timestamp))
             if (oldestTimestamp <= cursor.lastSuccessfulSyncAt || history.length < 100) break
-            const sequences = history
-              .map((message) => message.messageSeq)
-              .filter(
-                (value): value is number => typeof value === 'number' && Number.isFinite(value),
-              )
-            if (sequences.length === 0) {
-              throw new Error(
-                `NapCat 未返回 message_seq，无法继续分页补拉 ${channel.channelType}:${channel.channelId}`,
-              )
-            }
-            const oldestSequence = Math.min(...sequences)
-            if (seenPageStarts.has(oldestSequence) || oldestSequence === beforeMessageSeq) {
-              throw new Error(
-                `NapCat 历史分页游标未前进: ${channel.channelType}:${channel.channelId}`,
-              )
-            }
-            seenPageStarts.add(oldestSequence)
-            // NapCat 会将 message_seq 对应消息包含在下一页，唯一索引负责消除页间重叠。
-            beforeMessageSeq = oldestSequence
+            if (!page.nextCursor) break
+            if (seenPageStarts.has(page.nextCursor) || page.nextCursor === pageCursor)
+              throw new Error('SOCIAL_HISTORY_CURSOR_STALLED')
+            seenPageStarts.add(page.nextCursor)
+            pageCursor = page.nextCursor
           }
           if (!this.running) throw new Error('社交应用停止，历史同步将在下次启动时继续')
         }
@@ -445,20 +475,24 @@ export class SocialBridge {
 
   // ── 启动 / 停止 ──
 
-  async start(): Promise<void> {
+  async start(signal?: AbortSignal): Promise<void> {
+    signal?.throwIfAborted()
     this.running = true
 
     for (const [platform, adapter] of this.adapters) {
       try {
-        await adapter.connect()
+        await adapter.connect(signal)
+        signal?.throwIfAborted()
         logger.info(__t('apps.social.logs', '社交适配器启动: {0}', [platform]))
       } catch (err) {
+        signal?.throwIfAborted()
         logger.error(__t('apps.social.logs', '社交适配器 {0} 启动失败: {1}', [platform, err]))
       }
     }
 
     // 冷启动: 从 DB 恢复最近活跃的会话
     await this.reviveSessionsFromDb()
+    signal?.throwIfAborted()
 
     // 启动调度器
     this.scheduler.start()
@@ -504,8 +538,19 @@ export class SocialBridge {
    *
    * 流程: adapter → 路由归属 → 激活策略 → 持久化 → SessionManager 缓冲 → flush → generateReply
    */
-  private async handleInbound(inbound: InboundMessage): Promise<void> {
-    if (!this.running) return
+  private handleInbound(inbound: InboundMessage, committed?: () => void): Promise<void> {
+    const normalized = this.getAdapter(inbound.platform)?.normalizeInbound(inbound) ?? inbound
+    return withSocialScope(normalized, () => this.handleNormalizedInbound(normalized, committed))
+  }
+
+  private async handleNormalizedInbound(
+    inbound: InboundMessage,
+    committed?: () => void,
+  ): Promise<void> {
+    if (!this.running) {
+      if (committed) throw new Error('SOCIAL_INBOUND_UNAVAILABLE')
+      return
+    }
 
     const { channelId, channelType, senderName, platform, content } = inbound
     logger.info(
@@ -538,6 +583,7 @@ export class SocialBridge {
     }
 
     if (this.deps.shouldAcceptInbound && !this.deps.shouldAcceptInbound(inbound)) {
+      committed?.()
       logger.debug(
         __t('apps.social.logs', '入站消息被社交激活策略忽略: agent={0}, channel={1}, sender={2}', [
           inbound.agentId,
@@ -548,27 +594,29 @@ export class SocialBridge {
       return
     }
 
-    const raw = inbound.rawEvent as Record<string, unknown> | undefined
-    const accountId = String(raw?.self_id ?? '')
-    const msgId = String(raw?.message_id ?? randomUUID())
+    const raw = this.getAdapter(inbound.platform)?.serializeInbound(inbound) ?? {}
+    inbound = this.getAdapter(inbound.platform)?.normalizeInbound(inbound) ?? inbound
+    const accountId = inbound.accountId ?? ''
+    const msgId = inbound.messageId || randomUUID()
+    inbound.messageId = msgId
+    if (!accountId) throw new Error('SOCIAL_ACCOUNT_REQUIRED')
     if (
-      raw?.message_id !== undefined &&
-      (await this.deps.socialMessageRepo.getByMsgId(inbound.agentId, msgId, accountId))
+      Boolean(inbound.messageId) &&
+      (await this.deps.socialMessageRepo.getByMsgId(inbound.agentId, msgId, accountId, inbound))
     ) {
+      committed?.()
       await this.refillInbox(inbound.agentId)
       return
     }
-    inbound.rawEvent = { ...raw, message_id: msgId }
+    inbound.rawEvent = { ...raw, _infosInbound: { ...inbound, rawEvent: undefined } }
     await this.deps.loopGuard?.observe(inbound)
     const observed = this.sessionManager.getOrCreate(inbound)
     this.sessionManager.checkActiveExpiry(observed)
     const queueForReply =
       channelType === 'private' ||
-      raw?._isMentioned === true ||
       inbound.isMentioned === true ||
       observed.participation === 'engaged'
-    const continuationOnly =
-      channelType === 'group' && !inbound.isMentioned && raw?._isMentioned !== true
+    const continuationOnly = channelType === 'group' && !inbound.isMentioned
     // 入站正文与待处理标识在同一事务提交，进程退出后仍能恢复明确请求。
     try {
       await this.deps.socialMessageRepo.insert({
@@ -592,12 +640,20 @@ export class SocialBridge {
             routeThreadId: inbound.routeThreadId,
             isMentioned: inbound.isMentioned,
             senderKind: inbound.senderKind,
+            platformBot: inbound.platformBot,
+            timestampMs: inbound.timestampMs,
+            connectionId: inbound.connectionId,
           },
         }),
+        timestamp: inbound.timestampMs ? new Date(inbound.timestampMs).toISOString() : undefined,
       })
     } catch (err) {
       logger.warn(__t('apps.social.logs', '消息持久化失败 (非致命): {0}', [err]))
+      throw err
     }
+
+    committed?.()
+    if (!this.running) return
 
     if (this.deps.onMessagePersisted) {
       void this.deps.onMessagePersisted(inbound.agentId).catch((err) => {
@@ -623,7 +679,7 @@ export class SocialBridge {
     }
 
     // 3. 交给 SessionManager 缓冲处理
-    if (!(await this.handleOrchestrationInbound(inbound)))
+    if (!(await this.handleOrchestrationInbound(inbound)) && this.running)
       await this.sessionManager.handleInbound(inbound)
 
     // 3. 通知前端
@@ -683,7 +739,7 @@ export class SocialBridge {
           row.accountId === accountId &&
           row.channelId === trigger.channelId &&
           row.channelType === trigger.channelType
-            ? restoreSocialMessage(row)
+            ? this.restoreStoredMessage(row)
             : null
         const reference =
           stored ??
@@ -698,7 +754,7 @@ export class SocialBridge {
           candidates.push(reference)
           const excerpt = { ...reference, content: reference.content.slice(0, 4000) }
           context.push(
-            `引用原消息：${formatSocialMessage(excerpt, this.deps.getOwnerId?.(), (id) => this.deps.loopGuard?.isBotAccount(id) ?? false)}`,
+            `引用原消息：${formatSocialMessage(excerpt, this.deps.getOwnerId?.(trigger.platform), (id) => this.deps.loopGuard?.isBotAccount(id) ?? false)}`,
           )
         } else {
           context.push(`引用消息 ${trigger.replyTo} 暂不可读取，不要推测其内容。`)
@@ -730,8 +786,7 @@ export class SocialBridge {
           trigger.channelType,
           20,
         )
-        const raw = trigger.rawEvent as Record<string, unknown> | undefined
-        const triggerTime = Number(raw?.time) * 1000 || Date.now()
+        const triggerTime = trigger.timestampMs || Date.now()
         const recent = [...rows].sort(
           (a, b) => Date.parse(b.timestamp ?? '') - Date.parse(a.timestamp ?? ''),
         )
@@ -744,7 +799,7 @@ export class SocialBridge {
             time <= triggerTime &&
             time >= triggerTime - 120_000
           ) {
-            candidates.push(restoreSocialMessage(row))
+            candidates.push(this.restoreStoredMessage(row))
           }
         }
       } catch (error) {
@@ -763,7 +818,7 @@ export class SocialBridge {
         seen.add(key)
         selected.push({
           attachment,
-          source: `消息 ${socialMessageId(message) || '当前'}，发送者 ${JSON.stringify(message.senderName)}（QQ:${message.senderId}）`,
+          source: `消息 ${socialMessageId(message) || '当前'}，发送者 ${JSON.stringify(message.senderName)}（账号:${message.senderId}）`,
         })
         if (selected.length >= 3) break
       }
@@ -812,16 +867,31 @@ export class SocialBridge {
     channelId: string,
     content: string,
     senderId: string,
+    platform?: string,
+    requestedAccountId?: string,
+    signal?: AbortSignal,
+    execution?: { executionId: string; processId: string },
   ): Promise<SocialTurnOutcome> {
     if (!this.running) throw new Error('社交应用尚未运行')
-    const adapter = this.adapters.get('qq')
-    if (!adapter) throw new Error('QQ 适配器尚未连接')
+    const adapter = platform
+      ? this.adapters.get(platform)
+      : this.adapters.size === 1
+        ? this.adapters.values().next().value
+        : undefined
+    if (!adapter) throw new Error('SOCIAL_PLATFORM_REQUIRED')
     const accounts = adapter
       .getConnectedAccountIds()
-      .filter((account) => adapter.resolveAgentId(account) === agentId)
+      .filter(
+        (account) =>
+          adapter.resolveAgentId(account) === agentId &&
+          (!requestedAccountId || requestedAccountId === account),
+      )
     if (accounts.length !== 1) throw new Error('无法唯一确定发送账号，请检查社交账号连接')
     const message: InboundMessage = {
-      platform: 'qq',
+      platform: adapter.platform,
+      accountId: accounts[0],
+      messageId: `command:${id}`,
+      connectionId: adapter.connectionId,
       agentId,
       channelId,
       channelType: 'group',
@@ -829,7 +899,7 @@ export class SocialBridge {
       senderName: '主 Agent',
       content,
       isOwner: true,
-      rawEvent: { message_id: `command:${id}`, self_id: accounts[0], _infosSingleTask: true },
+      rawEvent: { _infosSingleTask: true },
     }
     const session = {
       ...this.sessionManager.getOrCreate(message),
@@ -839,11 +909,20 @@ export class SocialBridge {
       inFlightMessages: [message],
     }
     const controller = new AbortController()
+    const cancel = () => controller.abort(signal?.reason)
+    signal?.addEventListener('abort', cancel, { once: true })
+    if (signal?.aborted) cancel()
     this.commandControllers.set(session.turnId, { controller, session })
     try {
       for (let attempt = 0; attempt <= 2; attempt++) {
         try {
-          return await this.executeReply(session, [message], 'proactive_review', controller.signal)
+          return await this.executeReply(
+            session,
+            [message],
+            'proactive_review',
+            controller.signal,
+            execution,
+          )
         } catch (error) {
           controller.signal.throwIfAborted()
           if (
@@ -856,6 +935,7 @@ export class SocialBridge {
       }
       throw new Error('社交委派已结束重试')
     } finally {
+      signal?.removeEventListener('abort', cancel)
       this.commandControllers.delete(session.turnId)
     }
   }
@@ -866,23 +946,56 @@ export class SocialBridge {
    * 将缓冲消息合并后调用 generateReply 回调，
    * 由 SocialAppRuntime 使用应用自己的 Compiler + LLM 生成回复。
    */
+  private readonly replyLanes = new Map<string, Promise<unknown>>()
+
   private async executeReply(
     session: SocialSession,
     messages: InboundMessage[],
     reason: FlushReason,
     cancellation: AbortSignal,
+    execution?: { executionId: string; processId: string },
+  ): Promise<SocialTurnOutcome> {
+    const key = JSON.stringify([
+      session.agentId,
+      session.platform,
+      session.accountId,
+      session.channelType,
+      session.channelId,
+    ])
+    const previous = this.replyLanes.get(key) ?? Promise.resolve()
+    const result = previous
+      .catch(() => undefined)
+      .then(() =>
+        withSocialScope(
+          {
+            platform: messages[0]?.platform ?? session.platform,
+            accountId: session.accountId,
+            channelType: session.channelType,
+            channelId: session.channelId,
+          },
+          () => this.executeScopedReply(session, messages, reason, cancellation, execution),
+        ),
+      )
+    this.replyLanes.set(key, result)
+    try {
+      return await result
+    } finally {
+      if (this.replyLanes.get(key) === result) this.replyLanes.delete(key)
+    }
+  }
+
+  private async executeScopedReply(
+    session: SocialSession,
+    messages: InboundMessage[],
+    reason: FlushReason,
+    cancellation: AbortSignal,
+    execution?: { executionId: string; processId: string },
   ): Promise<SocialTurnOutcome> {
     if (messages.length === 0) return { type: 'pass' }
     if (!(await this.deps.socialMessageRepo.memoryAvailable(session.agentId)))
       throw new Error('社交数据正在清理，请先完成数据清理再继续')
-    const accountId = String(
-      (messages[0]?.rawEvent as Record<string, unknown> | undefined)?.self_id ?? '',
-    )
-    const identity = messages
-      .map((message) =>
-        String((message.rawEvent as Record<string, unknown> | undefined)?.message_id ?? ''),
-      )
-      .filter(Boolean)
+    const accountId = messages[0]?.accountId ?? ''
+    const identity = messages.map((message) => socialMessageId(message)).filter(Boolean)
     const id = session.turnId ?? `social:${randomUUID()}`
     session.turnId = id
     const stored = await this.deps.socialMessageRepo.getTurn(id)
@@ -896,10 +1009,20 @@ export class SocialBridge {
         ? { type: 'reply', content: '', delivered: true }
         : { type: 'pass' }
     }
+    if (
+      stored &&
+      (stored.platform !== messages[0]!.platform ||
+        stored.accountId !== accountId ||
+        stored.channelId !== session.channelId ||
+        stored.channelType !== session.channelType ||
+        stored.agentId !== session.agentId)
+    )
+      throw new Error('SOCIAL_TURN_SCOPE_INVALID')
     const now = new Date().toISOString()
     const triggerMessage = socialTriggerMessage(messages)
     const record: SocialTurnRecord = stored ?? {
       id,
+      platform: messages[0]!.platform,
       kind:
         (messages[0]?.rawEvent as Record<string, unknown> | undefined)?._infosSingleTask === true
           ? 'task'
@@ -943,12 +1066,16 @@ export class SocialBridge {
       controller.signal,
       AbortSignal.timeout(remaining),
     ])
-    const run = async (kernelSignal?: AbortSignal) => {
+    const run = async (
+      kernelSignal?: AbortSignal,
+      execution?: { executionId: string; processId: string },
+    ) => {
       const dataController = new AbortController()
       const version = await this.deps.socialMessageRepo.getDataVersion(
         record.agentId,
         record.channelType,
         record.channelId,
+        record,
       )
       record.checkpoint.deliveryDataVersion ??= version
       const signal = AbortSignal.any([
@@ -958,7 +1085,7 @@ export class SocialBridge {
       ])
       const dataTimer = setInterval(() => {
         void this.deps.socialMessageRepo
-          .getDataVersion(record.agentId, record.channelType, record.channelId)
+          .getDataVersion(record.agentId, record.channelType, record.channelId, record)
           .then((current) => {
             if (current !== version) dataController.abort(new Error('社交任务已取消：数据已经清理'))
           })
@@ -968,6 +1095,7 @@ export class SocialBridge {
       }, 2000)
       dataTimer.unref?.()
       const recovery = {
+        ...execution,
         record,
         signal,
         save: async () => {
@@ -1034,6 +1162,11 @@ export class SocialBridge {
               }
             }
             record.outcome = outcome.type
+            if (record.kind === 'task' && outcome.type !== 'orchestration')
+              record.commandResult = {
+                sent: outcome.type === 'reply',
+                ...(outcome.type === 'reply' ? { content: outcome.content } : {}),
+              }
             record.checkpoint.outcome = outcome
             const waiting =
               outcome.type === 'wait' ||
@@ -1068,6 +1201,7 @@ export class SocialBridge {
                 record.agentId,
                 record.accountId,
                 record.sourceMessageIds ?? [],
+                record,
               )
             return outcome
           } catch (error) {
@@ -1100,6 +1234,7 @@ export class SocialBridge {
                 record.agentId,
                 record.accountId,
                 record.sourceMessageIds ?? [],
+                record,
               )
             }
             if (!retry)
@@ -1121,6 +1256,7 @@ export class SocialBridge {
     try {
       lifetime.throwIfAborted()
       await this.deps.socialMessageRepo.saveTurn(record)
+      if (execution) return await run(lifetime, execution)
       try {
         await this.deps.loopGuard?.admit(
           record,
@@ -1152,6 +1288,7 @@ export class SocialBridge {
           record.agentId,
           record.accountId,
           record.sourceMessageIds ?? [],
+          record,
         )
         logger.info(
           __t('apps.social.logs', '已跳过受保护的机器人回复对象，其他联系人仍可触发交流'),
@@ -1170,10 +1307,10 @@ export class SocialBridge {
         taskId: id,
         class: 'background',
         priority: session.channelType === 'private' ? 6 : 4,
-        resourceKey: `social-session:${JSON.stringify([session.agentId, accountId, session.channelType, session.channelId])}`,
+        resourceKey: `social-session:${JSON.stringify([session.platform, session.agentId, accountId, session.channelType, session.channelId])}`,
         maxDurationMs: remaining,
         signal: lifetime,
-        run: ({ signal }) => run(signal),
+        run: ({ signal, executionId, processId }) => run(signal, { executionId, processId }),
       })
     } catch (error) {
       if (record.status === 'running') {
@@ -1187,6 +1324,7 @@ export class SocialBridge {
           record.agentId,
           record.accountId,
           record.sourceMessageIds ?? [],
+          record,
         )
       }
       throw error
@@ -1212,14 +1350,12 @@ export class SocialBridge {
     const triggerMessage = socialTriggerMessage(messages)!
     const replyTo =
       channelType === 'group' && directMessage
-        ? String(
-            (directMessage.rawEvent as Record<string, unknown> | undefined)?.message_id ?? '',
-          ) || undefined
+        ? socialMessageId(directMessage) || undefined
         : undefined
 
     // 构建合并的用户消息
     // 每条消息带上 message_id，供 AI 调用 social_read_image 工具时引用
-    const ownerId = this.deps.getOwnerId?.()
+    const ownerId = this.deps.getOwnerId?.(firstMsg.platform)
     const combined = messages
       .map((message) =>
         formatSocialMessage(
@@ -1238,24 +1374,25 @@ export class SocialBridge {
 
     // 提取本次 flush 消息的 msgId 列表（用于从 DB 历史中排除，避免重复）
     // handleInbound 已将这些消息持久化到 DB，如果不排除，combinedMessage 会在 messages 中出现两次
-    const flushMsgIds = messages
-      .map((m) => String((m.rawEvent as Record<string, unknown>)?.message_id ?? ''))
-      .filter((id) => id.length > 0)
+    const flushMsgIds = messages.map((m) => socialMessageId(m)).filter((id) => id.length > 0)
 
-    // ── 获取 Bot 自身信息（QQ 号 + 昵称），注入到上下文让 Agent 知道自己是谁 ──
+    // ── 获取 Bot 自身信息（平台账号 + 昵称），注入到上下文让 Agent 知道自己是谁 ──
     const platform = messages[0]!.platform
     const adapter = this.getAdapter(platform)
-    // 使用本批消息的 self_id，不能拿适配器默认账号管理另一账号的收藏。
+    // 使用本批消息的规范账号标识，不能拿适配器默认账号管理另一账号的收藏。
     const sourceAccounts = [
-      ...new Set(
-        messages
-          .map((message) =>
-            String((message.rawEvent as Record<string, unknown> | undefined)?.self_id ?? ''),
-          )
-          .filter(Boolean),
-      ),
+      ...new Set(messages.map((message) => message.accountId ?? '').filter(Boolean)),
     ]
-    if (sourceAccounts.length > 1) throw new Error('社交消息批次混入多个账号，已阻止跨账号发送')
+    if (
+      sourceAccounts.length !== 1 ||
+      messages.some(
+        (message) =>
+          message.platform !== platform ||
+          message.channelId !== channelId ||
+          message.channelType !== channelType,
+      )
+    )
+      throw new Error('社交消息批次混入多个账号，已阻止跨账号发送')
     let botSelfId: string | undefined = sourceAccounts[0]
     let botNickname: string | undefined
     if (adapter) {
@@ -1264,9 +1401,9 @@ export class SocialBridge {
         const acct = status.accountInfo as Record<string, unknown> | undefined
         if (acct) {
           if (!botSelfId && adapter.getConnectedAccountIds().length === 1)
-            botSelfId = acct.user_id != null ? String(acct.user_id) : undefined
-          if (String(acct.user_id ?? '') === botSelfId)
-            botNickname = acct.nickname != null ? String(acct.nickname) : undefined
+            botSelfId = acct.id != null ? String(acct.id) : undefined
+          if (String(acct.id ?? '') === botSelfId)
+            botNickname = acct.name != null ? String(acct.name) : undefined
         }
       } catch {
         // 获取 Bot 信息失败不影响主流程
@@ -1280,26 +1417,19 @@ export class SocialBridge {
       const outcome =
         (recovery?.record.checkpoint.outcome as SocialTurnOutcome | undefined) ??
         (await this.deps.generateReply({
+          platform,
           signal: recovery?.signal,
           taskOrigin:
             channelType === 'private' &&
-            messages.at(-1)?.senderId === this.deps.getOwnerId?.() &&
-            String(
-              (messages.at(-1)?.rawEvent as Record<string, unknown> | undefined)?.message_id ?? '',
-            )
+            messages.at(-1)?.senderId === this.deps.getOwnerId?.(platform) &&
+            socialMessageId(messages.at(-1)!)
               ? {
                   platform,
-                  accountId: String(
-                    (messages.at(-1)?.rawEvent as Record<string, unknown> | undefined)?.self_id ??
-                      botSelfId ??
-                      '',
-                  ),
+                  accountId: messages.at(-1)?.accountId ?? botSelfId ?? '',
                   channelType: 'private',
                   channelId,
                   senderId: messages.at(-1)!.senderId,
-                  messageId: String(
-                    (messages.at(-1)?.rawEvent as Record<string, unknown>).message_id,
-                  ),
+                  messageId: socialMessageId(messages.at(-1)!),
                 }
               : undefined,
           agentId,
@@ -1361,7 +1491,7 @@ export class SocialBridge {
         } else if (segment.type === 'native_emoji') {
           if (!botSelfId || !this.deps.resolveNativeEmoji) throw new Error('原生表情服务未就绪')
           const attachment = await this.deps.resolveNativeEmoji(
-            { agentId, accountId: botSelfId, channelId, channelType },
+            { platform, agentId, accountId: botSelfId, channelId, channelType },
             segment.reference,
           )
           await this.sendReply(
@@ -1381,8 +1511,9 @@ export class SocialBridge {
         } else {
           let attachment: Attachment
           try {
-            if (!this.stickerService || !botSelfId) throw new Error('当前账号没有收藏表情服务')
-            attachment = await this.stickerService.resolve(botSelfId, segment.stickerId)
+            const stickers = this.stickersFor(platform)
+            if (!stickers || !botSelfId) throw new Error('当前账号没有收藏表情服务')
+            attachment = await stickers.resolve(botSelfId, segment.stickerId)
           } catch (error) {
             logger.warn(
               __t('apps.social.logs', '表情未发送：{0}', [
@@ -1455,6 +1586,14 @@ export class SocialBridge {
     const adapter = this.adapters.get(platform)
     if (!adapter) {
       throw new Error(`社交适配器 ${platform} 未连接，无法发送到 ${msg.channelId}`)
+    }
+    if (recovery?.record.platform && recovery.record.platform !== platform)
+      throw Object.assign(new Error('SOCIAL_TURN_SCOPE_INVALID'), { code: 'DELIVERY_NOT_SENT' })
+    if (!msg.accountId) {
+      const accounts = adapter.getConnectedAccountIds()
+      if (accounts.length !== 1)
+        throw Object.assign(new Error('SOCIAL_ACCOUNT_REQUIRED'), { code: 'DELIVERY_NOT_SENT' })
+      msg = { ...msg, accountId: accounts[0] }
     }
     const generation = recovery?.record.checkpoint.generation as
       | { round: number; index: number; pending?: unknown }
@@ -1584,6 +1723,7 @@ export class SocialBridge {
           record.agentId,
           record.channelType,
           record.channelId,
+          record,
         )
         if (!live || version !== record.checkpoint.deliveryDataVersion)
           throw new Error('社交数据已清理，不能补写旧发送记录')
@@ -1630,6 +1770,11 @@ export class SocialBridge {
       throw Object.assign(new Error('相同消息的发送结果尚未确认，已阻止重复发送'), {
         uncertain: true,
       })
+    const readiness = await adapter.getSendReadiness(msg)
+    if (!readiness.ready)
+      throw Object.assign(new Error(readiness.reason ?? 'SOCIAL_ACCOUNT_NOT_CONNECTED'), {
+        code: 'DELIVERY_NOT_SENT',
+      })
     if (recovery) {
       try {
         await this.deps.loopGuard?.consume(
@@ -1669,7 +1814,16 @@ export class SocialBridge {
       attachments: msg.attachments?.map((item) => item.type) ?? [],
     })
     try {
-      sent = (await adapter.sendMessage(msg, signal)) ?? { sentAt: Date.now() }
+      sent = (await adapter.sendMessage(
+        {
+          ...msg,
+          deliveryId: createHash('sha256')
+            .update(`${recovery?.record.id ?? randomUUID()}:${key}`)
+            .digest('hex')
+            .slice(0, 24),
+        },
+        signal,
+      )) ?? { sentAt: Date.now() }
     } catch (error) {
       logger.warn(__t('apps.social.logs', '社交消息发送失败'), {
         turnId: recovery?.record.id,
@@ -1749,7 +1903,9 @@ export class SocialBridge {
       }
     }
     const platform =
-      (recovery.record.checkpoint.inbound as InboundMessage[] | undefined)?.[0]?.platform ?? 'qq'
+      recovery.record.platform ??
+      (recovery.record.checkpoint.inbound as InboundMessage[] | undefined)?.[0]?.platform
+    if (!platform) throw new Error('SOCIAL_PLATFORM_REQUIRED')
     const receipts: SocialDeliveryReceipt[] = []
     const segments = splitStickerSegments(msg.content)
     if (!segments.length && !msg.attachments?.length)
@@ -1769,6 +1925,7 @@ export class SocialBridge {
             index,
             await this.deps.resolveNativeEmoji(
               {
+                platform,
                 agentId: recovery.record.agentId,
                 accountId: msg.accountId,
                 channelId: msg.channelId,
@@ -1779,8 +1936,11 @@ export class SocialBridge {
             ),
           )
         } else {
-          if (!this.stickerService) throw new Error('收藏表情服务未就绪')
-          resolved.set(index, await this.stickerService.resolve(msg.accountId, segment.stickerId))
+          if (!this.stickersFor(platform)) throw new Error('收藏表情服务未就绪')
+          resolved.set(
+            index,
+            await this.stickersFor(platform)!.resolve(msg.accountId, segment.stickerId),
+          )
         }
       } catch (error) {
         throw Object.assign(new Error(error instanceof Error ? error.message : String(error)), {
@@ -1835,9 +1995,15 @@ export class SocialBridge {
     for (const [platform, adapter] of this.adapters) {
       try {
         const status = await adapter.getStatus()
-        results.push({ ...status })
+        results.push({
+          ...status,
+          connectionId: adapter.connectionId,
+          displayName: adapter.displayName,
+          accounts: adapter.getConnectedAccountIds(),
+          capabilities: adapter.capabilities,
+        })
       } catch {
-        results.push({ platform, connected: false, error: '获取状态失败' })
+        results.push({ platform, connected: false, error: __t('apps.social.ui', '获取状态失败') })
       }
     }
     return results
@@ -1861,10 +2027,13 @@ export class SocialBridge {
    */
   private async reviveSessionsFromDb(): Promise<void> {
     try {
-      const recentChannels = await this.deps.socialMessageRepo.getRecentChannelsForPlatform(
-        'qq',
-        20,
-      )
+      const recentChannels = (
+        await Promise.all(
+          [...this.adapters.keys()].map((platform) =>
+            this.deps.socialMessageRepo.getRecentChannelsForPlatform(platform, 20),
+          ),
+        )
+      ).flat()
 
       const agentIds = new Set(
         [...recentChannels.map((channel) => channel.agentId), this.deps.getAgentId?.()].filter(
@@ -1882,7 +2051,11 @@ export class SocialBridge {
             )
             continue
           }
-          const inbound = record.checkpoint.inbound as InboundMessage[] | undefined
+          const saved = record.checkpoint.inbound as InboundMessage[] | undefined
+          const inbound = saved?.map(
+            (message) => this.getAdapter(message.platform)?.normalizeInbound(message) ?? message,
+          )
+          if (inbound) record.checkpoint.inbound = inbound
           if (
             !inbound?.length ||
             (!this.deps.shouldAllowSession?.(record) && this.deps.shouldAllowSession)
@@ -1936,6 +2109,7 @@ export class SocialBridge {
                 agentId,
                 record.accountId,
                 record.sourceMessageIds ?? [],
+                record,
               )
             }
             continue
@@ -1972,13 +2146,18 @@ export class SocialBridge {
     if (!this.running) return
     if (!(await this.deps.socialMessageRepo.memoryAvailable(agentId))) return
     for (const row of await this.deps.socialMessageRepo.queuedMessages(agentId)) {
-      const inbound = restoreSocialMessage(row)
-      const ownerId = this.deps.getOwnerId?.()
+      const adapter = this.getAdapter(row.platform)
+      if (!adapter) continue
+      const inbound = restoreSocialMessage(row, (record) => adapter.restoreMessage(record))
+      const ownerId = this.deps.getOwnerId?.(row.platform)
       inbound.isOwner = Boolean(ownerId && row.senderId === ownerId)
       if (this.deps.shouldAcceptInbound && !this.deps.shouldAcceptInbound(inbound)) {
-        await this.deps.socialMessageRepo.completeQueuedMessages(agentId, row.accountId, [
-          row.msgId,
-        ])
+        await this.deps.socialMessageRepo.completeQueuedMessages(
+          agentId,
+          row.accountId,
+          [row.msgId],
+          row,
+        )
         continue
       }
       await this.sessionManager.handleInbound(inbound)
@@ -2050,6 +2229,7 @@ export class SocialBridge {
             record.channelId,
             record.channelType,
             20,
+            record,
           )
           const original = new Set(inbound.map(socialMessageId))
           const recent = rows
@@ -2063,8 +2243,8 @@ export class SocialBridge {
             .slice(-12)
           record.checkpoint.orchestrationContext = recent.map((row) =>
             formatSocialMessage(
-              { ...restoreSocialMessage(row), content: row.content.slice(0, 1200) },
-              this.deps.getOwnerId?.(),
+              { ...this.restoreStoredMessage(row), content: row.content.slice(0, 1200) },
+              this.deps.getOwnerId?.(row.platform),
               (id) => this.deps.loopGuard?.isBotAccount(id) ?? false,
             ),
           )
@@ -2072,7 +2252,7 @@ export class SocialBridge {
           for (const row of recent) {
             if (
               row.senderId === 'self' ||
-              !notifyOrchestrationInbound(record.checkpoint, restoreSocialMessage(row))
+              !notifyOrchestrationInbound(record.checkpoint, this.restoreStoredMessage(row))
             )
               continue
             record.sourceMessageIds = [...new Set([...(record.sourceMessageIds ?? []), row.msgId])]
@@ -2113,6 +2293,7 @@ export class SocialBridge {
       record.agentId,
       record.channelType,
       record.channelId,
+      record,
     )
     if (record.checkpoint.deliveryDataVersion !== version) return
     for (const [key, history] of Object.entries(pending)) {
@@ -2126,12 +2307,11 @@ export class SocialBridge {
   }
 
   private async handleOrchestrationInbound(message: InboundMessage): Promise<boolean> {
-    const accountId = String(
-      (message.rawEvent as Record<string, unknown> | undefined)?.self_id ?? '',
-    )
+    const accountId = message.accountId ?? ''
     for (const record of await this.deps.socialMessageRepo.listRecoverableTurns(message.agentId)) {
       if (
         record.status !== 'waiting' ||
+        record.platform !== message.platform ||
         record.accountId !== accountId ||
         record.channelType !== message.channelType ||
         record.channelId !== message.channelId
@@ -2148,6 +2328,10 @@ export class SocialBridge {
     return false
   }
 
+  private restoreStoredMessage(row: SocialMessageRecord): InboundMessage {
+    return this.getAdapter(row.platform)?.restoreMessage(row) ?? restoreSocialMessage(row)
+  }
+
   listSessions() {
     return this.sessionManager
       .listSessions()
@@ -2155,7 +2339,12 @@ export class SocialBridge {
         ...session,
         groupState:
           session.channelType === 'group'
-            ? this.getGroupState(session.agentId, session.accountId, session.channelId)
+            ? this.getGroupState(
+                session.agentId,
+                session.accountId,
+                session.channelId,
+                session.platform,
+              )
             : undefined,
       }))
   }
@@ -2181,13 +2370,14 @@ export class SocialBridge {
               agentId,
               id,
               record.accountId,
+              record,
             )
             if (
               message &&
               message.channelId === record.channelId &&
               message.channelType === record.channelType
             ) {
-              messages.push(restoreSocialMessage(message))
+              messages.push(this.restoreStoredMessage(message))
             }
           }
           source = socialTriggerMessage(messages)
@@ -2233,6 +2423,7 @@ export class SocialBridge {
         record.channelId,
         record.accountId,
         record.sourceMessageIds,
+        record.platform,
       )
       await finishSocialTurn(
         this.deps.socialMessageRepo,
@@ -2244,6 +2435,7 @@ export class SocialBridge {
         record.agentId,
         record.accountId,
         record.sourceMessageIds ?? [],
+        record,
       )
     }
   }
@@ -2258,6 +2450,7 @@ export class SocialBridge {
       record.channelId,
       record.accountId,
       record.sourceMessageIds,
+      record.platform,
     )
     await finishSocialTurn(
       this.deps.socialMessageRepo,
@@ -2269,6 +2462,7 @@ export class SocialBridge {
       record.agentId,
       record.accountId,
       record.sourceMessageIds ?? [],
+      record,
     )
   }
   async acknowledgeTurn(id: string, agentId?: string): Promise<void> {
@@ -2293,7 +2487,15 @@ export class SocialBridge {
     accountId: string,
     channelType: 'private' | 'group',
     channelId: string,
+    platform?: string,
   ) {
+    const matches = [...this.adapters.values()].filter(
+      (adapter) =>
+        (!platform || adapter.platform === platform) &&
+        adapter.getConnectedAccountIds().includes(accountId),
+    )
+    if (matches.length !== 1) throw new Error('SOCIAL_PLATFORM_REQUIRED')
+    platform = matches[0]!.platform
     const agentId = this.deps.getAgentId?.()
     if (
       !agentId ||
@@ -2303,20 +2505,27 @@ export class SocialBridge {
       )
     )
       throw new Error('所选社交账号未连接，不能重新授权')
-    return this.deps.loopGuard.allow({ agentId, accountId, channelType, channelId })
+    return this.deps.loopGuard.allow({ platform, agentId, accountId, channelType, channelId })
   }
 
-  closeSession(agentId: string, channelId: string): boolean {
-    for (const session of this.sessionManager.listSessions())
-      if (session.agentId === agentId && session.channelId === channelId)
-        this.cancelSessionRecords(session)
-    for (const entry of this.turnControllers.values())
-      if (entry.session.agentId === agentId && entry.session.channelId === channelId)
-        entry.controller.abort(new Error('社交任务已取消：会话关闭'))
-    for (const entry of this.commandControllers.values())
-      if (entry.session.agentId === agentId && entry.session.channelId === channelId)
-        entry.controller.abort(new Error('社交任务已取消：会话关闭'))
-    return this.sessionManager.closeSession(agentId, channelId)
+  closeSession(
+    agentId: string,
+    channelId: string,
+    scope?: { platform: string; accountId: string; channelType: string },
+  ): boolean {
+    const matches = this.sessionManager
+      .listSessions()
+      .filter(
+        (session) =>
+          session.agentId === agentId &&
+          session.channelId === channelId &&
+          (!scope ||
+            (session.platform === scope.platform &&
+              session.accountId === scope.accountId &&
+              session.channelType === scope.channelType)),
+      )
+    if (matches.length > 1) throw new Error('SOCIAL_SESSION_SCOPE_REQUIRED')
+    return matches.length === 1 && this.closeSessionsExcept((session) => session !== matches[0]) > 0
   }
 
   closeSessionsExcept(predicate: (session: SocialSession) => boolean): number {
@@ -2351,24 +2560,55 @@ export class SocialBridge {
    * 将 AbstractSocialAdapter 的方法包装为 SocialMessagingProvider 接口，
    * 供 SocialAppRuntime 注入到社交工具 (socialOps) 使用。
    *
-   * 使用第一个已注册的适配器作为默认平台。
-   * 未来可扩展为按 platform 参数路由到不同适配器。
+   * 平台与账号从可信现场取得，选择不明确时拒绝默认路由。
    */
   createMessagingProvider(): import('../tools').SocialMessagingProvider | null {
     if (this.adapters.size === 0) return null
 
     // eslint-disable-next-line @typescript-eslint/no-this-alias -- 对象字面量方法需通过闭包引用外层 this
     const bridge = this
-    // 取第一个适配器作为默认
-    const [defaultPlatform, defaultAdapter] = this.adapters.entries().next().value!
+    // 有可信现场时按现场路由；只有唯一平台才允许省略选择。
+    const select = () => {
+      const record = currentSocialRecovery()?.record
+      const platform =
+        currentSocialScope()?.platform ??
+        record?.platform ??
+        (record?.checkpoint.inbound as InboundMessage[] | undefined)?.[0]?.platform
+      const entry = platform
+        ? ([platform, this.adapters.get(platform)] as const)
+        : this.adapters.size === 1
+          ? this.adapters.entries().next().value
+          : undefined
+      if (!entry?.[1]) throw new Error('SOCIAL_PLATFORM_REQUIRED')
+      return { platform: entry[0], adapter: entry[1] }
+    }
+
+    const account = () => {
+      const adapter = select().adapter
+      const id =
+        currentSocialScope()?.accountId ??
+        (adapter.getConnectedAccountIds().length === 1
+          ? adapter.getConnectedAccountIds()[0]
+          : undefined)
+      if (!id || !adapter.getConnectedAccountIds().includes(id))
+        throw new Error('SOCIAL_ACCOUNT_REQUIRED')
+      return id
+    }
 
     return {
       get platform() {
-        return defaultPlatform
+        return bridge.adapters.size === 1 ? select().platform : 'multiple'
       },
 
       async sendMessage(agentId, target, content, type) {
-        await bridge.sendReply(defaultPlatform, {
+        const accountId =
+          currentSocialScope()?.accountId ??
+          (select().adapter.getConnectedAccountIds().length === 1
+            ? select().adapter.getConnectedAccountIds()[0]
+            : undefined)
+        if (!accountId) throw new Error('SOCIAL_ACCOUNT_REQUIRED')
+        await bridge.sendReply(select().platform, {
+          accountId,
           channelId: target,
           channelType: type,
           content,
@@ -2376,7 +2616,8 @@ export class SocialBridge {
         await bridge.deps.socialMessageRepo.insert({
           msgId: `agent_tool_${Date.now()}`,
           turnId: currentSocialRecovery()?.record.id,
-          platform: defaultPlatform,
+          platform: select().platform,
+          accountId,
           channelId: target,
           channelType: type,
           senderId: 'self',
@@ -2387,46 +2628,46 @@ export class SocialBridge {
       },
 
       async getContacts() {
-        return defaultAdapter.getContacts()
+        return select().adapter.getContacts(account())
       },
       async getGroups() {
-        return defaultAdapter.getGroups()
+        return select().adapter.getGroups(account())
       },
       async getContactInfo(userId) {
-        return defaultAdapter.getContactInfo(userId)
+        return select().adapter.getContactInfo(userId, account())
       },
       async getGroupInfo(groupId) {
-        return defaultAdapter.getGroupInfo(groupId)
+        return select().adapter.getGroupInfo(groupId, account())
       },
       async getGroupMembers(groupId) {
-        return defaultAdapter.getGroupMembers(groupId)
+        return select().adapter.getGroupMembers(groupId, account())
       },
       async handleFriendRequest(flag, approve, remark) {
-        return defaultAdapter.handleFriendRequest(flag, approve, remark)
+        return select().adapter.handleFriendRequest(flag, approve, remark, account())
       },
       async removeFriend(userId) {
-        return defaultAdapter.removeFriend(userId)
+        return select().adapter.removeFriend(userId, account())
       },
       async getForwardMsg(forwardId) {
-        return defaultAdapter.getForwardMsg(forwardId)
+        return select().adapter.getForwardMsg(forwardId, account())
       },
 
       async notifyOwner(content, importance) {
-        const owner = bridge.deps.getOwnerId?.()
+        const owner = bridge.deps.getOwnerId?.(select().platform)
         if (!owner) throw new Error('尚未绑定主人账号，无法发送通知')
-        const status = await defaultAdapter.getStatus()
-        const accountId = String(status.accountInfo?.user_id ?? '')
+        const status = await select().adapter.getStatus()
+        const accountId = account()
         if (!status.connected || !accountId) throw new Error('社交账号未连接，无法发送通知')
-        await bridge.sendReply(defaultPlatform, {
+        const destination = await select().adapter.getOwnerDestination(accountId)
+        await bridge.sendReply(select().platform, {
           accountId,
-          channelId: owner,
-          channelType: 'private',
+          ...destination,
           content,
         })
         bridge.notifyFrontend('social_owner_notification', {
           content,
           importance: importance ?? 'medium',
-          platform: defaultPlatform,
+          platform: select().platform,
         })
       },
     }

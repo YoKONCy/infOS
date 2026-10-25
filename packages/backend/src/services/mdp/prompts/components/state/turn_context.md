@@ -3,6 +3,12 @@
 {% if memory_context %}<long_term_memory>
 {{ memory_context }}
 </long_term_memory>{% endif %}
+{% if knowledge_context %}<knowledge_context>
+{{ knowledge_context }}
+</knowledge_context>{% endif %}
+{% if facts_context %}<facts_context>
+{{ facts_context }}
+</facts_context>{% endif %}
 {{ component('slots/800_pet_state') }}
 {% if flow_state %}<flow_state>
 <current_goal>{{ (flow_state.currentGoal or '暂无明确的持续目标。') | escape }}</current_goal>

@@ -103,6 +103,7 @@ export class PackageInstaller {
   ): Array<{ manifest?: PackageManifest; rootDir: string; error?: string }> {
     if (!existsSync(rootDir)) return []
     return readdirSync(rootDir)
+      .filter((entry) => !entry.startsWith('.'))
       .map((entry) => path.join(rootDir, entry))
       .filter((entry) => statSync(entry).isDirectory())
       .map((packageDir) => {

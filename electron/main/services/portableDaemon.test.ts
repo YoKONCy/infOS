@@ -6,6 +6,7 @@ const state = vi.hoisted(() => ({
   healthy: false,
   log: '',
   logWritable: true,
+  remote: false,
 }))
 
 vi.mock('node:child_process', () => ({ spawn: state.spawn }))
@@ -20,6 +21,7 @@ vi.mock('../utils/env', () => ({
   paths: { data: '/隔离数据', logs: '/隔离日志' },
 }))
 vi.mock('./steam', () => ({ getWorkshopInstallations: () => [] }))
+vi.mock('./clientConnection', () => ({ isRemoteConnection: () => state.remote }))
 vi.mock('../utils/logger', () => ({
   logger: { info: vi.fn(), warn: vi.fn(), error: vi.fn() },
 }))
@@ -71,6 +73,7 @@ beforeEach(() => {
   vi.clearAllMocks()
   vi.useFakeTimers()
   state.healthy = false
+  state.remote = false
   state.log = ''
   state.logWritable = true
   Object.defineProperty(process, 'resourcesPath', { value: '/隔离资源', configurable: true })
@@ -92,6 +95,14 @@ afterEach(() => {
 })
 
 describe('内置 Daemon 生命周期', () => {
+  it('远程模式的启动和健康重试均不探测或拉起本机后台', async () => {
+    state.remote = true
+    const daemon = await import('./portableDaemon')
+    expect(await daemon.ensurePortableDaemon()).toBe(false)
+    expect(await daemon.probeBusinessHealth()).toBe(false)
+    expect(state.spawn).not.toHaveBeenCalled()
+    expect(fetch).not.toHaveBeenCalled()
+  })
   it('日志不可写时继续启动，并通过内存缓冲提供诊断', async () => {
     state.logWritable = false
     const child = new FakeChild()

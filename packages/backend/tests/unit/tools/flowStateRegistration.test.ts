@@ -1,8 +1,37 @@
 import { describe, expect, it } from 'vitest'
-import { getBuiltinToolDefinitions } from '@infos/backend/tools'
+import { getBuiltinToolDefinitions, registerBuiltinTools } from '@infos/backend/tools'
 import { sanitizeToolParameters } from '@infos/backend/services/llm/sanitize'
+import { ToolRegistry } from '@infos/backend/services/agent/toolRegistry'
+import { RegistryToolExecutor } from '@infos/backend/services/agent/toolExecutor'
+import { isSystemProtocolTool } from '@infos/backend/tools/systemProtocolTools'
 
 describe('心流内置工具注册', () => {
+  it('应用侧宿主通信不进入主应用菜单，主 Agent 手工调用也不能执行', async () => {
+    expect(getBuiltinToolDefinitions().some((tool) => tool.name === 'communicate_with_host')).toBe(
+      false,
+    )
+    expect(isSystemProtocolTool('communicate_with_host')).toBe(false)
+    const registry = new ToolRegistry()
+    await registerBuiltinTools(registry)
+    expect(registry.getDefinitions().some((tool) => tool.name === 'communicate_with_host')).toBe(
+      false,
+    )
+    expect(registry.getHandler('communicate_with_host')).toBeUndefined()
+    const executor = new RegistryToolExecutor(registry)
+    await expect(
+      executor.execute(
+        'communicate_with_host',
+        { mode: 'consult', summary: '测试请求' },
+        'desktop',
+        {
+          agentId: 'pero',
+          threadId: 'host-communication-test',
+          interactionMode: 'work',
+        },
+      ),
+    ).resolves.toMatchObject({ isError: true, shouldTerminate: false })
+  })
+
   it('必须向 ToolRegistry 提供 update_flow_state 的 FC 定义', () => {
     const definition = getBuiltinToolDefinitions().find((tool) => tool.name === 'update_flow_state')
     expect(definition).toBeDefined()

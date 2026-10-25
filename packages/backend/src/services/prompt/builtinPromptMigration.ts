@@ -3,6 +3,13 @@ import { promptFingerprint } from '../llm/promptCache'
 
 // 只登记已经确认的历史内置原文；不能根据关键字或 builtin 标记猜测用户是否改写过。
 const legacyBodies: Record<string, readonly string[]> = {
+  'slots/800_pet_state': ['55b2e7a610ceceaadc408f70fe28d2306dbc71629d6e385b627630c6d9fec8fc'],
+  'components/abilities/interaction_mode': [
+    'bc44ea018a8fbb68c2d6b877d7c96069d2a9fe713888bf863c8f4849e628d97f',
+  ],
+  'components/state/turn_context': [
+    'ad6124337c958adcbaddcf0aacf94570ea9607e354459881731c2c1cb0a16a83',
+  ],
   'components/output/output_constraint': [
     'e565322797295df1ad7c05db8bb20a1cbe7097026c15f229cf69ec4d227bfaec',
     'edfec3d206fa6b20f4adb66cd2ccc646de46ecb4af15cba29917b6f21402b9ae',

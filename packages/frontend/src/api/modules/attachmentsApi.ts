@@ -6,6 +6,7 @@
  */
 import { apiClient } from '../client'
 import { getApiResourceUrl } from '../transport'
+import type { AudioMetadata } from '@infos/shared'
 
 export interface AttachmentInfo {
   id: string
@@ -18,6 +19,8 @@ export interface AttachmentInfo {
   contextPolicy: 'once'
   status: string
   error?: string
+  contextMode?: 'inline' | 'reference'
+  audio?: AudioMetadata
 }
 
 export const attachmentsApi = {
@@ -28,11 +31,20 @@ export const attachmentsApi = {
   get: (id: string) => apiClient.get<AttachmentInfo>(`/attachments/${encodeURIComponent(id)}`),
   retry: (id: string) =>
     apiClient.post<AttachmentInfo>(`/attachments/${encodeURIComponent(id)}/retry`),
-  upload: (file: File, threadId: string) => {
+  upload: (
+    file: File,
+    threadId: string,
+    options: { referenceOnly?: boolean; signal?: AbortSignal } = {},
+  ) => {
     const form = new FormData()
     form.append('file', file)
     form.append('threadId', threadId)
-    return apiClient.request<AttachmentInfo>('/attachments', { method: 'POST', body: form })
+    if (options.referenceOnly) form.append('contextMode', 'reference')
+    return apiClient.request<AttachmentInfo>('/attachments', {
+      method: 'POST',
+      body: form,
+      signal: options.signal,
+    })
   },
 
   contentUrl: (id: string, download = false) =>

@@ -2,7 +2,7 @@ import { existsSync, mkdirSync, readdirSync, readFileSync, rmSync, writeFileSync
 import { join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { randomUUID } from 'node:crypto'
-import { afterEach, describe, expect, it } from 'vitest'
+import { afterEach, describe, expect, it, vi } from 'vitest'
 import { MemoryStoreRegistry } from '@infos/backend/repositories/storeRegistry'
 import { triviumFiles, upgradeBackupPath } from '@infos/backend/repositories/triviumFiles'
 
@@ -10,6 +10,7 @@ const roots: string[] = []
 const temporaryRoot = fileURLToPath(new URL('../../../../../TEMP/', import.meta.url))
 
 afterEach(() => {
+  vi.restoreAllMocks()
   for (const root of roots.splice(0)) rmSync(root, { recursive: true, force: true })
 })
 
@@ -138,7 +139,7 @@ describe('MemoryStoreRegistry维度联动', () => {
     registry.closeAll()
   })
 
-  it('重置 Store 时清理 0.8.9 的全部文件组和升级备份，保留相邻文件', () => {
+  it('重置 Store 时清理 0.8.11 文件组与历代升级备份，保留相邻文件', () => {
     const root = join(temporaryRoot, `infos-store-reset-${Date.now()}-${Math.random()}`)
     roots.push(root)
     mkdirSync(root, { recursive: true })
@@ -169,6 +170,11 @@ describe('MemoryStoreRegistry维度联动', () => {
       '.pld.1792345678900',
       '.pld.1792345678901',
       '.pld.1792345678901.tmp',
+      '.publish',
+      '.publish.0',
+      '.publish.1',
+      '.publish.2',
+      '.publish.0.tmp',
     ]
     for (const suffix of suffixes) writeFileSync(`${storePath}${suffix}`, '测试')
     writeFileSync(`${storePath}.notes.md`, '用户文档')
@@ -177,11 +183,17 @@ describe('MemoryStoreRegistry维度联动', () => {
     const backup = upgradeBackupPath(root, storePath)
     mkdirSync(backup, { recursive: true })
     writeFileSync(join(backup, '旧正文'), '待删除')
+    const oldBackup = join(root, '.store-upgrades', '0.8.9', 'agent_pero', 'memory.tdb')
+    mkdirSync(oldBackup, { recursive: true })
+    writeFileSync(join(oldBackup, '旧正文'), '升级前版本的备份')
+    const oldSocialBackup = join(root, '.store-upgrades', '0.8.9', 'agent_pero', 'social.tdb')
+    mkdirSync(oldSocialBackup, { recursive: true })
+    writeFileSync(join(oldSocialBackup, '社交正文'), '其他库的备份')
     const recovery = join(root, 'agent_pero', `.index-${randomUUID()}`, '.previous')
     mkdirSync(recovery, { recursive: true })
     writeFileSync(join(recovery, 'memory.tdb.pld.456'), '重建失败留下的正文')
     writeFileSync(join(recovery, 'social.tdb.pld.456'), '其他库的恢复文件')
-    const removedAgentBackup = upgradeBackupPath(root, join(root, 'agent_removed', 'memory.tdb'))
+    const removedAgentBackup = join(root, '.store-upgrades', '0.8.9', 'agent_removed', 'memory.tdb')
     mkdirSync(removedAgentBackup, { recursive: true })
     expect(registry.listStoredAgentIds()).toContain('removed')
 
@@ -189,10 +201,74 @@ describe('MemoryStoreRegistry维度联动', () => {
 
     for (const suffix of suffixes) expect(existsSync(`${storePath}${suffix}`)).toBe(false)
     expect(existsSync(backup)).toBe(false)
+    expect(existsSync(oldBackup)).toBe(false)
+    expect(readFileSync(join(oldSocialBackup, '社交正文'), 'utf8')).toBe('其他库的备份')
     expect(readFileSync(`${storePath}.notes.md`, 'utf8')).toBe('用户文档')
     expect(existsSync(`${social}.pld.123`)).toBe(true)
     expect(existsSync(join(recovery, 'memory.tdb.pld.456'))).toBe(false)
     expect(readFileSync(join(recovery, 'social.tdb.pld.456'), 'utf8')).toBe('其他库的恢复文件')
+  })
+
+  it('文本预热失败向上传播并保留脏标记，后续请求可以重试', () => {
+    const registry = fixture(4)
+    try {
+      const store = registry.getAgentStore('pero', 'main')
+      const path = registry.resolveAgentStorePath('pero', 'main')
+      registry.markTextIndexDirty(path)
+      const build = vi.spyOn(store, 'buildTextIndex').mockImplementationOnce(() => {
+        throw new Error('模拟文本索引损坏')
+      })
+      expect(() => registry.ensureTextIndexReady('pero', 'desktop')).toThrow('模拟文本索引损坏')
+      expect(registry.ensureTextIndexReady('pero', 'desktop')).toBe(store)
+      expect(build).toHaveBeenCalledTimes(2)
+      registry.ensureTextIndexReady('pero', 'desktop')
+      expect(build).toHaveBeenCalledTimes(2)
+    } finally {
+      registry.closeAll()
+    }
+  })
+
+  it('社交索引初始化失败关闭句柄，重试不会遗留 Writer 锁', () => {
+    const registry = fixture(4)
+    const base = registry.getAgentStore('pero', 'main')
+    const build = vi
+      .spyOn(Object.getPrototypeOf(base), 'buildTextIndex')
+      .mockImplementationOnce(() => {
+        throw new Error('模拟社交文本预热失败')
+      })
+    try {
+      expect(() => registry.getAgentStore('pero', 'social')).toThrow('模拟社交文本预热失败')
+      build.mockRestore()
+      expect(() => registry.getAgentStore('pero', 'social')).not.toThrow()
+    } finally {
+      build.mockRestore()
+      registry.closeAll()
+    }
+  })
+
+  it('正文替换、重开和删除后复用 ID 不会召回旧文本', () => {
+    const registry = fixture(4)
+    try {
+      let store = registry.getAgentStore('pero', 'main')
+      const search = (text: string) =>
+        store.searchHybrid([0, 0, 0, 0], text, 10, 0, 0.01, 0).map((hit) => hit.id)
+      store.insertWithId(1, [1, 0, 0, 0], { content: '旧版正文' })
+      store.indexText(1, 'obsoletealpha')
+      store.indexText(1, 'currentbeta')
+      expect(search('obsoletealpha')).not.toContain(1)
+      expect(search('currentbeta')).toContain(1)
+      registry.closeAll()
+      store = registry.getAgentStore('pero', 'main')
+      expect(search('obsoletealpha')).not.toContain(1)
+      expect(search('currentbeta')).toContain(1)
+      store.delete(1)
+      store.insertWithId(1, [0, 1, 0, 0], { content: '复用 ID 的正文' })
+      expect(search('currentbeta')).not.toContain(1)
+      store.indexText(1, 'reusedgamma')
+      expect(search('reusedgamma')).toContain(1)
+    } finally {
+      registry.closeAll()
+    }
   })
 
   it('同步快照复制已刷新 Payload 文件组、冷 Store 与 SQLite，并允许继续写入', () => {

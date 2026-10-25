@@ -93,7 +93,7 @@ describe('社交角色人格隔离', () => {
     const { compiler, input } = compilerFixture()
     const result = await compiler.compile({
       ...input,
-      ownerQq: '654321',
+      ownerId: '654321',
       triggerSenderId: '654321',
       triggerSenderName: '秋月佑空',
       triggerMessageId: 'owner-now',
@@ -112,13 +112,13 @@ describe('社交角色人格隔离', () => {
       ],
     })
     const current = result.messages[result.currentMessageIndex!]?.content
-    expect(current).toContain('message_id="owner-now" sender_qq="654321" identity="主人"')
+    expect(current).toContain('message_id="owner-now" sender_id="654321" identity="主人"')
     expect(current).toContain('当前主要对话对象是你的主人')
     expect(current).toContain('<message_excerpt truncated="false">揉揉揉揉揉</message_excerpt>')
     expect(current).not.toContain('好糟糕的性格，撅了')
     expect(result.messages[0]?.content).toContain('不因群聊、私聊或工具权限多少而改变')
     const history = result.messages.find((message) => message.cacheControl?.kind === 'history')
-    expect(history?.content).toContain('QQ:123456 身份:普通联系人')
+    expect(history?.content).toContain('平台账号:123456 身份:普通联系人')
     expect(history?.content).toContain('visitor-old')
     expect(history?.content).toContain('2026-10-19T09:16:03Z')
   })
@@ -136,7 +136,7 @@ describe('社交角色人格隔离', () => {
     })
     const result = await compiler.compile({
       ...input,
-      ownerQq: '654321',
+      ownerId: '654321',
       triggerSenderId: '123456',
       isOwner: true,
       triggerMessageId: 'visitor-now',
@@ -145,7 +145,7 @@ describe('社交角色人格隔离', () => {
     })
     expect(result.currentMessageIndex).toBe(2)
     const current = result.messages[result.currentMessageIndex!]?.content
-    expect(current).toContain('sender_qq="123456" identity="普通联系人"')
+    expect(current).toContain('sender_id="123456" identity="普通联系人"')
     expect(current).toContain('&lt;/message_excerpt&gt;')
     expect(current).toContain('&lt;/reply_target&gt;')
     expect(result.messages.at(-1)?.content).toBe('自定义后置说明')
@@ -171,7 +171,7 @@ describe('社交角色人格隔离', () => {
       ctx,
       socialAgentId: currentAgent,
       grantIds: ['old-grant'],
-      napcatAdapter: adapter,
+      adapters: [adapter],
       socialBridge: { closeSessionsExcept: vi.fn(() => 1) },
     })
     const control = runtime as unknown as {

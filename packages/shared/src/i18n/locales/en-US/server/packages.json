@@ -1,0 +1,9 @@
+{
+  "当前处于拓展恢复模式，请在资源版本页恢复拓展并重启。": "Extension recovery mode is active. Resume extensions from Resource versions and restart.",
+  "插件记录无法读取，请检查数据目录中的安装记录。": "Could not read plugin records. Check the installation index in the data directory.",
+  "插件操作失败，请检查插件包与授权状态。": "Plugin operation failed. Check the package and authorization.",
+  "插件内容已修改，请先读取本地修改并重新审核。": "Plugin files changed. Review local changes and authorize again.",
+  "请先审核并授权此版本。": "Review and authorize this version first.",
+  "插件依赖准备失败，请检查网络和依赖声明。": "Dependency preparation failed. Check the network and dependency declarations.",
+  "插件包无效，或含有不允许的路径和配置。": "Invalid plugin package, or prohibited paths or configuration."
+}

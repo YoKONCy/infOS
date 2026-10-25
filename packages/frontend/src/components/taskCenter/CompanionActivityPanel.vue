@@ -4,12 +4,13 @@ import { getDisplayLocale } from '../../i18n/index'
 import { t as __t } from '../../i18n/index'
 
 import './task-pixel.css'
-import { computed, ref, toRef, watch } from 'vue'
+import { computed, onDeactivated, ref, toRef, watch } from 'vue'
 import { useCompanionActivity } from '../../composables/pet/useCompanionActivity'
 import { schedulerApi } from '../../api/modules/schedulerApi'
 import TaskDetailModal from './TaskDetailModal.vue'
 import PixelIcon from '../pixel/PixelIcon.vue'
 import { backgroundTasksApi, type BackgroundTaskInfo } from '../../api/modules/backgroundTasksApi'
+import { useTaskDetail } from '../../composables/main/useTaskDetail'
 
 const props = defineProps<{
   agentId: string
@@ -23,7 +24,14 @@ const { activity, summary, needsAttention, error, busy, refresh, perform } = use
   toRef(props, 'agentId'),
 )
 const expanded = ref(!props.compact && !props.floating)
-const selectedTask = ref<BackgroundTaskInfo | null>(null)
+const {
+  task: selectedTask,
+  error: detailError,
+  open: openDetail,
+  close: clearDetail,
+  refresh: refreshDetail,
+} = useTaskDetail()
+onDeactivated(clearDetail)
 const dismissedSignature = ref('')
 const focused = computed(() => props.floating || props.attentionOnly)
 const tasks = computed(() =>
@@ -73,27 +81,11 @@ watch(needsAttention, (value) => emit('attention-change', value), { immediate: t
 watch(
   () => props.agentId,
   () => {
-    selectedTask.value = null
+    clearDetail()
     dismissedSignature.value = ''
     expanded.value = !props.compact && !props.floating
   },
 )
-watch(activity, async (state) => {
-  const selected = selectedTask.value
-  if (!selected) return
-  const current = [...(state?.tasks ?? []), ...(state?.recent ?? [])].find(
-    (task) => task.id === selected.id,
-  )
-  if (current) selectedTask.value = current
-  else {
-    try {
-      const response = await backgroundTasksApi.detail(selected.id)
-      if (selectedTask.value?.id === selected.id) selectedTask.value = response.data ?? null
-    } catch {
-      /* 活动列表继续展示刷新失败信息，已打开的详情保留上次快照。 */
-    }
-  }
-})
 const statusLabels: Record<string, string> = {
   get waiting() {
     return __t('ui.taskCenter', '等待条件')
@@ -123,18 +115,18 @@ function timeText(value: string): string {
   })
 }
 async function openTask(task: BackgroundTaskInfo): Promise<void> {
-  selectedTask.value = task
+  void openDetail(task)
   if (['completed', 'failed', 'cancelled'].includes(task.status) && !task.readAt) {
     await perform(() => backgroundTasksApi.markRead(task.id))
   }
 }
 function closeTask(): void {
-  selectedTask.value = null
+  clearDetail()
   void refresh()
 }
 function dismiss(): void {
   dismissedSignature.value = attentionSignature.value
-  selectedTask.value = null
+  clearDetail()
   expanded.value = false
 }
 </script>
@@ -341,7 +333,14 @@ function dismiss(): void {
     <TaskDetailModal
       v-if="selectedTask"
       :task="selectedTask"
-      @updated="refresh"
+      :refresh-error="detailError"
+      @open-task="openDetail"
+      @updated="
+        () => {
+          refreshDetail()
+          refresh()
+        }
+      "
       @close="closeTask"
     />
   </section>

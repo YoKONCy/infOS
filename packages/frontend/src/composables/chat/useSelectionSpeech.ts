@@ -28,7 +28,7 @@ if (typeof window !== 'undefined') window.addEventListener('infos:stop-message-a
 import.meta.hot?.dispose(() => window.removeEventListener('infos:stop-message-audio', stopActive))
 
 /** 选区朗读复用已配置的 TTS；跨气泡只保留一次播放，离开页面立即取消。 */
-export function useSelectionSpeech() {
+export function useSelectionSpeech(agentId?: () => string | undefined) {
   const owner = Symbol('selection-speech')
   const busy = ref(false)
   const stop = () => {
@@ -53,7 +53,7 @@ export function useSelectionSpeech() {
       await context.resume()
       const chunks: string[] = []
       for (let start = 0; start < text.length; ) {
-        let end = Math.min(text.length, start + 4000)
+        let end = Math.min(text.length, start + 500)
         // 不从 UTF-16 代理对中间切开，避免分段朗读破坏表情或生僻字。
         if (end < text.length && /[\uD800-\uDBFF]/.test(text[end - 1]!)) end--
         chunks.push(text.slice(start, end))
@@ -61,7 +61,10 @@ export function useSelectionSpeech() {
       }
       for (const chunk of chunks) {
         if (active !== current) return
-        const bytes = await voiceApi.synthesize({ text: chunk }, current.abort.signal)
+        const bytes = await voiceApi.synthesize(
+          { text: chunk, ...(agentId?.() ? { agentId: agentId() } : {}) },
+          current.abort.signal,
+        )
         if (active !== current) return
         const buffer = await context.decodeAudioData(bytes)
         if (active !== current) return

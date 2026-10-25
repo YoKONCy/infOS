@@ -15,7 +15,6 @@ import { t as __t } from '../lib/i18n'
 import type { AppContext } from '../container'
 import type { GatewayEnvelope } from '../services/gateway/types'
 import { createEnvelope } from '../services/gateway/types'
-import { cleanTextForTts } from '../services/voice'
 import { createLogger } from '../lib/logger'
 import { ConversationSurfaceSession } from '../projections/conversationSurfaceSession'
 import { runChatStream } from '../services/conversation/chatStreamRunner'
@@ -245,6 +244,7 @@ function registerVoicePipelineHandler(ctx: AppContext): void {
  * desktop 文本对话路径默认走 TTS；无有效 Seat 或 Provider 时安全跳过。
  */
 const speechGenerations = new Map<string, number>()
+const speechControllers = new Map<string, AbortController>()
 
 async function synthesizeAndDeliverTts(
   ctx: AppContext,
@@ -253,8 +253,12 @@ async function synthesizeAndDeliverTts(
   principalId: string,
   generation: number,
 ): Promise<void> {
+  if (speechGenerations.get(principalId) !== generation) return
+  const controller = new AbortController()
+  speechControllers.get(principalId)?.abort()
+  speechControllers.set(principalId, controller)
   try {
-    if (!ctx.ttsService.isAvailable) {
+    if (!ctx.ttsService.availableFor(principalId)) {
       logger.debug(__t('logs.lifecycle', 'TTS 不可用，跳过桌面对话语音合成'))
       return
     }
@@ -275,13 +279,17 @@ async function synthesizeAndDeliverTts(
       return
     }
 
-    const ttsText = cleanTextForTts(spokenReply)
+    const ttsText = spokenReply
     if (!ttsText.trim()) {
       logger.debug(__t('logs.lifecycle', 'TTS 文本清洗后为空，跳过合成'))
       return
     }
 
-    const audio = await ctx.ttsService.synthesize({ text: ttsText })
+    const audio = await ctx.ttsService.synthesize({
+      text: ttsText,
+      agentId: principalId,
+      signal: controller.signal,
+    })
     if (speechGenerations.get(principalId) !== generation) return
     const receipt = await ctx.audioDeliveryService.deliver(
       audio,
@@ -307,7 +315,10 @@ async function synthesizeAndDeliverTts(
       ]),
     )
   } catch (err) {
+    if (controller.signal.aborted) return
     logger.warn(__t('logs.lifecycle', '桌面对话 TTS 失败: {0}', [err]))
+  } finally {
+    if (speechControllers.get(principalId) === controller) speechControllers.delete(principalId)
   }
 }
 
@@ -319,6 +330,7 @@ function registerChatHandler(ctx: AppContext): void {
         ? payload.agentId
         : ctx.runtimeStateService.getActiveAgent() || ctx.agentManager.defaultAgentId
     speechGenerations.set(principalId, (speechGenerations.get(principalId) ?? 0) + 1)
+    speechControllers.get(principalId)?.abort()
     await ctx.audioDeliveryService.cancel(principalId)
     if (envelope.id && envelope.sourceId)
       await ctx.gatewayHub.sendResponse(envelope.id, envelope.sourceId, { stopped: true })
@@ -332,6 +344,7 @@ function registerChatHandler(ctx: AppContext): void {
     const requestId = envelope.id
     const speechGeneration = (speechGenerations.get(agentId) ?? 0) + 1
     speechGenerations.set(agentId, speechGeneration)
+    speechControllers.get(agentId)?.abort()
     const sourceNodeId = envelope.sourceId ?? ''
 
     // AIOS: 优先使用 threadId；兼容旧版 sessionId 字段

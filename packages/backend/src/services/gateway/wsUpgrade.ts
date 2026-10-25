@@ -5,7 +5,7 @@ import { t as __t } from '../../lib/i18n'
  * 在 Node.js HTTP Server 上监听 upgrade 事件，
  * 分路由处理两种 WebSocket 端点:
  * 1. /ws/gateway     — 前端 Dashboard 实时通信 (GatewayHub)
- * 2. /api/social/ws  — NapCat 反向 WebSocket 连接 (OneBot v11)
+ * 2. /api/social/ws  — 平台声明的 WebSocket 传输
  *
  * 符合 A02 §7: Gateway 与 HTTP 共用 :9120 端口
  *
@@ -16,7 +16,7 @@ import { t as __t } from '../../lib/i18n'
 import type { Server, IncomingMessage } from 'node:http'
 import { WebSocketServer, WebSocket } from 'ws'
 import type { GatewayHub } from './gatewayHub'
-import { getSocialNapcatAdapter, createWsSender } from '../../applications/socialWsBridge'
+import { getSocialTransport, createWsSender } from '../../applications/socialWsBridge'
 import { createLogger } from '../../lib/logger'
 import { createArcaBrowserSocket } from '../../applications/arcaBrowserSocket'
 import type { AppContext } from '../../container'
@@ -140,7 +140,7 @@ export function setupGatewayWebSocket(
         socket.destroy()
         return
       }
-      // 适配器属于独立原生通道，未授权网页不能冒充 NapCat 建立反向连接。
+      // 适配器属于独立原生通道，未授权网页不能冒充平台客户端 建立反向连接。
       if (request.headers.origin && access && !identity) {
         socket.destroy()
         return
@@ -204,21 +204,23 @@ export function setupGatewayWebSocket(
     })
   })
 
-  // ── 社交适配器 WS 连接 (NapCat OneBot v11 反向 WS) ──
-  // 通过 socialWsBridge 全局注册表获取 SocialAppRuntime 注入的 NapcatAdapter
+  // ── 社交适配器 WS 连接 ──
+  // 由宿主注册表选择平台，协议身份字段由平台端口声明。
   socialWss.on('connection', (ws: WebSocket, request: IncomingMessage) => {
-    const adapter = getSocialNapcatAdapter()
+    const platform =
+      new URL(request.url ?? '/', 'http://localhost').searchParams.get('platform') ?? undefined
+    const adapter = getSocialTransport(platform)
     if (!adapter) {
-      logger.warn(
-        __t('logs.gateway', '收到社交 WS 连接但无 NapCat 适配器注册（社交应用未启动），关闭连接'),
-      )
+      logger.warn(__t('logs.gateway', '社交 WS 未找到唯一可用的平台传输，关闭连接'))
       ws.close(1013, '社交服务尚未就绪，请稍后重连')
       return
     }
 
-    // 从 NapCat 的 X-Self-ID header 获取 Bot QQ 号
-    const selfId = request.headers['x-self-id'] as string | undefined
-    logger.info(__t('logs.gateway', 'NapCat 反向 WS 连接建立: selfId={0}', [selfId ?? '未知']))
+    const header = adapter.accountHeader
+      ? request.headers[adapter.accountHeader.toLowerCase()]
+      : undefined
+    const selfId = typeof header === 'string' ? header : undefined
+    logger.info(__t('logs.gateway', '社交 WS 连接建立: accountId={0}', [selfId ?? '未知']))
 
     // 注册连接到适配器
     const sender = createWsSender({
@@ -231,17 +233,17 @@ export function setupGatewayWebSocket(
     ws.on('message', (data: Buffer | string) => {
       const text = typeof data === 'string' ? data : data.toString('utf-8')
       adapter.handleRawEvent(text).catch((err) => {
-        logger.warn(__t('logs.gateway', 'NapCat 事件处理失败: {0}', [err]))
+        logger.warn(__t('logs.gateway', '社交平台事件处理失败: {0}', [err]))
       })
     })
 
     ws.on('close', () => {
       adapter.unregisterConnection(selfId, sender)
-      logger.info(__t('logs.gateway', 'NapCat 反向 WS 连接断开: selfId={0}', [selfId ?? '未知']))
+      logger.info(__t('logs.gateway', '社交 WS 连接断开: accountId={0}', [selfId ?? '未知']))
     })
 
     ws.on('error', (err) => {
-      logger.warn(__t('logs.gateway', 'NapCat WS 错误: {0}', [err.message]))
+      logger.warn(__t('logs.gateway', '社交 WS 错误: {0}', [err.message]))
     })
   })
 

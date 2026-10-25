@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { t as __t } from '../../i18n/index'
+import { t as __t, appLocale } from '../../i18n/index'
 
 import { copyClientText } from '../../lib/clientPlatform'
 
@@ -13,6 +13,13 @@ import EmbeddedWebPreview from './EmbeddedWebPreview.vue'
 import StreamText from './StreamText.vue'
 import { segmentChatContent } from '../../lib/embeddedWebPreview'
 import { queueTextRender } from '../../compositor/renderQueue'
+import {
+  matchesRichTextSnapshot,
+  readRichTextSnapshot,
+  writeRichTextSnapshot,
+  type RichTextSegment,
+  type RichTextSnapshot,
+} from '../../compositor/richTextSnapshot'
 import { useNotificationStore } from '../../stores/useNotificationStore'
 import ResourceReferenceCard from '../resources/ResourceReferenceCard.vue'
 import { splitResourceCards } from '../../lib/resourceLinks'
@@ -40,13 +47,10 @@ const props = withDefaults(
 )
 const notify = useNotificationStore()
 const mainVisible = inject('infos:main-surface-visible', shallowRef(true))
-type Segment = {
-  type: 'rich-text' | 'web-preview' | 'resource-reference'
-  source: string
-  label?: string
-  html?: string
-}
-const segments = shallowRef<Segment[]>([{ type: 'rich-text', source: props.content }])
+const segments = shallowRef<readonly RichTextSegment[]>([
+  { type: 'rich-text', source: props.content },
+])
+let residentSnapshot: RichTextSnapshot | undefined
 let cancelRender: (() => void) | undefined
 let generation = 0
 let disposed = false
@@ -58,7 +62,16 @@ function updateSegments(): void {
   cancelRender?.()
   if (!pageActive.value || !props.active || !mainVisible.value) return
   if (!props.stable) {
+    residentSnapshot = undefined
     segments.value = [{ type: 'rich-text', source: props.content }]
+    return
+  }
+  const input = { content: props.content, webPreview: props.webPreview, locale: appLocale.value }
+  if (matchesRichTextSnapshot(residentSnapshot, input)) return
+  const cached = props.cache ? readRichTextSnapshot(input) : undefined
+  if (cached) {
+    residentSnapshot = cached
+    segments.value = cached.segments
     return
   }
   rendererPromise ??= import('../../lib/chatRichRenderer')
@@ -89,6 +102,8 @@ function updateSegments(): void {
                     ? renderChatRichText(segment.source, { cache: props.cache && props.stable })
                     : '',
               }))
+          residentSnapshot = { ...input, segments: segments.value }
+          if (props.cache) writeRichTextSnapshot(residentSnapshot)
         } catch {
           segments.value = [{ type: 'rich-text', source: props.content }]
         }
@@ -107,8 +122,7 @@ watch(
     props.active,
     props.cache,
     props.webPreview,
-    props.agentId,
-    props.threadId,
+    appLocale.value,
     mainVisible.value,
     pageActive.value,
   ],
@@ -235,6 +249,8 @@ async function handleClick(event: MouseEvent) {
   --chat-quote-cn-single-bg: rgba(236, 72, 153, 0.11);
   --chat-quote-en-single: #b45309;
   --chat-corner: #7c3aed;
+  --chat-parenthetical: #666179;
+  --chat-parenthetical-bg: rgba(112, 104, 145, 0.045);
   --chat-link: #0284c7;
   --chat-code-bg: #161b2a;
   --chat-code-head: #242b3d;
@@ -255,6 +271,8 @@ async function handleClick(event: MouseEvent) {
   --chat-quote-cn-single-bg: rgba(236, 72, 153, 0.16);
   --chat-quote-en-single: #fcd34d;
   --chat-corner: #c4b5fd;
+  --chat-parenthetical: #bcb7cd;
+  --chat-parenthetical-bg: rgba(176, 165, 214, 0.055);
   --chat-link: #67e8f9;
   --chat-code-bg: #0b1020;
   --chat-code-head: #161d31;
@@ -413,6 +431,14 @@ async function handleClick(event: MouseEvent) {
   box-shadow:
     inset 2px 0 var(--ui-accent-primary),
     inset -2px 0 var(--ui-accent-sky);
+}
+.chat-rich-text .chat-parenthetical {
+  color: var(--chat-parenthetical);
+  background: var(--chat-parenthetical-bg);
+  border-radius: 3px;
+  text-decoration: none;
+  -webkit-box-decoration-break: clone;
+  box-decoration-break: clone;
 }
 .chat-rich-text :not(pre) > code,
 .chat-xml-inline {

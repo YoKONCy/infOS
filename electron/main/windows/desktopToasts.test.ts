@@ -35,6 +35,7 @@ class Window extends EventEmitter {
   getContentBounds = () => this.bounds
   setBounds = vi.fn()
   setMenu = vi.fn()
+  setBackgroundMaterial = vi.fn()
   setIgnoreMouseEvents = vi.fn()
   loadURL = vi.fn().mockResolvedValue(undefined)
   showInactive = vi.fn(() => {
@@ -98,6 +99,7 @@ describe('原生通知层', () => {
     expect(mock.createWindow).toHaveBeenCalledWith(
       expect.objectContaining({ parent: host, transparent: true, focusable: false }),
     )
+    expect(mock.createWindow.mock.calls[0]![0]).not.toHaveProperty('backgroundMaterial')
     expect(overlay.showInactive).not.toHaveBeenCalled()
     overlay.webContents.emit('did-finish-load')
     expect(overlay.showInactive).toHaveBeenCalledTimes(1)

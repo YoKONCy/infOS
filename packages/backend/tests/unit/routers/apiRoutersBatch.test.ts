@@ -115,6 +115,7 @@ describe('AgentRouter', () => {
         ),
         getWritableCapabilitiesPath: vi.fn(() => '/tmp/pero-capabilities.yaml'),
       },
+      cleanupDeletedAgent: vi.fn(),
       strongholdService: {
         ensureAgentLocation: vi.fn(() => Promise.resolve({ agentId: 'pero', roomId: 'living' })),
       },
@@ -653,6 +654,7 @@ describe('VoiceRouter', () => {
       voice: 'alloy',
       speed: 1,
       format: 'mp3',
+      signal: expect.any(AbortSignal),
     })
     expect(await readJson(asr)).toMatchObject({
       code: 'OK',

@@ -1,0 +1,6 @@
+{
+  "请使用 Gemini 协议并手动开启模型卡片的原生音频输入": "Use the Gemini protocol and manually enable native audio input on the model card.",
+  "音频格式或编码无效，请重新上传": "Invalid audio format or encoding. Upload again.",
+  "单轮原生音频不能超过 12MB": "Native audio cannot exceed 12 MB per turn.",
+  "Gemini 内联请求超过 20MB，请减少附件后重试": "The Gemini inline request exceeds 20 MB. Remove attachments and try again."
+}

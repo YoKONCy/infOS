@@ -1,4 +1,13 @@
 {
+  "当前文件的第 {0}–{1} 行": "Lines {0}–{1} of the current file",
+  "{0} 个文件": "{0} files",
+  "{0} 个目录": "{0} directories",
+  "{0} 处匹配": "{0} matches",
+  "搜索范围：{0}": "Search scope: {0}",
+  "遵守 Git 忽略规则": "Respects Git ignore rules",
+  "包含 Git 忽略项": "Includes Git-ignored files",
+  "在工作区打开：{0}": "Open in workspace: {0}",
+  "结果已截断，可缩小搜索范围查看其余匹配": "Results truncated. Narrow the search to see additional matches.",
   "找到{0}{1}": "found {0}{1}",
   "至少 ": "at least"
 }

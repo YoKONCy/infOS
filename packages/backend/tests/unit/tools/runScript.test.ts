@@ -134,6 +134,21 @@ describe('NIT 取消与超时', () => {
     expect(executor).not.toHaveBeenCalled()
   })
 
+  it.each(['open_application', 'get_active_windows', 'activate_window'])(
+    '%s 未展开时，脚本在前置工具产生副作用前拒绝整段执行',
+    async (name) => {
+      const executor = vi.fn().mockResolvedValue(success())
+      runScriptTool.bindToolExecutor!(executor)
+      await expect(
+        runScriptTool.execute(
+          { code: `terminal_execute(command="前置操作")\n${name}()` },
+          { ...context, advancedToolAccess: { expanded: false, names: new Set([name]) } },
+        ),
+      ).rejects.toThrow('脚本尚未执行任何工具')
+      expect(executor).not.toHaveBeenCalled()
+    },
+  )
+
   it('桌面接管后停止脚本，脚本 catch 也不能继续下一项工具', async () => {
     const executor = vi.fn(async () => ({
       output: JSON.stringify({

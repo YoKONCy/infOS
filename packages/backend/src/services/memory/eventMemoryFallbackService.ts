@@ -3,6 +3,7 @@ import { createHash, randomUUID } from 'node:crypto'
 import { performance } from 'node:perf_hooks'
 import type { EventNoteDraftInput, MemoryBackgroundPolicy } from '@infos/shared'
 import { MemoryBackgroundControl } from './memoryBackgroundControl'
+import { MemoryAgentScope } from './memoryAgentScope'
 import type { EventNoteRepository } from '../../repositories/eventNote.repo'
 import type { ThreadRepository } from '../../repositories/thread.repo'
 import type { EventMemoryService } from './eventMemoryService'
@@ -44,6 +45,7 @@ interface MemoryBatch {
 }
 
 export interface EventMemoryFallbackOptions {
+  agents?: MemoryAgentScope
   background?: MemoryBackgroundPolicy
   intervalSeconds?: number
   safeInputTokens?: number
@@ -74,6 +76,7 @@ export class EventMemoryFallbackService {
     options: EventMemoryFallbackOptions = {},
   ) {
     this.options = {
+      agents: options.agents ?? new MemoryAgentScope(),
       background: options.background ?? new MemoryBackgroundControl(),
       intervalSeconds: options.intervalSeconds ?? INTERVAL_SECONDS,
       safeInputTokens: options.safeInputTokens ?? 0,
@@ -90,6 +93,7 @@ export class EventMemoryFallbackService {
 
   /** 独立轻量心跳持续落盘，不因正在调用补记模型而漏计运行时间。 */
   checkpointRuntime(enabledAgentIds: string[]): Promise<void> {
+    enabledAgentIds = enabledAgentIds.filter((id) => this.options.agents.isAvailable(id))
     const now = this.runtimeNow()
     const elapsed = Math.max(0, (now - this.lastTickMs) / 1000)
     const enabled = this.options.background.enabled
@@ -109,6 +113,10 @@ export class EventMemoryFallbackService {
       .catch(() => undefined)
       .then(async () => {
         for (const [agentId, seconds] of [...this.pendingRuntime]) {
+          if (!this.options.agents.isAvailable(agentId)) {
+            this.pendingRuntime.delete(agentId)
+            continue
+          }
           await this.repo.advanceTimer(`background-runtime:${agentId}`, seconds)
           const remaining = (this.pendingRuntime.get(agentId) ?? 0) - seconds
           if (remaining > 0) this.pendingRuntime.set(agentId, remaining)
@@ -131,13 +139,17 @@ export class EventMemoryFallbackService {
       this.scanIncomplete = false
       for (const agentId of new Set(enabledAgentIds)) {
         signal.throwIfAborted()
+        if (!this.options.agents.isAvailable(agentId)) continue
+        const agentSignal = AbortSignal.any([signal, this.options.agents.signal(agentId)])
         const runtime = await this.repo.readTimer(`background-runtime:${agentId}`)
         const reviewed = await this.repo.readTimer(`background-reviewed-runtime:${agentId}`)
+        if (agentSignal.aborted) continue
         if (runtime - reviewed < this.options.intervalSeconds) continue
         try {
-          await this.reviewAgent(agentId, runtime, reviewed, signal)
+          await this.reviewAgent(agentId, runtime, reviewed, agentSignal)
         } catch (error) {
           if (signal.aborted) return
+          if (agentSignal.aborted) continue
           this.scanIncomplete = true
           logger.warn(__t('logs.memory', '定时补记尚未完成，保留周期进度等待重试'), {
             agentId,
@@ -165,12 +177,14 @@ export class EventMemoryFallbackService {
     reviewed: number,
     signal: AbortSignal,
   ): Promise<void> {
+    signal.throwIfAborted()
     const cycleId = `background:cycle:${agentId}:${reviewed}`
     const saved = await this.repo.findOperation(cycleId)
     const cycle = (saved?.payload as MemoryCycle | undefined) ?? {
       runtimeSeconds,
       throughMessageId: await this.threads.latestMemoryMessageId(),
     }
+    signal.throwIfAborted()
     // 固定本周期边界；分批和失败重试都不会顺带追赶后来追加的对话。
     if (!saved) await this.repo.createOperation(cycleId, agentId, 'background_cycle', cycle)
     let incomplete = false
@@ -546,7 +560,11 @@ export class EventMemoryFallbackService {
         },
         ownerId,
       )
-      for (const id of extractionIds) await this.repo.markOperationCommitted(id)
+      for (const id of extractionIds) {
+        signal.throwIfAborted()
+        await this.repo.markOperationCommitted(id)
+      }
+      signal.throwIfAborted()
       await this.repo.markOperationCommitted(aggregateId)
       logger.info(__t('logs.memory', '后台定时补记批次已落盘'), {
         agentId: task.agentId,

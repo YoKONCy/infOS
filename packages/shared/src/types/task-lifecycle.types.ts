@@ -53,6 +53,8 @@ export interface TaskControlInput {
     | 'approve'
     | 'resolve_delivery'
   taskId?: string
+  resultOffset?: number
+  resultLimit?: number
   planId?: string
   planStepId?: string
   expectedRevision?: number
@@ -76,12 +78,30 @@ export interface TaskControlInput {
 
 /** 内置社交应用的任务领域接口，不暴露后端 Service。 */
 export interface SocialTaskControlPort {
-  execute(origin: TaskOrigin, input: TaskControlInput): Promise<unknown>
+  execute(origin: TaskOrigin, input: TaskControlInput, callId?: string): Promise<unknown>
+}
+
+/** 执行身份只能由工具运行时填写，不能从模型参数接收。 */
+export interface TaskControlContext {
+  requestedBy?: 'user' | 'agent'
+  taskId?: string
+  executionId?: string
+  callId?: string
+}
+
+export interface TaskDeliveryContext {
+  agentId: string
+  deliveryId: string
+  taskId: string
+  revision: number
+  status: string
 }
 
 export interface TaskDeliveryPort {
+  /** 身份由社交应用按所属平台核验，宿主不解释平台配置。 */
+  authorizeOrigin?(origin: TaskOrigin): Promise<string | undefined>
   ready(origin: TaskOrigin): Promise<boolean>
-  send(origin: TaskOrigin, content: string): Promise<void>
+  send(origin: TaskOrigin, content: string, context?: TaskDeliveryContext): Promise<void>
   sendResources?(
     origin: TaskOrigin,
     content: string,

@@ -25,7 +25,7 @@
     },
     {
       "name": "skill_read_resource",
-      "description": "安全读取指定Skill目录内的文本资源，禁止路径逃逸且限制为256KB。",
+      "description": "读取指定 Skill 目录内的文本资源，最多 256KB。",
       "display": { "label": "读取Skill资源", "icon": "file", "color": "purple", "style": "skill" },
       "parameters": {
         "type": "object",

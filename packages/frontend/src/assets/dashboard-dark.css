@@ -112,12 +112,12 @@
 
 /* ── SocialTab：专属暗色规则 ── */
 [data-theme='dark'] .social-panel {
-  color: #edf2f8 !important;
-  background: #0f131c !important;
+  color: var(--sp-text) !important;
+  background: var(--sp-canvas) !important;
 }
 
 [data-theme='dark'] .social-panel .sp-header {
-  background: #131721 !important;
+  background: var(--sp-surface) !important;
   border-bottom: 1px solid rgba(148, 163, 184, 0.14) !important;
 }
 
@@ -152,13 +152,13 @@
 
 [data-theme='dark'] .social-panel .sp-card {
   color: #aab4c3 !important;
-  background: #151923 !important;
+  background: var(--sp-surface) !important;
   border-color: rgba(148, 163, 184, 0.16) !important;
   box-shadow: none !important;
 }
 
 [data-theme='dark'] .social-panel .sp-card:hover:not(.sp-card-disabled) {
-  background: #1a202c !important;
+  background: var(--sp-hover) !important;
   border-color: rgba(56, 189, 248, 0.34) !important;
   box-shadow: none !important;
 }
@@ -197,26 +197,26 @@
 }
 
 [data-theme='dark'] .social-panel .sp-card-tag {
-  background: #1b202c !important;
+  background: var(--sp-surface-soft) !important;
   border-color: rgba(148, 163, 184, 0.16) !important;
 }
 
 [data-theme='dark'] .social-panel .sp-owner-config,
 [data-theme='dark'] .social-panel .sp-config-block {
-  background: #151923 !important;
+  background: var(--sp-surface) !important;
   border: 1px solid rgba(148, 163, 184, 0.17) !important;
 }
 
 [data-theme='dark'] .social-panel .sp-block-header {
   color: #b5c0cf !important;
-  background: #1a1f2b !important;
+  background: var(--sp-surface-soft) !important;
   border-color: rgba(148, 163, 184, 0.14) !important;
 }
 
 [data-theme='dark'] .social-panel .sp-owner-input,
 [data-theme='dark'] .social-panel .sp-mono {
   color: #dce4ef !important;
-  background: #0e121a !important;
+  background: var(--sp-reading) !important;
   border-color: rgba(148, 163, 184, 0.18) !important;
 }
 
@@ -235,7 +235,7 @@
 [data-theme='dark'] .social-panel .sp-terminal {
   margin: 0 24px 16px;
   border: 1px solid rgba(148, 163, 184, 0.18) !important;
-  background: #090c12 !important;
+  background: var(--sp-reading) !important;
   box-shadow: 0 12px 30px rgba(0, 0, 0, 0.24);
 }
 

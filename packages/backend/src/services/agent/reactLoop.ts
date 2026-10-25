@@ -1,4 +1,5 @@
 import { t as __t } from '../../lib/i18n'
+import { packageRequestMessages } from '../../packages/packageAgentFlow'
 /**
  * ReAct Loop — 推理-行动循环
  *
@@ -63,7 +64,8 @@ import { modelToolObservation } from '../execution/toolObservation'
 import { persistentWorkMessage } from '../context/workContext'
 import { executionOwnerState } from '../../tools/productivityRuntimeHolder'
 import { desktopPauseFromObservation } from '../execution/desktopPause'
-import { appendPromptSnapshot } from '../llm/promptCache'
+import { appendPromptSnapshot, canonicalTools } from '../llm/promptCache'
+import { compileModelRequest, promptPlanOf } from '../prompt/requestCompiler'
 
 const logger = createLogger('ReActLoop')
 
@@ -269,8 +271,15 @@ function searchResultPreview(name: string, output: string): string | undefined {
     for (const field of fields) {
       const entries = value[field]
       if (!Array.isArray(entries)) continue
-      preview[field] = entries.slice(0, 8)
-      if (entries.length > 8) preview.previewTruncated = true
+      preview[field] = entries.slice(0, 50).map((entry) =>
+        field === 'matches' && entry && typeof entry === 'object'
+          ? {
+              ...entry,
+              content: typeof entry.content === 'string' ? entry.content.slice(0, 300) : undefined,
+            }
+          : entry,
+      )
+      if (entries.length > 50) preview.previewTruncated = true
     }
     return JSON.stringify(preview)
   } catch {
@@ -472,6 +481,9 @@ export interface ToolExecutor {
       taskId?: string
       realmId?: string
       capabilityScope?: CapabilityScope
+      browserScope?: import('@infos/shared').AgentBrowserScope
+      requestedBy?: 'user' | 'agent'
+      inlineImages?: boolean
       executionId?: import('@infos/shared').KernelExecutionId
       processId?: import('@infos/shared').KernelProcessId
       deadline?: string
@@ -524,9 +536,13 @@ export interface CancelChecker {
  * @yields 流式文本片段 / SSE 事件 (Thinking 块已过滤)
  */
 export async function* runReActLoop(params: {
+  packageHooks?: import('../../packages/packageAgentFlow').PackageFlowEmitter
   onExecutionMessages?: (messages: ChatMessage[]) => void
   llmService: LlmService
   modelConfig: ModelConfig
+  /** 上下文编译器固定的请求策略，执行器不读取全局提示词设置。 */
+  promptPlan?: import('@infos/shared').CompiledPromptPlan
+  onRequestCompiled?: (request: import('../prompt/requestCompiler').ModelRequestSnapshot) => void
   messages: ChatMessage[]
   tools: ToolDefinition[] | undefined
   toolExecutor: ToolExecutor | undefined
@@ -546,6 +562,8 @@ export async function* runReActLoop(params: {
    * - channel: 当前对话通道（desktop/social/group）
    */
   threadContext?: {
+    browserScope?: import('@infos/shared').AgentBrowserScope
+    requestedBy?: 'user' | 'agent'
     threadId?: string
     channel?: string
     taskId?: string
@@ -683,6 +701,7 @@ export async function* runReActLoop(params: {
   let advancedTools = allAvailableTools.filter((tool) => isAdvancedTool(tool.name))
   advancedToolAccess.names = new Set(advancedTools.map((tool) => tool.name))
   let currentTools = initialReActTools(allAvailableTools, !!params.threadContext?.taskId, messages)
+  let preparedTools: ToolDefinition[] | undefined
   advancedToolAccess.expanded = currentTools.some((tool) => isAdvancedTool(tool.name))
   let finishTaskAvailable = !!params.threadContext?.taskId
   /** 是否已经向用户流式输出过可见正文（Thinking 不计入）。 */
@@ -690,6 +709,7 @@ export async function* runReActLoop(params: {
   // 完整原始转写：保留每一轮未过滤的 LLM 输出 (含 Thinking 块) + 工具调用/返回摘要，
   // 供「对话调试详情」查看内部构造 (区别于给用户看的、已剥离 Thinking 的可见回复)。
   let rawTranscript = ''
+  let modelRequestCount = 0
   const readableCallIds = new Set<string>()
   let consecutiveTruncations = 0
   let contextRetryBudget: number | undefined
@@ -699,9 +719,26 @@ export async function* runReActLoop(params: {
   const sentArgumentChars = new Map<string, number>()
 
   try {
+    await params.packageHooks?.emitHook('agent:beforeRun', {
+      agentId: params.agentId,
+      threadId: params.sessionId,
+      channel: source,
+      executionId: params.threadContext?.executionId,
+      realmId: params.threadContext?.realmId,
+    })
+    await params.packageHooks?.emitHook('chat:beforeSend', {
+      agentId: params.agentId,
+      threadId: params.sessionId,
+      channel: source,
+      messages,
+      executionId: params.threadContext?.executionId,
+      realmId: params.threadContext?.realmId,
+    })
     for (let turn = 0; turn < maxTurns; turn++) {
-      if (params.prepareToolDefinitions)
+      if (params.prepareToolDefinitions && currentTools !== preparedTools) {
         currentTools = await params.prepareToolDefinitions(currentTools)
+        preparedTools = currentTools
+      }
       await params.cancelChecker?.checkPause?.(controlSessionId)
       if (params.cancelChecker?.isHandoffRequested?.(controlSessionId)) break
       // 每轮开始前检测取消
@@ -797,7 +834,13 @@ export async function* runReActLoop(params: {
         data: { state: 'thinking', message: __t('server.agent', '正在思考...'), turn: turn + 1 },
       }
 
+      const promptPlan = params.promptPlan ?? promptPlanOf(messages)
+      const assistantPrefill = compileModelRequest([], turn, promptPlan).prefill
+      let prefillPending = !!assistantPrefill
+      const compileRequestMessages = (input: ChatMessage[]): ChatMessage[] =>
+        compileModelRequest(input, turn, promptPlan).messages
       let turnText = ''
+      let generatedTurnText = ''
       let visibleTurnText = ''
       let narrationBlockId = `narration-${turn + 1}`
       let narrationStarted = false
@@ -900,16 +943,20 @@ export async function* runReActLoop(params: {
       if (maxInputTokens > 0) {
         const available = maxInputTokens
         const count = () => {
-          currentInputTokens = llmService.estimateInputTokens(modelConfig, toModelMessages(), {
-            tools: currentTools.map((tool) => ({
-              type: 'function' as const,
-              function: {
-                name: tool.name,
-                description: tool.description,
-                parameters: tool.parameters,
-              },
-            })),
-          })
+          currentInputTokens = llmService.estimateInputTokens(
+            modelConfig,
+            compileRequestMessages(toModelMessages()),
+            {
+              tools: currentTools.map((tool) => ({
+                type: 'function' as const,
+                function: {
+                  name: tool.name,
+                  description: tool.description,
+                  parameters: tool.parameters,
+                },
+              })),
+            },
+          )
           return currentInputTokens
         }
         if (count() > available) {
@@ -933,7 +980,51 @@ export async function* runReActLoop(params: {
             })
         }
       }
-      const llmMessages = toModelMessages()
+      const originalModelMessages = toModelMessages()
+      const packageMessages = await packageRequestMessages(
+        params.packageHooks,
+        originalModelMessages,
+        {
+          agentId: params.agentId,
+          threadId: params.sessionId,
+          channel: source,
+          turn: turn + 1,
+          executionId: params.threadContext?.executionId,
+          realmId: params.threadContext?.realmId,
+        },
+        (candidate) =>
+          maxInputTokens <= 0 ||
+          llmService.estimateInputTokens(modelConfig, compileRequestMessages(candidate), {
+            tools: currentTools.map((tool) => ({
+              type: 'function' as const,
+              function: {
+                name: tool.name,
+                description: tool.description,
+                parameters: tool.parameters,
+              },
+            })),
+          }) <= maxInputTokens,
+      )
+      // 预填充只存在于请求副本中，不能将未完成的 assistant 消息写进历史或拆开工具配对。
+      const llmMessages = compileRequestMessages(packageMessages)
+      params.onRequestCompiled?.({
+        requestId: ++modelRequestCount,
+        turn: turn + 1,
+        messages: llmMessages,
+        tools:
+          canonicalTools(
+            currentTools.map((tool) => ({
+              type: 'function' as const,
+              function: {
+                name: tool.name,
+                description: tool.description,
+                parameters: tool.parameters,
+              },
+            })),
+          ) ?? [],
+        prefill: assistantPrefill ? promptPlan.assistantPrefill : undefined,
+      })
+      if (llmMessages !== originalModelMessages) currentInputTokens = undefined
       if (
         currentInputTokens === undefined &&
         typeof llmService.estimateInputTokens === 'function'
@@ -1204,9 +1295,11 @@ export async function* runReActLoop(params: {
                 fileBaselineDrafts.delete(call.draftId)
               }
               discardedTextCharacters = visibleTurnText.length
-              if (turnText)
-                rawTranscript += `\n⟦中断响应，第 ${turn + 1} 轮⟧\n${turnText}\n⟦/中断响应⟧\n`
+              if (generatedTurnText)
+                rawTranscript += `\n⟦中断响应，第 ${turn + 1} 轮⟧\n${generatedTurnText}\n⟦/中断响应⟧\n`
               turnText = ''
+              generatedTurnText = ''
+              prefillPending = !!assistantPrefill
               visibleTurnText = ''
               turnReasoningContent = ''
               turnNativeReasoning.length = 0
@@ -1315,7 +1408,12 @@ export async function* runReActLoop(params: {
             yield* completeReasoning()
 
           // 收集文本
-          const content = choice.delta.content
+          generatedTurnText += choice.delta.content ?? ''
+          // 等待真实正文或工具参数后才拼回预填充，失败或空响应不能伪装成成功回答。
+          const prependPrefill =
+            prefillPending && (!!choice.delta.content || !!choice.delta.toolCalls?.length)
+          const content = (prependPrefill ? assistantPrefill : '') + (choice.delta.content ?? '')
+          if (prependPrefill) prefillPending = false
           if (content) {
             turnText += content
 
@@ -1478,6 +1576,15 @@ export async function* runReActLoop(params: {
           }
           if (localOutputLimit) break
         }
+        await params.packageHooks?.emitHook('agent:afterRequest', {
+          agentId: params.agentId,
+          threadId: params.sessionId,
+          channel: source,
+          turn: turn + 1,
+          text: turnText,
+          toolCalls: collectedCalls,
+          executionId: params.threadContext?.executionId,
+        })
       } catch (error) {
         if (error instanceof GenerationLoopError) {
           // 冻结已经显示的片段并收口参数草稿；不把截断参数补成合法调用或自动重放。
@@ -1532,7 +1639,7 @@ export async function* runReActLoop(params: {
               },
             }
           }
-          rawTranscript += `\n⟦重复生成已中断，第 ${turn + 1} 轮⟧\n${turnText}\n`
+          rawTranscript += `\n⟦重复生成已中断，第 ${turn + 1} 轮⟧\n${generatedTurnText}\n`
           yield { event: 'status', data: { state: 'tool_failed', message: error.message } }
           throw error
         }
@@ -1610,11 +1717,11 @@ export async function* runReActLoop(params: {
       // 打印 LLM 原始回复文本（含碎碎念标签块，供终端调试查看生成过程）
       // 注意：yield 给前端的内容已被 ThinkingStreamFilter 过滤，这里打印的是未过滤的原始文本
       // 使用 info 级别：debug 级别在生产环境 (PERO_LOG_LEVEL=3) 会被过滤，导致终端看不到思考内容
-      if (turnText) {
-        logger.info(__t('logs.agent', '[LLM原始回复] {0}', [truncate(turnText, 4000)]))
+      if (generatedTurnText) {
+        logger.info(__t('logs.agent', '[LLM原始回复] {0}', [truncate(generatedTurnText, 4000)]))
         // 累积到原始转写 (保留 Thinking 块，供调试视图查看)
         // 剥离前导空白，避免 Debug View 显示缩进异常
-        const cleanText = turnText.replace(/^[\s}\])）】]+/, '')
+        const cleanText = generatedTurnText.replace(/^[\s}\])）】]+/, '')
         rawTranscript += (rawTranscript ? '\n' : '') + cleanText
       }
 
@@ -2039,7 +2146,10 @@ export async function* runReActLoop(params: {
                       ),
                       result: persistentResult,
                     })
-                    block.result = observation.displayOutput ?? persistentResult
+                    block.result =
+                      observation.displayOutput ??
+                      searchResultPreview(observation.name, observation.output) ??
+                      persistentResult
                     block.isError = observation.isError
                     block.durationMs = observation.durationMs
                     block.automaticApproval = parseAutomaticApproval(
@@ -2403,13 +2513,15 @@ export async function* runReActLoop(params: {
           },
         }
 
-        toolBlock.result = CONTEXT_READ_TOOLS.has(fnName)
-          ? persistentToolResult
-          : (filePreviewResult ??
-            searchPreview ??
-            (IMAGE_PREVIEW_TOOLS.some((name) => name === fnName)
-              ? toolResultText
-              : toolResultText.slice(0, 8000)))
+        // 搜索列表仅用于界面；模型历史和原始转写仍使用无正文的审计结果。
+        toolBlock.result =
+          searchPreview ??
+          (CONTEXT_READ_TOOLS.has(fnName)
+            ? persistentToolResult
+            : (filePreviewResult ??
+              (IMAGE_PREVIEW_TOOLS.some((name) => name === fnName)
+                ? toolResultText
+                : toolResultText.slice(0, 8000))))
         toolBlock.isError = result.isError
         toolBlock.durationMs = result.durationMs
         toolBlock.automaticApproval = parseAutomaticApproval(result.metadata?.automaticApproval)
@@ -2712,6 +2824,15 @@ export async function* runReActLoop(params: {
       turnLimitReached,
     }
   } finally {
+    await params.packageHooks?.emitHook('agent:afterRun', {
+      agentId: params.agentId,
+      threadId: params.sessionId,
+      channel: source,
+      executionId: params.threadContext?.executionId,
+      cancelled: !!params.signal?.aborted,
+      toolCalls: allToolCalls,
+      rawText: rawTranscript,
+    })
     params.onTimeline?.([...contentBlocks], [...allToolCalls], rawTranscript)
   }
 }

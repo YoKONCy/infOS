@@ -14,6 +14,8 @@ function createThread() {
     agentId: 'pero',
     channel: 'desktop',
     interactionMode: 'work',
+    purpose: 'conversation',
+    disabledTools: [],
     platform: undefined,
     platformIdentifier: undefined,
     title: '测试 Thread',
@@ -71,6 +73,7 @@ function createCtx() {
       historyChanged: vi.fn(),
       setLive: vi.fn(),
     },
+    runtimeDebug: { close: vi.fn(async () => undefined) },
     agentService: {
       chatWithCompiledMessages: vi.fn(() => Promise.resolve('回复')),
       chatStreamWithCompiledMessages: vi.fn(),
@@ -87,6 +90,14 @@ function createCtx() {
       listThreads: vi.fn(() => Promise.resolve({ items: [thread], total: 1 })),
       listMessages: vi.fn(() => Promise.resolve({ items: messages, total: messages.length })),
       createThread: vi.fn(() => Promise.resolve(thread)),
+      updateInteractionMode: vi.fn(async () => undefined),
+      rewindThread: vi.fn(async () => ({ deletedMessageIds: [1, 2] })),
+      previewThreadRewind: vi.fn(async () => ({
+        pairCount: 1,
+        pairIds: ['p1'],
+        messageCount: 2,
+        affectedPaths: [],
+      })),
       getOrCreateLatest: vi.fn(() => Promise.resolve(thread)),
       editMessage: vi.fn(() => Promise.resolve(true)),
       deleteMessage: vi.fn(() => Promise.resolve(true)),
@@ -149,6 +160,7 @@ function createCtx() {
     toolRegistry: {
       getDefinitions: vi.fn((): Array<{ name: string; description: string }> => []),
       isChatEnabled: vi.fn(() => false),
+      isRuntimeScoped: vi.fn(() => false),
     },
     applicationRealms: {
       isPrivateTool: vi.fn((_name: string) => false),
@@ -157,12 +169,13 @@ function createCtx() {
       resolve: vi.fn(() => ({ allowedTools: new Set<string>() })),
     },
     flowStateService: {
+      deleteThread: vi.fn(async () => undefined),
       get: vi.fn(),
       listByThread: vi.fn(),
       clear: vi.fn(),
       rollbackPairs: vi.fn(),
     },
-    toolContextService: { deletePairs: vi.fn() },
+    toolContextService: { deletePairs: vi.fn(), deleteThread: vi.fn() },
     backgroundTaskService: {
       hasActiveWork: vi.fn(() => Promise.resolve(false)),
     },
@@ -182,6 +195,32 @@ function createCtx() {
 }
 
 describe('ChatRouter', () => {
+  it('切换非工作模式、清除整条会话及删除历史均撤销当前调试', async () => {
+    const ctx = createCtx()
+    const router = createChatRouter(ctx as never)
+    const headers = { 'content-type': 'application/json' }
+    expect(
+      (
+        await router.request('/threads/t1/interaction-mode', {
+          method: 'PUT',
+          headers,
+          body: '{"interactionMode":"chat"}',
+        })
+      ).status,
+    ).toBe(200)
+    expect(
+      (
+        await router.request('/threads/t1/rewind', {
+          method: 'POST',
+          headers,
+          body: '{"wholeThread":true}',
+        })
+      ).status,
+    ).toBe(200)
+    expect((await router.request('/threads/t1', { method: 'DELETE' })).status).toBe(200)
+    expect(ctx.runtimeDebug.close).toHaveBeenCalledTimes(3)
+    expect(ctx.runtimeDebug.close).toHaveBeenLastCalledWith('t1')
+  })
   it('group 会话工具应严格限制为 Channel 白名单，不得回退注册表全量工具', async () => {
     const ctx = createCtx()
     const registryTools = Array.from({ length: 44 }, (_, index) => ({

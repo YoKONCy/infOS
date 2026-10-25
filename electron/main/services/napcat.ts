@@ -126,7 +126,7 @@ function broadcastDownloadProgress(data: Record<string, unknown>): void {
 const BACKEND_PORT = Number(process.env.PERO_PORT ?? 9120)
 
 /** 后端反向 WS 端点 (NapCat 连入后端的地址) */
-const REVERSE_WS_URL = `ws://127.0.0.1:${BACKEND_PORT}/api/social/ws`
+const REVERSE_WS_URL = `ws://127.0.0.1:${BACKEND_PORT}/api/social/ws?platform=qq`
 
 /** 我们在 NapCat 配置中使用的连接名称 (用于标识是我们自动注入的) */
 const WS_CLIENT_NAME = 'infOS'

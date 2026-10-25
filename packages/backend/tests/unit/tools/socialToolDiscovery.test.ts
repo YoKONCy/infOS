@@ -23,8 +23,12 @@ describe('主应用与社交应用的工具隔离', () => {
     expect(names).toContain('social_notify_owner')
   })
 
-  it('应用清单只向宿主声明任务委派动作，保留应用内部的三个业务工具', () => {
-    expect(manifest.actions.map((action) => action.name)).toEqual(['chat_in_group'])
+  it('应用清单向宿主声明任务委派、查询和取消动作，保留内部业务工具', () => {
+    expect(manifest.actions.map((action) => action.name)).toEqual([
+      'chat_in_group',
+      'get_task',
+      'cancel_task',
+    ])
     expect(manifest.providesTools.map((tool) => tool.name)).toEqual(SOCIAL_BUSINESS_TOOLS)
   })
 

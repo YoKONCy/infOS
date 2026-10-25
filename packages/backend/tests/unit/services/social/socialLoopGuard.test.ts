@@ -35,6 +35,7 @@ function fixture(patch: Partial<LoopPolicy> = {}) {
         policy = next
         return next
       },
+      () => 'qq',
     )
   const message = (id: string, senderId = '234567'): InboundMessage => ({
     platform: 'qq',
@@ -44,10 +45,13 @@ function fixture(patch: Partial<LoopPolicy> = {}) {
     senderId,
     senderName: '主人',
     content: '你好',
+    accountId: '123456',
+    messageId: id,
     rawEvent: { self_id: '123456', message_id: id },
   })
   const turn = (id: string, inbound = message(id)): SocialTurnRecord => ({
     id,
+    platform: 'qq',
     agentId: 'keromi',
     accountId: '123456',
     channelType: 'group',
@@ -95,7 +99,7 @@ describe('社交跨回合互聊保护', () => {
       added: false,
     })
     const saved = JSON.parse(f.data.get('social')!).mode.loopGuard
-    expect(saved.knownBotIds).toEqual(['567890'])
+    expect(saved.knownBotIds).toEqual(['qq:567890'])
     expect(saved.botMarks).toEqual([
       expect.objectContaining({
         ...input,
@@ -153,7 +157,7 @@ describe('社交跨回合互聊保护', () => {
     const guard = f.create()
     await guard.markBot(f.turn('a'), { userId: '567890', messageId: 'a', reason: '判断依据' })
     expect(normalizeLoopPolicy({ ...f.policy(), knownBotIds: [] }).botMarks).toEqual([])
-    const corrected = normalizeLoopPolicy({ ...f.policy(), trustedHumanIds: ['567890'] })
+    const corrected = normalizeLoopPolicy({ ...f.policy(), trustedHumanIds: ['qq:567890'] })
     expect(corrected.knownBotIds).toEqual([])
     expect(corrected.botMarks).toEqual([])
     const controller = new AbortController()
@@ -168,7 +172,7 @@ describe('社交跨回合互聊保护', () => {
         },
       ),
     ).rejects.toThrow('任务已停止')
-    expect(f.policy().knownBotIds).toEqual(['567890'])
+    expect(f.policy().knownBotIds).toEqual(['qq:567890'])
   })
   it('机器人预算跨实例恢复，昵称不能伪装真人', async () => {
     const f = fixture({ maxBotTurns: 2 })

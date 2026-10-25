@@ -433,8 +433,13 @@ export function createChatRouter(ctx: AppContext) {
     if (!thread) throw new AppError('NOT_FOUND', { message: `Thread 不存在: ${threadId}` })
     const registryTools = ctx.toolRegistry
       .getDefinitions(thread.channel)
+      .filter((tool) => tool.name !== 'runtime_debug')
       .filter((tool) => !ctx.applicationRealms.isPrivateTool(tool.name))
-    const allowed = ctx.capabilityGate.resolve(thread.agentId, thread.channel).allowedTools
+    const allowed = ctx.capabilityGate.resolve(
+      thread.agentId,
+      thread.channel,
+      thread.id,
+    ).allowedTools
     const disabled = new Set(thread.disabledTools.filter((name) => !isSystemProtocolTool(name)))
     const tools = registryTools
       .filter(
@@ -573,6 +578,7 @@ export function createChatRouter(ctx: AppContext) {
       }
       await assertThreadMutable(threadId)
       const { interactionMode } = c.req.valid('json')
+      if (interactionMode !== 'work') await ctx.runtimeDebug.close(threadId)
       await ctx.threadService.updateInteractionMode(threadId, interactionMode)
       const { thread: updated, tools } = await resolveThreadTools(threadId)
       return c.json({
@@ -770,6 +776,7 @@ export function createChatRouter(ctx: AppContext) {
           )
       ctx.conversationQueue.historyChanged(threadId, body.wholeThread, true)
       if (body.wholeThread) {
+        await ctx.runtimeDebug.close(threadId)
         await ctx.flowStateService.deleteThread(threadId)
         ctx.toolContextService.deleteThread(threadId)
       } else {
@@ -801,6 +808,7 @@ export function createChatRouter(ctx: AppContext) {
     ctx.conversationQueue.pause(threadId, true)
     await assertThreadMutable(threadId)
     await ctx.threadService.rewindThread(threadId)
+    await ctx.runtimeDebug.close(threadId)
     await ctx.flowStateService.deleteThread(threadId)
     ctx.toolContextService.deleteThread(threadId)
     ctx.conversationProjection.invalidate(threadId)

@@ -15,7 +15,8 @@ import './task-pixel.css'
  * @props avatarUrl / agentName — Agent 展示信息（可选）
  * @emits detail / pause / resume / resumeInterrupted / cancel
  */
-import { computed } from 'vue'
+import { computed, onBeforeUnmount, ref } from 'vue'
+import { taskElapsed, taskOriginLabel } from './taskPresentation'
 import PixelIcon from '../pixel/PixelIcon.vue'
 import TaskStatusBadge from './TaskStatusBadge.vue'
 import type { BackgroundTaskInfo } from '../../api/modules/backgroundTasksApi'
@@ -44,21 +45,15 @@ const emit = defineEmits<{
   delete: [task: BackgroundTaskInfo]
 }>()
 
-/** 计算运行时间（从开始时间起；未完成则算到现在） */
-const elapsed = computed(() => {
-  const start = props.task.startedAt ?? props.task.createdAt
-  if (!start) return ''
-  // 后端返回 "YYYY-MM-DD HH:MM:SS" 本地时间字符串
-  const end = props.task.completedAt ?? new Date().toISOString().replace('T', ' ').slice(0, 19)
-  const ms = new Date(end.replace(' ', 'T')).getTime() - new Date(start.replace(' ', 'T')).getTime()
-  if (ms < 0) return ''
-  const s = Math.floor(ms / 1000)
-  const m = Math.floor(s / 60)
-  const h = Math.floor(m / 60)
-  if (h > 0) return `${h}h ${m % 60}m`
-  if (m > 0) return `${m}m ${s % 60}s`
-  return `${s}s`
-})
+const now = ref(Date.now())
+const clock = setInterval(() => {
+  now.value = Date.now()
+}, 30_000)
+onBeforeUnmount(() => clearInterval(clock))
+const elapsed = computed(() => taskElapsed(props.task, now.value))
+const preview = computed(
+  () => props.task.result || props.task.lifecycle?.continuation || props.task.instruction,
+)
 
 /** 是否可暂停（排队或运行中） */
 const canPause = computed(
@@ -133,6 +128,7 @@ const canResumeInterrupted = computed(
     tabindex="0"
     @click="history ? emit('read', task) : emit('detail', task)"
     @keydown.enter="history ? emit('read', task) : emit('detail', task)"
+    @keydown.space.prevent="history ? emit('read', task) : emit('detail', task)"
   >
     <!-- 头像 + 状态点 -->
     <div class="task-card__avatar-wrap">
@@ -152,10 +148,11 @@ const canResumeInterrupted = computed(
     <div class="task-card__body">
       <div class="task-card__title-row">
         <h4 class="task-card__title" :title="task.title">{{ task.title }}</h4>
-        <TaskStatusBadge :status="task.status" :read="history && Boolean(task.readAt)" />
+        <TaskStatusBadge :status="task.status" />
       </div>
 
       <p class="task-card__meta">
+        <span class="task-card__origin">{{ taskOriginLabel(task) }}</span>
         <span v-if="agentName" class="task-card__agent">{{ agentName }}</span>
         <span v-if="task.currentStage" class="task-card__stage">{{ task.currentStage }}</span>
         <span v-if="waitReason" class="task-card__stage">{{ waitReason }}</span>
@@ -163,7 +160,9 @@ const canResumeInterrupted = computed(
         <span class="task-card__tools">
           {{ __t('ui.taskCenter', '工具 ×') }}{{ task.toolCallCount }}
         </span>
+        <span v-if="history && task.readAt">{{ __t('ui.taskCenter', '已读') }}</span>
       </p>
+      <p v-if="preview" class="task-card__preview">{{ preview }}</p>
 
       <!-- 进度条 -->
       <div v-if="task.progress != null" class="task-card__progress">
@@ -247,22 +246,22 @@ const canResumeInterrupted = computed(
   align-items: flex-start;
   gap: var(--ui-space-3);
   padding: 12px 14px;
-  border-radius: 0;
-  background: var(--task-fill);
+  border-radius: var(--ui-radius-xs);
+  background: var(--ui-bg-surface);
   border: 1px solid var(--ui-border-default);
-  box-shadow: var(--task-raised);
+  box-shadow: none;
   cursor: pointer;
   transition:
     transform var(--ui-duration-fast) steps(3, end),
     box-shadow var(--ui-duration-fast) steps(3, end),
     border-color var(--ui-duration-fast) steps(3, end);
-  font-family: var(--ui-font-pixel);
+  font-family: var(--ui-font-sans);
 }
 
 .task-card:hover {
   transform: none;
   border-color: var(--ui-border-strong);
-  box-shadow: var(--task-raised);
+  box-shadow: 0 3px 12px color-mix(in srgb, var(--ui-text-primary) 4%, transparent);
 }
 
 .task-card:focus-visible {
@@ -353,6 +352,20 @@ const canResumeInterrupted = computed(
 .task-card__body {
   flex: 1;
   min-width: 0;
+}
+.task-card__preview {
+  margin: 9px 0 0;
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+  overflow: hidden;
+  color: var(--ui-text-secondary);
+  font-size: 12px;
+  line-height: 1.7;
+  overflow-wrap: anywhere;
+}
+.task-card__origin {
+  color: var(--ui-text-tertiary);
 }
 
 .task-card__title-row {
@@ -449,26 +462,18 @@ const canResumeInterrupted = computed(
   line-height: 1.6;
 }
 
-/* 历史记录：未读更醒目，已读统一为安静的蓝色完成态。 */
+/* 已读降低背景强调，状态与错误始终保留各自的语义颜色。 */
 .task-card--history:not(.task-card--read) {
   border-left: 2px solid var(--ui-accent-primary);
   background:
     linear-gradient(var(--task-sheen), transparent 18px),
     color-mix(in srgb, var(--ui-accent-primary-soft) 20%, var(--task-face));
 }
-.task-card--history.task-card--read,
+.task-card--history.task-card--read {
+  background: var(--ui-bg-surface);
+}
 .task-card--history.task-card--read.task-card--failed {
-  border-left: 2px solid var(--ui-accent-sky);
-  background:
-    linear-gradient(var(--task-sheen), transparent 18px),
-    color-mix(in srgb, var(--ui-accent-sky-soft) 20%, var(--task-face));
-}
-.task-card--history.task-card--read .task-card__status-dot,
-.task-card--history.task-card--read.task-card--failed .task-card__status-dot {
-  --dot-color: var(--ui-accent-sky);
-}
-.task-card--history.task-card--read .task-card__error {
-  color: var(--ui-accent-sky);
+  border-left: 2px solid var(--ui-danger);
 }
 .task-card--history .task-card__action--delete {
   opacity: 0;

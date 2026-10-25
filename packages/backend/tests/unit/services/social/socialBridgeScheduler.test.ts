@@ -1,4 +1,4 @@
-import { EventEmitter } from 'node:events'
+import { AbstractSocialAdapter } from '@infos/social/adapters/ISocialAdapter'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { SocialBridge } from '@infos/social/runtime/socialBridge'
 import type { InboundMessage } from '@infos/social/runtime/types'
@@ -6,17 +6,22 @@ import { currentSocialRecovery, socialFailure } from '@infos/social/runtime/soci
 import { SocialLoopGuard, normalizeLoopPolicy } from '@infos/social/runtime/socialLoopGuard'
 import type { SocialTurnRecord } from '@infos/shared'
 
-class FakeAdapter extends EventEmitter {
+class FakeAdapter extends AbstractSocialAdapter {
+  accept(message: InboundMessage) {
+    return this.deliverMessage(message)
+  }
   platform = 'napcat'
   connect = vi.fn(() => Promise.resolve())
   disconnect = vi.fn(() => Promise.resolve())
   sendMessage = vi.fn(() => Promise.resolve())
-  getStatus = vi.fn(() => Promise.resolve({ platform: 'napcat', connected: true }))
+  getStatus = vi.fn(() => Promise.resolve({ platform: 'napcat', connected: true, latencyMs: 0 }))
   getConnectedAccountIds = vi.fn(() => [])
   getContacts = vi.fn(() => Promise.resolve([]))
   getGroups = vi.fn(() => Promise.resolve([]))
-  getContactInfo = vi.fn(() => Promise.resolve({}))
-  getGroupInfo = vi.fn(() => Promise.resolve({}))
+  getContactInfo = vi.fn(() =>
+    Promise.resolve({ id: 'contact', name: '联系人', platform: 'napcat' }),
+  )
+  getGroupInfo = vi.fn(() => Promise.resolve({ id: 'contact', name: '联系人', platform: 'napcat' }))
   getGroupMembers = vi.fn(() => Promise.resolve([]))
   handleFriendRequest = vi.fn(() => Promise.resolve())
   removeFriend = vi.fn(() => Promise.resolve())
@@ -31,6 +36,15 @@ function inbound(overrides: Partial<InboundMessage> = {}): InboundMessage {
     senderName: '群友',
     content: '你好',
     agentId: 'pero',
+    accountId:
+      overrides.accountId ??
+      String((overrides.rawEvent as Record<string, unknown> | undefined)?.self_id ?? '123456789'),
+    messageId:
+      overrides.messageId ??
+      String((overrides.rawEvent as Record<string, unknown> | undefined)?.message_id ?? '123'),
+    isMentioned:
+      overrides.isMentioned ??
+      (overrides.rawEvent as Record<string, unknown> | undefined)?._isMentioned === true,
     rawEvent: { message_id: 123 },
     ...overrides,
   }
@@ -76,6 +90,8 @@ function executeTurn(
     }
   ).executeReply(
     {
+      platform: first.platform,
+      accountId: first.accountId,
       channelId: first.channelId,
       channelType: first.channelType,
       agentId: first.agentId,
@@ -91,6 +107,52 @@ function executeTurn(
 describe('SocialBridge 单 Agent 社交链路', () => {
   beforeEach(() => vi.useFakeTimers())
   afterEach(() => vi.useRealTimers())
+
+  it('接收确认等待持久化成功，但不等待后续会话处理', async () => {
+    const { bridge, deps } = createBridge()
+    const adapter = new FakeAdapter()
+    bridge.registerAdapter(adapter)
+    await bridge.start()
+    let persist!: () => void
+    deps.socialMessageRepo.insert.mockReturnValue(
+      new Promise<void>((resolve) => {
+        persist = resolve
+      }),
+    )
+    let continueProcessing!: () => void
+    vi.spyOn(
+      bridge as unknown as { handleOrchestrationInbound(): Promise<boolean> },
+      'handleOrchestrationInbound',
+    ).mockImplementation(
+      () =>
+        new Promise<boolean>((resolve) => {
+          continueProcessing = () => resolve(false)
+        }),
+    )
+    let accepted = false
+    const accepting = adapter.accept(inbound()).then(() => {
+      accepted = true
+    })
+    await vi.advanceTimersByTimeAsync(1)
+    expect(accepted).toBe(false)
+    persist()
+    await accepting
+    expect(accepted).toBe(true)
+    expect(deps.generateReply).not.toHaveBeenCalled()
+    continueProcessing()
+    await bridge.stop()
+  })
+
+  it('持久化失败不签发接收确认，停止时也不确认新消息', async () => {
+    const { bridge, deps } = createBridge()
+    const adapter = new FakeAdapter()
+    bridge.registerAdapter(adapter)
+    await bridge.start()
+    deps.socialMessageRepo.insert.mockRejectedValue(new Error('测试写入失败'))
+    await expect(adapter.accept(inbound())).rejects.toThrow('测试写入失败')
+    await bridge.stop()
+    await expect(adapter.accept(inbound())).rejects.toThrow('SOCIAL_INBOUND_UNAVAILABLE')
+  })
 
   it('普通群聊短时限流保留原批次，窗口恢复后自动调用模型并发送', async () => {
     const values = new Map<string, string>()
@@ -216,7 +278,7 @@ describe('SocialBridge 单 Agent 社交链路', () => {
       expect.objectContaining({
         isOwner: false,
         triggerSenderId: '123456',
-        combinedMessage: expect.stringContaining('QQ:123456 身份:普通联系人'),
+        combinedMessage: expect.stringContaining('平台账号:123456 身份:普通联系人'),
       }),
     )
     expect(adapter.sendMessage).toHaveBeenCalledOnce()
@@ -267,7 +329,7 @@ describe('SocialBridge 单 Agent 社交链路', () => {
       senderName: '被引用者',
       content: '[图片]',
       rawEventJson: JSON.stringify({
-        message: [{ type: 'image', data: { url: 'https://example.test/image' } }],
+        _infosInbound: { attachments: [{ type: 'image', url: 'https://example.test/image' }] },
       }),
     })
     await executeTurn(bridge, [
@@ -276,7 +338,12 @@ describe('SocialBridge 单 Agent 社交链路', () => {
         rawEvent: { self_id: '111111', message_id: 22, _isMentioned: true },
       }),
     ])
-    expect(deps.socialMessageRepo.getByMsgId).toHaveBeenCalledWith('pero', '21', '111111')
+    expect(deps.socialMessageRepo.getByMsgId).toHaveBeenCalledWith(
+      'pero',
+      '21',
+      '111111',
+      expect.objectContaining({ platform: 'napcat', accountId: '111111', channelId: 'group-1' }),
+    )
     expect(deps.generateReply).toHaveBeenCalledWith(
       expect.objectContaining({
         images: [],
@@ -290,6 +357,8 @@ describe('SocialBridge 单 Agent 社交链路', () => {
     const first = new FakeAdapter()
     const second = new FakeAdapter()
     bridge.registerAdapter(first as never)
+    expect(() => bridge.registerAdapter(second as never)).toThrow('SOCIAL_PLATFORM_DUPLICATE')
+    bridge.unregisterAdapter(first.platform)
     bridge.registerAdapter(second as never)
     await bridge.start()
     await bridge.stop()
@@ -357,11 +426,12 @@ describe('SocialBridge 单 Agent 社交链路', () => {
     )
     expect(adapter.sendMessage).toHaveBeenCalledWith(
       {
-        accountId: undefined,
+        accountId: '123456789',
         channelId: 'group-1',
         channelType: 'group',
         content: '好的',
         replyTo: undefined,
+        deliveryId: expect.stringMatching(/^[a-f0-9]{24}$/),
       },
       expect.any(AbortSignal),
     )

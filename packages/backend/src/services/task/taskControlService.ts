@@ -1,5 +1,6 @@
 import { z } from 'zod'
-import type { TaskControlInput, TaskOrigin } from '@infos/shared'
+import { t as __t } from '../../lib/i18n'
+import type { TaskControlContext, TaskControlInput, TaskOrigin } from '@infos/shared'
 import type { BackgroundScheduler } from './backgroundTaskService'
 import type { AgentInputService } from '../execution/agentInputService'
 import type { ApprovalService } from '../execution/approvalService'
@@ -23,6 +24,8 @@ export const taskControlSchema = z
       'resolve_delivery',
     ]),
     taskId: z.string().min(1).max(160).optional(),
+    resultOffset: z.number().int().min(0).optional(),
+    resultLimit: z.number().int().min(1).max(32000).optional(),
     planId: z.string().min(1).max(160).optional(),
     planStepId: z.string().min(1).max(80).optional(),
     expectedRevision: z.number().int().positive().optional(),
@@ -69,7 +72,7 @@ export class TaskControlService {
     private readonly plans?: TaskPlanService,
   ) {}
 
-  async remote(origin: TaskOrigin, input: TaskControlInput): Promise<unknown> {
+  async remote(origin: TaskOrigin, input: TaskControlInput, callId?: string): Promise<unknown> {
     const valid = z
       .object({
         platform: z.string().min(1).max(40),
@@ -85,7 +88,7 @@ export class TaskControlService {
     const agentId = await this.authorizeOrigin(origin)
     if (!agentId) throw new AppError('FORBIDDEN', { message: '当前账号或会话未获任务控制授权' })
     // 当前内置社交应用仅支持已绑定主人的私聊，角色身份由绑定配置解析。
-    return this.execute(agentId, input, origin)
+    return this.execute(agentId, input, origin, false, undefined, { callId })
   }
 
   async execute(
@@ -94,6 +97,7 @@ export class TaskControlService {
     origin?: TaskOrigin,
     userInitiated = false,
     threadId?: string,
+    context: TaskControlContext = {},
   ): Promise<unknown> {
     const parsed = taskControlSchema.safeParse(raw)
     if (!parsed.success) throw new AppError('VALIDATION_ERROR', { message: '任务操作参数无效' })
@@ -112,14 +116,20 @@ export class TaskControlService {
           agentId,
           instruction,
           title: input.title,
-          requestedBy: 'user',
+          requestedBy: context.taskId ? 'agent' : (context.requestedBy ?? 'user'),
           targetThreadId: link?.originThreadId ?? threadId,
-          metadata: link ?? {},
+          completionAction:
+            !context.taskId && (link?.originThreadId ?? threadId) ? 'send_to_chat' : 'notify',
+          parentTaskId: context.taskId,
+          parentExecutionId: context.executionId,
+          metadata: { ...link, ...(threadId ? { originThreadId: threadId } : {}) },
           idempotencyKey: link
             ? `plan:${link.planId}:${link.planStepId}`
             : origin
-              ? `social:${origin.platform}:${origin.accountId}:${origin.senderId}:${origin.messageId}`
-              : undefined,
+              ? `social:${origin.platform}:${origin.accountId}:${origin.senderId}:${origin.messageId}:${context.callId ?? 'create'}`
+              : context.callId
+                ? `tool:${agentId}:${threadId}:${context.callId}`
+                : undefined,
           lifecycle: {
             origin,
             successCriteria: input.successCriteria ?? '',
@@ -130,18 +140,22 @@ export class TaskControlService {
             ...(input.maxToolCalls ? { maxToolCalls: input.maxToolCalls } : {}),
           },
         })
-        return this.describe(task)
+        return this.describe(task, input)
       }
       return this.plans
         ? this.plans.withLink(agentId, input.planId, input.planStepId, threadId, dispatch)
         : dispatch()
     }
     if (input.action === 'list') {
-      const page = await this.tasks.query({ agentId, pageSize: 20 })
+      const page = await this.tasks.query({ agentId, parentTaskId: context.taskId, pageSize: 20 })
       return {
         ...page,
         items: page.items
-          .filter((task) => task.category !== 'resident')
+          .filter(
+            (task) =>
+              task.category !== 'resident' &&
+              (!context.taskId || task.parentTaskId === context.taskId),
+          )
           .map((task) => ({
             id: task.id,
             revision: task.revision,
@@ -154,20 +168,20 @@ export class TaskControlService {
     }
     if (!input.taskId) throw new AppError('VALIDATION_ERROR', { message: '请明确指定任务' })
     const task = await this.tasks.getTask(input.taskId)
-    if (
-      !task ||
-      task.agentId !== agentId ||
-      (origin &&
-        task.lifecycle.origin &&
-        (task.lifecycle.origin.senderId !== origin.senderId ||
-          task.lifecycle.origin.accountId !== origin.accountId))
-    )
+    if (!task || task.agentId !== agentId)
       throw new AppError('NOT_FOUND', { message: '任务不存在或无权访问' })
+    if (
+      context.taskId &&
+      (task.id === context.taskId ? input.action !== 'get' : task.parentTaskId !== context.taskId)
+    )
+      throw new AppError('FORBIDDEN', {
+        message: __t('server.task', '后台任务只能读取自身或管理自己派发的子任务'),
+      })
     if (task.category === 'resident')
       throw new AppError('CONFLICT', {
         message: '这是随服务运行的只读常驻状态，不能作为普通任务操作',
       })
-    if (input.action === 'get') return this.describe(task)
+    if (input.action === 'get') return this.describe(task, input)
     if (input.expectedRevision === undefined || input.expectedRevision !== task.revision)
       throw new AppError('CONFLICT', { message: '请先读取任务当前修订，再提交操作' })
     if (input.action === 'resolve_delivery') {
@@ -212,7 +226,13 @@ export class TaskControlService {
     return this.tasks.changeTask(task.id, task.revision, input)
   }
 
-  private describe(task: BackgroundTaskInfo) {
+  private describe(
+    task: BackgroundTaskInfo,
+    input: Pick<TaskControlInput, 'resultOffset' | 'resultLimit'> = {},
+  ) {
+    const offset = input.resultOffset ?? 0
+    const limit = input.resultLimit ?? 12000
+    const result = task.result?.slice(offset, offset + limit) ?? null
     const wait = task.lifecycle.wait
     const request =
       wait?.kind === 'input'
@@ -224,11 +244,14 @@ export class TaskControlService {
       id: task.id,
       agentId: task.agentId,
       revision: task.revision,
+      parentTaskId: task.parentTaskId,
       title: task.title,
       instruction: task.instruction,
       status: task.status,
       currentStage: task.currentStage,
-      result: task.result,
+      result,
+      resultTotalChars: task.result?.length ?? 0,
+      nextResultOffset: task.result && offset + limit < task.result.length ? offset + limit : null,
       errorMessage: task.errorMessage,
       lifecycle: task.lifecycle,
       plan: task.plan,

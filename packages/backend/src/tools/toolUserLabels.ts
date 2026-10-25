@@ -108,7 +108,7 @@ export const TOOL_USER_DESCRIPTIONS: Record<string, string> = {
   skill_read_resource: '安全读取技能目录内的文本资源。',
   update_flow_state: '记录当前目标和临时要点，帮助助手保持任务思路。',
   update_plan: '维护当前工作的步骤与进度，标记完成或受阻；不会创建后台任务。仅工作模式可用。',
-  manage_task: '安排后台任务、查看进度，或暂停、恢复、取消任务及处理问答。仅工作模式可用。',
+  manage_task: '安排后台任务、查看结果，或暂停、恢复、取消任务及处理问答。聊天与工作模式可用。',
   expand_advanced_tools:
     '需要操作网页、桌面软件或远程命令行时，按需展开已获授权的工具。仅当前执行有效；关闭此项也会停用包内工具。',
   ask_user: '在缺少必要信息时向你提问，并等待回答后继续。',

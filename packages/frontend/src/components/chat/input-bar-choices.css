@@ -1,0 +1,159 @@
+.input-choice-section {
+  --choice-accent: var(--ui-accent-sky);
+}
+.input-choice-section__head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  padding: 7px 9px 9px;
+}
+.input-choice-section__head > span {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  color: var(--ui-text-secondary);
+  font: 11px/1.5 var(--ui-font-pixel);
+}
+.input-choice-section__head > small {
+  color: var(--ui-text-tertiary);
+  font: 10px/1.5 var(--ui-font-sans);
+}
+.input-choice-section--voice {
+  margin-top: 8px;
+  padding-top: 5px;
+  border-top: 1px solid var(--ui-border-default);
+  --choice-accent: var(--ui-accent-purple);
+}
+.input-choice-list {
+  display: grid;
+  gap: 3px;
+}
+.input-choice {
+  --choice-accent: var(--ui-accent-sky);
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  box-sizing: border-box;
+  width: 100%;
+  min-height: 56px;
+  margin: 0;
+  padding: 9px;
+  border: 1px solid transparent;
+  border-radius: 0;
+  background: transparent;
+  color: var(--ui-text-secondary);
+  cursor: pointer;
+  text-align: left;
+  transition:
+    border-color 120ms ease,
+    color 120ms ease,
+    background-color 120ms ease;
+}
+.input-choice[data-interaction-mode='minimal'] {
+  --choice-accent: var(--ui-success);
+}
+.input-choice[data-interaction-mode='chat'] {
+  --choice-accent: var(--ui-accent-primary);
+}
+.input-choice[data-interaction-mode='work'] {
+  --choice-accent: var(--ui-accent-sky);
+}
+.input-choice-section--voice .input-choice {
+  --choice-accent: var(--ui-accent-purple);
+}
+.input-choice__icon {
+  display: grid;
+  flex: 0 0 28px;
+  place-items: center;
+  height: 28px;
+  border: 1px solid var(--ui-border-subtle);
+  color: var(--ui-text-tertiary);
+  background: var(--app-soft-fill, var(--ui-bg-surface-soft));
+  box-shadow: inset 1px 1px 0 var(--ui-border-subtle);
+}
+.input-choice__copy {
+  display: grid;
+  flex: 1;
+  gap: 4px;
+  min-width: 0;
+}
+.input-choice__copy strong {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 7px;
+  color: var(--ui-text-primary);
+  font: 12px/1.4 var(--ui-font-pixel);
+}
+.input-choice__copy small {
+  color: var(--ui-text-tertiary);
+  font: 11px/1.4 var(--ui-font-sans);
+}
+.input-choice__copy em {
+  padding: 1px 4px;
+  border: 1px solid var(--ui-border-subtle);
+  color: var(--ui-text-tertiary);
+  font: 9px/1.4 var(--ui-font-pixel);
+}
+.input-choice__check {
+  display: grid;
+  flex: 0 0 15px;
+  place-items: center;
+  height: 15px;
+  border: 1px solid var(--ui-border-default);
+  color: var(--choice-accent);
+}
+.input-choice__arrow {
+  flex: 0 0 auto;
+  color: var(--ui-text-tertiary);
+}
+.input-choice:hover:not(:disabled) {
+  background: color-mix(in srgb, var(--choice-accent) 5%, transparent);
+  border-color: var(--ui-border-default);
+}
+.input-choice.is-selected,
+.input-choice.is-pending {
+  border-color: color-mix(in srgb, var(--choice-accent) 40%, var(--ui-border-subtle));
+  background: color-mix(in srgb, var(--choice-accent) 8%, transparent);
+  box-shadow:
+    inset 2px 0 0 var(--choice-accent),
+    inset 0 1px 0 color-mix(in srgb, var(--choice-accent) 8%, transparent);
+}
+.input-choice.is-selected .input-choice__icon,
+.input-choice.is-pending .input-choice__icon {
+  color: var(--choice-accent);
+  border-color: color-mix(in srgb, var(--choice-accent) 30%, var(--ui-border-subtle));
+}
+.input-choice.is-selected .input-choice__check {
+  border-color: var(--choice-accent);
+  background: color-mix(in srgb, var(--choice-accent) 10%, transparent);
+}
+.input-choice.is-pending {
+  border-style: dashed;
+}
+.input-choice:focus-visible {
+  outline: 2px solid var(--choice-accent);
+  outline-offset: -2px;
+}
+.input-choice:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+.input-choice.is-selected:disabled,
+.input-choice.is-pending:disabled {
+  opacity: 0.8;
+}
+.input-choice--reserved .input-choice__icon {
+  border-style: dashed;
+}
+.input-debug-section {
+  margin-top: 8px;
+  padding-top: 8px;
+  border-top: 1px solid var(--ui-border-default);
+}
+@media (prefers-reduced-motion: reduce) {
+  .input-choice {
+    transition: none;
+  }
+}

@@ -1,4 +1,7 @@
 {
+  "查看现场、准备修正候选并保留恢复记录。": "Inspect the runtime, prepare fix candidates and retain recovery records.",
+  "运行时调试": "Runtime debugging",
+  "查看现场，检查修正并临时加载，保留恢复记录。": "Inspect, check, and temporarily load fixes with recovery records.",
   "发送文件": "Send file",
   "处理文档": "processing documents",
   "完成任务": "completed the task",
@@ -177,5 +180,6 @@
   "调整房间的灯光、声音或氛围。": "Adjust the lighting, sound or ambience of a room.",
   "呼叫据点管家协助处理事务。": "calls the stronghold housekeeper to assist in handling matters.",
   "扩展工具": "extension tool",
-  "为当前任务提供额外能力。关闭后，助手将无法使用这项功能。": "provides additional capabilities for the current mission. When turned off, the Assistant will not be able to use this feature."
+  "为当前任务提供额外能力。关闭后，助手将无法使用这项功能。": "provides additional capabilities for the current mission. When turned off, the Assistant will not be able to use this feature.",
+  "安排后台任务、查看结果，或暂停、恢复、取消任务及处理问答。聊天与工作模式可用。": "Delegate background tasks, read results, pause, resume or cancel tasks, and handle questions. Available in chat and work modes."
 }

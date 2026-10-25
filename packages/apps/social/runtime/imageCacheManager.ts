@@ -3,7 +3,7 @@ import { t as __t } from './i18n'
  * ImageCacheManager — 社交图片本地缓存
  *
  * 负责:
- * 1. 将 OneBot 消息中的远程图片 URL 下载到本地缓存目录
+ * 1. 将规范消息中的远程图片 URL 下载到本地缓存目录
  * 2. 提供本地绝对路径，供后续 base64 编码传给 LLM
  * 3. 自动清理旧文件，保持缓存大小在限定范围内
  *
@@ -20,6 +20,7 @@ import { createLogger } from '@infos/backend/applicationHostAbi'
 const logger = createLogger('ImageCache')
 
 export interface ImageCacheConfig {
+  requestContext?: (url: string) => { partition?: string; headers?: Record<string, string> }
   /** 缓存目录绝对路径 */
   cacheDir: string
   /** 最大缓存文件数 */
@@ -59,23 +60,29 @@ export class ImageCacheManager {
    * @returns 本地绝对路径; 下载失败返回 null
    */
   async download(url: string): Promise<string | null> {
-    const pending = this.downloads.get(url)
+    const context = this.config.requestContext?.(url)
+    const key = JSON.stringify([context?.partition ?? '', url])
+    const pending = this.downloads.get(key)
     if (pending) return pending
-    const downloading = this.downloadImage(url)
-    this.downloads.set(url, downloading)
+    const downloading = this.downloadImage(url, key, context?.headers)
+    this.downloads.set(key, downloading)
     try {
       return await downloading
     } finally {
-      this.downloads.delete(url)
+      this.downloads.delete(key)
     }
   }
 
-  private async downloadImage(url: string): Promise<string | null> {
+  private async downloadImage(
+    url: string,
+    key: string,
+    headers?: Record<string, string>,
+  ): Promise<string | null> {
     try {
       this.ensureDir()
 
       // 使用 URL 的 MD5 作为文件名
-      const hash = crypto.createHash('md5').update(url).digest('hex')
+      const hash = crypto.createHash('md5').update(key).digest('hex')
       const ext = this.guessExtension(url)
       const filename = `${hash}.${ext}`
       const filepath = path.join(this.config.cacheDir, filename)
@@ -86,21 +93,11 @@ export class ImageCacheManager {
       }
 
       // 使用 fetch 下载 (Node 18+ 原生支持)
-      // QQ 多媒体服务器 (multimedia.nt.qq.com.cn) 会拒绝无请求头的请求 (HTTP 400)，
-      // 需要带上浏览器风格的 User-Agent 和 Referer 才能正常下载
+      // 下载请求的认证与平台请求头由适配器提供。
       const controller = new AbortController()
       const timeout = setTimeout(() => controller.abort(), this.config.downloadTimeout)
 
       try {
-        const headers: Record<string, string> = {
-          'User-Agent':
-            'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
-        }
-        // QQ 多媒体域名需要带 Referer
-        if (url.includes('qq.com')) {
-          headers['Referer'] = 'https://qq.com'
-        }
-
         const resp = await fetch(url, { signal: controller.signal, headers })
         if (!resp.ok) {
           logger.warn(__t('apps.social.logs', '下载图片失败 {0}: HTTP {1}', [url, resp.status]))
@@ -133,7 +130,7 @@ export class ImageCacheManager {
       if (!fs.existsSync(filepath)) return null
 
       const data = fs.readFileSync(filepath)
-      // QQ 图片地址经常没有扩展名，优先按真实文件头判断，避免 PNG 被标成 JPEG。
+      // 平台图片地址可能没有扩展名，优先按真实文件头判断，避免 PNG 被标成 JPEG。
       const mime = data.subarray(0, 8).equals(Buffer.from([137, 80, 78, 71, 13, 10, 26, 10]))
         ? 'image/png'
         : data.subarray(0, 3).equals(Buffer.from([255, 216, 255]))

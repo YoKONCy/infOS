@@ -11,6 +11,7 @@ import {
   type AdvancedToolAccess,
 } from '@infos/backend/tools/advancedTools'
 import { expandAdvancedToolsTool } from '@infos/backend/tools/expandAdvancedTools'
+import { initialReActTools } from '@infos/backend/services/agent/reactLoop'
 
 const controls = ['expand_advanced_tools', 'update_plan', 'manage_task']
 const context: ToolContext = {
@@ -23,7 +24,39 @@ const context: ToolContext = {
 }
 
 describe('工作协调工具的分类和权限', () => {
-  it.each(controls)('%s 可关闭、聊天不可用，且不作为业务成果', async (name) => {
+  it.each(['open_application', 'get_active_windows', 'activate_window'])(
+    '%s 仅在高级菜单展开并获授权后可用，关闭入口后再次拒绝',
+    async (name) => {
+      const registry = new ToolRegistry()
+      const handler = vi.fn().mockResolvedValue('执行成功')
+      const definition = { name, description: '桌面应用工具', parameters: {} }
+      const entry = { name: 'expand_advanced_tools', description: '展开高级工具', parameters: {} }
+      registry.register(definition, handler)
+      expect(initialReActTools([entry, definition])).toEqual([entry])
+      expect(availableToolDefinitions([definition])).toEqual([])
+      expect(isToolAllowedInInteractionMode(name, 'chat', registry)).toBe(false)
+      const executor = new RegistryToolExecutor(registry)
+      const access: AdvancedToolAccess = { names: new Set([name]), expanded: false }
+      const runtime = { ...context, executionMode: 'full' as const, advancedToolAccess: access }
+      expect(await executor.execute(name, {}, 'desktop', runtime)).toMatchObject({ isError: true })
+      expect(handler).not.toHaveBeenCalled()
+      access.expanded = true
+      access.names = new Set()
+      expect(await executor.execute(name, {}, 'desktop', runtime)).toMatchObject({ isError: true })
+      expect(handler).not.toHaveBeenCalled()
+      access.names = new Set([name])
+      expect(await executor.execute(name, {}, 'desktop', runtime)).toMatchObject({ isError: false })
+      expect(handler).toHaveBeenCalledOnce()
+      executor.setThreadPolicyResolver(async () => ({
+        interactionMode: 'work',
+        disabledTools: ['expand_advanced_tools'],
+      }))
+      expect(await executor.execute(name, {}, 'desktop', runtime)).toMatchObject({ isError: true })
+      expect(handler).toHaveBeenCalledOnce()
+    },
+  )
+
+  it.each(controls)('%s 遵守模式与会话开关，且不作为业务成果', async (name) => {
     const registry = new ToolRegistry()
     const handler = vi.fn().mockResolvedValue('执行成功')
     registry.register({ name, description: '协调工具', parameters: {} }, handler, ['desktop'], {
@@ -32,17 +65,23 @@ describe('工作协调工具的分类和权限', () => {
     expect(isSystemProtocolTool(name)).toBe(false)
     expect(isTaskCoordinationTool(name)).toBe(true)
     expect(isTaskCoordinationTool('read_file')).toBe(false)
-    expect(isToolAllowedInInteractionMode(name, 'chat', registry)).toBe(false)
+    const chatAllowed = name === 'manage_task'
+    expect(isToolAllowedInInteractionMode(name, 'chat', registry)).toBe(chatAllowed)
     expect(isToolAllowedInInteractionMode(name, 'work', registry)).toBe(true)
 
     const executor = new RegistryToolExecutor(registry)
     executor.setThreadPolicyResolver(async () => ({ interactionMode: 'chat', disabledTools: [] }))
-    await expect(
-      executor.execute(name, { action: 'list' }, 'desktop', context),
-    ).resolves.toMatchObject({
-      isError: true,
-      output: expect.stringContaining('聊天模式未开放'),
-    })
+    const chatResult = await executor.execute(name, { action: 'list' }, 'desktop', context)
+    if (chatAllowed) {
+      expect(chatResult.isError).toBe(false)
+      expect(handler).toHaveBeenCalledOnce()
+      handler.mockClear()
+    } else {
+      expect(chatResult).toMatchObject({
+        isError: true,
+        output: expect.stringContaining('聊天模式未开放'),
+      })
+    }
     executor.setThreadPolicyResolver(async () => ({
       interactionMode: 'work',
       disabledTools: [name],
@@ -71,7 +110,13 @@ describe('工作协调工具的分类和权限', () => {
         ...context,
         advancedToolAccess: {
           expanded: false,
-          names: new Set(['browser_get_content', 'remote_terminal_list']),
+          names: new Set([
+            'browser_get_content',
+            'open_application',
+            'get_active_windows',
+            'activate_window',
+            'remote_terminal_list',
+          ]),
         },
       },
     )
@@ -81,6 +126,11 @@ describe('工作协调工具的分类和权限', () => {
       metadata: {
         packages: [
           { id: 'browser', count: 1, tools: ['browser_get_content'] },
+          {
+            id: 'computerUse',
+            count: 3,
+            tools: ['open_application', 'get_active_windows', 'activate_window'],
+          },
           { id: 'remoteTerminal', count: 1, tools: ['remote_terminal_list'] },
         ],
       },

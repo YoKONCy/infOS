@@ -22,7 +22,7 @@
           },
           "private_facts": {
             "type": "string",
-            "description": "必须持续记住但不应直接向用户透露的事实，最多 8000 字。"
+            "description": "当前会话的私有临时要点，不向用户展示，最多 8000 字。"
           }
         },
         "additionalProperties": false

@@ -5,7 +5,7 @@ import { validate as zValidator } from '../lib/validation'
 import type { AppContext } from '../container'
 import type { EventNoteArchiveFilter, EventNoteStatus, EventNoteOriginMode } from '@infos/shared'
 import { memoryEditSchema } from '../schemas/archiveEdit.schema'
-import { throwArchiveEditError } from './archiveEditError'
+import { throwArchiveEditError, throwArchiveRestoreError } from './archiveEditError'
 
 /** 逗号分隔字符串 → 去重数组 */
 function csv(value: string | undefined): string[] | undefined {
@@ -136,7 +136,11 @@ export function createMemoryRouter(ctx: AppContext) {
   })
 
   router.post('/:id/restore', async (c) => {
-    await ctx.eventMemoryService.restore(c.req.param('id'))
+    try {
+      await ctx.eventMemoryService.restore(c.req.param('id'))
+    } catch (error) {
+      throwArchiveRestoreError(error)
+    }
     return c.json({ code: 'OK', message: __t('server.routers', '记忆已恢复') })
   })
   router.delete('/:id', async (c) => {
@@ -168,8 +172,13 @@ export function createMemoryRouter(ctx: AppContext) {
       const pending: string[] = []
       for (const id of new Set(input.ids)) {
         if (input.action === 'archive') await ctx.eventMemoryService.archive(id)
-        else if (input.action === 'restore') await ctx.eventMemoryService.restore(id)
-        else {
+        else if (input.action === 'restore') {
+          try {
+            await ctx.eventMemoryService.restore(id)
+          } catch (error) {
+            throwArchiveRestoreError(error)
+          }
+        } else {
           try {
             await ctx.privacyDeletionService.deleteMemory(id, input.deleteSource)
           } catch {

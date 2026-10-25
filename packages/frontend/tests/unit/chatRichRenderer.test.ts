@@ -1,8 +1,55 @@
-// @vitest-environment happy-dom
+// @vitest-environment jsdom
 import { describe, expect, it } from 'vitest'
 import { renderChatRichText } from '../../src/lib/chatRichRenderer'
 
 describe('chatRichRenderer', () => {
+  it('中英文圆括号使用旁注样式，保留原文、空括号与嵌套内容', () => {
+    const source = '正文（轻轻点头）继续 (waves hello)，还有（外层 (内层) 与（另一层）结束）和 ()。'
+    const root = document.createElement('div')
+    root.innerHTML = renderChatRichText(source)
+    expect(
+      [...root.querySelectorAll('.chat-parenthetical')].map((node) => node.textContent),
+    ).toEqual(['（轻轻点头）', '(waves hello)', '（外层 (内层) 与（另一层）结束）', '()'])
+    expect(root.querySelector('p')?.textContent).toBe(source)
+  })
+
+  it('括号跨越加粗、引号和链接时保留原结构，链接内的括号不参与识别', () => {
+    const root = document.createElement('div')
+    root.innerHTML = renderChatRichText(
+      '（**轻声**说“你好”，参见[说明](https://example.com/a(b))）',
+    )
+    expect(root.querySelector('strong')?.textContent).toBe('轻声')
+    expect(root.querySelector('.chat-quote-cn-double')?.textContent).toBe('“你好”')
+    expect(root.querySelector('a')?.getAttribute('href')).toBe('https://example.com/a(b)')
+    expect(root.querySelector('a .chat-parenthetical')).toBeNull()
+    expect(root.querySelector('strong .chat-parenthetical')?.textContent).toBe('轻声')
+    expect(root.querySelector('.chat-quote-cn-double .chat-parenthetical')?.textContent).toBe(
+      '“你好”',
+    )
+  })
+
+  it('代码、公式和 XML 内的括号保持原样', () => {
+    const root = document.createElement('div')
+    root.innerHTML = renderChatRichText(
+      '`fn()`、$f(x)$、<action>(源码)</action>\n\n```js\nfn()\n```',
+    )
+    expect(
+      root.querySelectorAll(
+        'code .chat-parenthetical, .katex .chat-parenthetical, .chat-xml-inline .chat-parenthetical',
+      ),
+    ).toHaveLength(0)
+    expect(root.querySelector('code')?.textContent).toBe('fn()')
+    expect(root.querySelector('.chat-code-block code')?.textContent).toContain('fn()')
+  })
+
+  it('未闭合或错配括号保持原样，也不跨换行和段落误配', () => {
+    const root = document.createElement('div')
+    root.innerHTML = renderChatRichText(
+      '未闭合（第一行\n第二行）\n\n（另一段\n\n跨段结束）\n\n错配（内容)',
+    )
+    expect(root.querySelectorAll('.chat-parenthetical')).toHaveLength(0)
+  })
+
   it('应当保持块公式、标题和代码块为互不污染的同级结构', () => {
     const html = renderChatRichText(`$$
 E = mc^2

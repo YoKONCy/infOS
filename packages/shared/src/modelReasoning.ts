@@ -39,6 +39,7 @@ export interface ThreadModelSettings {
     reasoningEffort: ReasoningEffort | null
     enableVision: boolean
     enableAudioInput: boolean
+    nativeAudioAvailable?: boolean
   }
   models: Array<{
     id: number

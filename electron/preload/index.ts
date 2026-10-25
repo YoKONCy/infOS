@@ -14,9 +14,11 @@
 
 import { contextBridge, ipcRenderer } from 'electron'
 import { createEmbeddedSurfaceMotion } from './surfaceMotion'
+import { installDesktopEntry } from './desktopEntry'
 
 const embedded = process.argv.includes('--infos-embedded-app')
 const toastOverlay = process.argv.includes('--infos-toast-overlay')
+if (!embedded && !toastOverlay) installDesktopEntry()
 const toastInvokes = new Set(['desktop-toasts:get-state', 'i18n:get-language'])
 const toastEvents = new Set(['desktop-toasts:changed', 'desktop-toasts:active', 'i18n:changed'])
 const applicationInvokes = new Set([
@@ -46,6 +48,8 @@ contextBridge.exposeInMainWorld('electron', {
     embedded || toastOverlay ? '' : ipcRenderer.sendSync('client-access:credential'),
   backendOrigin: () =>
     embedded || toastOverlay ? '' : ipcRenderer.sendSync('client-access:credential', 'origin'),
+  connectionMode: () =>
+    embedded || toastOverlay ? '' : ipcRenderer.sendSync('client-access:credential', 'mode'),
   /**
    * 调用主进程 (请求/响应式 IPC)
    * 对应 ipcMain.handle()

@@ -16,7 +16,7 @@
 | **Layer 2 (Graph)**   | **TriviumDB**          | 事件图谱 + 关系边              | 图谱扩散 + 确定性 BFS | 长期             |
 | **Layer 3 (Diary)**   | **Workspace Markdown** | 每日人格日记 `dailynotes/*.md` | 按日期读取            | 永久             |
 
-> Layer 3 的每日人格日记写入 Agent Workspace，**不进入事件记忆库**；另有全 Agent 共享的 **Facts Store**（`facts.tdb`），仅经工具访问、不自动注入 Prompt。TriviumDB 为运行/检索权威，SQLite 保存完整备份与事务日志。
+> Layer 3 的每日人格日记写入 Agent Workspace，**不进入事件记忆库**；另有全 Agent 共享的 **Facts Store**（`facts.tdb`），默认经工具访问，可在知识库面板独立开启有效事实的自动召回。该召回使用独立的动态 XML，不进入事件记忆 RAG 管线。TriviumDB 为运行/检索权威，SQLite 保存完整备份与事务日志。
 
 ---
 
@@ -61,7 +61,9 @@
 
 ## 5. TriviumDB 接入规范
 
-后端与社交应用统一固定 **0.8.9**。Store 注册表负责旧格式写入前备份、完整文件组重建/清理及一致性快照；持久化正文旁路文件 `.tdb.pld.<generation>`、属性/图索引与 flush marker 必须随主库一起处理。升级本身不修改 Embedding 维度，也不要求重新生成向量。每个常驻 Store 的 Payload 缓存上限为 32 MiB、单条缓存上限为 4 MiB；只读临时 Store 使用 8 MiB。具体回退约束见 [A08_DEVOPS](./A08_DEVOPS.md#23-迁移原则)。
+后端与社交应用统一固定 **0.8.11**，主文件仍为 v9，无需为本次升级迁移数据或重新生成向量。Store 注册表负责旧格式写入前备份、完整文件组重建/清理及一致性快照；持久化正文旁路文件 `.tdb.pld.<generation>`、属性/图索引、flush marker，以及发布恢复日志 `.publish` 与 `.publish.0/1/2` 必须按同一数据库文件组处理。升级备份按目标版本分目录保存，清空、永久遗忘和维度重建同时清理旧版本对应库的副本。每个常驻 Store 的 Payload 缓存上限为 32 MiB、单条缓存上限为 4 MiB；只读临时 Store 使用 8 MiB。具体回退约束见 [A08_DEVOPS](./A08_DEVOPS.md#23-迁移原则)。
+
+`indexText(id, text)` 替换节点的完整 BM25 正文，多字段需合并后一次登记；修改 Payload 不会自动更新独立正文。常驻 Store 保持 `loadTextIndex: true`，`buildTextIndex()` 用于提前预热关键词自动机，加载、损坏和预算错误向请求传播；初始化失败关闭未注册的句柄，后续可重试。文本登记仍需 flush/close 持久化，不属于节点事务的 WAL 原子提交；继续保留 SQLite 完整备份和事务重放路径，不因库升级删除这些恢复来源。
 
 TS 层必须通过 `VectorWriteHelper` 操作数据库，确保原子性：
 
@@ -88,7 +90,7 @@ Agent 第一人称事件记事：`id`、`agentId`、`narrative`、`eventAt`（�
 
 ### 6.3 Facts (共享 Store)
 
-全 Agent 共享的对象事实库（`facts.tdb`）：`objectKey` / `statement`，支持 `superseded_by` 取代链；仅经工具访问。
+全 Agent 共享的对象事实库（`facts.tdb`）：`objectKey` / `statement`，支持 `superseded_by` 取代链；支持工具访问与默认关闭的自动召回，详见 [文档知识库](B03_DOCUMENT_KNOWLEDGE.md#可选自动召回)。
 
 ## 7. 记忆边界与来源追溯
 
@@ -137,5 +139,7 @@ ContextRNN 是 SA-PPR 高级管线的可选子模块，默认关闭。只有 `ad
 - 重新生成的向量在准备修订事务前完成；失败不会发布新版本。已准备事务持久保存本次向量，失败重试与启动重放沿用该向量，不重复调用模型。
 - 客户端同一草稿重试沿用 `operationId`。事务内检查旧版本是否仍有效，归档状态是否变化；并发修订仅允许一个版本接管。迟到请求不能复活已被再次替代的旧条目。冲突响应保留编辑草稿，由用户刷新后决定如何处理。
 - 保存完成后刷新详情、列表、统计与图谱；未保存的修改关闭前需要明确放弃。已生成的日记与进行中的对话上下文不因档案编辑自动重写。
+- 归档记忆可从列表、详情或批量操作恢复；知识库中的已撤回事实提供「还原」。还原保留同一条记录的正文、原始来源、观察时间和记录者，不重新生成向量。被新修订替代的旧版本不允许直接恢复为有效条目，避免绕过版本链。
+- 记忆恢复同步失效旧检索轨迹并恢复索引；事实恢复使用事务日志同步 SQLite 与 TDB，索引中断可重试，旧事务重放以数据库当前状态为准。永久删除及来源遗忘的标记继续优先拦截，包括已经创建过的还原事务，不能借还原复活删除数据。
 
 _本文档由 Carola 整理，适用于 infOS-TS 记忆引擎架构规范。_

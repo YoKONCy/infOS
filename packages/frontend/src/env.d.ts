@@ -12,6 +12,7 @@ interface Window {
   electron?: {
     clientCredential?: () => string
     backendOrigin?: () => string
+    connectionMode?: () => 'local' | 'remote' | ''
     embedded?: boolean
     toastOverlay?: boolean
     invoke(channel: string, ...args: unknown[]): Promise<unknown>

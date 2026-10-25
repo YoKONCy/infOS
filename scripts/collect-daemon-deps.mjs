@@ -121,7 +121,8 @@ function copyDir(source, target, packageName) {
     const dstPath = path.join(target, entry.name)
     if (entry.isDirectory()) {
       // 跳过包内部的 node_modules（pnpm 嵌套链接，顶层已扁平收集）
-      if (entry.name === 'node_modules') continue
+      // pnpm 的 dist/node_modules 是随 CLI 发布的运行文件，不能按 workspace 链接丢弃。
+      if (entry.name === 'node_modules' && packageName !== 'pnpm') continue
       copyDir(srcPath, dstPath, packageName)
     } else if (entry.isSymbolicLink()) {
       // 保留符号链接语义 → 复制其真实目标

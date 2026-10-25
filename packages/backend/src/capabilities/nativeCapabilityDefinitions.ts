@@ -96,6 +96,7 @@ export const DESKTOP_ENVIRONMENT_CAPABILITY: KernelCapabilityDefinition = {
   capabilityType: 'desktop.environment',
   contractVersion: '1.0',
   operations: {
+    runtimeDiagnostics: { risk: 'read', idempotency: 'safe' },
     control: { risk: 'interact', idempotency: 'unsafe' },
     statusCard: { risk: 'read', idempotency: 'safe' },
     screenCapture: { risk: 'elevated', idempotency: 'safe' },

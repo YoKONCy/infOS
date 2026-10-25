@@ -33,7 +33,7 @@ describe('收藏表情失败与核验语义', () => {
       uncertain: false,
       stage: 'preflight',
     })
-    expect(result.error).toContain('emoji_list')
+    expect(result.error).toContain('当前平台提供的表情能力')
     expect(collect).not.toHaveBeenCalled()
   })
   it('核验列表显式刷新，不沿用缓存', async () => {

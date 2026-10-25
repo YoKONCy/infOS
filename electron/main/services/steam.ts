@@ -14,6 +14,7 @@ import path from 'node:path'
 import fs from 'node:fs'
 import { logger } from '../utils/logger'
 import { isPackagedRuntime } from '../utils/runtimeMode'
+import { isRemoteConnection } from './clientConnection'
 
 // ─── 延迟加载 steamworks.js ──────────────────────────
 // 不在模块顶层 require()，防止缺 steam_api64.dll 时 segfault
@@ -201,7 +202,7 @@ export function getSteamCloudApi(): any | null {
 
 /** 云存档状态 */
 export function getCloudStatus(): { enabled: boolean } {
-  if (!steamApi) return { enabled: false }
+  if (!steamApi || isRemoteConnection()) return { enabled: false }
   try {
     return { enabled: steamApi.cloud.isEnabledForApp() ?? false }
   } catch {

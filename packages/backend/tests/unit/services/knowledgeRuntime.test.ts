@@ -185,9 +185,11 @@ describe('文档知识库持久化与 API', () => {
     const payload = (await response.json()) as ApiResponse<KnowledgeDocumentInfo>
     const id = payload.data!.id
     expect(repo.get(id)?.status).toBe('queued')
+    expect(repo.hasReadyParts()).toBe(false)
     expect(jobs).toHaveLength(1)
     expect(llm.chatText).not.toHaveBeenCalled()
     await run()
+    expect(repo.hasReadyParts()).toBe(true)
     expect(service.detail(id)).toMatchObject({
       status: 'ready',
       vectorStatus: 'skipped',
@@ -202,6 +204,7 @@ describe('文档知识库持久化与 API', () => {
     const invalid = await jsonRequest(app, '/search', { keywords: ['蓝莓'], limit: 21 })
     expect(invalid.status).toBe(400)
     await service.delete(id)
+    expect(repo.hasReadyParts()).toBe(false)
     expect((await service.index.search({ keywords: ['蓝莓'] })).items).toEqual([])
     expect(repo.parts(id)).toEqual([])
   })

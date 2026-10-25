@@ -35,6 +35,7 @@ import WorkspaceFilePreview from '../../workspace/WorkspaceFilePreview.vue'
 import SurfaceTransition from '../../motion/SurfaceTransition.vue'
 import WorkspaceFileGlyph from '../../workspace/WorkspaceFileGlyph.vue'
 import { createPreviewState, type WorkspacePreviewState } from '../../workspace/workspacePreview'
+import { useWorkspaceFullscreen } from '../../../composables/workspace/useWorkspaceFullscreen'
 import {
   useAgentStore,
   useThreadStore,
@@ -51,6 +52,10 @@ import { threadsApi } from '../../../api/modules/threadsApi'
 import { getApiBaseUrl, isElectronRuntime } from '../../../api/transport'
 import { invoke } from '../../../utils/ipcAdapter'
 import { resourceNavigation } from '../../../composables/resources/useResources'
+import {
+  useWorkspaceSearchNavigation,
+  type WorkspaceSearchRequest,
+} from '../../../composables/workspace/useWorkspaceSearchNavigation'
 import { useMobileLayout } from '../../../composables/ui/useMobileLayout'
 import {
   buildConversationMarkdown,
@@ -65,6 +70,8 @@ interface OpenFile extends WorkspaceFileDescriptor {
   truncated: boolean
   previewState: WorkspacePreviewState
   previewRevision: number
+  searchSource?: WorkspaceSearchRequest
+  sourceLineStart?: number
 }
 
 const agentStore = useAgentStore()
@@ -121,6 +128,21 @@ function dismissMobileWorkspacePanels() {
 }
 const isTerminalCollapsed = ref(isMobile.value)
 const isTerminalMaximized = ref(false)
+const previewFrame = ref<HTMLElement | null>(null)
+const previewVisible = computed(
+  () => workspaceActive.value && desktopHomeVisible.value && !isTerminalMaximized.value,
+)
+const previewFiles = computed(() => openFiles.value.filter((file) => file.kind !== 'text'))
+const {
+  expanded: previewExpanded,
+  pending: fullscreenPending,
+  toggle: toggleFullscreen,
+} = useWorkspaceFullscreen(previewFrame, previewVisible)
+async function togglePreviewFullscreen() {
+  if (fullscreenPending.value || !previewVisible.value) return
+  if (!(await toggleFullscreen()))
+    notification.toast(__t('ui.workspace', '无法进入全屏，请重试'), { type: 'error' })
+}
 const isApprovalQueueExpanded = ref(true)
 const isSessionDrawerOpen = ref(false)
 const markdownPreviewPaths = ref(new Set<string>())
@@ -277,8 +299,10 @@ async function ensureAgent(): Promise<void> {
   }
 }
 
+const revealingWorkspace = ref(false)
 async function revealWorkspace(): Promise<void> {
-  if (!currentAgent.value || !threadId.value) return
+  if (!currentAgent.value || !threadId.value || revealingWorkspace.value) return
+  revealingWorkspace.value = true
   try {
     const session = { agentId: currentAgent.value.id, threadId: threadId.value }
     // Electron 必须由主进程在当前桌面会话中调用 shell.openPath；Daemon 可能运行在独立服务会话中。
@@ -287,7 +311,7 @@ async function revealWorkspace(): Promise<void> {
     if (isElectronRuntime()) await invoke('open-local-path', response.data.path)
     notification.toast(
       isElectronRuntime()
-        ? __t('ui.navigation', '已在 Windows 资源管理器中打开工作区')
+        ? __t('ui.workspace', '已在系统文件管理器中打开工作区')
         : __t('ui.navigation', '已请求打开工作区'),
       { type: 'success' },
     )
@@ -298,6 +322,8 @@ async function revealWorkspace(): Promise<void> {
         type: 'error',
       },
     )
+  } finally {
+    revealingWorkspace.value = false
   }
 }
 
@@ -313,6 +339,10 @@ async function openFile(
     if (activate && focusRevision === fileFocusRevision) activePath.value = node.path
   }
   const existing = openFiles.value.find((file) => file.path === node.path)
+  if (existing?.searchSource && forceReload) {
+    await openSearchFile(existing.searchSource, activate)
+    return
+  }
   forceReload ||= !!existing && !existing.dirty && needsRefresh.has(existing)
   if (existing && !forceReload) {
     focus()
@@ -429,11 +459,125 @@ async function reloadPreview(): Promise<void> {
 }
 
 function updateContent(event: Event): void {
-  if (!activeFile.value || activeFile.value.kind !== 'text' || activeFile.value.truncated) return
+  if (
+    !activeFile.value ||
+    activeFile.value.kind !== 'text' ||
+    activeFile.value.truncated ||
+    activeFile.value.searchSource
+  )
+    return
   activeFile.value.content = (event.target as HTMLTextAreaElement).value
   activeFile.value.dirty = true
   selectedSnippet.value = null
 }
+
+async function openSearchFile(request: WorkspaceSearchRequest, activate = true): Promise<void> {
+  const ownerFiles = openFiles.value
+  const revision = activate ? ++fileFocusRevision : fileFocusRevision
+  const response = await workspaceApi.searchResultFile(request)
+  if (
+    !response.data ||
+    currentAgent.value?.id !== request.agentId ||
+    openFiles.value !== ownerFiles
+  )
+    return
+  const { descriptor, read } = response.data
+  const existing = ownerFiles.find((file) => file.path === request.file)
+  if (existing?.searchSource && existing.searchSource.revision > request.revision) return
+  if (!existing?.dirty) {
+    const loaded: OpenFile = {
+      ...descriptor,
+      path: request.file,
+      content: read.content,
+      hash: read.hash,
+      dirty: false,
+      truncated: read.truncated,
+      sourceLineStart: read.lineStart,
+      previewState: createPreviewState(),
+      previewRevision: 0,
+      searchSource: request,
+    }
+    if (existing) Object.assign(existing, loaded)
+    else ownerFiles.push(loaded)
+  }
+  if (activate && revision === fileFocusRevision) activePath.value = request.file
+}
+
+const searchNavigation = useWorkspaceSearchNavigation()
+let openedSearchRevision = -1
+watch(
+  [searchNavigation, () => currentAgent.value?.id, threadId, workspaceActive],
+  async () => {
+    const request = searchNavigation.value
+    if (
+      !workspaceActive.value ||
+      !request ||
+      request.revision === openedSearchRevision ||
+      request.agentId !== currentAgent.value?.id ||
+      !threadId.value
+    )
+      return
+    openedSearchRevision = request.revision
+    try {
+      isTerminalMaximized.value = false
+      isExplorerCollapsed.value = false
+      const name = request.file.replaceAll('\\', '/').split('/').pop() || request.file
+      if (openFiles.value.some((file) => file.path === request.file && file.searchSource))
+        await openSearchFile(request)
+      else {
+        const requestFocus = fileFocusRevision + 1
+        try {
+          await openFile({ path: request.file, name, type: 'file' })
+        } catch {
+          if (
+            searchNavigation.value?.revision !== request.revision ||
+            fileFocusRevision !== requestFocus
+          )
+            return
+          await openSearchFile(request)
+        }
+      }
+      if (
+        activePath.value === request.file &&
+        activeFile.value?.truncated &&
+        !activeFile.value.searchSource &&
+        (request.line ?? 1) > activeFile.value.content.split('\n').length
+      )
+        await openSearchFile(request)
+      await nextTick()
+      if (
+        activePath.value !== request.file ||
+        !activeFile.value ||
+        searchNavigation.value?.revision !== request.revision
+      )
+        return
+      setMarkdownPreview(false)
+      await nextTick()
+      const target = editorTextarea.value
+      if (!target) return
+      const lines = target.value.split('\n')
+      const line = Math.max(
+        1,
+        Math.min(lines.length, (request.line ?? 1) - (activeFile.value.sourceLineStart ?? 1) + 1),
+      )
+      const offset = lines.slice(0, line - 1).reduce((size, text) => size + text.length + 1, 0)
+      const column = Math.min(lines[line - 1]?.length ?? 0, Math.max(0, (request.column ?? 1) - 1))
+      target.focus()
+      target.setSelectionRange(offset + column, offset + (lines[line - 1]?.length ?? 0))
+      target.scrollTop = Math.max(
+        0,
+        (line - 1) * (parseFloat(getComputedStyle(target).lineHeight) || 22) -
+          target.clientHeight / 3,
+      )
+    } catch (error) {
+      notification.toast(
+        error instanceof Error ? error.message : __t('ui.navigation', '无法打开文件'),
+        { type: 'error' },
+      )
+    }
+  },
+  { immediate: true },
+)
 
 let openedResourceRevision = -1
 watch(
@@ -482,7 +626,7 @@ function attachSelection(): void {
   const file = activeFile.value
   const editor = editorTextarea.value
   if (!file || !editor || editor.selectionEnd <= editor.selectionStart) return
-  const text = file.content.slice(editor.selectionStart, editor.selectionEnd)
+  const text = editor.value.slice(editor.selectionStart, editor.selectionEnd)
   if (!text.trim()) return
   if (text.length > 4000) {
     notification.toast(__t('ui.navigation', '选区最多附带 4000 字，请缩小范围'), {
@@ -490,8 +634,12 @@ function attachSelection(): void {
     })
     return
   }
-  const startLine = file.content.slice(0, editor.selectionStart).split('\n').length
-  const endLine = file.content.slice(0, editor.selectionEnd).split('\n').length
+  const startLine =
+    editor.value.slice(0, editor.selectionStart).split('\n').length +
+    (file.sourceLineStart ?? 1) -
+    1
+  const endLine =
+    editor.value.slice(0, editor.selectionEnd).split('\n').length + (file.sourceLineStart ?? 1) - 1
   selectedSnippet.value = { path: file.path, text, startLine, endLine }
   notification.toast(__t('ui.navigation', '选区已加入本轮材料'), { type: 'success' })
 }
@@ -499,6 +647,7 @@ function attachSelection(): void {
 async function save(): Promise<void> {
   const file = activeFile.value
   if (!file || file.kind !== 'text' || !currentAgent.value || !threadId.value) return
+  if (file.searchSource) return
   if (file.truncated) {
     notification.toast(__t('ui.navigation', '大文件仅支持预览'), { type: 'error' })
     return
@@ -862,7 +1011,10 @@ onBeforeUnmount(() => {
             class="workspace-dirty-dot"
             :title="__t('ui.navigation', '尚未保存')"
           />
-          <span v-if="activeFile?.truncated" class="workspace-readonly-badge">
+          <span
+            v-if="activeFile?.truncated || activeFile?.searchSource"
+            class="workspace-readonly-badge"
+          >
             {{ __t('ui.navigation', '只读预览') }}
           </span>
         </div>
@@ -929,12 +1081,15 @@ onBeforeUnmount(() => {
             <WorkspaceTree
               v-if="threadId"
               ref="workspaceTreeRef"
+              :active="workspaceActive && desktopHomeVisible && !isExplorerCollapsed"
+              :opening="revealingWorkspace"
               :agent-id="currentAgent.id"
               :agent-name="currentAgent.name"
               :thread-id="threadId"
               @select="selectFile"
               @renamed="handleFileRenamed"
               @deleted="handleFileDeleted"
+              @reveal="revealWorkspace"
             />
             <div
               class="workspace-resizer workspace-resizer--vertical"
@@ -967,23 +1122,32 @@ onBeforeUnmount(() => {
             </span>
           </div>
 
-          <SurfaceTransition
-            fill
-            variant="panel"
-            :identity="`${currentAgent.id}:${activePath}`"
-            :pending="!!pendingFile && !isTerminalMaximized"
-            :label="__t('ui.navigation', '正在打开文件')"
-            class="editor-area"
-            :class="{ 'editor-area--terminal-maximized': isTerminalMaximized }"
-          >
-            <template v-if="activeFile && !isTerminalMaximized">
-              <div class="editor-toolbar">
+          <div v-show="!isTerminalMaximized" ref="previewFrame" class="editor-preview-frame">
+            <SurfaceTransition
+              fill
+              variant="panel"
+              :identity="`${currentAgent.id}:${activePath}`"
+              :pending="!!pendingFile && !isTerminalMaximized"
+              :label="__t('ui.navigation', '正在打开文件')"
+              class="editor-area"
+              :class="{ 'editor-area--terminal-maximized': isTerminalMaximized }"
+            >
+              <div v-if="activeFile && !isTerminalMaximized" class="editor-toolbar">
                 <div class="editor-breadcrumb">
                   <PixelIcon name="folder" size="xs" />
                   <span>{{ activeFile.path }}</span>
                 </div>
                 <span v-if="activeFile.truncated" class="editor-warning">
-                  {{ __t('ui.navigation', '文件过大，仅载入前 128K 字符') }}
+                  {{
+                    activeFile.searchSource
+                      ? __t('ui.toolSearchResult', '当前文件的第 {0}–{1} 行', [
+                          activeFile.sourceLineStart ?? 1,
+                          (activeFile.sourceLineStart ?? 1) +
+                            activeFile.content.split('\n').length -
+                            1,
+                        ])
+                      : __t('ui.navigation', '文件过大，仅载入前 128K 字符')
+                  }}
                 </span>
                 <div
                   v-if="isMarkdownFile"
@@ -1009,6 +1173,20 @@ onBeforeUnmount(() => {
                   </button>
                 </div>
                 <PButton
+                  size="sm"
+                  variant="ghost"
+                  :disabled="fullscreenPending"
+                  :aria-pressed="previewExpanded"
+                  @click="togglePreviewFullscreen"
+                >
+                  <PixelIcon :name="previewExpanded ? 'minimize' : 'maximize'" size="xs" />
+                  {{
+                    previewExpanded
+                      ? __t('ui.workspace', '退出全屏')
+                      : __t('ui.workspace', '全屏浏览')
+                  }}
+                </PButton>
+                <PButton
                   v-if="activeFile.kind === 'text' && !isMarkdownPreview"
                   size="sm"
                   variant="ghost"
@@ -1019,77 +1197,83 @@ onBeforeUnmount(() => {
                 <PButton
                   v-if="activeFile.kind === 'text' && !isMarkdownPreview"
                   size="sm"
-                  :disabled="!activeFile.dirty || activeFile.truncated"
+                  :disabled="!activeFile.dirty || activeFile.truncated || !!activeFile.searchSource"
                   @click="save"
                 >
                   {{
-                    activeFile.truncated
+                    activeFile.truncated || activeFile.searchSource
                       ? __t('ui.navigation', '只读预览')
                       : __t('ui.navigation', '保存')
                   }}
                 </PButton>
               </div>
               <WorkspaceFilePreview
-                v-if="activeFile.kind !== 'text'"
-                :key="`${currentAgent.id}:${threadId}:${activeFile.path}:${activeFile.version}:${activeFile.previewRevision}`"
-                :file="activeFile"
+                v-for="file in previewFiles"
+                v-show="file.path === activePath && !isTerminalMaximized"
+                :key="`${currentAgent.id}:${threadId}:${file.path}:${file.version}:${file.previewRevision}`"
+                :file="file"
                 :session="{ agentId: currentAgent.id, threadId }"
-                :state="activeFile.previewState"
-                :active="workspaceActive && desktopHomeVisible && !isTerminalMaximized"
+                :state="file.previewState"
+                :active="previewVisible && file.path === activePath"
                 @state="(state, patch) => Object.assign(state, patch)"
                 @reload="reloadPreview"
+                @fullscreen="togglePreviewFullscreen"
               />
-              <div
-                v-else-if="isMarkdownPreview"
-                class="markdown-preview"
-                :aria-label="__t('ui.navigation', 'Markdown浏览器')"
-              >
-                <article class="markdown-preview__paper">
-                  <ChatRichText :content="activeFile.content" />
-                </article>
-              </div>
-              <div v-else class="editor-surface">
-                <div class="editor-gutter" aria-hidden="true">1</div>
-                <textarea
-                  ref="editorTextarea"
-                  :value="activeFile.content"
-                  :readonly="activeFile.truncated"
-                  spellcheck="false"
-                  :aria-label="__t('ui.navigation', '文件编辑器')"
-                  @input="updateContent"
-                  @keydown.ctrl.s.prevent="save"
-                />
-              </div>
-              <footer class="editor-statusbar">
-                <span>
-                  {{
-                    activeFile.kind !== 'text'
-                      ? __t('ui.navigation', '只读浏览')
-                      : activeFile.dirty
-                        ? __t('ui.navigation', '已修改')
-                        : __t('ui.navigation', '已保存')
-                  }}
-                </span>
-                <span class="editor-statusbar__spacer" />
-                <span v-if="activeFile.kind === 'text'">UTF-8</span>
-                <span v-if="activeFile.kind === 'text'">LF</span>
-                <span>{{ activeFileExtension }}</span>
-              </footer>
-            </template>
+              <template v-if="activeFile && !isTerminalMaximized">
+                <div
+                  v-if="isMarkdownPreview"
+                  class="markdown-preview"
+                  :aria-label="__t('ui.navigation', 'Markdown浏览器')"
+                >
+                  <article class="markdown-preview__paper">
+                    <ChatRichText :content="activeFile.content" />
+                  </article>
+                </div>
+                <div v-else-if="activeFile.kind === 'text'" class="editor-surface">
+                  <div class="editor-gutter" aria-hidden="true">
+                    {{ activeFile.sourceLineStart ?? 1 }}
+                  </div>
+                  <textarea
+                    ref="editorTextarea"
+                    :value="activeFile.content"
+                    :readonly="activeFile.truncated || !!activeFile.searchSource"
+                    spellcheck="false"
+                    :aria-label="__t('ui.navigation', '文件编辑器')"
+                    @input="updateContent"
+                    @keydown.ctrl.s.prevent="save"
+                  />
+                </div>
+                <footer class="editor-statusbar">
+                  <span>
+                    {{
+                      activeFile.kind !== 'text'
+                        ? __t('ui.navigation', '只读浏览')
+                        : activeFile.dirty
+                          ? __t('ui.navigation', '已修改')
+                          : __t('ui.navigation', '已保存')
+                    }}
+                  </span>
+                  <span class="editor-statusbar__spacer" />
+                  <span v-if="activeFile.kind === 'text'">UTF-8</span>
+                  <span v-if="activeFile.kind === 'text'">LF</span>
+                  <span>{{ activeFileExtension }}</span>
+                </footer>
+              </template>
 
-            <div v-else-if="!isTerminalMaximized" class="editor-empty">
-              <div class="editor-empty__mark"><PixelIcon name="code" size="2xl" /></div>
-              <strong>
-                {{ __t('ui.navigation', '打开文件，开始与') }} {{ currentAgent.name }}
-                {{ __t('ui.navigation', '协作') }}
-              </strong>
-              <span>{{ __t('ui.navigation', '从左侧选择文件，与助手一起编辑。') }}</span>
-              <button @click="revealWorkspace">
-                <PixelIcon name="folder" size="xs" />
-                {{ __t('ui.navigation', '在文件管理器中打开') }}
-              </button>
-            </div>
-          </SurfaceTransition>
+              <div v-else-if="!isTerminalMaximized" class="editor-empty">
+                <div class="editor-empty__mark"><PixelIcon name="code" size="2xl" /></div>
+                <strong>
+                  {{ __t('ui.navigation', '打开文件，开始与') }} {{ currentAgent.name }}
+                  {{ __t('ui.navigation', '协作') }}
+                </strong>
+                <span>{{ __t('ui.navigation', '从左侧选择文件，与助手一起编辑。') }}</span>
+                <button @click="revealWorkspace">
+                  <PixelIcon name="folder" size="xs" />
+                  {{ __t('ui.navigation', '在文件管理器中打开') }}
+                </button>
+              </div>
+            </SurfaceTransition>
+          </div>
 
           <section
             class="terminal-area"
@@ -1679,6 +1863,23 @@ onBeforeUnmount(() => {
   font-size: 10px;
 }
 
+.editor-preview-frame {
+  display: flex;
+  flex: 1;
+  min-width: 0;
+  min-height: 120px;
+  flex-direction: column;
+  overflow: hidden;
+}
+.editor-preview-frame:fullscreen {
+  width: 100%;
+  height: 100%;
+  min-height: 0;
+  background: var(--ui-bg-surface);
+}
+.editor-preview-frame:fullscreen .editor-toolbar {
+  min-height: 44px;
+}
 .editor-area {
   display: flex;
   min-height: 120px;

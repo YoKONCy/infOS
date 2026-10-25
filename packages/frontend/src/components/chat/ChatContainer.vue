@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import PackageSlot from '../integrations/PackageSlot.vue'
 import { t as __t } from '../../i18n/index'
 
 import { copyClientText } from '../../lib/clientPlatform'
@@ -25,6 +26,7 @@ import {
 import ConversationSurface from '../compositor/ConversationSurface.vue'
 import SurfaceTransition from '../motion/SurfaceTransition.vue'
 import MessageBubble from './MessageBubble.vue'
+import { isLocalOwnerMessage } from '../../lib/userMessageIdentity'
 import InputBar from './InputBar.vue'
 import ConversationQueue from './ConversationQueue.vue'
 import { useConversationQueue } from '../../composables/chat/useConversationQueue'
@@ -54,6 +56,7 @@ import { voiceApi } from '../../api/modules/voiceApi'
 import type { AttachmentInfo } from '../../api/modules/attachmentsApi'
 import type { ChatMessage as StoredMessage } from '../../stores/useThreadStore'
 import { listen } from '../../utils/ipcAdapter'
+import { useFileDrop } from '../../composables/chat/useFileDrop'
 
 export interface Props {
   switching?: boolean
@@ -127,6 +130,14 @@ const {
 const threadStore = useThreadStore()
 const queue = useConversationQueue()
 const inputBarRef = ref<InstanceType<typeof InputBar> | null>(null)
+const fileDrop = useFileDrop({
+  enabled: () => !!inputBarRef.value && !props.switching && !threadStore.navigationTarget,
+  files: async (files) => {
+    await inputBarRef.value?.uploadFiles(files)
+  },
+  directory: () =>
+    notif.toast(__t('ui.attachments', '请拖入文件，文件夹请先压缩'), { type: 'warning' }),
+})
 const restoringQueueDraft = ref(false)
 const returnedWorkspaceContext = ref<ChatWorkspaceContext | undefined>()
 const draftWarnings = new Set<string>()
@@ -241,6 +252,7 @@ watch(
   },
 )
 let messageAudioContext: AudioContext | null = null
+let messageAudioAbort: AbortController | null = null
 let messageAudioSource: AudioBufferSourceNode | null = null
 let audioRequest = 0
 const interactionSurfaces = computed(() =>
@@ -750,6 +762,8 @@ async function handleDeletePair(id: string) {
 
 function stopMessageAudio(): void {
   audioRequest++
+  messageAudioAbort?.abort()
+  messageAudioAbort = null
   messageAudioSource?.stop()
   messageAudioSource = null
   void messageAudioContext?.close()
@@ -775,7 +789,11 @@ async function handleTtsPlay(message: BubbleMessage): Promise<void> {
   playingMsgId.value = message.id
   isLoadingAudio.value = true
   try {
-    const audio = await voiceApi.synthesize({ text })
+    messageAudioAbort = new AbortController()
+    const audio = await voiceApi.synthesize(
+      { text, agentId: message.senderId || props.agentId },
+      messageAudioAbort.signal,
+    )
     if (request !== audioRequest || playingMsgId.value !== message.id) return
     const context = new AudioContext()
     messageAudioContext = context
@@ -915,8 +933,18 @@ onUnmounted(() => {
     class="chat-container"
     :class="{ 'chat-container--compact': compactInput }"
     :style="{ '--chat-input-height': `${inputAreaHeight}px` }"
+    @dragenter="fileDrop.enter"
+    @dragover="fileDrop.over"
+    @dragleave="fileDrop.leave"
+    @drop="fileDrop.drop"
   >
+    <div v-if="fileDrop.dragging.value" class="chat-file-drop" aria-hidden="true">
+      <PixelIcon name="file" size="lg" />
+      <strong>{{ __t('ui.attachments', '松开以上传文件') }}</strong>
+      <span>{{ __t('ui.attachments', '支持多文件，上传后可按需读取') }}</span>
+    </div>
     <!-- M05-B1: 角色工作状态徽章（后台任务进行中提示，点击跳转任务中心） -->
+    <PackageSlot region="chat.header" />
     <div class="chat-work-badge">
       <AgentWorkBadge :agent-id="agentId" />
     </div>
@@ -965,6 +993,7 @@ onUnmounted(() => {
             threadStore.ragFailureTrace,
           ]"
           :message="msg"
+          :is-owner-message="isLocalOwnerMessage({ role: msg.role, channel: threadStore.channel })"
           :agent-id="agentId"
           :agent-name="agentName"
           :agent-avatar-url="agentAvatarUrl"
@@ -1012,6 +1041,7 @@ onUnmounted(() => {
 
     <!-- 输入框 -->
     <div ref="inputAreaRef" class="chat-input-area">
+      <PackageSlot region="chat.footer" />
       <ThreadTodo :thread-id="threadStore.threadId || props.threadId" :agent-id="props.agentId" />
       <div
         v-if="
@@ -1183,6 +1213,33 @@ onUnmounted(() => {
   position: relative;
   overflow: hidden;
   background: transparent;
+}
+.chat-file-drop {
+  position: absolute;
+  inset: 12px;
+  z-index: 45;
+  pointer-events: none;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 12px;
+  border: 2px solid var(--ui-accent-cyan);
+  border-radius: 0;
+  background: color-mix(in srgb, var(--ui-bg-surface) 92%, transparent);
+  color: var(--ui-accent-cyan);
+  box-shadow:
+    4px 4px 0 var(--ui-border-default),
+    inset 0 0 0 4px color-mix(in srgb, var(--ui-accent-cyan) 10%, transparent);
+}
+.chat-file-drop strong {
+  font-family: var(--ui-font-pixel);
+  font-size: 20px;
+  font-weight: 400;
+}
+.chat-file-drop span {
+  color: var(--ui-text-secondary);
+  font-size: 12px;
 }
 
 /* M05-B1: 工作徽章悬浮于消息区右上角，不占布局 */

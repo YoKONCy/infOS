@@ -18,6 +18,18 @@ export class KnowledgeRepository {
   }
   constructor(private readonly db: DrizzleDb) {}
 
+  hasReadyParts(): boolean {
+    return Boolean(
+      this.db
+        .select({ id: knowledgeParts.id })
+        .from(knowledgeParts)
+        .innerJoin(knowledgeDocuments, eq(knowledgeParts.documentId, knowledgeDocuments.id))
+        .where(and(eq(knowledgeDocuments.status, 'ready'), this.visible))
+        .limit(1)
+        .get(),
+    )
+  }
+
   get(id: string): KnowledgeDocumentRow | undefined {
     return this.db
       .select()

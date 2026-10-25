@@ -35,6 +35,7 @@ import { AppError } from '../../lib/appError'
 import { disposeExecutionOwner } from '../../tools/productivityRuntimeHolder'
 import { publicWorkMetadata, workContextText } from '../context/workContext'
 import { tokenCounter } from '../tokenizer/tokenCounter'
+import { buildConversationTimeAnchors } from '../context/conversationTime'
 
 const logger = createLogger('ThreadService')
 
@@ -381,6 +382,17 @@ export class ThreadService {
   async getActiveMessages(threadId: string, limit = 20): Promise<ThreadMessageInfo[]> {
     const rows = await this.threadRepo.queryActiveMessages({ threadId, limit })
     return rows.map((r) => this.toMessageInfo(r))
+  }
+
+  /** 标记依据完整会话时间索引派生，当前输入是否注入由上下文编译器决定。 */
+  async getConversationTimeAnchors(
+    threadId: string,
+    throughMessageId: number,
+  ): Promise<ReadonlyMap<number, string>> {
+    if (throughMessageId <= 0) return new Map()
+    return buildConversationTimeAnchors(
+      await this.threadRepo.queryConversationUserTimes(threadId, throughMessageId),
+    )
   }
 
   /**

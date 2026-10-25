@@ -7,13 +7,22 @@ import type { InboundMessage } from '@infos/social/runtime/types'
 
 function message(overrides: Partial<InboundMessage> = {}): InboundMessage {
   return {
-    platform: 'qq',
     channelId: overrides.channelId ?? 'group-1',
     channelType: overrides.channelType ?? 'group',
     senderId: overrides.senderId ?? 'user-1',
     senderName: overrides.senderName ?? '群友',
     content: overrides.content ?? '你好',
     agentId: overrides.agentId ?? 'pero',
+    platform: overrides.platform ?? 'qq',
+    messageId:
+      overrides.messageId ??
+      String((overrides.rawEvent as Record<string, unknown> | undefined)?.message_id ?? ''),
+    accountId:
+      overrides.accountId ??
+      String((overrides.rawEvent as Record<string, unknown> | undefined)?.self_id ?? ''),
+    isMentioned:
+      overrides.isMentioned ??
+      (overrides.rawEvent as Record<string, unknown> | undefined)?._isMentioned === true,
     rawEvent: overrides.rawEvent ?? {},
   }
 }

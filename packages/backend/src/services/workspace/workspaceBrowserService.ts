@@ -5,13 +5,15 @@
  * 非直观的状态转换、失败恢复与安全边界应在本模块内完成，避免泄漏实现细节。
  */
 import path from 'node:path'
-import { open, readdir, stat } from 'node:fs/promises'
-import type { WorkspaceFileDescriptor } from '@infos/shared'
+import { open, readdir, realpath, stat } from 'node:fs/promises'
+import type { CodeSearchNavigation, WorkspaceFileDescriptor } from '@infos/shared'
 import { AppError } from '../../lib/appError'
 import type { ProductivityRuntime } from '../../tools/productivityRuntimeHolder'
 import { __codeSearchInternals } from '../../tools/codeSearcher'
 import type { ThreadService } from '../thread/threadService'
 import { workspaceFileType } from './workspaceFileType'
+import { readToolObservation } from '../execution/toolObservation'
+import { t } from '../../lib/i18n'
 
 export interface WorkspaceTreeNode {
   name: string
@@ -27,6 +29,72 @@ export class WorkspaceBrowserService {
     private readonly runtime: ProductivityRuntime,
     private readonly threads?: ThreadService,
   ) {}
+
+  /** 外部与任务文件仅通过已有搜索凭据读取，不能借此扩展工作区写权限。 */
+  async searchResultFile(input: CodeSearchNavigation & { file: string; line?: number }) {
+    const thread = await this.threads?.getThread(input.threadId)
+    if (!thread || thread.agentId !== input.agentId)
+      throw new AppError('FORBIDDEN', { message: t('server.tools', '搜索结果与会话不匹配') })
+    let manifest: { kind?: string; files?: unknown[] }
+    try {
+      const stored = readToolObservation(
+        input.resultRef,
+        {
+          agentId: input.agentId,
+          threadId: input.threadId,
+          taskId: input.taskId,
+          channel: thread.channel,
+        },
+        0,
+        128_000,
+      )
+      manifest = JSON.parse(stored.content)
+    } catch {
+      throw new AppError('FORBIDDEN', { message: t('server.tools', '搜索结果与会话不匹配') })
+    }
+    const target = path.resolve(input.file)
+    if (
+      !manifest ||
+      manifest.kind !== 'code_search_files' ||
+      !Array.isArray(manifest.files) ||
+      !manifest.files.includes(target)
+    )
+      throw new AppError('FORBIDDEN', { message: t('server.tools', '文件不属于本次搜索结果') })
+    if ((await realpath(target)) !== target)
+      throw new AppError('FORBIDDEN', {
+        message: t('server.tools', '搜索文件路径已变化，请重新搜索'),
+      })
+    const info = await stat(target)
+    if (!info.isFile() || info.size > 10 * 1024 * 1024)
+      throw new AppError('VALIDATION_ERROR', {
+        message: t('server.tools', '搜索文件暂不可预览，请重新搜索'),
+      })
+    const principalRoot = this.runtime.workspace.getWorkspaceRoot(input.agentId)
+    const session = await this.runtime.sessions.getOrCreate({
+      ownerAgentId: input.agentId,
+      threadId: input.threadId,
+      taskId: input.taskId,
+      channel: thread.channel,
+      workspaceRoot: input.taskId
+        ? path.join(path.dirname(principalRoot), 'tasks', input.taskId, 'workspace')
+        : principalRoot,
+    })
+    const read = await this.runtime.virtualWorkspace.read(session, target, {
+      deviceScope: true,
+      limit: 128_000,
+      ...(input.line ? { lineStart: Math.max(1, input.line - 20), lineEnd: input.line + 80 } : {}),
+    })
+    const descriptor: WorkspaceFileDescriptor = {
+      path: target,
+      name: path.basename(target),
+      kind: 'text',
+      mimeType: 'text/plain',
+      sizeBytes: info.size,
+      modifiedAt: info.mtime.toISOString(),
+      version: read.hash,
+    }
+    return { descriptor, read }
+  }
 
   async session(agentId: string, threadId: string) {
     if (this.threads) {
@@ -109,6 +177,8 @@ export class WorkspaceBrowserService {
     isRegex?: boolean
     fileType?: string
     path?: string
+    respectGitIgnore?: boolean
+    includeHidden?: boolean
   }) {
     const session = await this.session(input.agentId, input.threadId)
     const searchPath = await this.runtime.virtualWorkspace.resolveDirectory(
@@ -120,6 +190,8 @@ export class WorkspaceBrowserService {
       isRegex: Boolean(input.isRegex),
       fileType: input.fileType,
       searchPath,
+      respectGitIgnore: input.respectGitIgnore,
+      includeHidden: input.includeHidden,
     }
     const rg = await __codeSearchInternals.searchWithRipgrep(options)
     const node = rg.available ? null : await __codeSearchInternals.searchWithNode(options)

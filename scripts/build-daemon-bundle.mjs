@@ -88,6 +88,18 @@ await esbuild.build({
 })
 
 // ── 内置社交应用 runtime（动态 import 单独加载，无法内联进 daemon bundle）──
+// 独立恢复入口不装配数据库或插件，后端崩溃时仍可离线使用。
+await esbuild.build({
+  entryPoints: [path.join(root, 'packages/backend/src/recovery.ts')],
+  outfile: path.join(OUT_DIR, 'recovery.mjs'),
+  bundle: true,
+  platform: 'node',
+  format: 'esm',
+  target: 'node20',
+  tsconfig: DAEMON_TSCONFIG,
+  packages: 'external',
+  absWorkingDir: root,
+})
 await esbuild.build({
   entryPoints: [path.join(root, 'packages/apps/social/runtime/index.ts')],
   outfile: SOCIAL_OUT_FILE,
@@ -115,6 +127,7 @@ function assertNoWorkspaceImports(outputFile) {
 
 assertNoWorkspaceImports(OUT_FILE)
 assertNoWorkspaceImports(SOCIAL_OUT_FILE)
+assertNoWorkspaceImports(path.join(OUT_DIR, 'recovery.mjs'))
 
 // 产物体积提示
 const sizeMB = (fs.statSync(OUT_FILE).size / 1024 / 1024).toFixed(2)

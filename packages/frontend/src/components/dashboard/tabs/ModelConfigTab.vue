@@ -594,7 +594,7 @@ function connectionName(model: LlmModel) {
               class="model-capability-toggle model-capability-toggle-audio"
               :class="{ 'is-enabled': model.enableAudioInput }"
             >
-              <strong :title="__t('ui.settings', '音频输入')">
+              <strong :title="__t('ui.audio-input', '手动开启后，Gemini 协议连接可接收原生音频')">
                 {{ __t('ui.settings', '音频输入') }}
               </strong>
               <PSwitch
@@ -1284,7 +1284,7 @@ function connectionName(model: LlmModel) {
                 :label="__t('ui.settings', '音频输入 (Audio)')"
               />
               <p class="mt-1 text-[10px] leading-relaxed text-slate-400">
-                {{ __t('ui.settings', '支持音频') }}
+                {{ __t('ui.audio-input', '手动开启后，Gemini 协议连接可接收原生音频') }}
               </p>
             </div>
           </div>

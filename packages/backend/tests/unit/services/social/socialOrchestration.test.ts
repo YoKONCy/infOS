@@ -1,3 +1,4 @@
+import { NAPCAT_ACTIONS } from '@infos/social/adapters/napcat/napcatActions'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import {
   SocialOrchestration,
@@ -55,6 +56,10 @@ function fixture() {
         triggerMessageId: 'trigger',
         triggerSenderId: inbound.senderId,
         execute,
+        isReadOnly: (name, args) =>
+          NAPCAT_ACTIONS.some(
+            (item) => item.tool === name && item.action === args.action && !item.mutation,
+          ),
         send,
         sendResource,
         available,

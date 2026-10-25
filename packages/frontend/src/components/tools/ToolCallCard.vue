@@ -26,6 +26,8 @@ import { IMAGE_PREVIEW_TOOLS, imagePreviewsFromToolResult } from '@infos/shared'
 import { useFileMutationPreview } from '../../composables/tools/useFileMutationPreview'
 import ToolCardEdit from './renderers/ToolCardEdit.vue'
 import ToolCardImage from './renderers/ToolCardImage.vue'
+import { toolTaskTarget } from './toolTaskTarget'
+import { requestTaskNavigation } from '../../composables/main/useTaskNavigation'
 
 interface Props {
   tool: ToolCallView
@@ -45,6 +47,15 @@ const props = withDefaults(defineProps<Props>(), {
   nested: false,
 })
 const emit = defineEmits<{ 'update:expanded': [value: boolean] }>()
+const taskId = computed(() => toolTaskTarget(props.tool))
+async function openTask(event?: Event): Promise<void> {
+  event?.preventDefault()
+  event?.stopPropagation()
+  if (!taskId.value) return
+  requestTaskNavigation(taskId.value)
+  const { useMainNav } = await import('../../composables/main/useMainNav')
+  await useMainNav().setTab('tasks')
+}
 const imageTool = computed(
   () =>
     IMAGE_PREVIEW_TOOLS.some((name) => name === props.tool.name) &&
@@ -198,6 +209,10 @@ function setOpen(value: boolean, user = false): void {
   nextTick(syncOpen)
 }
 function handleSummaryClick(): void {
+  if (taskId.value) {
+    void openTask()
+    return
+  }
   window.clearTimeout(collapseTimer)
   setOpen(!open.value, true)
 }
@@ -249,7 +264,12 @@ watch(drawerOpen, (value) => {
     :data-chain="signature.chain"
     :style="accentVars"
   >
-    <summary class="ta-summary" @click.prevent="handleSummaryClick">
+    <summary
+      class="ta-summary"
+      :class="{ 'has-task': taskId }"
+      :aria-label="taskId ? __t('ui.tools', '在任务中心查看任务') : undefined"
+      @click.prevent="handleSummaryClick"
+    >
       <ToolArchetypeSignature
         :signature="signature"
         :icon="icon"
@@ -278,6 +298,10 @@ watch(drawerOpen, (value) => {
       </span>
       <span class="ta-progress" aria-hidden="true"><i /></span>
       <span class="ta-meta">
+        <button v-if="taskId" class="ta-task-link" type="button" @click="openTask">
+          {{ __t('ui.tools', '查看任务') }}
+          <span aria-hidden="true">↗</span>
+        </button>
         <span
           class="ta-state-dot"
           :title="
@@ -392,6 +416,30 @@ watch(drawerOpen, (value) => {
 </template>
 
 <style scoped>
+.ta-task-link {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  border: 0;
+  background: var(--ui-accent-sky-soft);
+  color: var(--ui-accent-sky);
+  border-radius: var(--ui-radius-xs);
+  padding: 4px 7px;
+  font: inherit;
+  font-size: 11px;
+  white-space: nowrap;
+  cursor: pointer;
+}
+.ta-task-link:hover {
+  background: var(--ui-bg-hover);
+}
+.ta-task-link:focus-visible {
+  outline: 2px solid var(--ui-accent-sky);
+  outline-offset: 2px;
+}
+.has-task .ta-copy small {
+  color: var(--ui-text-secondary);
+}
 .ta-approval-note {
   margin: 0 0 8px;
   padding: 6px 10px;

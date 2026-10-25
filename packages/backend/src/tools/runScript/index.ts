@@ -231,6 +231,8 @@ export const runScriptTool: BuiltinTool = {
               loopGuard: ctx.loopGuard,
               taskId: ctx.taskId,
               realmId: ctx.realmId,
+              browserScope: ctx.browserScope,
+              requestedBy: ctx.requestedBy,
               executionId: ctx.executionId,
               processId: ctx.processId,
               deadline,

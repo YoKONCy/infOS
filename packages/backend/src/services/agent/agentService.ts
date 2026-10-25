@@ -31,6 +31,7 @@ import { AppError } from '../../lib/appError'
 import { createLogger } from '../../lib/logger'
 import type { ObservedToolResult } from '../context/toolContextService'
 import type { InteractionMode } from '@infos/shared'
+import { compileModelRequest, promptPlanOf } from '../prompt/requestCompiler'
 
 const logger = createLogger('AgentService')
 
@@ -39,6 +40,7 @@ const logger = createLogger('AgentService')
 // ─────────────────────────────────────────────
 
 export interface AgentServiceDeps {
+  packageHooks?: import('../../packages/packageAgentFlow').PackageFlowEmitter
   llmService: LlmService
   configRepo: ConfigRepository
   agentManager: AgentManager
@@ -59,6 +61,7 @@ export interface AgentServiceDeps {
   resolveToolDefinitions?: (
     definitions: ToolDefinition[],
     agentId: string,
+    threadId?: string,
   ) => Promise<ToolDefinition[]>
   clearDynamicCapabilities?: (scopeId: string) => void
   /** 取消检测器（RuntimeStateService） */
@@ -81,6 +84,9 @@ export interface AgentServiceDeps {
 }
 
 export interface CompiledRunParams {
+  browserScope?: import('@infos/shared').AgentBrowserScope
+  requestedBy?: 'user' | 'agent'
+  onRequestCompiled?: (request: import('../prompt/requestCompiler').ModelRequestSnapshot) => void
   /** 编译上下文与执行共享同一份模型配置，避免中途重读全局配置。 */
   modelConfig?: ModelConfig
   onExecutionMessages?: (messages: ChatMessage[]) => void
@@ -255,6 +261,7 @@ export class AgentService {
       interactionMode,
     )
 
+    const promptPlan = promptPlanOf(messages)
     const replay =
       interactionMode === 'work' &&
       messages.some((message) => message.cacheControl?.kind === 'current')
@@ -279,10 +286,12 @@ export class AgentService {
             realmId: params.realmId,
             disabled: dynamicallyDisabledTools ? [...dynamicallyDisabledTools].sort() : undefined,
             interactionMode,
+            promptPlan,
           })
         : undefined
 
     const events = runReActLoop({
+      packageHooks: this.deps.packageHooks,
       onTimeline: (blocks, calls, rawText) => {
         params.onContentBlocks?.(blocks)
         params.onToolCalls?.(calls)
@@ -290,10 +299,12 @@ export class AgentService {
       },
       llmService: this.deps.llmService,
       modelConfig,
+      promptPlan,
+      onRequestCompiled: params.onRequestCompiled,
       messages: replay?.messages ?? messages,
       tools,
       prepareToolDefinitions: (definitions) =>
-        this.deps.resolveToolDefinitions?.(definitions, params.agentId) ??
+        this.deps.resolveToolDefinitions?.(definitions, params.agentId, params.threadId) ??
         Promise.resolve(definitions),
       refreshToolDefinitions: () =>
         this.deps.getToolDefinitions?.(
@@ -312,6 +323,8 @@ export class AgentService {
       sessionId: params.threadId,
       agentId: params.agentId,
       threadContext: {
+        browserScope: params.browserScope,
+        requestedBy: params.requestedBy,
         threadId: params.threadId,
         channel,
         taskId: params.taskId,
@@ -384,6 +397,15 @@ export class AgentService {
   ): Promise<void> {
     const { params, startedAt } = run
     const rawText = result.rawText || text
+    if (!params.signal?.aborted)
+      await this.deps.packageHooks?.emitHook('chat:afterReply', {
+        agentId: params.agentId,
+        threadId: params.threadId,
+        channel: run.channel,
+        executionId: params.executionId,
+        realmId: params.realmId,
+        text,
+      })
 
     if (params.onRawText && rawText) {
       params.onRawText(rawText)
@@ -459,18 +481,22 @@ export class AgentService {
       messages,
     )
     if (this.deps.resolveToolDefinitions)
-      tools = await this.deps.resolveToolDefinitions(tools, input.agentId)
+      tools = await this.deps.resolveToolDefinitions(tools, input.agentId, input.threadId)
     const count = () =>
-      this.deps.llmService.estimateInputTokens(input.modelConfig, messages, {
-        tools: tools.map((tool) => ({
-          type: 'function' as const,
-          function: {
-            name: tool.name,
-            description: tool.description,
-            parameters: tool.parameters,
-          },
-        })),
-      })
+      this.deps.llmService.estimateInputTokens(
+        input.modelConfig,
+        compileModelRequest(messages, 0).messages,
+        {
+          tools: tools.map((tool) => ({
+            type: 'function' as const,
+            function: {
+              name: tool.name,
+              description: tool.description,
+              parameters: tool.parameters,
+            },
+          })),
+        },
+      )
     const budget = input.modelConfig.contextWindowTokens
       ? Math.max(
           1,

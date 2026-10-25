@@ -1,6 +1,7 @@
 import { t as __t } from '../../lib/i18n'
 import type { EventNote, EventNoteRelation, MemoryBackgroundPolicy } from '@infos/shared'
 import { MemoryBackgroundControl } from './memoryBackgroundControl'
+import { MemoryAgentScope } from './memoryAgentScope'
 import type { EventMemoryService } from './eventMemoryService'
 import type { EventNoteRepository } from '../../repositories/eventNote.repo'
 import type { MemoryStoreRegistry } from '../../repositories/storeRegistry'
@@ -38,6 +39,7 @@ export interface EventReflectionModel {
 }
 
 export interface EventReflectionOptions {
+  agents?: MemoryAgentScope
   background?: MemoryBackgroundPolicy
   canMaintain?: () => boolean
   temporalCandidates?: number
@@ -62,6 +64,7 @@ export class EventReflectionService {
     options: EventReflectionOptions = {},
   ) {
     this.options = {
+      agents: options.agents ?? new MemoryAgentScope(),
       background: options.background ?? new MemoryBackgroundControl(),
       canMaintain: options.canMaintain ?? (() => true),
       temporalCandidates: options.temporalCandidates ?? 3,
@@ -81,7 +84,12 @@ export class EventReflectionService {
   }
 
   async enqueue(agentId: string, eventId: string): Promise<void> {
-    if (!this.options.background.enabled || !this.options.canMaintain()) return
+    if (
+      !this.options.agents.isAvailable(agentId) ||
+      !this.options.background.enabled ||
+      !this.options.canMaintain()
+    )
+      return
     await this.repo.enqueueReflectionTask({
       id: `reflection:${agentId}:${eventId}`,
       agentId,
@@ -91,7 +99,7 @@ export class EventReflectionService {
 
   async enqueueDailyBackfill(): Promise<number> {
     if (!this.options.background.enabled || !this.options.canMaintain()) return 0
-    return this.repo.enqueueMissingReflectionTasks()
+    return this.repo.enqueueMissingReflectionTasks((id) => this.options.agents.isAvailable(id))
   }
 
   async drain(): Promise<void> {
@@ -102,12 +110,23 @@ export class EventReflectionService {
       const tasks = await this.repo.pendingReflectionTasks(100, this.options.now())
       for (const task of tasks) {
         if (signal.aborted) return
+        if (!this.options.agents.isAvailable(task.agentId)) {
+          await this.repo.discardReflectionDecision(task.agentId, task.eventId)
+          await this.repo.completeReflectionTask(task.id)
+          continue
+        }
+        const agentSignal = this.options.agents.signal(task.agentId)
         try {
           await this.reflect(task.agentId, task.eventId)
           if (signal.aborted) return
           await this.repo.completeReflectionTask(task.id)
         } catch (error) {
           if (signal.aborted) return
+          if (agentSignal.aborted || !this.options.agents.isAvailable(task.agentId)) {
+            await this.repo.discardReflectionDecision(task.agentId, task.eventId)
+            await this.repo.completeReflectionTask(task.id)
+            continue
+          }
           if (error instanceof MemoryForgottenError) {
             await this.repo.discardReflectionDecision(task.agentId, task.eventId)
             const current = await this.repo.findById(task.eventId)
@@ -129,8 +148,17 @@ export class EventReflectionService {
   }
 
   async reflect(agentId: string, eventId: string): Promise<void> {
-    if (!this.options.background.enabled || !this.options.canMaintain()) return
-    const signal = AbortSignal.any([this.options.background.signal, this.deletionController.signal])
+    if (
+      !this.options.agents.isAvailable(agentId) ||
+      !this.options.background.enabled ||
+      !this.options.canMaintain()
+    )
+      return
+    const signal = AbortSignal.any([
+      this.options.background.signal,
+      this.deletionController.signal,
+      this.options.agents.signal(agentId),
+    ])
     const decisionId = `reflection:decision:${agentId}:${eventId}`
     const current = await this.repo.findById(eventId)
     signal.throwIfAborted()
@@ -307,7 +335,11 @@ export class EventReflectionService {
   }
 
   validateAndRepair(agentId: string): { valid: boolean; repaired: boolean } {
-    if (!this.options.background.enabled || !this.options.canMaintain())
+    if (
+      !this.options.agents.isAvailable(agentId) ||
+      !this.options.background.enabled ||
+      !this.options.canMaintain()
+    )
       return { valid: true, repaired: false }
     const store = this.stores.getAgentStore(agentId, 'main')
     const report = store.validateGraph()

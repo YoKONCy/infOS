@@ -1,5 +1,13 @@
 export type ResourceKind = 'image' | 'video' | 'audio' | 'pdf' | 'text' | 'file' | 'web'
 
+/** 搜索文件的只读打开凭据，归属由后端验证。 */
+export interface CodeSearchNavigation {
+  resultRef: string
+  agentId: string
+  threadId: string
+  taskId?: string
+}
+
 export interface ResourceOrigin {
   type: 'workspace' | 'url' | 'arca' | 'application'
   value: string

@@ -58,7 +58,16 @@ export class AudioDeliveryService {
   ): Promise<AudioPlaybackReceipt> {
     await this.cancel(context.principalId)
     mkdirSync(this.assetRoot, { recursive: true })
-    const extension = audio.mimeType === 'audio/ogg' ? 'ogg' : 'mp3'
+    const extension = (
+      {
+        'audio/ogg': 'ogg',
+        'audio/wav': 'wav',
+        'audio/flac': 'flac',
+        'audio/aac': 'aac',
+        'audio/mpeg': 'mp3',
+      } as Record<string, string>
+    )[audio.mimeType]
+    if (!extension) throw new Error('AUDIO_FORMAT_UNSUPPORTED')
     const filePath = path.join(this.assetRoot, `${randomUUID()}.${extension}`)
     writeFileSync(filePath, Buffer.from(audio.audio))
     const asset = this.assets.registerFile({

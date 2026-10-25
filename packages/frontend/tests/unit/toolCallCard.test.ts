@@ -1,7 +1,11 @@
 // @vitest-environment happy-dom
-import { enableAutoUnmount, mount } from '@vue/test-utils'
+import { enableAutoUnmount, flushPromises, mount } from '@vue/test-utils'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import ToolCallCard from '../../src/components/tools/ToolCallCard.vue'
+import { useTaskNavigation } from '../../src/composables/main/useTaskNavigation'
+
+const navigation = vi.hoisted(() => ({ setTab: vi.fn() }))
+vi.mock('../../src/composables/main/useMainNav', () => ({ useMainNav: () => navigation }))
 
 vi.mock('../../src/composables/tools/useToolDisplay', () => ({
   resolveToolDisplay: vi.fn(async () => ({
@@ -19,6 +23,46 @@ vi.mock('../../src/composables/tools/useToolDisplay', () => ({
 afterEach(() => vi.useRealTimers())
 
 describe('ToolCallCard Tool Atelier', () => {
+  it('点击派发工具打开对应任务，技术详情保持独立', async () => {
+    const wrapper = mount(ToolCallCard, {
+      props: {
+        tool: {
+          name: 'manage_task',
+          args: '{"action":"create"}',
+          result: '{"id":"task-123","status":"queued"}',
+        },
+      },
+      global: { stubs: { Teleport: true } },
+    })
+    await wrapper.get('.ta-task-link').trigger('click')
+    await flushPromises()
+    expect(useTaskNavigation().value?.taskId).toBe('task-123')
+    expect(navigation.setTab).toHaveBeenCalledWith('tasks')
+    const revision = useTaskNavigation().value!.revision
+    await wrapper.get('summary').trigger('click')
+    await flushPromises()
+    expect(useTaskNavigation().value!.revision).toBeGreaterThan(revision)
+    await wrapper.get('.ta-data-port').trigger('click')
+    expect(useTaskNavigation().value!.revision).toBe(revision + 1)
+    expect(wrapper.text()).toContain('manage_task')
+  })
+  it('NIT 子工具支持独立任务入口，失败工具不生成入口', () => {
+    const wrapper = mount(ToolCallCard, {
+      props: {
+        tool: { name: 'nit', args: '{}', result: '{}' },
+        children: [
+          {
+            name: 'interact_with_social',
+            args: '{}',
+            result: '{"success":true,"taskId":"social-1"}',
+          },
+          { name: 'manage_task', args: '{}', result: '{"id":"failed"}', isError: true },
+        ],
+      },
+      global: { stubs: { Teleport: true } },
+    })
+    expect(wrapper.findAll('.ta-task-link')).toHaveLength(1)
+  })
   it('执行中默认展开，展示目标和进度', async () => {
     const wrapper = mount(ToolCallCard, {
       props: { tool: { name: 'browser_click', args: '{"target":"登录"}' } },

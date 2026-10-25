@@ -50,12 +50,21 @@ import { getApiBaseUrl } from '../../../api/transport'
 import { backgroundTasksApi } from '../../../api/modules/backgroundTasksApi'
 import ProactiveModePanel from '../ProactiveModePanel.vue'
 import { logger } from '../../../lib/logger'
-import { useTaskNavigation } from '../../../composables/main/useTaskNavigation'
+import {
+  requestTaskNavigation,
+  useTaskNavigation,
+} from '../../../composables/main/useTaskNavigation'
+import { useTaskDetail } from '../../../composables/main/useTaskDetail'
 
 const ctx = useDashboardContext()
 const taskCenter = useTaskCenterStore()
 
 const agentStore = useAgentStore()
+// 常驻记录只描述现存角色，角色列表更新后立即收起旧缓存中的孤立条目。
+const residentTasks = computed(() => {
+  const agentIds = new Set(agentStore.agents.map((agent) => agent.id))
+  return taskCenter.residentTasks.filter((task) => agentIds.has(task.agentId))
+})
 const threadStore = useThreadStore()
 const notify = useNotificationStore()
 
@@ -86,7 +95,14 @@ function openDispatch() {
 }
 
 /** 任务详情弹窗 */
-const detailTask = ref<BackgroundTaskInfo | null>(null)
+const {
+  task: detailTask,
+  loading: detailLoading,
+  error: detailError,
+  open: openDetail,
+  close: clearDetail,
+  refresh: refreshDetail,
+} = useTaskDetail()
 
 const taskNavigation = useTaskNavigation()
 let navigationSequence = 0
@@ -98,9 +114,15 @@ watch(
     const sequence = ++navigationSequence
     if (!taskId) return
     try {
-      const response = await backgroundTasksApi.detail(taskId)
-      if (sequence === navigationSequence && response.data) {
-        detailTask.value = response.data
+      const opened = await openDetail(taskId)
+      if (sequence === navigationSequence) {
+        if (opened && detailTask.value) {
+          activeView.value = ['completed', 'failed', 'cancelled'].includes(detailTask.value.status)
+            ? 'history'
+            : 'active'
+          if (!detailTask.value.readAt && activeView.value === 'history')
+            void taskCenter.markRead(taskId).catch(() => {})
+        } else if (detailError.value) notify.toast(detailError.value, 'error')
         if (taskNavigation.value === navigation) taskNavigation.value = null
       }
     } catch (error) {
@@ -116,7 +138,9 @@ watch(
 
 /** 关闭任务详情弹窗 */
 function closeDetail() {
-  detailTask.value = null
+  navigationSequence++
+  taskNavigation.value = null
+  clearDetail()
 }
 
 /** 恢复因服务重启中断的任务 */
@@ -261,15 +285,13 @@ const expandedHistoryTasks = ref(new Set<string>())
 const markingHistoryRead = ref(false)
 
 async function markHistoryRead(task: BackgroundTaskInfo): Promise<void> {
+  expandedHistoryTasks.value = new Set([...expandedHistoryTasks.value, task.id])
+  void openDetail(task)
   if (task.readAt) {
-    expandedHistoryTasks.value = new Set([...expandedHistoryTasks.value, task.id])
-    detailTask.value = task
     return
   }
   try {
     await taskCenter.markRead(task.id)
-    expandedHistoryTasks.value = new Set([...expandedHistoryTasks.value, task.id])
-    detailTask.value = task
   } catch (error) {
     logger.warn('TasksTab', __t('logs.frontend.settings', '标记历史记录已读失败'), error)
   }
@@ -549,7 +571,7 @@ watch(
   () => taskCenter.pendingOpenTask,
   (task) => {
     if (!task) return
-    detailTask.value = task
+    void openDetail(task)
     taskCenter.consumePendingOpenTask()
   },
   { immediate: true },
@@ -569,6 +591,8 @@ watch([activeView, showCronTasks], () => syncCronPolling(true))
 
 onMounted(() => {
   componentActive = true
+  void agentStore.fetchAgents()
+  void taskCenter.refreshActive()
   if (!scheduledAgentId.value)
     scheduledAgentId.value = agentStore.activeAgentId || agentStore.agents[0]?.id || ''
   fetchReminders()
@@ -578,12 +602,17 @@ onMounted(() => {
 })
 
 onActivated(() => {
+  if (!componentActive) {
+    void agentStore.fetchAgents()
+    void taskCenter.refreshActive()
+  }
   componentActive = true
   syncCronPolling(true)
 })
 
 onDeactivated(() => {
   componentActive = false
+  closeDetail()
   stopCronPolling()
 })
 
@@ -597,6 +626,10 @@ onUnmounted(() => {
 
 <template>
   <div class="tasks-tab task-pixel-surface">
+    <p v-if="detailLoading && !detailTask" class="task-open-status" role="status">
+      {{ __t('ui.taskCenter', '正在打开任务…') }}
+      <button type="button" @click="closeDetail">{{ __t('ui.taskCenter', '取消') }}</button>
+    </p>
     <!-- ═══ 页头 ═══ -->
     <header class="tasks-tab__header">
       <div class="tasks-tab__header-left">
@@ -677,7 +710,7 @@ onUnmounted(() => {
             :task="task"
             :avatar-url="agentAvatarUrl(task.agentId)"
             :agent-name="agentDisplayName(task.agentId)"
-            @detail="detailTask = $event"
+            @detail="openDetail"
             @pause="(t) => taskCenter.pause(t.id)"
             @resume="(t) => taskCenter.resume(t.id)"
             @cancel="(t) => taskCenter.cancel(t.id)"
@@ -686,19 +719,19 @@ onUnmounted(() => {
       </div>
 
       <!-- 常驻状态只供查看，不进入普通任务控制与计数。 -->
-      <details v-if="taskCenter.residentTasks.length" class="tasks-tab__group">
+      <details v-if="residentTasks.length" class="tasks-tab__group">
         <summary class="tasks-tab__group-title">
           <PixelIcon name="activity" size="xs" />
           {{ __t('ui.settings', '系统常驻 · 只读状态') }}
         </summary>
         <div class="tasks-tab__list">
           <TaskCard
-            v-for="task in taskCenter.residentTasks"
+            v-for="task in residentTasks"
             :key="task.id"
             :task="task"
             :avatar-url="agentAvatarUrl(task.agentId)"
             :agent-name="agentDisplayName(task.agentId)"
-            @detail="detailTask = $event"
+            @detail="openDetail"
           />
         </div>
       </details>
@@ -721,7 +754,33 @@ onUnmounted(() => {
     </section>
 
     <!-- ═══ 历史记录视图（时间线） ═══ -->
-    <section v-if="activeView === 'history'" class="tasks-tab__section">
+    <section
+      v-if="activeView === 'history'"
+      class="tasks-tab__section"
+      :aria-busy="taskCenter.isLoadingHistory"
+    >
+      <form class="task-history-filter" @submit.prevent="taskCenter.refreshHistory({ page: 1 })">
+        <label class="task-history-search">
+          <PixelIcon name="search" size="xs" />
+          <input
+            v-model="taskCenter.historyFilter.keyword"
+            type="search"
+            :placeholder="__t('ui.taskCenter', '搜索任务标题或目标')"
+            :aria-label="__t('ui.taskCenter', '搜索任务标题或目标')"
+          />
+          <button type="submit">{{ __t('ui.taskCenter', '搜索') }}</button>
+        </label>
+        <select
+          v-model="taskCenter.historyFilter.status"
+          :aria-label="__t('ui.taskCenter', '任务状态')"
+          @change="taskCenter.refreshHistory({ page: 1 })"
+        >
+          <option :value="undefined">{{ __t('ui.taskCenter', '全部状态') }}</option>
+          <option value="completed">{{ __t('ui.taskCenter', '已完成') }}</option>
+          <option value="failed">{{ __t('ui.taskCenter', '失败') }}</option>
+          <option value="cancelled">{{ __t('ui.taskCenter', '已取消') }}</option>
+        </select>
+      </form>
       <SocialTurnPanel
         :agent-id="agentStore.activeAgentId"
         tasks-only
@@ -757,7 +816,11 @@ onUnmounted(() => {
       </div>
       <PEmpty
         v-if="taskCenter.historyTasks.length === 0 && !hasSocialHistory"
-        :description="__t('ui.settings', '任务完成、失败或取消后会归档在这里~')"
+        :description="
+          taskCenter.historyFilter.keyword || taskCenter.historyFilter.status
+            ? __t('ui.taskCenter', '没有符合条件的任务')
+            : __t('ui.settings', '任务完成、失败或取消后会归档在这里~')
+        "
       />
       <ol v-if="taskCenter.historyTasks.length" class="tasks-tab__timeline">
         <li v-for="task in taskCenter.historyTasks" :key="task.id" class="tasks-tab__timeline-item">
@@ -777,7 +840,7 @@ onUnmounted(() => {
               :delete-open="expandedHistoryTasks.has(task.id)"
               @read="markHistoryRead"
               @delete="deleteHistoryTask"
-              @detail="detailTask = $event"
+              @detail="openDetail"
               @resume-interrupted="(t) => resumeInterrupted(t.id)"
               @retry="(t) => taskCenter.retry(t.id)"
             />
@@ -785,6 +848,40 @@ onUnmounted(() => {
           </div>
         </li>
       </ol>
+      <nav
+        v-if="taskCenter.historyTotal > (taskCenter.historyFilter.pageSize ?? 20)"
+        class="task-history-pages"
+        :aria-label="__t('ui.taskCenter', '历史任务分页')"
+      >
+        <PButton
+          size="sm"
+          variant="ghost"
+          :disabled="taskCenter.isLoadingHistory || (taskCenter.historyFilter.page ?? 1) <= 1"
+          @click="taskCenter.refreshHistory({ page: (taskCenter.historyFilter.page ?? 1) - 1 })"
+        >
+          {{ __t('ui.taskCenter', '上一页') }}
+        </PButton>
+        <span>
+          {{
+            __t('ui.taskCenter', '第 {0} 页 · 共 {1} 条', [
+              taskCenter.historyFilter.page ?? 1,
+              taskCenter.historyTotal,
+            ])
+          }}
+        </span>
+        <PButton
+          size="sm"
+          variant="ghost"
+          :disabled="
+            taskCenter.isLoadingHistory ||
+            (taskCenter.historyFilter.page ?? 1) * (taskCenter.historyFilter.pageSize ?? 20) >=
+              taskCenter.historyTotal
+          "
+          @click="taskCenter.refreshHistory({ page: (taskCenter.historyFilter.page ?? 1) + 1 })"
+        >
+          {{ __t('ui.taskCenter', '下一页') }}
+        </PButton>
+      </nav>
     </section>
 
     <!-- ═══ 定时与提醒视图 ═══ -->
@@ -1041,12 +1138,93 @@ onUnmounted(() => {
       :task="detailTask"
       :avatar-url="agentAvatarUrl(detailTask.agentId)"
       :agent-name="agentDisplayName(detailTask.agentId)"
+      :refresh-error="detailError"
       @close="closeDetail"
+      @open-task="requestTaskNavigation"
+      @updated="
+        () => {
+          refreshDetail()
+          taskCenter.refreshActive()
+          taskCenter.refreshHistory()
+        }
+      "
     />
   </div>
 </template>
 
 <style scoped>
+.task-open-status {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 10px 14px;
+  margin: 0 0 14px;
+  background: var(--ui-accent-sky-soft);
+  color: var(--ui-accent-sky);
+  font-size: 12px;
+}
+.task-open-status button {
+  border: 0;
+  background: transparent;
+  color: inherit;
+  cursor: pointer;
+}
+.task-history-filter {
+  display: flex;
+  gap: 10px;
+  margin-bottom: 16px;
+  font-family: var(--ui-font-sans);
+}
+.task-history-search {
+  display: flex;
+  flex: 1;
+  min-width: 0;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 10px;
+  border: 1px solid var(--ui-border-subtle);
+  border-radius: var(--ui-radius-xs);
+  color: var(--ui-text-tertiary);
+  background: var(--ui-bg-surface);
+}
+.task-history-search input {
+  min-width: 0;
+  width: 100%;
+  border: 0;
+  background: transparent;
+  outline: none;
+  color: var(--ui-text-primary);
+  font: 12px var(--ui-font-sans);
+}
+.task-history-search:focus-within {
+  border-color: var(--ui-accent-sky);
+}
+.task-history-search button {
+  border: 0;
+  background: transparent;
+  color: var(--ui-accent-sky);
+  white-space: nowrap;
+  font-size: 12px;
+  cursor: pointer;
+}
+.task-history-filter select {
+  max-width: 40%;
+  padding: 8px;
+  color: var(--ui-text-secondary);
+  background: var(--ui-bg-surface);
+  border: 1px solid var(--ui-border-subtle);
+  border-radius: var(--ui-radius-xs);
+  font-size: 12px;
+}
+.task-history-pages {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 16px;
+  margin-block: 20px;
+  color: var(--ui-text-tertiary);
+  font-size: 12px;
+}
 .scheduled-agent-composer {
   border: 1px solid var(--ui-border-subtle);
   border-radius: 0;

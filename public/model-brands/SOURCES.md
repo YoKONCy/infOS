@@ -2,6 +2,8 @@
 
 来源：Lobe Icons，静态资源包 `@lobehub/icons-static-svg@1.95.1`。以下 SVG 保留原始内容，随应用本地提供。
 
+TTS 补充：`microsoft-color.svg` 复用同一版本的微软品牌图形；`xiaomimimo.svg` 取自固定版本 `@lobehub/icons-static-svg@1.98.0`。MiMo 单色图形沿用主题遮罩，Edge TTS 以微软服务商品牌标识。
+
 项目采用 MIT 许可，许可副本见 `LICENSE.lobe-icons.txt`。品牌图形属于相应品牌，用于标识模型或服务，不表示其对 infOS 的背书。
 
 许可来源：[https://raw.githubusercontent.com/lobehub/lobe-icons/bcdb7c82792a854c2967f7328e11a30205ea584d/LICENSE](https://raw.githubusercontent.com/lobehub/lobe-icons/bcdb7c82792a854c2967f7328e11a30205ea584d/LICENSE)
@@ -20,6 +22,9 @@ Kimi、OpenRouter、Yi、LongCat 的小尺寸展示采用库提供的单色版�
 - 新品牌先添加本地 SVG 和来源记录，再补充映射；兼容协议类型不代表实际服务商品牌。
 
 ## 资源清单
+
+- `microsoft-color.svg`：[https://unpkg.com/@lobehub/icons-static-svg@1.95.1/icons/microsoft-color.svg](https://unpkg.com/@lobehub/icons-static-svg@1.95.1/icons/microsoft-color.svg)
+- `xiaomimimo.svg`：[https://unpkg.com/@lobehub/icons-static-svg@1.98.0/icons/xiaomimimo.svg](https://unpkg.com/@lobehub/icons-static-svg@1.98.0/icons/xiaomimimo.svg)
 
 - `openai.svg`：[https://unpkg.com/@lobehub/icons-static-svg@1.95.1/icons/openai.svg](https://unpkg.com/@lobehub/icons-static-svg@1.95.1/icons/openai.svg)
 - `anthropic.svg`：[https://unpkg.com/@lobehub/icons-static-svg@1.95.1/icons/anthropic.svg](https://unpkg.com/@lobehub/icons-static-svg@1.95.1/icons/anthropic.svg)

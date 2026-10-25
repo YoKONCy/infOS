@@ -43,6 +43,8 @@ export interface ToolDefinition {
   display?: ToolDisplayMeta
   /** 工具自身声明每次调用前需要审批。 */
   requiresApproval?: boolean
+  /** 应用声明的动作权限；仅供宿主使用，不发送给模型。 */
+  actionPermissions?: Record<string, { mutation: boolean; requiresApproval: boolean }>
 }
 
 /** 工具调用记录 */

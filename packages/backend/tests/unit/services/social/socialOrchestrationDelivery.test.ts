@@ -1,4 +1,4 @@
-import { EventEmitter } from 'node:events'
+import { AbstractSocialAdapter } from '@infos/social/adapters/ISocialAdapter'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { SocialBridge } from '@infos/social/runtime/socialBridge'
 import { SocialOrchestration } from '@infos/social/runtime/socialOrchestration'
@@ -7,6 +7,17 @@ import type { SocialStoragePort, SocialTurnRecord } from '@infos/shared'
 import type { OutboundMessage, SocialDeliveryReceipt } from '@infos/social/runtime/types'
 import type { SocialSessionManager } from '@infos/social/runtime/socialSessionManager'
 
+class DeliveryAdapter extends AbstractSocialAdapter {
+  readonly platform = 'qq'
+  async connect() {}
+  async disconnect() {}
+  async sendMessage(): Promise<SocialDeliveryReceipt> {
+    return { sentAt: Date.now() }
+  }
+  async getStatus() {
+    return { platform: this.platform, connected: true, latencyMs: 0 }
+  }
+}
 function fixture() {
   const rows: Array<Parameters<SocialStoragePort['insert']>[0]> = []
   const records = new Map<string, SocialTurnRecord>()
@@ -39,11 +50,16 @@ function fixture() {
     messageId: `platform-${sendMessage.mock.calls.length}`,
     sentAt: Date.now(),
   }))
-  const adapter = Object.assign(new EventEmitter(), { platform: 'qq', sendMessage })
+  const adapter = Object.assign(new DeliveryAdapter(), {
+    platform: 'qq',
+    sendMessage,
+    getConnectedAccountIds: () => ['123456789'],
+  })
   bridge.registerAdapter(adapter as never)
   const controller = new AbortController()
   const record: SocialTurnRecord = {
     id: 'delivery-turn',
+    platform: 'qq',
     agentId: 'keromi',
     accountId: '123456789',
     channelType: 'group',
@@ -58,6 +74,8 @@ function fixture() {
       inbound: [
         {
           platform: 'qq',
+          accountId: '123456789',
+          messageId: 'trigger',
           agentId: 'keromi',
           channelId: '987654321',
           channelType: 'group',
@@ -95,6 +113,32 @@ function fixture() {
 afterEach(() => vi.useRealTimers())
 
 describe('社交编排逐条送达与消息落盘', () => {
+  it('已确认的发送回执可在通道离线后恢复，不重复发送或消耗新预算', async () => {
+    const f = fixture()
+    const context = {
+      record: f.record,
+      signal: f.controller.signal,
+      save: () => f.saveTurn(f.record),
+    }
+    const message: OutboundMessage = {
+      accountId: f.record.accountId,
+      channelId: f.record.channelId,
+      channelType: 'group',
+      content: '已发送内容',
+    }
+    const first = await runSocialRecovery(context, () =>
+      f.bridge.sendReply('qq', message, undefined, 'saved-stage'),
+    )
+    const readiness = vi
+      .spyOn(f.bridge.getAdapter('qq')!, 'getSendReadiness')
+      .mockResolvedValue({ ready: false, reason: 'SOCIAL_ACCOUNT_NOT_CONNECTED' })
+    const second = await runSocialRecovery(context, () =>
+      f.bridge.sendReply('qq', message, undefined, 'saved-stage'),
+    )
+    expect(second).toEqual(first)
+    expect(readiness).not.toHaveBeenCalled()
+    expect(f.sendMessage).toHaveBeenCalledOnce()
+  })
   it('调度器到期领取原回合，复用原始消息及调用现场，领取时不直接重发', async () => {
     vi.useFakeTimers()
     const f = fixture()

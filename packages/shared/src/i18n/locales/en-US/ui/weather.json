@@ -44,5 +44,6 @@
   "雾霾": "Haze",
   "严重雾霾": "Severe haze",
   "沙尘": "Sand",
-  "浮尘": "floating dust"
+  "浮尘": "floating dust",
+  "城市未保存，请检查地点或稍后重试": "City was not saved. Check the location or try again later."
 }

@@ -80,7 +80,7 @@ describe('DistributedSyncService 完整快照', () => {
     expect(paths.some((file) => file.startsWith('.store-upgrades/'))).toBe(false)
     expect(bundle.manifest).toMatchObject({
       bundleVersion: 2,
-      triviumVersion: '0.8.9',
+      triviumVersion: '0.8.11',
       triviumFormat: 9,
     })
   })

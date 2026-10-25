@@ -1,4 +1,6 @@
 {
+  "未捕获的异常: {0}\n{1}": "Uncaught exception: {0}\n{1}",
+  "未处理的 Promise 拒绝: {0}\n{1}": "Unhandled Promise rejection: {0}\n{1}",
   "未处理的 Promise 拒绝: {0}": "Unhandled Promise rejection: {0}",
   "Windows 任务栏身份：{0}；程序路径：{1}": "Windows taskbar identity: {0}; program path: {1}",
   "通过 Steam 重启，当前进程退出...": "Restarted via Steam, the current process exited...",

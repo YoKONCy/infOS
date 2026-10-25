@@ -14,6 +14,9 @@ import { t as __t } from '../lib/i18n'
 import { Hono } from 'hono'
 import type { TtsService, AsrService } from '../services/voice'
 import { AppError } from '../lib/appError'
+import { bodyLimit } from 'hono/body-limit'
+import { z } from 'zod'
+import { TTS_ADAPTERS } from '@infos/shared'
 
 /** Voice Router 依赖 */
 interface VoiceRouterDeps {
@@ -23,6 +26,17 @@ interface VoiceRouterDeps {
 
 export function createVoiceRouter(deps: VoiceRouterDeps) {
   const router = new Hono()
+  router.get('/tts/config', (c) => c.json({ code: 'OK', data: deps.ttsService.getWorkspace() }))
+  router.get('/tts/adapters', (c) => c.json({ code: 'OK', data: TTS_ADAPTERS }))
+  router.put('/tts/config', bodyLimit({ maxSize: 512000 }), async (c) => {
+    const data = await deps.ttsService.saveWorkspace(await c.req.json())
+    return c.json({ code: 'OK', data })
+  })
+  router.post('/tts/references', bodyLimit({ maxSize: 7 * 1024 * 1024 + 65536 }), async (c) => {
+    const body = await c.req.parseBody()
+    if (!(body.audio instanceof File)) throw new AppError('MISSING_FIELD')
+    return c.json({ code: 'OK', data: await deps.ttsService.saveReference(body.audio) })
+  })
 
   /**
    * POST /api/voice/tts — 文本转语音
@@ -31,31 +45,22 @@ export function createVoiceRouter(deps: VoiceRouterDeps) {
    * 响应：音频二进制流 (Content-Type 由 format 决定)
    */
   router.post('/tts', async (c) => {
-    const body = await c.req.json<{
-      text?: string
-      voice?: string
-      speed?: number
-      format?: 'mp3' | 'opus' | 'aac' | 'pcm'
-    }>()
-
-    if (!body.text || body.text.trim().length === 0) {
-      throw new AppError('VALIDATION_ERROR', { message: '文本不能为空' })
-    }
-
-    // 限制文本长度 (OpenAI TTS 最大 4096 字符)
-    if (body.text.length > 4096) {
-      throw new AppError('VALIDATION_ERROR', {
-        message: '文本过长，最大 4096 字符',
-        data: { field: 'text', max: 4096 },
+    const parsed = z
+      .object({
+        text: z
+          .string()
+          .min(1)
+          .max(100000)
+          .refine((value) => !!value.trim()),
+        presetId: z.string().max(120).optional(),
+        agentId: z.string().max(120).optional(),
+        voice: z.string().max(300).optional(),
+        speed: z.number().min(0.25).max(4).optional(),
+        format: z.enum(['mp3', 'wav', 'flac', 'opus', 'aac', 'pcm']).optional(),
       })
-    }
-
-    const result = await deps.ttsService.synthesize({
-      text: body.text,
-      voice: body.voice,
-      speed: body.speed,
-      format: body.format,
-    })
+      .safeParse(await c.req.json())
+    if (!parsed.success) throw new AppError('VALIDATION_ERROR')
+    const result = await deps.ttsService.synthesize({ ...parsed.data, signal: c.req.raw.signal })
 
     // 返回音频二进制流 (特殊响应，不走信封格式)
     return new Response(result.audio, {

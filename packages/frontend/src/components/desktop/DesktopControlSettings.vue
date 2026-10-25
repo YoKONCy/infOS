@@ -7,7 +7,18 @@ import { invoke } from '../../utils/ipcAdapter'
 import { recordPetShortcut } from '../../utils/petShortcuts'
 import { PCard, PSwitch, PButton, PixelIcon } from '../pixel'
 import DesktopControlStatus from './DesktopControlStatus.vue'
+import { useSystemSettingsPage } from '../../composables/ui/useSystemSettingsPage'
+import type { DesktopControlSettings } from '@infos/shared'
 const { settings, error, update, supported } = useDesktopControl()
+const page = useSystemSettingsPage()
+async function savePatch(patch: Partial<DesktopControlSettings>): Promise<void> {
+  const persist = async () => {
+    await update(patch)
+    if (error.value) throw new Error(error.value)
+  }
+  if (page) await page.save(persist, `desktop-control:${Object.keys(patch).sort().join(',')}`)
+  else await persist().catch(() => undefined)
+}
 const capturing = ref(false)
 const captureError = ref('')
 let version = 0
@@ -45,7 +56,7 @@ async function capture(event: KeyboardEvent) {
     return
   }
   await endCapture()
-  await update({ stopShortcut: binding })
+  await savePatch({ stopShortcut: binding })
 }
 onBeforeUnmount(() => {
   void endCapture()
@@ -66,11 +77,21 @@ onDeactivated(() => {
         <strong>{{ __t('ui.desktop', '允许桌面操作') }}</strong>
         <p>{{ __t('ui.desktop', '用户操作鼠标键盘时暂停，继续后重新观察界面。') }}</p>
       </div>
-      <PSwitch :model-value="settings.enabled" @update:model-value="update({ enabled: $event })" />
+      <PSwitch
+        :model-value="settings.enabled"
+        :disabled="page?.disabled.value"
+        @update:model-value="savePatch({ enabled: $event })"
+      />
     </div>
     <div class="desktop-settings-row">
       <label>{{ __t('ui.desktop', '停止快捷键') }}</label>
-      <PButton variant="ghost" @click="beginCapture" @keydown="capture" @blur="endCapture">
+      <PButton
+        variant="ghost"
+        :disabled="page?.disabled.value"
+        @click="beginCapture"
+        @keydown="capture"
+        @blur="endCapture"
+      >
         {{ capturing ? __t('ui.desktop', '按下快捷键…') : settings.stopShortcut }}
       </PButton>
     </div>

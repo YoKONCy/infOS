@@ -23,7 +23,7 @@ export function createPictoriaRouter(ctx: AppContext) {
       z
         .object({
           agentId: z.string().min(1).max(128),
-          input: z.record(z.unknown()),
+          input: z.record(z.string(), z.unknown()),
           key: z.string().uuid(),
         })
         .strict(),
@@ -142,7 +142,7 @@ export function createPictoriaRouter(ctx: AppContext) {
         .object({
           agentId: z.string().min(1).max(128),
           threadId: z.string().optional(),
-          input: z.record(z.unknown()).default({}),
+          input: z.record(z.string(), z.unknown()).default({}),
         })
         .strict(),
     ),

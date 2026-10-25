@@ -49,9 +49,8 @@ import {
   triviumFiles,
   TRIVIUM_FORMAT,
   TRIVIUM_BACKUP_DIRECTORY,
-  TRIVIUM_VERSION,
   isTriviumFile,
-  upgradeBackupPath,
+  upgradeBackupRoots,
 } from './triviumFiles'
 
 const logger = createLogger('StoreRegistry')
@@ -70,7 +69,7 @@ const DEFAULT_DIM = 1536
 export class MemoryStoreRegistry {
   /** 缓存已打开的 TriviumDB 实例 (key = 文件路径) */
   private stores = new Map<string, TriviumDBType>()
-  /** 文本索引脏标记 (key = 文件路径，true 表示有新增 indexText 未编译) */
+  /** 文本索引预热标记 (key = 文件路径，true 表示写入后尚未执行预热) */
   private textIndexDirty = new Map<string, boolean>()
   private descriptions = new Map<
     string,
@@ -128,11 +127,11 @@ export class MemoryStoreRegistry {
   /** 全量遗忘也覆盖已移除角色留下的受管索引目录。 */
   listStoredAgentIds(): string[] {
     const root = this.pathResolver.resolve('@data')
-    const backups = path.join(root, TRIVIUM_BACKUP_DIRECTORY, TRIVIUM_VERSION)
+    const backups = upgradeBackupRoots(root)
     const agents = new Set<string>()
-    for (const directory of [root, backups]) {
+    for (const directory of [root, ...backups]) {
       if (!existsSync(directory)) continue
-      if (directory === backups) assertManagedFilePath(root, directory)
+      if (directory !== root) assertManagedFilePath(root, directory)
       for (const entry of readdirSync(directory, { withFileTypes: true })) {
         if (!entry.isDirectory() || entry.isSymbolicLink() || !/^agent_[\w-]+$/.test(entry.name))
           continue
@@ -252,9 +251,12 @@ export class MemoryStoreRegistry {
   /** 永久删除与重建不能留下包含旧正文的升级副本。 */
   discardUpgradeBackup(tdbPath: string, preserveStaging?: string): void {
     this.assertManagedStorePath(tdbPath)
-    const backup = upgradeBackupPath(this.pathResolver.resolve('@data'), tdbPath)
-    assertManagedFilePath(this.pathResolver.resolve('@data'), backup)
-    if (existsSync(backup)) rmSync(backup, { recursive: true, force: true })
+    const root = this.pathResolver.resolve('@data')
+    for (const backupRoot of upgradeBackupRoots(root)) {
+      const backup = path.join(backupRoot, managedRelative(root, tdbPath))
+      assertManagedFilePath(root, backup)
+      if (existsSync(backup)) rmSync(backup, { recursive: true, force: true })
+    }
     const parent = path.dirname(tdbPath)
     if (!existsSync(parent)) return
     // 异常发布留下的回滚区同样可能含旧正文；仅清理对应库，不能递归扫用户目录。
@@ -305,7 +307,7 @@ export class MemoryStoreRegistry {
       for (const name of readdirSync(path.join(root, entry.name))) {
         const relative = `${entry.name}/${name}`
         const base = managedStoreBase(relative)
-        if (base && relative === base) paths.add(path.join(root, base))
+        if (base) paths.add(path.join(root, base))
       }
     }
     const paused: TriviumDBType[] = []
@@ -553,9 +555,9 @@ export class MemoryStoreRegistry {
   }
 
   /**
-   * 重编译所有 Store 的 BM25 文本索引
+   * 预热所有 Store 的文本索引
    *
-   * TriviumDB 的 indexText() 是增量追加，必须调 buildTextIndex() 才能生效。
+   * indexText() 替换对应节点的完整正文；buildTextIndex() 提前预热关键词自动机。
    * 应由 KernelScheduler 周期计划定期触发。
    */
   rebuildAllTextIndexes(): void {
@@ -574,7 +576,7 @@ export class MemoryStoreRegistry {
    * 标记某 Store 的文本索引为脏（indexText 后调用）
    *
    * AIOS 第八阶段：修复主 Agent BM25 索引从未编译的 bug。
-   * indexText() 是增量追加，不会自动触发 buildTextIndex()。
+   * 多字段正文应合并后一次 indexText()，后续调用会替换旧正文；关键词查询也可按需编译。
    * 此方法仅设置脏标记，实际编译延迟到 ensureTextIndexReady() 时执行。
    */
   markTextIndexDirty(tdbPath: string): void {
@@ -582,11 +584,10 @@ export class MemoryStoreRegistry {
   }
 
   /**
-   * 确保文本索引已编译（searchHybrid 前调用）
+   * 确保文本索引已预热（searchHybrid 前调用）
    *
-   * 如果脏标记为 true，先执行 buildTextIndex() 再返回 Store。
-   * 这样保证 searchHybrid 的 BM25 路总是能拿到最新索引，
-   * 同时避免每次写入都全量重编译的性能开销。
+   * 如果预热标记为 true，先执行 buildTextIndex() 再返回 Store。
+   * 正文由 indexText() 替换；这里提前编译关键词自动机，并将延期加载或预算错误传给调用方。
    */
   ensureTextIndexReady(agentId: string, source: string): TriviumDBType {
     // 复用 getStoreBySource 的路由逻辑拿到 tdbPath
@@ -600,6 +601,7 @@ export class MemoryStoreRegistry {
         logger.debug(__t('logs.repositories', '文本索引懒编译完成: {0}', [tdbPath]))
       } catch (err) {
         logger.warn(__t('logs.repositories', '文本索引懒编译失败: {0}', [tdbPath]), { error: err })
+        throw err
       }
     }
     return store
@@ -725,28 +727,40 @@ export class MemoryStoreRegistry {
       accessMode: 'readWrite',
       missingIndexPolicy: 'fallback',
     })
-    if (store.dim() !== this.dim) {
-      const actual = store.dim()
-      store.close()
-      throw new Error(`向量库维度不匹配：库为 ${actual} 维，当前配置为 ${this.dim} 维，请重建索引`)
-    }
-    writeFileSync(dimensionPath, String(this.dim), 'utf8')
-
-    // 社交关键词自动机属于运行时索引；重开或发布重建文件后，从主存恢复一次。
-    // 仅重编译无法恢复 indexKeyword 注册，不能把“节点尚存”误当作“可以召回”。
-    if (path.basename(tdbPath) === 'social.tdb') {
-      for (const id of store.allNodeIds()) {
-        const payload = store.get<{ type?: string; content?: string }>(id)?.payload
-        if (typeof payload?.content !== 'string') continue
-        if (payload.type === 'feature') store.indexKeyword(id, payload.content)
-        else if (payload.type === 'event') store.indexText(id, payload.content)
+    try {
+      if (store.dim() !== this.dim) {
+        const actual = store.dim()
+        throw new Error(
+          `向量库维度不匹配：库为 ${actual} 维，当前配置为 ${this.dim} 维，请重建索引`,
+        )
       }
-      store.buildTextIndex()
-    }
+      writeFileSync(dimensionPath, String(this.dim), 'utf8')
 
-    // 定时压缩仍由引擎托管；内存预算已在打开前传入，避免初始化峰值越界。
-    store.enableAutoCompaction(300) // 每 5 分钟自动压缩落盘
-    this.stores.set(tdbPath, store)
-    return store
+      // 从权威 Payload 补齐社交正文与显式关键词；新版重复关键词登记保持幂等。
+      if (path.basename(tdbPath) === 'social.tdb') {
+        for (const id of store.allNodeIds()) {
+          const payload = store.get<{ type?: string; content?: string }>(id)?.payload
+          if (typeof payload?.content !== 'string') continue
+          if (payload.type === 'feature') store.indexKeyword(id, payload.content)
+          else if (payload.type === 'event') store.indexText(id, payload.content)
+        }
+        store.buildTextIndex()
+      }
+
+      // 定时压缩仍由引擎托管；内存预算已在打开前传入，避免初始化峰值越界。
+      store.enableAutoCompaction(300) // 每 5 分钟自动压缩落盘
+      this.stores.set(tdbPath, store)
+      return store
+    } catch (error) {
+      // 新版文本预热会传播损坏与预算错误；初始化失败仍需释放原生句柄和 Writer 锁。
+      try {
+        store.close()
+      } catch (closeError) {
+        logger.warn(__t('logs.repositories', 'Store 关闭失败: {0}', [tdbPath]), {
+          error: closeError,
+        })
+      }
+      throw error
+    }
   }
 }

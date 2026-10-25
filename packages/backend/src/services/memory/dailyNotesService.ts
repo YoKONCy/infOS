@@ -1,6 +1,7 @@
 import { existsSync, readFileSync } from 'node:fs'
 import type { EventNote, MemoryBackgroundPolicy } from '@infos/shared'
 import { MemoryBackgroundControl } from './memoryBackgroundControl'
+import { MemoryAgentScope } from './memoryAgentScope'
 import type { PathResolver } from '../../core/pathResolver'
 import type { EventMemoryService } from './eventMemoryService'
 import type { EventNoteRepository } from '../../repositories/eventNote.repo'
@@ -14,6 +15,10 @@ import { formatEventTime } from './eventMemoryTime'
 const RETRY_MINUTES = [10, 30, 60] as const
 
 export class DailyNotesService {
+  private agents = new MemoryAgentScope()
+  setAgentScope(agents: MemoryAgentScope): void {
+    this.agents = agents
+  }
   private background: MemoryBackgroundPolicy = new MemoryBackgroundControl()
   setBackgroundPolicy(policy: MemoryBackgroundPolicy): void {
     this.background = policy
@@ -62,7 +67,8 @@ export class DailyNotesService {
   }
 
   async generate(agentId: string, date: string, sourceIncomplete = false): Promise<string[]> {
-    if (!this.background.enabled) return []
+    if (!this.agents.isAvailable(agentId) || !this.background.enabled) return []
+    const agentSignal = this.agents.signal(agentId)
     const backgroundSignal = this.background.signal
     const generation = this.generation
     await this.repo.ensureDailyNoteTask({
@@ -72,13 +78,14 @@ export class DailyNotesService {
       sourceIncomplete,
     })
     const task = await this.repo.dailyNoteTask(agentId, date)
+    if (agentSignal.aborted) return []
     if (!task || task.status === 'completed') return task?.writtenFiles ?? []
     if (task.status === 'exhausted') return []
     const now = this.now()
     if (task.nextAttemptAt && task.nextAttemptAt > now.toISOString()) return []
 
     const controller = new AbortController()
-    const signal = AbortSignal.any([controller.signal, backgroundSignal])
+    const signal = AbortSignal.any([controller.signal, backgroundSignal, agentSignal])
     this.controllers.add(controller)
     try {
       signal.throwIfAborted()
@@ -123,13 +130,16 @@ export class DailyNotesService {
         } finally {
           this.writes.delete(writing)
         }
+        signal.throwIfAborted()
         if (generation !== this.generation) return []
         written.push(fileName)
       }
+      signal.throwIfAborted()
       await this.repo.completeDailyNoteTask(task.id, written)
       return written
     } catch (error) {
-      if (generation !== this.generation || backgroundSignal.aborted) return []
+      if (generation !== this.generation || backgroundSignal.aborted || agentSignal.aborted)
+        return []
       const retryMinutes = RETRY_MINUTES[task.attempts]
       const nextAttemptAt =
         retryMinutes === undefined
@@ -151,6 +161,7 @@ export class DailyNotesService {
     signal?: AbortSignal,
   ): Promise<string> {
     const config = await this.getModelConfig(agentId)
+    signal?.throwIfAborted()
     if (!config) throw new Error('日记生成模型未配置')
     const profile = this.agentManager.getAgent(agentId)
     const promptPath =

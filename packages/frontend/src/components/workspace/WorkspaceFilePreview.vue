@@ -22,6 +22,7 @@ const props = defineProps<{
 const emit = defineEmits<{
   reload: []
   state: [state: WorkspacePreviewState, patch: Partial<WorkspacePreviewState>]
+  fullscreen: []
 }>()
 const PdfViewer = defineAsyncComponent({
   loader: () => import('./WorkspacePdfViewer.vue'),
@@ -217,6 +218,7 @@ onBeforeUnmount(() => {
         :name="file.name"
         :state="state"
         :active="visible"
+        :allow-expand="false"
         @state="emit('state', state, $event)"
         @error="failure = $event"
       />
@@ -242,6 +244,7 @@ onBeforeUnmount(() => {
         :kind="file.kind"
         :state="state"
         :active="visible"
+        @fullscreen="emit('fullscreen')"
         @state="emit('state', state, $event)"
         @error="failure = $event"
       />

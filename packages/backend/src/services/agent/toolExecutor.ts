@@ -21,7 +21,7 @@ import { t as __t } from '../../lib/i18n'
  */
 
 import type { ToolExecutor, ToolExecutionResult } from './reactLoop'
-import { SOCIAL_ACTIONS, SCREENSHOT_TOOLS } from '@infos/shared'
+import { SOCIAL_BUSINESS_TOOLS, SCREENSHOT_TOOLS } from '@infos/shared'
 import type { ToolRegistry, ToolContext } from './toolRegistry'
 import { ToolLoopError } from './toolLoopGuard'
 import type { ApplicationRealmManager } from '../../applications/applicationRealm'
@@ -52,6 +52,8 @@ import type { FileWritePreviewBaseline } from '@infos/shared'
 import { resolveExecutionMode, parseAutomaticApproval, type ExecutionMode } from '@infos/shared'
 import { realpath } from 'node:fs/promises'
 import path from 'node:path'
+import { getDataDir } from '../../lib/env'
+import { protectedResourceWrite } from '../debug/resourceWritePolicy'
 import type { ChatMessage } from '../llm/types'
 import type { ResourceService } from '../attachment/resourceService'
 import { fileToolBusinessOutput, modelToolObservation } from '../execution/toolObservation'
@@ -500,6 +502,7 @@ export class RegistryToolExecutor implements ToolExecutor {
     if (
       !result.isError &&
       this.screenshotResources &&
+      !runtimeContext?.inlineImages &&
       runtimeContext?.agentId &&
       runtimeContext.threadId &&
       SCREENSHOT_TOOLS.some((tool) => tool === name)
@@ -559,6 +562,9 @@ export class RegistryToolExecutor implements ToolExecutor {
       loopGuard?: import('./toolLoopGuard').ToolLoopGuard
       taskId?: string
       realmId?: string
+      browserScope?: import('@infos/shared').AgentBrowserScope
+      requestedBy?: 'user' | 'agent'
+      inlineImages?: boolean
       executionId?: import('@infos/shared').KernelExecutionId
       processId?: import('@infos/shared').KernelProcessId
       deadline?: string
@@ -635,7 +641,7 @@ export class RegistryToolExecutor implements ToolExecutor {
           shouldTerminate: false,
         }
       }
-      if (realmId && !realmTool) {
+      if (realmId && !realmTool && !this.applicationRealms.hasHostToolGrant(realmId, name)) {
         return {
           output: `当前Application Realm不允许调用主应用工具“${name}”。`,
           durationMs: Date.now() - startTime,
@@ -863,17 +869,22 @@ export class RegistryToolExecutor implements ToolExecutor {
     // ── Hook: before_tool_call ──
     if (this.hookEmitter) {
       try {
-        const hookData = await this.hookEmitter.emitHook('tool:beforeCall', {
+        const hookData = await this.hookEmitter.emitHook('chat:beforeToolCall', {
           name,
           args,
           source,
           agentId,
           threadId,
           channel,
+          realmId: runtimeContext?.realmId,
+          taskId: runtimeContext?.taskId,
+          capabilityScope: runtimeContext?.capabilityScope,
         })
         // Hook 可以修改参数
         if (hookData && typeof hookData === 'object' && 'args' in hookData) {
-          args = (hookData as { args: Record<string, unknown> }).args
+          const candidate = (hookData as { args: Record<string, unknown> }).args
+          if (candidate && typeof candidate === 'object' && !Array.isArray(candidate))
+            args = candidate
         }
       } catch (err) {
         logger.warn(__t('logs.agent', 'before_tool_call Hook 执行失败: {0}', [err]))
@@ -964,7 +975,9 @@ export class RegistryToolExecutor implements ToolExecutor {
     const autoExecuteTools = executionMode !== 'manual'
     const needsAutomaticReview =
       executionMode === 'auto_approve' &&
-      (TERMINAL_APPROVAL_TOOLS.has(name) ||
+      ((name === 'runtime_debug' && typeof args.code === 'string' && !!args.code.trim()) ||
+        this.registry.isRuntimeScoped(name) ||
+        TERMINAL_APPROVAL_TOOLS.has(name) ||
         [
           'remote_terminal_create',
           'remote_terminal_write',
@@ -1094,6 +1107,8 @@ export class RegistryToolExecutor implements ToolExecutor {
     const pathRequiresApproval =
       !skipApprovalPolicy && pathViolation !== null && (!autoExecuteTools || name === 'delete_file')
     const forceApprovalEachCall =
+      (name === 'runtime_debug' && typeof args.code === 'string' && !!args.code.trim()) ||
+      this.registry.isRuntimeScoped(name) ||
       (!autoExecuteTools && remoteTerminalTool) ||
       (!remoteTerminalTool &&
         (pathRequiresApproval ||
@@ -1112,12 +1127,14 @@ export class RegistryToolExecutor implements ToolExecutor {
     }
     if (this.policyEngine && !fullAccess) {
       const permission = this.capabilityGate?.getToolPermission(agentId, channel, name)
-      const socialAction = SOCIAL_ACTIONS.find(
-        (item) => item.tool === name && item.action === args.action,
-      )
+      const actionPermission =
+        typeof args.action === 'string'
+          ? this.registry.getDefinition(name)?.actionPermissions?.[args.action]
+          : undefined
       const declaredPermission =
         this.registry.getDefinition(name)?.requiresApproval ||
-        (socialAction?.mutation && socialAction.ownerOnly)
+        actionPermission?.requiresApproval ||
+        (!actionPermission && SOCIAL_BUSINESS_TOOLS.some((tool) => tool === name))
           ? {
               toolName: name,
               resourceScope: permission?.resourceScope ?? {
@@ -1150,7 +1167,9 @@ export class RegistryToolExecutor implements ToolExecutor {
         : autoExecuteTools &&
             basePolicyDecision.action === 'require_approval' &&
             !TERMINAL_APPROVAL_TOOLS.has(name) &&
-            !(name === 'delete_file' && pathViolation !== null)
+            !(name === 'delete_file' && pathViolation !== null) &&
+            name !== 'runtime_debug' &&
+            !this.registry.isRuntimeScoped(name)
           ? { action: 'allow' as const }
           : isSkillTool && executionMode !== 'auto_approve' && basePolicyDecision.action === 'allow'
             ? {
@@ -1364,8 +1383,39 @@ export class RegistryToolExecutor implements ToolExecutor {
         }
       }
       runtimeContext?.signal?.throwIfAborted()
+      if (
+        ['write_file', 'edit_file', 'delete_file'].includes(name) &&
+        typeof args.file_path === 'string'
+      ) {
+        const session = await resolveExecutionSession({
+          agentId,
+          threadId,
+          channel,
+          taskId: runtimeContext?.taskId,
+        })
+        const target = path.resolve(
+          session.workspaceRoot,
+          args.file_path.replace(/^@principal[\\/]/i, ''),
+        )
+        const resource = await protectedResourceWrite(getDataDir(), target)
+        if (resource)
+          return {
+            output: JSON.stringify({
+              code: 'RESOURCE_CANDIDATE_REQUIRED',
+              resource,
+              message: __t(
+                'server.resource-versions',
+                '请先创建资源候选并编辑候选目录，再由用户应用。调试模式可用 debug.resources.checkout，也可从资源版本页创建。',
+              ),
+            }),
+            durationMs: Date.now() - startTime,
+            isError: true,
+            shouldTerminate: false,
+          }
+      }
       // AIOS: 透传 threadId + channel 给工具处理函数
       const context: ToolContext = {
+        requestedBy: runtimeContext?.requestedBy,
         source,
         agentId,
         sessionId,
@@ -1378,6 +1428,7 @@ export class RegistryToolExecutor implements ToolExecutor {
         disabledTools: threadPolicy?.disabledTools ?? runtimeContext?.disabledTools,
         advancedToolAccess: runtimeContext?.advancedToolAccess,
         realmId: runtimeContext?.realmId,
+        browserScope: runtimeContext?.browserScope,
         capabilityScope: runtimeContext?.capabilityScope,
         reviewMessages: runtimeContext?.reviewMessages,
         onExecutionStatus: runtimeContext?.onExecutionStatus,
@@ -1436,7 +1487,13 @@ export class RegistryToolExecutor implements ToolExecutor {
       // ── Hook: after_tool_call ──
       if (this.hookEmitter) {
         try {
-          await this.hookEmitter.emitHook('tool:afterCall', {
+          await this.hookEmitter.emitHook('chat:afterToolCall', {
+            threadId,
+            agentId,
+            channel,
+            realmId: runtimeContext?.realmId,
+            taskId: runtimeContext?.taskId,
+            capabilityScope: runtimeContext?.capabilityScope,
             name,
             args,
             output,
@@ -1476,7 +1533,13 @@ export class RegistryToolExecutor implements ToolExecutor {
       // ── Hook: after_tool_call (错误) ──
       if (this.hookEmitter) {
         try {
-          await this.hookEmitter.emitHook('tool:afterCall', {
+          await this.hookEmitter.emitHook('chat:afterToolCall', {
+            threadId,
+            agentId,
+            channel,
+            realmId: runtimeContext?.realmId,
+            taskId: runtimeContext?.taskId,
+            capabilityScope: runtimeContext?.capabilityScope,
             name,
             args,
             output: errMsg,

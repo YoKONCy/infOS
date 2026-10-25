@@ -142,7 +142,7 @@ async function save(): Promise<void> {
 onMounted(async () => {
   dialog.value?.showModal()
   await nextTick()
-  textArea.value?.focus()
+  textArea.value?.focus({ preventScroll: true })
 })
 onUnmounted(() => {
   alive = false
@@ -312,13 +312,25 @@ onUnmounted(() => {
 
 <style scoped>
 .entry-editor {
+  /* 显式居中，避免全局样式重置覆盖原生 dialog 的默认外边距。 */
+  position: fixed;
+  inset: 0;
+  margin: auto;
+  box-sizing: border-box;
   width: min(740px, calc(100vw - 32px));
+  max-width: calc(100vw - 32px);
+  height: fit-content;
   max-height: min(900px, calc(100dvh - 48px));
   padding: 0;
-  border: 2px solid var(--ui-border-default);
-  background: var(--ui-bg-surface);
+  overflow: hidden;
+  border: 2px solid var(--ui-border-strong);
+  border-radius: 0;
+  background: var(--dash-panel-elevated, var(--ui-bg-surface));
   color: var(--ui-text-primary);
-  box-shadow: var(--ui-shadow-lg);
+  font-family: var(--ui-font-sans);
+  box-shadow:
+    5px 5px 0 var(--ui-border-default),
+    var(--ui-shadow-lg);
 }
 .entry-editor::backdrop {
   background: var(--ui-overlay-backdrop);
@@ -329,39 +341,77 @@ onUnmounted(() => {
   flex-direction: column;
 }
 .editor-header {
+  position: relative;
   display: flex;
+  flex-shrink: 0;
   align-items: center;
   justify-content: space-between;
+  gap: 16px;
   padding: 18px 22px;
-  border-bottom: 1px solid var(--ui-border-default);
+  border-bottom: 2px solid var(--ui-border-default);
+  background: var(--dash-panel-soft, var(--ui-bg-surface-soft));
+  box-shadow: inset 0 1px 0 var(--ui-border-subtle);
+}
+.editor-header::before {
+  content: '';
+  position: absolute;
+  top: 0;
+  left: 22px;
+  width: 48px;
+  height: 3px;
+  background: var(--ui-accent-purple);
 }
 .editor-eyebrow {
+  font-family: var(--ui-font-pixel);
   font-size: 11px;
   color: var(--ui-accent-purple);
-  letter-spacing: 0.12em;
+  line-height: 1.6;
+  letter-spacing: 0.08em;
 }
 .editor-header h3 {
-  margin: 4px 0 0;
-  font-size: 19px;
+  margin: 5px 0 0;
+  font-family: var(--ui-font-pixel);
+  font-size: 22px;
+  font-weight: 400;
+  line-height: 1.5;
+  overflow-wrap: anywhere;
 }
 .editor-body {
+  flex: 1 1 auto;
   overflow-y: auto;
+  overscroll-behavior: contain;
+  scrollbar-gutter: stable;
   min-height: 0;
+  margin: 0;
   padding: 20px 22px;
   display: flex;
   flex-direction: column;
   gap: 14px;
 }
+.editor-body > * {
+  flex-shrink: 0;
+}
 .editor-context {
   display: flex;
-  align-items: center;
+  align-items: flex-start;
   flex-wrap: wrap;
   gap: 8px;
+  padding: 9px 12px;
+  border-left: 3px solid var(--ui-accent-purple);
+  background: var(--dash-panel-soft, var(--ui-bg-surface-soft));
   font-size: 12px;
+  line-height: 1.7;
   color: var(--ui-text-secondary);
+}
+.editor-context > span {
+  flex: 1;
+  min-width: 0;
+  overflow-wrap: anywhere;
 }
 .editor-context b {
   margin-left: auto;
+  font-family: var(--ui-font-pixel);
+  font-weight: 400;
   color: var(--ui-accent-purple);
 }
 .editor-field {
@@ -370,32 +420,45 @@ onUnmounted(() => {
   gap: 7px;
   min-width: 0;
   font-size: 13px;
-  font-weight: 600;
+}
+.editor-field > span {
+  font-family: var(--ui-font-pixel);
+  line-height: 1.7;
 }
 .editor-field textarea,
 .editor-field input {
   width: 100%;
   box-sizing: border-box;
-  border: 1px solid var(--ui-border-default);
-  border-radius: 5px;
+  min-width: 0;
+  border: 2px solid var(--ui-border-default);
+  border-radius: 0;
   padding: 10px 12px;
-  background: var(--ui-bg-surface-soft);
+  background: var(--dash-input-bg, var(--ui-bg-surface-soft));
   color: var(--ui-text-primary);
-  font: inherit;
-  font-weight: 400;
+  font: 400 14px / 1.7 var(--ui-font-sans);
+  box-shadow: inset 2px 2px 0 var(--ui-border-subtle);
+}
+.editor-field input {
+  min-height: 44px;
 }
 .editor-field textarea {
   resize: vertical;
-  line-height: 1.65;
+  line-height: 1.8;
+}
+.editor-field textarea:disabled,
+.editor-field input:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
 }
 .editor-narrative {
   min-height: 160px;
-  max-height: 36dvh;
+  max-height: max(160px, 36dvh);
 }
 .editor-field textarea:focus-visible,
 .editor-field input:focus-visible {
   outline: 2px solid var(--ui-accent-sky);
   outline-offset: 2px;
+  border-color: var(--ui-accent-sky);
 }
 .editor-hint {
   margin: 0;
@@ -408,15 +471,30 @@ onUnmounted(() => {
   grid-template-columns: repeat(3, minmax(0, 1fr));
   gap: 12px;
 }
+.editor-scores input {
+  font-family: var(--ui-font-pixel);
+  font-size: 18px;
+  font-variant-numeric: tabular-nums;
+}
 .editor-tags {
-  border: 1px solid var(--ui-border-default);
-  border-radius: 5px;
+  border: 2px solid var(--ui-border-default);
+  border-radius: 0;
   padding: 12px;
+  background: var(--dash-panel-soft, var(--ui-bg-surface-soft));
+  box-shadow: 2px 2px 0 var(--ui-border-subtle);
 }
 .editor-tags summary {
   cursor: pointer;
+  font-family: var(--ui-font-pixel);
   font-size: 13px;
-  font-weight: 600;
+  line-height: 1.7;
+}
+.editor-tags summary::marker {
+  color: var(--ui-accent-purple);
+}
+.editor-tags summary:focus-visible {
+  outline: 2px solid var(--ui-accent-sky);
+  outline-offset: 4px;
 }
 .editor-tags[open] summary {
   margin-bottom: 10px;
@@ -433,28 +511,67 @@ onUnmounted(() => {
   align-items: flex-start;
   gap: 10px;
   padding: 13px;
-  border: 1px solid var(--ui-border-default);
-  background: var(--ui-bg-surface-soft);
-  border-radius: 5px;
+  border: 2px solid var(--ui-border-default);
+  background: var(--dash-panel-soft, var(--ui-bg-surface-soft));
+  border-radius: 0;
+  box-shadow: 2px 2px 0 var(--ui-border-subtle);
   cursor: pointer;
 }
+.editor-vector:has(input:checked) {
+  border-color: var(--ui-accent-purple);
+}
 .editor-vector input {
-  margin-top: 3px;
-  accent-color: var(--ui-accent-purple);
+  appearance: none;
+  display: grid;
+  flex-shrink: 0;
+  place-content: center;
+  width: 18px;
+  height: 18px;
+  margin: 2px 0 0;
+  border: 2px solid var(--ui-border-strong);
+  border-radius: 0;
+  background: var(--dash-input-bg, var(--ui-bg-surface-soft));
+  box-shadow: inset 2px 2px 0 var(--ui-border-subtle);
+  cursor: inherit;
+}
+.editor-vector input:checked {
+  border-color: var(--ui-accent-purple);
+}
+.editor-vector input:checked::before {
+  content: '';
+  width: 8px;
+  height: 8px;
+  background: var(--ui-accent-purple);
+}
+.editor-vector input:focus-visible {
+  outline: 2px solid var(--ui-accent-sky);
+  outline-offset: 3px;
+}
+.editor-vector:has(input:disabled) {
+  opacity: 0.6;
+  cursor: not-allowed;
 }
 .editor-vector span {
   display: grid;
+  min-width: 0;
   gap: 5px;
   font-size: 13px;
 }
+.editor-vector b {
+  font-family: var(--ui-font-pixel);
+  font-weight: 400;
+  line-height: 1.7;
+}
 .editor-vector small {
+  font-size: 12px;
   color: var(--ui-text-secondary);
   line-height: 1.7;
 }
 .editor-error {
   padding: 12px;
-  border: 1px solid var(--ui-danger);
-  border-radius: 5px;
+  border: 2px solid var(--ui-danger);
+  border-radius: 0;
+  background: var(--dash-panel-soft, var(--ui-bg-surface-soft));
   color: var(--ui-text-primary);
   overflow-wrap: anywhere;
 }
@@ -468,20 +585,33 @@ onUnmounted(() => {
 }
 .editor-footer {
   display: flex;
+  flex-shrink: 0;
   align-items: center;
   justify-content: flex-end;
   flex-wrap: wrap;
   gap: 10px;
   padding: 16px 22px;
-  border-top: 1px solid var(--ui-border-default);
+  border-top: 2px solid var(--ui-border-default);
+  background: var(--dash-panel-soft, var(--ui-bg-surface-soft));
+  box-shadow: inset 0 1px 0 var(--ui-border-subtle);
 }
 .editor-footer > span {
   flex: 1;
   min-width: 140px;
   font-size: 12px;
+  line-height: 1.7;
   color: var(--ui-text-secondary);
 }
 @media (max-width: 560px) {
+  .entry-editor {
+    width: calc(100vw - 24px);
+    max-width: calc(100vw - 24px);
+    max-height: calc(100dvh - 24px);
+    box-shadow:
+      3px 3px 0 var(--ui-border-default),
+      var(--ui-shadow-lg);
+  }
+  .editor-scores,
   .editor-tag-grid,
   .editor-fact-meta {
     grid-template-columns: 1fr;
@@ -490,6 +620,20 @@ onUnmounted(() => {
   .editor-header,
   .editor-footer {
     padding: 14px;
+  }
+  .editor-header::before {
+    left: 14px;
+  }
+  .editor-footer > span {
+    flex-basis: 100%;
+  }
+}
+@media (forced-colors: active) {
+  .editor-vector input {
+    appearance: auto;
+  }
+  .editor-vector input::before {
+    display: none;
   }
 }
 </style>

@@ -28,6 +28,7 @@ const emit = defineEmits<{
   select: [note: EventNote]
   page: [target: number]
   toggle: [id: string]
+  restore: [note: EventNote]
 }>()
 
 interface DayGroup {
@@ -166,6 +167,15 @@ const pageEnd = computed(() => Math.min(props.page * props.pageSize, props.total
               </div>
             </div>
 
+            <PButton
+              v-if="note.status === 'archived'"
+              size="sm"
+              variant="ghost"
+              @click.stop="emit('restore', note)"
+            >
+              <PixelIcon name="refresh" size="xs" />
+              {{ __t('ui.settings', '恢复') }}
+            </PButton>
             <div
               class="entry-importance"
               :title="__t('ui.settings', '重要度 {0}/10', [note.importance])"

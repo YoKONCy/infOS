@@ -1,6 +1,16 @@
 # 标准版构建配置
 # 无 Steam SDK，通过 GitHub Releases 自动更新
 extends: electron-builder.base.yml
+beforePack: scripts/prepare-installer.cjs
+
+nsis:
+  include: build/installer/installer.nsh
+  # 自定义选项页负责目录选择，避免再弹出第二套原生目录页。
+  allowToChangeInstallationDirectory: false
+  installerLanguages:
+    - zh_CN
+    - zh_TW
+    - en_US
 
 # 基础配置已包含 publish: github，无需覆写
 win:

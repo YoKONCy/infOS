@@ -1,6 +1,7 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { tokenCounter } from '@infos/backend/services/tokenizer/tokenCounter'
 import { MemoryBackgroundControl } from '@infos/backend/services/memory/memoryBackgroundControl'
+import { MemoryAgentScope } from '@infos/backend/services/memory/memoryAgentScope'
 import {
   EventMemoryFallbackService,
   type EventMemoryFallbackOptions,
@@ -130,6 +131,33 @@ function fixture(options: EventMemoryFallbackOptions = {}, drafts: EventNoteDraf
 }
 
 describe('Agent 累计在线八小时补记', () => {
+  it('已删除角色即使仍在调度快照里，也不能继续计时或调用补记模型', async () => {
+    const f = fixture({ agents: new MemoryAgentScope(() => false) })
+    await f.online(90)
+    await f.service.tick(['pero'])
+    expect(f.repo.advanceTimer).not.toHaveBeenCalled()
+    expect(f.extractor.extract).not.toHaveBeenCalled()
+  })
+
+  it('补记模型执行期间删除角色时，中止提交且不进入失败重试', async () => {
+    let exists = true
+    const agents = new MemoryAgentScope(() => exists)
+    const f = fixture({ agents }, [draft])
+    await f.online(60)
+    f.extractor.extract.mockImplementation(async () => {
+      exists = false
+      agents.invalidate('pero')
+      return [draft]
+    })
+    await f.service.tick(['pero'])
+    expect(f.extractor.extract).toHaveBeenCalledOnce()
+    expect(f.create).not.toHaveBeenCalled()
+    expect(f.repo.commitCoverageUnderClaim).not.toHaveBeenCalled()
+    expect(f.repo.releaseCoverageClaim).toHaveBeenCalledOnce()
+    expect(f.repo.setMemoryScheduleTime).not.toHaveBeenCalled()
+    expect(f.service.hasPendingWork).toBe(false)
+  })
+
   it('八小时之前再多轮数、再长正文和日界都不能提前触发', async () => {
     const f = fixture({ intervalSeconds: 8 * 60 * 60, safeInputTokens: 500 })
     f.setMessages(rounds(100))

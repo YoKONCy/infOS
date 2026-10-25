@@ -32,6 +32,9 @@ describe('工具用户文案', () => {
         'browser_status',
         'automation_execute',
         'get_mouse_position',
+        'open_application',
+        'get_active_windows',
+        'activate_window',
         'remote_terminal_nodes',
         'remote_terminal_create',
         'remote_terminal_read',
@@ -40,8 +43,7 @@ describe('工具用户文案', () => {
     )
     expect(ADVANCED_TOOL_NAMES.has('take_screenshot')).toBe(false)
     expect(ADVANCED_TOOL_NAMES.has('web_fetch')).toBe(false)
-    expect(ADVANCED_TOOL_NAMES.has('open_application')).toBe(false)
-    expect(ADVANCED_TOOL_NAMES.has('get_active_windows')).toBe(false)
+    expect(ADVANCED_TOOL_NAMES.has('get_system_info')).toBe(false)
   })
 
   it('应优先使用工具自身声明的用户文案', () => {

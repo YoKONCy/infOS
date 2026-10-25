@@ -1,7 +1,7 @@
 import { currentKernelExecution } from '../kernel/executionContext'
 import type { KernelOutboxRepository } from '../kernel/kernelOutboxRepository'
 import type Database from 'better-sqlite3'
-import type { SocialTurnRecord } from '@infos/shared'
+import type { SocialStorageScope, SocialTurnRecord } from '@infos/shared'
 import { getSocialTurnKind, SOCIAL_DELEGATED_TURN_PREFIX, type SocialTurnKind } from '@infos/shared'
 import type {
   SocialContactImpressionRecord,
@@ -20,26 +20,34 @@ export class SqliteSocialStoragePort implements SocialStoragePort {
   ) {}
 
   async getTurn(id: string): Promise<SocialTurnRecord | null> {
-    const row = this.db.prepare('SELECT record_json FROM social_turns WHERE id=?').get(id) as
-      | { record_json: string }
-      | undefined
+    const row = this.db
+      .prepare('SELECT platform,record_json FROM social_turns WHERE id=?')
+      .get(id) as { platform: string; record_json: string } | undefined
     if (!row) return null
     const record = JSON.parse(row.record_json) as SocialTurnRecord
-    return { ...record, kind: getSocialTurnKind(record) }
+    return { ...record, platform: record.platform ?? row.platform, kind: getSocialTurnKind(record) }
   }
 
   async saveTurn(record: SocialTurnRecord): Promise<void> {
+    record.platform ??=
+      (record.checkpoint.inbound as Array<{ platform?: string }> | undefined)?.[0]?.platform ?? 'qq'
     const fence = this.db
       .prepare(
-        "SELECT max(cleared_at) AS value FROM social_data_fences WHERE agent_id=? AND (channel_type='' OR (channel_type=? AND channel_id=?))",
+        "SELECT max(cleared_at) AS value FROM social_data_fences WHERE agent_id=? AND (channel_type='' OR (channel_type=? AND channel_id=?)) AND (platform='' OR platform=?) AND (account_id='' OR account_id=?)",
       )
-      .get(record.agentId, record.channelType, record.channelId) as { value: number | null }
+      .get(
+        record.agentId,
+        record.channelType,
+        record.channelId,
+        record.platform,
+        record.accountId,
+      ) as { value: number | null }
     if (fence.value !== null && Date.parse(record.startedAt) <= fence.value)
       throw new Error('社交数据已清理，已阻止旧任务回写')
     this.db
       .prepare(
-        `INSERT INTO social_turns(id,agent_id,account_id,channel_type,channel_id,status,record_json,updated_at)
-      VALUES(?,?,?,?,?,?,?,?) ON CONFLICT(id) DO UPDATE SET status=excluded.status,record_json=excluded.record_json,updated_at=excluded.updated_at`,
+        `INSERT INTO social_turns(id,agent_id,account_id,channel_type,channel_id,status,record_json,updated_at,platform)
+      VALUES(?,?,?,?,?,?,?,?,?) ON CONFLICT(id) DO UPDATE SET status=excluded.status,record_json=excluded.record_json,updated_at=excluded.updated_at`,
       )
       .run(
         record.id,
@@ -50,6 +58,7 @@ export class SqliteSocialStoragePort implements SocialStoragePort {
         record.status,
         JSON.stringify({ ...record, kind: getSocialTurnKind(record) }),
         record.updatedAt,
+        record.platform,
       )
   }
 
@@ -68,69 +77,99 @@ export class SqliteSocialStoragePort implements SocialStoragePort {
     const args = kind ? [agentId, `${SOCIAL_DELEGATED_TURN_PREFIX}*`, kind] : [agentId]
     const rows = this.db
       .prepare(
-        `SELECT record_json FROM social_turns WHERE agent_id=? AND status IN ('running','retrying','waiting')${kindFilter} ORDER BY updated_at DESC`,
+        `SELECT platform,record_json FROM social_turns WHERE agent_id=? AND status IN ('running','retrying','waiting')${kindFilter} ORDER BY updated_at DESC`,
       )
-      .all(...args) as Array<{ record_json: string }>
+      .all(...args) as Array<{ platform: string; record_json: string }>
     if (includeTerminal)
       rows.push(
         ...(this.db
           .prepare(
-            `SELECT record_json FROM social_turns WHERE agent_id=? AND status NOT IN ('running','retrying','waiting')${kindFilter} ORDER BY updated_at DESC LIMIT 100`,
+            `SELECT platform,record_json FROM social_turns WHERE agent_id=? AND status NOT IN ('running','retrying','waiting')${kindFilter} ORDER BY updated_at DESC LIMIT 100`,
           )
-          .all(...args) as Array<{ record_json: string }>),
+          .all(...args) as Array<{ platform: string; record_json: string }>),
       )
     return rows.map((row) => {
       const record = JSON.parse(row.record_json) as SocialTurnRecord
-      return { ...record, kind: getSocialTurnKind(record) }
+      return {
+        ...record,
+        platform: record.platform ?? row.platform,
+        kind: getSocialTurnKind(record),
+      }
     })
   }
 
-  async deleteTurns(agentId: string, channelType?: string, channelId?: string): Promise<void> {
-    this.clearTurnRows(agentId, channelType, channelId)
+  async deleteTurns(
+    agentId: string,
+    channelType?: string,
+    channelId?: string,
+    scope?: SocialStorageScope,
+  ): Promise<void> {
+    this.clearTurnRows(agentId, channelType, channelId, scope)
   }
-  private clearTurnRows(agentId: string, channelType?: string, channelId?: string): void {
+  private clearTurnRows(
+    agentId: string,
+    channelType?: string,
+    channelId?: string,
+    scope?: SocialStorageScope,
+  ): void {
     this.db.transaction(() => {
-      const id = JSON.stringify([agentId, channelType ?? '', channelId ?? ''])
+      const id = JSON.stringify([
+        agentId,
+        scope?.platform ?? '',
+        scope?.accountId ?? '',
+        channelType ?? '',
+        channelId ?? '',
+      ])
       this.db
         .prepare(
-          `INSERT INTO social_data_fences(id,agent_id,channel_type,channel_id,version,cleared_at) VALUES(?,?,?,?,1,?)
-        ON CONFLICT(id) DO UPDATE SET version=version+1,cleared_at=excluded.cleared_at`,
+          `INSERT INTO social_data_fences(id,agent_id,platform,account_id,channel_type,channel_id,version,cleared_at)
+        VALUES(?,?,?,?,?,?,1,?) ON CONFLICT(id) DO UPDATE SET version=version+1,cleared_at=excluded.cleared_at`,
         )
-        .run(id, agentId, channelType ?? '', channelId ?? '', Date.now())
-      if (channelType && channelId) {
-        this.db
-          .prepare(
-            'DELETE FROM social_inbox WHERE agent_id=? AND msg_id IN (SELECT msg_id FROM social_messages WHERE agent_id=? AND channel_type=? AND channel_id=?)',
-          )
-          .run(agentId, agentId, channelType, channelId)
-        this.db
-          .prepare('DELETE FROM social_turns WHERE agent_id=? AND channel_type=? AND channel_id=?')
-          .run(agentId, channelType, channelId)
-      } else {
-        this.db.prepare('DELETE FROM social_inbox WHERE agent_id=?').run(agentId)
-        this.db.prepare('DELETE FROM social_turns WHERE agent_id=?').run(agentId)
-      }
+        .run(
+          id,
+          agentId,
+          scope?.platform ?? '',
+          scope?.accountId ?? '',
+          channelType ?? '',
+          channelId ?? '',
+          Date.now(),
+        )
+      const filter = this.scopeFilter(scope)
+      const channel = channelType && channelId ? ' AND channel_type=? AND channel_id=?' : ''
+      const args = [agentId, ...(channel ? [channelType, channelId] : []), ...filter.args]
+      this.db
+        .prepare(`DELETE FROM social_inbox WHERE agent_id=?${channel}${filter.sql}`)
+        .run(...args)
+      this.db
+        .prepare(`DELETE FROM social_turns WHERE agent_id=?${channel}${filter.sql}`)
+        .run(...args)
     })()
   }
-  async getDataVersion(agentId: string, channelType?: string, channelId?: string): Promise<number> {
-    return (
-      this.db
-        .prepare(
-          `SELECT coalesce(sum(version),0) AS value FROM social_data_fences WHERE agent_id=?
-      ${channelType && channelId ? "AND (channel_type='' OR (channel_type=? AND channel_id=?))" : ''}`,
-        )
-        .get(agentId, ...(channelType && channelId ? [channelType, channelId] : [])) as {
-        value: number
-      }
-    ).value
+  async getDataVersion(
+    agentId: string,
+    channelType?: string,
+    channelId?: string,
+    scope?: SocialStorageScope,
+  ): Promise<number> {
+    const channel =
+      channelType && channelId ? " AND (channel_type='' OR (channel_type=? AND channel_id=?))" : ''
+    const filter = this.fenceFilter(scope)
+    const row = this.db
+      .prepare(
+        `SELECT coalesce(sum(version),0) AS value FROM social_data_fences WHERE agent_id=?${channel}${filter.sql}`,
+      )
+      .get(agentId, ...(channel ? [channelType, channelId] : []), ...filter.args) as {
+      value: number
+    }
+    return row.value
   }
   async queuedMessages(agentId: string): Promise<SocialMessageRecord[]> {
     return this.db
       .prepare(
         `SELECT ${MESSAGE_COLUMNS} FROM social_messages WHERE agent_id=?
-      AND EXISTS(SELECT 1 FROM social_inbox i WHERE i.agent_id=social_messages.agent_id AND i.account_id=social_messages.account_id AND i.msg_id=social_messages.msg_id)
+      AND EXISTS(SELECT 1 FROM social_inbox i WHERE i.agent_id=social_messages.agent_id AND i.account_id=social_messages.account_id AND i.platform=social_messages.platform AND i.channel_type=social_messages.channel_type AND i.channel_id=social_messages.channel_id AND i.msg_id=social_messages.msg_id)
       AND NOT EXISTS(SELECT 1 FROM social_turns t,json_each(t.record_json,'$.sourceMessageIds') refs
-        WHERE t.agent_id=social_messages.agent_id AND t.account_id=social_messages.account_id
+        WHERE t.agent_id=social_messages.agent_id AND t.account_id=social_messages.account_id AND t.platform=social_messages.platform AND t.channel_type=social_messages.channel_type AND t.channel_id=social_messages.channel_id
         AND refs.value=social_messages.msg_id)
       ORDER BY id LIMIT 1000`,
       )
@@ -140,12 +179,14 @@ export class SqliteSocialStoragePort implements SocialStoragePort {
     agentId: string,
     accountId: string,
     msgIds: string[],
+    scope?: SocialStorageScope,
   ): Promise<void> {
+    const filter = this.scopeFilter(scope)
     this.db
       .prepare(
-        'DELETE FROM social_inbox WHERE agent_id=? AND account_id=? AND msg_id IN (SELECT value FROM json_each(?))',
+        `DELETE FROM social_inbox WHERE agent_id=? AND account_id=? AND msg_id IN (SELECT value FROM json_each(?))${filter.sql}`,
       )
-      .run(agentId, accountId, JSON.stringify(msgIds))
+      .run(agentId, accountId, JSON.stringify(msgIds), ...filter.args)
   }
   async forgetLongMemory(agentId: string): Promise<void> {
     this.db.transaction(() => {
@@ -193,8 +234,17 @@ export class SqliteSocialStoragePort implements SocialStoragePort {
       const execution = currentKernelExecution()
       if (inserted.changes && message.queueForReply)
         this.db
-          .prepare('INSERT OR IGNORE INTO social_inbox(agent_id,account_id,msg_id) VALUES(?,?,?)')
-          .run(message.agentId, message.accountId ?? '', message.msgId)
+          .prepare(
+            'INSERT OR IGNORE INTO social_inbox(agent_id,platform,account_id,channel_type,channel_id,msg_id) VALUES(?,?,?,?,?,?)',
+          )
+          .run(
+            message.agentId,
+            message.platform,
+            message.accountId ?? '',
+            message.channelType,
+            message.channelId,
+            message.msgId,
+          )
       if (!inserted.changes || !execution || !this.outbox) return
       const event = this.outbox.createEvent({
         protocolVersion: 1,
@@ -240,78 +290,115 @@ export class SqliteSocialStoragePort implements SocialStoragePort {
     transaction()
   }
 
-  async getRecent(agentId: string, channelId: string, channelType: string, limit = 20) {
+  async getRecent(
+    agentId: string,
+    channelId: string,
+    channelType: string,
+    limit = 20,
+    scope?: SocialStorageScope,
+  ) {
     return this.messages(
       `agent_id=? AND channel_id=? AND channel_type=?`,
       [agentId, channelId, channelType],
       limit,
+      scope,
     )
   }
-  async getRecentPrivateBySender(agentId: string, senderId: string, limit = 10) {
+  async getRecentPrivateBySender(
+    agentId: string,
+    senderId: string,
+    limit = 10,
+    scope?: SocialStorageScope,
+  ) {
     return this.messages(
-      `agent_id=? AND channel_type='private' AND channel_id=?`,
-      [agentId, senderId],
+      `agent_id=? AND channel_type='private' AND channel_id IN (SELECT channel_id FROM social_messages WHERE agent_id=? AND channel_type='private' AND sender_id=?${this.scopeFilter(scope).sql})`,
+      [agentId, agentId, senderId, ...this.scopeFilter(scope).args],
       limit,
+      scope,
     )
   }
-  async getRecentBySender(agentId: string, senderId: string, limit = 20) {
-    return this.messages(`agent_id=? AND sender_id=?`, [agentId, senderId], limit)
+  async getRecentBySender(
+    agentId: string,
+    senderId: string,
+    limit = 20,
+    scope?: SocialStorageScope,
+  ) {
+    return this.messages(`agent_id=? AND sender_id=?`, [agentId, senderId], limit, scope)
   }
-  async getRecentSelfGroupMessages(agentId: string, groupId: string, limit = 5) {
+  async getRecentSelfGroupMessages(
+    agentId: string,
+    groupId: string,
+    limit = 5,
+    scope?: SocialStorageScope,
+  ) {
     return this.messages(
       `agent_id=? AND channel_type='group' AND channel_id=? AND sender_id='self'`,
       [agentId, groupId],
       limit,
+      scope,
     )
   }
-  async getContactGroupMessages(agentId: string, senderId: string, groupId: string, limit = 30) {
+  async getContactGroupMessages(
+    agentId: string,
+    senderId: string,
+    groupId: string,
+    limit = 30,
+    scope?: SocialStorageScope,
+  ) {
     return this.messages(
       `agent_id=? AND channel_type='group' AND channel_id=? AND sender_id=?`,
       [agentId, groupId, senderId],
       limit,
+      scope,
     )
   }
   async getByMsgId(
     agentId: string,
     msgId: string,
     accountId?: string,
+    scope?: SocialStorageScope,
   ): Promise<SocialMessageRecord | null> {
-    return (
-      (this.db
-        .prepare(
-          `SELECT ${MESSAGE_COLUMNS} FROM social_messages WHERE agent_id=? AND msg_id=? ${accountId === undefined ? '' : 'AND account_id=?'} LIMIT 1`,
-        )
-        .get(agentId, msgId, ...(accountId === undefined ? [] : [accountId])) as
-        | SocialMessageRecord
-        | undefined) ?? null
-    )
-  }
-  async getRecentChannels(agentId: string, limit = 10) {
+    const filter = this.scopeFilter(scope)
     const rows = this.db
       .prepare(
-        `SELECT channel_id AS channelId, channel_type AS channelType, timestamp AS lastTimestamp
-      FROM social_messages WHERE agent_id=? ORDER BY id DESC LIMIT ?`,
+        `SELECT ${MESSAGE_COLUMNS} FROM social_messages WHERE agent_id=? AND msg_id=?${accountId === undefined ? '' : ' AND account_id=?'}${filter.sql} LIMIT 2`,
       )
-      .all(agentId, limit * 5) as Array<{
+      .all(
+        agentId,
+        msgId,
+        ...(accountId === undefined ? [] : [accountId]),
+        ...filter.args,
+      ) as SocialMessageRecord[]
+    if (rows.length > 1) throw new Error('SOCIAL_MESSAGE_SCOPE_REQUIRED')
+    return rows[0] ?? null
+  }
+  async getRecentChannels(agentId: string, limit = 10) {
+    return this.db
+      .prepare(
+        `SELECT platform,account_id AS accountId,channel_id AS channelId,channel_type AS channelType,MAX(timestamp) AS lastTimestamp
+      FROM social_messages WHERE agent_id=? GROUP BY platform,account_id,channel_type,channel_id ORDER BY MAX(id) DESC LIMIT ?`,
+      )
+      .all(agentId, limit) as Array<{
+      platform: string
+      accountId: string
       channelId: string
       channelType: string
       lastTimestamp: string | null
     }>
-    const seen = new Set<string>()
-    return rows.filter((row) => {
-      const key = `${row.channelId}:${row.channelType}`
-      if (seen.has(key) || seen.size >= limit) return false
-      seen.add(key)
-      return true
-    })
   }
-  async getRecentGroupsByContact(agentId: string, userId: string, groupLimit = 5) {
+  async getRecentGroupsByContact(
+    agentId: string,
+    userId: string,
+    groupLimit = 5,
+    scope?: SocialStorageScope,
+  ) {
+    const filter = this.scopeFilter(scope)
     const rows = this.db
       .prepare(
         `SELECT channel_id AS channelId FROM social_messages
-      WHERE agent_id=? AND channel_type='group' AND sender_id=? ORDER BY id DESC LIMIT ?`,
+      WHERE agent_id=? AND channel_type='group' AND sender_id=?${filter.sql} ORDER BY id DESC LIMIT ?`,
       )
-      .all(agentId, userId, groupLimit * 20) as Array<{ channelId: string }>
+      .all(agentId, userId, ...filter.args, groupLimit * 20) as Array<{ channelId: string }>
     return [...new Set(rows.map((row) => row.channelId))].slice(0, groupLimit)
   }
 
@@ -392,21 +479,35 @@ export class SqliteSocialStoragePort implements SocialStoragePort {
       .changes
   }
 
-  async countChannelMessages(agentId: string, channelType: string, channelId: string) {
+  async countChannelMessages(
+    agentId: string,
+    channelType: string,
+    channelId: string,
+    scope?: SocialStorageScope,
+  ) {
+    const filter = this.scopeFilter(scope)
     return Number(
       (
         this.db
           .prepare(
-            `SELECT COUNT(*) AS total FROM social_messages WHERE agent_id=? AND channel_type=? AND channel_id=?`,
+            `SELECT COUNT(*) AS total FROM social_messages WHERE agent_id=? AND channel_type=? AND channel_id=?${filter.sql}`,
           )
-          .get(agentId, channelType, channelId) as { total: number }
+          .get(agentId, channelType, channelId, ...filter.args) as { total: number }
       ).total,
     )
   }
-  async deleteChannelMessages(agentId: string, channelType: string, channelId: string) {
+  async deleteChannelMessages(
+    agentId: string,
+    channelType: string,
+    channelId: string,
+    scope?: SocialStorageScope,
+  ) {
+    const filter = this.scopeFilter(scope)
     return this.db
-      .prepare(`DELETE FROM social_messages WHERE agent_id=? AND channel_type=? AND channel_id=?`)
-      .run(agentId, channelType, channelId).changes
+      .prepare(
+        `DELETE FROM social_messages WHERE agent_id=? AND channel_type=? AND channel_id=?${filter.sql}`,
+      )
+      .run(agentId, channelType, channelId, ...filter.args).changes
   }
   async deleteAllMessages(agentId: string) {
     return this.db.prepare(`DELETE FROM social_messages WHERE agent_id=?`).run(agentId).changes
@@ -416,7 +517,7 @@ export class SqliteSocialStoragePort implements SocialStoragePort {
     const rows = this.db
       .prepare(
         `SELECT account_id AS accountId, channel_type AS channelType, channel_id AS channelId,
-      deleted_before AS deletedBefore FROM social_history_tombstones WHERE agent_id=? AND platform=?`,
+      deleted_before AS deletedBefore FROM social_history_tombstones WHERE agent_id=? AND (platform=? OR platform='*')`,
       )
       .all(input.agentId, input.platform) as Array<{
       accountId: string
@@ -491,13 +592,22 @@ export class SqliteSocialStoragePort implements SocialStoragePort {
       )
       .run(error, agentId, platform, accountId)
   }
-  async getRecentChannelsForPlatform(platform: string, limit = 100) {
+  async getRecentChannelsForPlatform(
+    platform: string,
+    limit = 100,
+    scope?: { agentId: string; accountId: string },
+  ) {
     return this.db
       .prepare(
-        `SELECT agent_id AS agentId,channel_id AS channelId,channel_type AS channelType
-      FROM social_messages WHERE platform=? GROUP BY agent_id,channel_id,channel_type ORDER BY MAX(timestamp) DESC LIMIT ?`,
+        `SELECT agent_id AS agentId,account_id AS accountId,channel_id AS channelId,channel_type AS channelType
+      FROM social_messages WHERE platform=?${scope ? ' AND agent_id=? AND account_id=?' : ''} GROUP BY agent_id,account_id,channel_id,channel_type ORDER BY MAX(timestamp) DESC LIMIT ?`,
       )
-      .all(platform, limit) as Array<{ agentId: string; channelId: string; channelType: string }>
+      .all(platform, ...(scope ? [scope.agentId, scope.accountId] : []), limit) as Array<{
+      agentId: string
+      accountId: string
+      channelId: string
+      channelType: string
+    }>
   }
 
   async getUnsummarizedStats(agentId: string) {
@@ -523,17 +633,42 @@ export class SqliteSocialStoragePort implements SocialStoragePort {
     })(messageIds)
   }
 
+  private scopeFilter(scope?: SocialStorageScope) {
+    const fields = [
+      ['platform', scope?.platform],
+      ['account_id', scope?.accountId],
+      ['channel_type', scope?.channelType],
+      ['channel_id', scope?.channelId],
+    ] as const
+    const values = fields.filter((entry) => entry[1] !== undefined)
+    return {
+      sql: values.map(([field]) => ` AND ${field}=?`).join(''),
+      args: values.map(([, value]) => value!),
+    }
+  }
+  private fenceFilter(scope?: SocialStorageScope) {
+    const values = [
+      ['platform', scope?.platform],
+      ['account_id', scope?.accountId],
+    ].filter((entry) => entry[1] !== undefined)
+    return {
+      sql: values.map(([field]) => ` AND (${field}='' OR ${field}=?)`).join(''),
+      args: values.map(([, value]) => value!),
+    }
+  }
   private async messages(
     where: string,
     args: unknown[],
     limit: number,
+    scope?: SocialStorageScope,
   ): Promise<SocialMessageRecord[]> {
+    const filter = this.scopeFilter(scope)
     return (
       this.db
         .prepare(
-          `SELECT ${MESSAGE_COLUMNS} FROM social_messages WHERE ${where} ORDER BY id DESC LIMIT ?`,
+          `SELECT ${MESSAGE_COLUMNS} FROM social_messages WHERE ${where}${filter.sql} ORDER BY id DESC LIMIT ?`,
         )
-        .all(...args, limit) as SocialMessageRecord[]
+        .all(...args, ...filter.args, limit) as SocialMessageRecord[]
     ).reverse()
   }
   private assertConfirmedDelivery(message: Parameters<SocialStoragePort['insert']>[0]): void {
@@ -564,9 +699,15 @@ export class SqliteSocialStoragePort implements SocialStoragePort {
       throw new Error('补存消息与已确认的发送记录不一致')
     const version = this.db
       .prepare(
-        "SELECT coalesce(sum(version),0) AS value FROM social_data_fences WHERE agent_id=? AND (channel_type='' OR (channel_type=? AND channel_id=?))",
+        "SELECT coalesce(sum(version),0) AS value FROM social_data_fences WHERE agent_id=? AND (channel_type='' OR (channel_type=? AND channel_id=?)) AND (platform='' OR platform=?) AND (account_id='' OR account_id=?)",
       )
-      .get(record.agentId, record.channelType, record.channelId) as { value: number }
+      .get(
+        record.agentId,
+        record.channelType,
+        record.channelId,
+        record.platform,
+        record.accountId,
+      ) as { value: number }
     if (version.value !== record.checkpoint.deliveryDataVersion)
       throw new Error('社交数据已清理，不能重新写入旧发送记录')
   }

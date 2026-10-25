@@ -5,6 +5,8 @@ import { onMounted, onActivated, onBeforeUnmount, ref } from 'vue'
 import { DEFAULT_COMPLETION_ALERT_SETTINGS, type CompletionAlertSettings } from '@infos/shared'
 import { invoke, isElectron, listen } from '../../utils/ipcAdapter'
 import { PCard, PButton, PSwitch, PixelIcon } from '../pixel'
+import { useSystemSettingsPage } from '../../composables/ui/useSystemSettingsPage'
+const page = useSystemSettingsPage()
 
 const supported = isElectron()
 const settings = ref({ ...DEFAULT_COMPLETION_ALERT_SETTINGS, windowsNotificationsSupported: false })
@@ -46,7 +48,7 @@ async function load(): Promise<void> {
   }
 }
 
-async function update(patch: Partial<CompletionAlertSettings>): Promise<void> {
+async function persistUpdate(patch: Partial<CompletionAlertSettings>): Promise<void> {
   if (saving.value || !loaded.value) return
   saving.value = true
   ++request
@@ -58,6 +60,19 @@ async function update(patch: Partial<CompletionAlertSettings>): Promise<void> {
   } finally {
     saving.value = false
   }
+}
+
+async function update(patch: Partial<CompletionAlertSettings>): Promise<void> {
+  if (!loaded.value || saving.value || page?.disabled.value) return
+  if (page)
+    await page.save(
+      async () => {
+        await persistUpdate(patch)
+        if (error.value) throw new Error(error.value)
+      },
+      `completion-alerts:${Object.keys(patch).sort().join(',')}`,
+    )
+  else await persistUpdate(patch)
 }
 
 async function preview(): Promise<void> {
@@ -119,7 +134,7 @@ onBeforeUnmount(() => {
         </PButton>
         <PSwitch
           :model-value="settings.soundEnabled"
-          :disabled="!loaded || saving"
+          :disabled="!loaded || saving || page?.disabled.value"
           :aria-label="__t('ui.notification', '完成提示音')"
           @update:model-value="update({ soundEnabled: $event })"
         />
@@ -132,7 +147,9 @@ onBeforeUnmount(() => {
       </div>
       <PSwitch
         :model-value="settings.windowsNotificationsEnabled"
-        :disabled="!loaded || saving || !settings.windowsNotificationsSupported"
+        :disabled="
+          !loaded || saving || page?.disabled.value || !settings.windowsNotificationsSupported
+        "
         :aria-label="__t('ui.notification', 'Windows 完成通知')"
         @update:model-value="update({ windowsNotificationsEnabled: $event })"
       />

@@ -1,3 +1,4 @@
+import { NapcatAdapter } from '@infos/social/adapters/napcat'
 import { describe, expect, it, vi } from 'vitest'
 import { SocialAppRuntime } from '@infos/social/runtime'
 import { SocialBridge } from '@infos/social/runtime/socialBridge'
@@ -10,7 +11,11 @@ import {
 function fixture(fail = false) {
   const runtime = new SocialAppRuntime()
   const values = new Map<string, string>()
-  const bridge = { updateSchedulerConfig: vi.fn(), updateGroupPolicies: vi.fn() }
+  const bridge = {
+    updateSchedulerConfig: vi.fn(),
+    updateGroupPolicies: vi.fn(),
+    createMessagingProvider: vi.fn(() => null),
+  }
   Object.assign(runtime, {
     ctx: {
       configRepo: {
@@ -22,6 +27,7 @@ function fixture(fail = false) {
       },
     },
     socialBridge: bridge,
+    adapters: [new NapcatAdapter({ defaultAgentId: 'pero' })],
   })
   return {
     runtime: runtime as unknown as {
@@ -59,7 +65,7 @@ describe('群状态机配置持久化闭环', () => {
   })
   it('持久化后实际调度策略可读回，重启加载继续按账号和群隔离，重置后继承默认值', async () => {
     const { runtime, values } = fixture()
-    const bridge = new SocialBridge({} as never)
+    const bridge = new SocialBridge({ socialMessageRepo: {} } as never)
     Object.assign(runtime, { socialBridge: bridge })
     const key = socialGroupPolicyKey('pero', '123456789', '987654321')
     await runtime.updateModeConfig({
@@ -75,7 +81,7 @@ describe('群状态机配置持久化闭环', () => {
       3,
     )
     const restarted = fixture()
-    const restartedBridge = new SocialBridge({} as never)
+    const restartedBridge = new SocialBridge({ socialMessageRepo: {} } as never)
     Object.assign(restarted.runtime, { socialBridge: restartedBridge })
     restarted.values.set('social', values.get('social')!)
     await restarted.runtime.onConfigChanged(['social'])

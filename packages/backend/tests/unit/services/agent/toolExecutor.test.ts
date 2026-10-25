@@ -7,6 +7,16 @@ import type { SkillLoader } from '@infos/backend/capabilities/skillLoader'
 import { PolicyEngine } from '@infos/backend/services/execution/policyEngine'
 import { ApprovalService } from '@infos/backend/services/execution/approvalService'
 import { MODEL_TOOL_OUTPUT_CHARACTERS } from '@infos/backend/services/execution/toolObservation'
+import { getDataDir } from '@infos/backend/lib/env'
+import path from 'node:path'
+
+// 本文件验证工具审批与分派，执行会话只提供隔离路径，不运行真实文件处理器。
+vi.mock('@infos/backend/tools/productivityRuntimeHolder', async (original) => ({
+  ...(await original<typeof import('@infos/backend/tools/productivityRuntimeHolder')>()),
+  resolveExecutionSession: vi.fn(async ({ agentId }: { agentId: string }) => ({
+    workspaceRoot: path.resolve('TEMP/tool-executor-workspace', agentId),
+  })),
+}))
 
 function createRegistry() {
   const registry = new ToolRegistry()
@@ -19,6 +29,44 @@ function createRegistry() {
 }
 
 describe('RegistryToolExecutor', () => {
+  it('普通文件分派保持可用，资源运行目录写入要求先创建候选', async () => {
+    const registry = new ToolRegistry(),
+      handler = vi.fn(async () => '已写入')
+    registry.register({ name: 'write_file', description: '写文件', parameters: {} }, handler)
+    const executor = new RegistryToolExecutor(registry)
+    const context = {
+      agentId: 'pero',
+      threadId: 'resource-write',
+      channel: 'desktop',
+      interactionMode: 'work' as const,
+      executionMode: 'full' as const,
+    }
+    const denied = await executor.execute(
+      'write_file',
+      { file_path: path.join(getDataDir(), 'skills', 'SKILL.md'), content: '新内容' },
+      'desktop',
+      context,
+    )
+    expect(denied).toMatchObject({ isError: true, shouldTerminate: false })
+    expect(JSON.parse(denied.output).code).toBe('RESOURCE_CANDIDATE_REQUIRED')
+    expect(handler).not.toHaveBeenCalled()
+    const candidate = path.join(
+      getDataDir(),
+      'resource-versions',
+      'aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee',
+      'candidate',
+      'SKILL.md',
+    )
+    expect(
+      await executor.execute(
+        'write_file',
+        { file_path: candidate, content: '候选内容' },
+        'desktop',
+        context,
+      ),
+    ).toMatchObject({ isError: false })
+    expect(handler).toHaveBeenCalledOnce()
+  })
   it('NIT 常驻系统入口在聊天模式可用，旧禁用记录不关闭它，内部工具仍按模式校验', async () => {
     const registry = new ToolRegistry()
     const script = vi.fn(async () => '已编排')
@@ -299,7 +347,8 @@ describe('RegistryToolExecutor', () => {
     } as unknown as CapabilityGate
     const hookEmitter = {
       emitHook: vi.fn(async (event: string, data: unknown) => {
-        if (event === 'tool:beforeCall') return { ...(data as object), args: { value: 'hooked' } }
+        if (event === 'chat:beforeToolCall')
+          return { ...(data as object), args: { value: 'hooked' } }
         return data
       }),
     } as HookEmitter & { emitHook: ReturnType<typeof vi.fn> }
@@ -323,13 +372,16 @@ describe('RegistryToolExecutor', () => {
         interactionMode: 'work',
       }),
     )
-    expect(hookEmitter.emitHook).toHaveBeenCalledWith('tool:afterCall', {
-      name: 'demo.run',
-      args: { value: 'hooked' },
-      output: '执行结果',
-      durationMs: expect.any(Number),
-      isError: false,
-    })
+    expect(hookEmitter.emitHook).toHaveBeenCalledWith(
+      'chat:afterToolCall',
+      expect.objectContaining({
+        name: 'demo.run',
+        args: { value: 'hooked' },
+        output: '执行结果',
+        durationMs: expect.any(Number),
+        isError: false,
+      }),
+    )
     expect(result).toMatchObject({ output: '执行结果', isError: false, shouldTerminate: false })
   })
 
@@ -714,7 +766,7 @@ describe('RegistryToolExecutor', () => {
       excerpt: expect.stringContaining('x'.repeat(100)),
     })
     expect(hookEmitter.emitHook).toHaveBeenCalledWith(
-      'tool:afterCall',
+      'chat:afterToolCall',
       expect.objectContaining({ isError: true }),
     )
   })
@@ -882,7 +934,7 @@ describe('RegistryToolExecutor', () => {
     const { registry, handler } = createRegistry()
     const hookEmitter = {
       emitHook: vi.fn(async (event: string, data: unknown) => {
-        if (event === 'tool:beforeCall') throw new Error('Hook 坏了')
+        if (event === 'chat:beforeToolCall') throw new Error('Hook 坏了')
         return data
       }),
     } as HookEmitter & { emitHook: ReturnType<typeof vi.fn> }

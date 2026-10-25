@@ -1,0 +1,13 @@
+<?xml version='1.0' encoding='utf-8'?>
+<svg xmlns="http://www.w3.org/2000/svg" width="540" height="120" viewBox="0 0 540 120" color="#e2e8f6"><defs><symbol id="infos-approved-full" viewBox="70 60 540 120"><use href="#ref-icon-c" x="61" y="25" width="178" height="178" /><use href="#ref-type-b" x="282" y="63" width="323" height="102" /></symbol><symbol id="ref-icon-c" viewBox="0 0 160 160">
+      <path d="M80 67 18 36 12 82 57 107Z" fill="#6c9bed" />
+      <path d="M80 67 142 36 148 82 103 107Z" fill="#6e58a8" />
+      <path d="M57 107 46 133 80 119 114 133 103 107 80 91Z" fill="url(#ref-cool)" />
+      <path d="M80 52 99 76 80 96 61 76Z" fill="#ad8cdb" />
+      <path d="M18 36 80 67 57 107 48 78Z" fill="url(#ref-cool)" />
+    </symbol><symbol id="ref-type-b" viewBox="0 0 260 82">
+      <g fill="none" stroke="currentColor" stroke-width="8" stroke-linecap="butt" stroke-linejoin="round">
+        <path d="M8 34V70M33 70V34H54C63 34 68 40 68 49V70M94 70V24C94 16 100 12 109 12H122M82 35H116" />
+        <path d="M157 12H169C183 12 190 23 190 41S183 70 169 70H157C143 70 136 59 136 41S143 12 157 12ZM248 17C239 11 214 8 209 24 203 43 248 35 248 54 248 74 219 74 205 64" />
+      </g><rect x="4" y="11" width="8" height="8" rx="1" fill="#6c9bed" />
+    </symbol><linearGradient id="ref-cool" x1="0" y1="0" x2="1" y2="1"><stop stop-color="#6c9bed" /><stop offset="1" stop-color="#ad8cdb" /></linearGradient></defs><use href="#infos-approved-full" width="540" height="120" /></svg>

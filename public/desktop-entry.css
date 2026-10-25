@@ -1,0 +1,277 @@
+#infos-desktop-entry {
+  position: fixed;
+  inset: 0;
+  z-index: 2147483000;
+  overflow: hidden;
+  color: #c4d7f3;
+  font-family: 'Segoe UI', 'Microsoft YaHei', sans-serif;
+}
+.desktop-entry-scrim {
+  position: absolute;
+  inset: 0;
+  background: #18243a;
+}
+.desktop-entry-facets {
+  position: absolute;
+  inset: 0;
+  contain: layout style;
+}
+.desktop-entry-facets > div {
+  position: absolute;
+  transform-origin: center;
+  backface-visibility: hidden;
+}
+.desktop-entry-facets > div > i {
+  position: absolute;
+  inset: -0.5px;
+  display: block;
+}
+/* 四块不对称折面拼满视口：左主面、上斜面、右上角片和右下切片。 */
+.desktop-entry-facets > [data-entry-facet='0'] {
+  left: 0;
+  top: 0;
+  width: 78%;
+  height: 100%;
+}
+.desktop-entry-facets > [data-entry-facet='0'] > i {
+  background: #172438;
+  clip-path: polygon(0 0, 33.33333% 0, 100% 100%, 0 100%);
+}
+.desktop-entry-facets > [data-entry-facet='1'] {
+  left: 26%;
+  top: 0;
+  width: 74%;
+  height: 73.07692%;
+}
+.desktop-entry-facets > [data-entry-facet='1'] > i {
+  background: linear-gradient(145deg, #2a3955, #202b47);
+  clip-path: polygon(0 0, 48.64865% 0, 100% 100%, 33.72973% 65.68421%);
+}
+.desktop-entry-facets > [data-entry-facet='2'] {
+  left: 62%;
+  top: 0;
+  width: 38%;
+  height: 73.07692%;
+}
+.desktop-entry-facets > [data-entry-facet='2'] > i {
+  background: #141e30;
+  clip-path: polygon(0 0, 100% 0, 100% 100%);
+}
+.desktop-entry-facets > [data-entry-facet='3'] {
+  left: 50.96%;
+  top: 48%;
+  width: 49.04%;
+  height: 52%;
+}
+.desktop-entry-facets > [data-entry-facet='3'] > i {
+  background: linear-gradient(155deg, #25304b, #1b273e);
+  clip-path: polygon(0 0, 100% 48.22485%, 100% 100%, 55.13866% 100%);
+}
+/* 细光边直接绘在所属折面内，随面移动，无需另占两个合成层。 */
+.desktop-entry-facets > [data-entry-facet='0'] > i::before {
+  content: '';
+  position: absolute;
+  inset: 0;
+  background: linear-gradient(180deg, #96c2ee05, #96c2ee40 48%, #b3a6e00a);
+  clip-path: polygon(33.2% 0, 33.33333% 0, 100% 100%, 99.86667% 100%);
+}
+.desktop-entry-facets > [data-entry-facet='1'] > i::before {
+  content: '';
+  position: absolute;
+  inset: 0;
+  background: linear-gradient(110deg, #b3a6e004, #b3a6e032);
+  clip-path: polygon(33.72973% 65.55%, 100% 99.8%, 100% 100%, 33.72973% 65.68421%);
+}
+.desktop-entry-facets > [data-entry-facet='2'] > i::after {
+  content: '';
+  position: absolute;
+  top: 14%;
+  right: 12%;
+  width: 45%;
+  aspect-ratio: 1;
+  background: url('./infos-mark.svg') center / contain no-repeat;
+  opacity: 0.055;
+}
+#infos-desktop-entry[data-motion='full']:is([data-phase='preparing'], [data-phase='revealing'])
+  [data-entry-facet] {
+  will-change: transform;
+}
+#infos-desktop-entry[data-motion='full']:is([data-phase='preparing'], [data-phase='revealing'])
+  .desktop-entry-identity {
+  will-change: transform, opacity;
+}
+#infos-desktop-entry[data-motion='full']:is([data-phase='preparing'], [data-phase='revealing'])
+  :is(.desktop-entry-scrim, .desktop-entry-window-actions) {
+  will-change: opacity;
+}
+#infos-desktop-entry[data-motion='reduced'] {
+  will-change: opacity;
+}
+/* 保留页面布局与加载，只暂停开屏完全遮挡期间的底层绘制。 */
+html[data-desktop-entry='waiting'] #app {
+  visibility: hidden;
+}
+.desktop-entry-identity {
+  position: absolute;
+  left: 42%;
+  top: 47%;
+  transform: translate3d(-50%, -50%, 0);
+  display: grid;
+  grid-template-columns: 124px 218px;
+  column-gap: 24px;
+  align-items: center;
+  width: 366px;
+  text-align: left;
+}
+.desktop-entry-identity::before {
+  content: '';
+  position: absolute;
+  left: 0;
+  top: -28px;
+  width: 32px;
+  height: 1px;
+  background: #9bb9e05c;
+}
+#infos-desktop-entry[data-motion='full'] .desktop-entry-identity {
+  animation: desktop-entry-appear 380ms ease-out both;
+}
+.desktop-entry-mark {
+  display: block;
+  grid-column: 1;
+  grid-row: 1 / 4;
+  width: 124px;
+  height: 124px;
+}
+.desktop-entry-wordmark {
+  display: block;
+  grid-column: 2;
+  width: 218px;
+  height: auto;
+}
+.desktop-entry-identity p {
+  grid-column: 2;
+  margin: 8px 0 0;
+  min-height: 17px;
+  font-size: 12px;
+  line-height: 17px;
+  color: #9eb2d0;
+}
+.desktop-entry-pixels {
+  grid-column: 2;
+  display: flex;
+  gap: 9px;
+  margin-top: 18px;
+}
+.desktop-entry-pixels i {
+  width: 4px;
+  height: 4px;
+  background: #8ba7cf;
+  opacity: 0.3;
+  animation: desktop-entry-link 1.65s ease-in-out infinite;
+}
+.desktop-entry-pixels i:nth-child(2) {
+  animation-delay: 0.14s;
+}
+.desktop-entry-pixels i:nth-child(3) {
+  animation-delay: 0.28s;
+}
+.desktop-entry-pixels i:nth-child(4) {
+  animation-delay: 0.42s;
+}
+.desktop-entry-pixels i:nth-child(5) {
+  animation-delay: 0.56s;
+}
+#infos-desktop-entry[data-motion='reduced'] .desktop-entry-pixels i,
+#infos-desktop-entry[data-motion='off'] .desktop-entry-pixels i,
+#infos-desktop-entry[data-failed='true'] .desktop-entry-pixels i {
+  animation: none;
+  opacity: 0.6;
+}
+#infos-desktop-entry[data-phase='revealing'] .desktop-entry-pixels i {
+  animation-play-state: paused;
+}
+#infos-desktop-entry [data-entry-actions] {
+  grid-column: 1 / -1;
+  display: flex;
+  justify-content: center;
+  gap: 12px;
+  margin-top: 22px;
+}
+#infos-desktop-entry [hidden] {
+  display: none;
+}
+#infos-desktop-entry button {
+  border-radius: 0;
+  padding: 8px 14px;
+  background: #22324c;
+  border: 1px solid #617da5;
+  color: #c4d7f3;
+  cursor: pointer;
+}
+#infos-desktop-entry button:focus-visible {
+  outline: 2px solid #a0c8f5;
+  outline-offset: 3px;
+}
+.desktop-entry-drag {
+  position: absolute;
+  inset: 0 92px auto 0;
+  height: 40px;
+  -webkit-app-region: drag;
+  z-index: 2;
+}
+.desktop-entry-window-actions {
+  position: absolute;
+  right: 0;
+  top: 0;
+  display: flex;
+  z-index: 3;
+}
+#infos-desktop-entry .desktop-entry-window-actions button {
+  width: 46px;
+  height: 40px;
+  border: 0;
+  padding: 0;
+  background: transparent;
+  color: #91a7c6;
+}
+#infos-desktop-entry .desktop-entry-window-actions button:hover {
+  background: #ffffff12;
+}
+@keyframes desktop-entry-link {
+  0%,
+  70%,
+  100% {
+    opacity: 0.3;
+  }
+  35% {
+    opacity: 1;
+  }
+}
+@keyframes desktop-entry-appear {
+  from {
+    opacity: 0;
+  }
+  to {
+    opacity: 1;
+  }
+}
+@media (max-width: 600px) {
+  .desktop-entry-identity {
+    left: 46%;
+    width: 288px;
+    grid-template-columns: 96px 174px;
+    column-gap: 18px;
+  }
+  .desktop-entry-mark {
+    width: 96px;
+    height: 96px;
+  }
+  .desktop-entry-wordmark {
+    width: 174px;
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .desktop-entry-pixels i {
+    animation: none;
+  }
+}

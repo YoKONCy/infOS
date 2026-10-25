@@ -10,7 +10,7 @@
   "platforms": ["windows", "linux", "darwin"],
   "toolDefinition": {
     "name": "expand_advanced_tools",
-    "description": "需要打开网页、预览工作区生成的 HTML/Three.js 页面、截图检查渲染效果、填写表单、操作桌面软件或在远程节点运行命令时，若当前菜单没有具体定义，先直接调用本工具。下一轮取得定义后：网页与本地 HTML 预览使用 browser_open_url，视觉验证使用 browser_screenshot；只有启动电脑已安装的软件才使用 open_application，不能用它打开生成的 HTML。内置浏览器不抢占用户鼠标键盘。普通网页文字读取可使用 web_fetch，无需展开。按当前权限展开浏览器、桌面操作与远程终端；不扩大权限、不绕过审批。工作上下文保留成功展开记录时，新消息可接续菜单；名单仍按当前开关与权限过滤，以当前提供的定义为准。必须直接调用，不得放入 run_script。没有可用工具时明确返回原因。",
+    "description": "需要网页或 HTML/Three.js 预览、视觉检查、桌面操作或远程命令，且当前菜单缺少具体工具时，直接调用以展开。按返回菜单继续；工作上下文可续接展开状态，可用项随当前权限更新。网页和本地 HTML 预览使用 browser_open_url，视觉检查使用 browser_screenshot；普通网页文本可用 web_fetch。仅展开已授权工具，仍遵守审批。本工具须直接调用，不可放入 run_script。",
     "display": {
       "label": "展开高级工具列表",
       "description": "需要操作网页、桌面软件或远程命令行时，按需展开已获授权的工具。工作上下文可续接展开状态；关闭此项也会停用包内工具。",

@@ -21,6 +21,15 @@ function createMessage(partial: Partial<InboundMessage> = {}): InboundMessage {
     senderName: partial.senderName ?? '主人',
     content: partial.content ?? '你好',
     agentId: partial.agentId ?? 'pero',
+    accountId:
+      partial.accountId ??
+      String((partial.rawEvent as Record<string, unknown> | undefined)?.self_id ?? ''),
+    messageId:
+      partial.messageId ??
+      String((partial.rawEvent as Record<string, unknown> | undefined)?.message_id ?? ''),
+    isMentioned:
+      partial.isMentioned ??
+      (partial.rawEvent as Record<string, unknown> | undefined)?._isMentioned === true,
     rawEvent: partial.rawEvent ?? {},
     attachments: partial.attachments,
   }
@@ -323,7 +332,7 @@ describe('StickerService', () => {
       ),
     )
     expect(result.success).toBe(false)
-    expect(result.error).toContain('不属于当前 QQ 账号')
+    expect(result.error).toBe('SOCIAL_MESSAGE_SOURCE_INVALID')
     expect(adapter.collect).not.toHaveBeenCalled()
   })
 

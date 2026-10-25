@@ -56,3 +56,4 @@ __pycache__/
 
 # 临时目录
 /TEMP/
+/build/installer/generated/

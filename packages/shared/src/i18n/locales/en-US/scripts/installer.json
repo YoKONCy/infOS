@@ -1,0 +1,6 @@
+{
+  "安装器缺少译文：{0}": "Missing installer translation: {0}",
+  "自定义安装器需要 Visual Studio C++ x86 构建工具。": "The custom installer requires the Visual Studio C++ x86 build tools.",
+  "安装器展示插件编译失败：{0}": "Installer presentation plugin compilation failed: {0}",
+  "安装器展示插件必须是 x86 DLL。": "The installer presentation plugin must be an x86 DLL."
+}

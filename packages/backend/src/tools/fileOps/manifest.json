@@ -51,7 +51,7 @@
     },
     {
       "name": "read_image",
-      "description": "查看一张或批量对比多张原图。单图填 file_path，多图填 file_paths，二选一。支持文件路径、attachment:ID 或公开图片 URL；PNG/JPEG/WebP/GIF，每张最多 20 MB，一次最多 8 张且合计 40 MB。保持原始字节，不用界面缩略图替代；批量结果按输入顺序标注，部分图片失败时仍返回成功读取的图片。比较旧版本时使用返回的 snapshotRef 重读保存的快照，避免原文件已经改变。",
+      "description": "查看一张或批量对比多张原图。单图填 file_path，多图填 file_paths，二选一。支持文件路径、attachment:ID 或公开图片 URL；PNG/JPEG/WebP/GIF，每张最多 20 MB，一次最多 8 张且合计 40 MB。返回原图字节；批量结果按输入顺序标注，部分图片失败时仍返回成功读取的图片。比较旧版本时使用返回的 snapshotRef 重读保存的快照，避免原文件已经改变。",
       "display": { "label": "读取图片", "icon": "image", "color": "sky", "style": "read" },
       "parameters": {
         "type": "object",
@@ -94,7 +94,7 @@
     },
     {
       "name": "delete_file",
-      "description": "删除服务端指定的普通文件。该操作不会删除目录，也不会递归删除。",
+      "description": "删除指定普通文件，不支持目录删除。",
       "display": { "label": "删除文件", "icon": "trash", "color": "red", "style": "edit" },
       "parameters": {
         "type": "object",

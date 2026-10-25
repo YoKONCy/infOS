@@ -296,7 +296,7 @@ device      相机、麦克风、相册、定位、震动
 
 Node Identity 是稳定安全身份，Node Session 是一次 Transport 连接。连接断开或重建不能改变对象 Authority，也不能让旧 Session Handle 继续有效。
 
-客户端入口属于产品形态约束：Electron 标准版、Steam 版和便携版 Client Facet 强制绑定同设备 Server Facet，只通过本机回环访问内置 Daemon，不允许切换远程 Server；浏览器、CLI、移动端等远程纯 Client Facet才允许选择 Server。远程 Server 数据进入 Electron/Steam 时由本机 Daemon执行手动完整快照同步，而不是让 Renderer绕过本机 Authority。
+客户端入口在任何后台启动之前决定：Electron 标准版、Steam 版和便携版可选择本地 Server Facet 或远程 Control Authority。远程模式不启动本机 Server，仅保留 Client/Capability Facet；业务连接与能力会话绑定选定服务器身份，断线不自动回退本地。模式配置与加密凭据位于客户端用户根目录，不依赖业务数据库，不参与 Steam 业务快照。切换模式通过重启生效，退出远程客户端不关闭共享服务器或其子应用。
 
 ### 7.2 Control Plane 与 Execution Plane
 

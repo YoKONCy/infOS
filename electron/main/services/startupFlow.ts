@@ -21,6 +21,10 @@ export class StartupFlow {
 
   constructor(private readonly steps: StartupFlowSteps) {}
 
+  get running(): boolean {
+    return this.pending !== null
+  }
+
   start(): Promise<void> {
     if (this.controller.signal.aborted || this.completed) return Promise.resolve()
     if (this.pending) return this.pending

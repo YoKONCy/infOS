@@ -294,7 +294,7 @@ export class WeatherService {
     url.searchParams.set('format', 'j1')
     const response = await fetch(url, {
       headers: {
-        'User-Agent': 'infOS/0.9.5-hotfix1 (+https://github.com/YoKONCy/infOS)',
+        'User-Agent': 'infOS/0.9.6 (+https://github.com/YoKONCy/infOS)',
         Accept: 'application/json',
       },
       signal: AbortSignal.any([this.controller.signal, AbortSignal.timeout(12_000)]),

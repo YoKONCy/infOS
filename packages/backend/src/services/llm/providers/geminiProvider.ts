@@ -30,6 +30,7 @@ import type {
   UsageInfo,
 } from '../types'
 import { AppError } from '../../../lib/appError'
+import { geminiAudioPart } from '../geminiAudio'
 import { sanitizeToolParameters, stripBase64DataUris } from '../sanitize'
 import { createLogger } from '../../../lib/logger'
 
@@ -62,7 +63,7 @@ interface GeminiPart {
   text?: string
   /** 原生思考摘要块。 */
   thought?: boolean
-  /** 多模态图片块 (base64) */
+  /** 图片或音频的多模态块（base64）。 */
   inlineData?: { mimeType: string; data: string }
   functionCall?: { name: string; args: Record<string, unknown> }
   functionResponse?: { name: string; response: Record<string, unknown> }
@@ -353,8 +354,9 @@ export class GeminiProvider implements LlmProvider {
       } else if (part.type === 'image_url') {
         const inline = this.dataUriToInline(part.image_url.url)
         if (inline) parts.push({ inlineData: inline })
+      } else if (part.type === 'input_audio') {
+        parts.push(geminiAudioPart(part))
       }
-      // input_audio: Gemini REST 当前不在此处支持，跳过
     }
     return parts
   }
@@ -518,13 +520,18 @@ export class GeminiProvider implements LlmProvider {
     timeoutMs: number,
     signal?: AbortSignal,
   ): Promise<Response> {
+    const body = JSON.stringify(payload)
+    if (Buffer.byteLength(body, 'utf8') > 20 * 1024 * 1024)
+      throw new AppError('PAYLOAD_TOO_LARGE', {
+        message: __t('server.audio-input', 'Gemini 内联请求超过 20MB，请减少附件后重试'),
+      })
     try {
       return await fetchLlmResponse(
         url,
         {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify(payload),
+          body,
         },
         { timeout: timeoutMs, signal },
         'gemini',

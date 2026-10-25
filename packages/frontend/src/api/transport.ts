@@ -10,7 +10,7 @@
  */
 
 import type { ApiResponse } from '@infos/shared'
-import { getLocale } from '@infos/shared/i18n'
+import { getLocale, translate } from '@infos/shared/i18n'
 
 /**
  * Electron 模式下后端服务根地址。
@@ -18,7 +18,7 @@ import { getLocale } from '@infos/shared/i18n'
  * 所有 localhost:9120 引用**必须**使用此常量，
  * 禁止在其他文件中硬编码端口号 (S05 §3)。
  *
- * 原生客户端由主进程提供当前 Daemon 地址，兼容自定义端口。
+ * 原生客户端由主进程提供已选业务服务器地址，兼容本地与远程模式。
  */
 export const ELECTRON_BACKEND_ORIGIN =
   (typeof window !== 'undefined' && window.electron?.backendOrigin?.()) || 'http://localhost:9120'
@@ -44,7 +44,8 @@ export function getWebServerOrigin(): string {
 }
 
 export function setWebServerOrigin(origin: string, token = ''): void {
-  if (isElectronRuntime()) throw new Error('Electron 客户端固定绑定本机 Daemon')
+  if (isElectronRuntime())
+    throw new Error(translate('ui.connection', '桌面客户端请通过连接窗口切换服务器。'))
   const url = new URL(origin)
   if (!['http:', 'https:'].includes(url.protocol))
     throw new Error('服务器地址必须使用 HTTP 或 HTTPS')

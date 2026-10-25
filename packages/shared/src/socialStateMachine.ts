@@ -99,8 +99,15 @@ export function normalizeSocialSchedulerConfig(
   }
 }
 
-export function socialGroupPolicyKey(agentId: string, accountId: string, groupId: string): string {
-  return JSON.stringify([agentId, accountId, groupId])
+export function socialGroupPolicyKey(
+  agentId: string,
+  accountId: string,
+  groupId: string,
+  platform?: string,
+): string {
+  return JSON.stringify(
+    platform ? [platform, agentId, accountId, groupId] : [agentId, accountId, groupId],
+  )
 }
 
 /** 持久化配置只接受已知策略字段；群覆盖不复制默认值，便于继续继承全局设置。 */
@@ -113,7 +120,7 @@ export function normalizeSocialGroupPolicies(input: unknown): SocialGroupPolicie
       const identity: unknown = JSON.parse(key)
       if (
         !Array.isArray(identity) ||
-        identity.length !== 3 ||
+        ![3, 4].includes(identity.length) ||
         identity.some((part) => typeof part !== 'string' || !part || part.length > 200) ||
         !value ||
         typeof value !== 'object' ||

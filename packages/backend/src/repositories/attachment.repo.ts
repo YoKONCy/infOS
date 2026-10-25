@@ -189,8 +189,11 @@ export class AttachmentRepository {
     await this.db
       .update(messageAttachments)
       .set({
-        status: 'failed',
-        metadataJson: JSON.stringify({ pdf: { error: '服务重启导致解析中断，请重试' } }),
+        status: 'uploaded',
+        metadataJson: JSON.stringify({
+          upload: { contextMode: 'reference' },
+          pdf: { interrupted: true },
+        }),
       })
       .where(
         and(

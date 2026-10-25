@@ -193,6 +193,7 @@ export type {
   SocialExecutionPort,
   SocialMessageRecord,
   SocialStoragePort,
+  SocialStorageScope,
   SocialTurnRecord,
   SocialTurnListItem,
   SocialSyncCursorRecord,
@@ -369,6 +370,7 @@ export type {
 } from './types/petControls'
 export type {
   KnowledgeSourceKind,
+  KnowledgeRecallSettings,
   KnowledgeDocumentStatus,
   KnowledgeVectorStatus,
   KnowledgeDocumentInfo,
@@ -385,6 +387,8 @@ export type {
   TaskLifecycle,
   TaskSegmentResult,
   TaskControlInput,
+  TaskControlContext,
+  TaskDeliveryContext,
   SocialTaskControlPort,
   TaskDeliveryPort,
 } from './types/task-lifecycle.types'
@@ -434,4 +438,21 @@ export type {
   ConversationQueueItem,
   ConversationQueueSnapshot,
 } from './conversationQueue'
-export { WHOLESOME_MODE_KEY } from './contentMode'
+export {
+  WHOLESOME_MODE_KEY,
+  ASSISTANT_PREFILL_KEY,
+  MAX_ASSISTANT_PREFILL_LENGTH,
+  isAssistantPrefillConfig,
+  parseAssistantPrefillConfig,
+} from './contentMode'
+export type { AssistantPrefillConfig, CompiledPromptPlan } from './contentMode'
+export type * from './types/package-management.types'
+export type * from './types/package-host.types'
+export type * from './types/package-hooks.types'
+export { PACKAGE_INTERCEPT_EVENTS } from './types/package-hooks.types'
+export { RUNTIME_DEBUG_TOOL, type RuntimeDebugStatus } from './runtimeDebug'
+export * from './tts'
+export type * from './resourceVersions'
+export * from './attachmentUpload'
+export * from './nativeAudio'
+export * from './agentPresence'

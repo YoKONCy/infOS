@@ -345,7 +345,7 @@ export class PictoriaApplication {
               .object({
                 stepId: z.string().max(128),
                 text: z.string().max(64000),
-                inputsByStep: z.record(z.record(z.unknown())),
+                inputsByStep: z.record(z.string(), z.record(z.string(), z.unknown())),
               })
               .strict()
               .refine((value) => JSON.stringify(value).length <= 256_000, '创作参数超过大小限制')

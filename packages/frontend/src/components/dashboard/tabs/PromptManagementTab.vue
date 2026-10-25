@@ -28,6 +28,11 @@ const {
   setFormatFilter,
   stImport,
   stImportOpen,
+  presetExportOpen,
+  presetImportOpen,
+  presetImport,
+  exportPreset,
+  commitPresetImport,
   reloadStImport,
   commitStImport,
   exportStPreset,
@@ -98,6 +103,20 @@ const independent = reactive({
   channel: '',
 })
 const stScope = reactive({ scope: 'later' as 'all' | 'range' | 'later', agentId: '', channel: '' })
+const presetScope = reactive({
+  scope: 'later' as 'all' | 'range' | 'later',
+  agentId: '',
+  channel: '',
+})
+const exportFrameworkId = ref('')
+function openPresetExport() {
+  exportFrameworkId.value =
+    framework.value?.id ??
+    bundle.value.assignments.find((item) => !item.agentId && !item.channel)?.frameworkId ??
+    bundle.value.frameworks[0]?.id ??
+    ''
+  presetExportOpen.value = true
+}
 const isSt = computed(() =>
   Boolean(framework.value && promptFormat(framework.value) === 'sillytavern'),
 )
@@ -353,6 +372,7 @@ function scopeLabel(agentId: string, channel: string) {
 function onImport(event: Event) {
   const input = event.target as HTMLInputElement
   Object.assign(stScope, { scope: 'later', agentId: '', channel: '' })
+  Object.assign(presetScope, { scope: 'later', agentId: '', channel: '' })
   void importBundle(input.files?.[0])
   input.value = ''
 }
@@ -405,10 +425,10 @@ function addFrameworkOverride() {
           {{ __t('ui.settings', '＋ 新建框架') }}
         </PButton>
         <PButton variant="ghost" size="sm" :disabled="busy" @click="fileInput?.click()">
-          {{ __t('ui.settings', '导入') }}
+          {{ __t('ui.prompt-presets', '导入预设') }}
         </PButton>
-        <PButton variant="ghost" size="sm" @click="exportBundle">
-          {{ __t('ui.settings', '导出') }}
+        <PButton variant="ghost" size="sm" :disabled="busy || !view" @click="openPresetExport">
+          {{ __t('ui.prompt-presets', '导出预设') }}
         </PButton>
         <PButton variant="ghost" size="sm" :disabled="busy || !view" @click="restoreDefaults">
           {{ __t('ui.settings', '内置预设') }}
@@ -1211,6 +1231,135 @@ function addFrameworkOverride() {
           @click="submitIndependent"
         >
           {{ __t('ui.settings', '创建框架') }}
+        </PButton>
+      </template>
+    </PDialog>
+    <PDialog
+      v-model="presetExportOpen"
+      :title="__t('ui.prompt-presets', '导出提示词')"
+      width="min(680px, calc(100vw - 48px))"
+    >
+      <div class="independent-form">
+        <section class="preset-package-choice">
+          <strong>{{ __t('ui.prompt-presets', '框架预设') }}</strong>
+          <p>
+            {{
+              __t(
+                'ui.prompt-presets',
+                '包含选中框架及其引用的槽位、组件与替换关系，适合分享和迁移。',
+              )
+            }}
+          </p>
+          <PSelect
+            :model-value="exportFrameworkId"
+            :options="frameworkOptions"
+            :disabled="busy"
+            teleport
+            @update:model-value="exportFrameworkId = String($event)"
+          />
+          <PButton
+            size="sm"
+            :disabled="busy || !exportFrameworkId"
+            @click="exportPreset(exportFrameworkId)"
+          >
+            <PixelIcon name="download" size="xs" />
+            {{ __t('ui.prompt-presets', '导出预设 JSON') }}
+          </PButton>
+        </section>
+        <section class="preset-package-choice">
+          <strong>{{ __t('ui.prompt-presets', '完整工作区备份') }}</strong>
+          <p>
+            {{
+              __t(
+                'ui.prompt-presets',
+                '包含全部框架、模板和指派。导入备份时会确认是否替换当前草稿。',
+              )
+            }}
+          </p>
+          <PButton size="sm" variant="secondary" :disabled="busy" @click="exportBundle">
+            {{ __t('ui.prompt-presets', '导出完整备份') }}
+          </PButton>
+        </section>
+        <p v-if="error" class="preview-issue error" role="alert">{{ error }}</p>
+      </div>
+      <template #footer>
+        <PButton size="sm" variant="secondary" :disabled="busy" @click="presetExportOpen = false">
+          {{ __t('ui.settings', '关闭') }}
+        </PButton>
+      </template>
+    </PDialog>
+    <PDialog
+      v-model="presetImportOpen"
+      :title="__t('ui.prompt-presets', '导入提示词预设')"
+      width="min(780px, calc(100vw - 48px))"
+    >
+      <div v-if="presetImport" class="independent-form">
+        <p v-if="error" class="preview-issue error" role="alert">{{ error }}</p>
+        <label class="field">
+          {{ __t('ui.settings', '名称') }}
+          <PInput v-model="presetImport.preset.name" maxlength="100" :disabled="busy" />
+        </label>
+        <div class="st-import-stats">
+          <span>{{ formatLabel(presetImport.preset.framework) }}</span>
+          <span>
+            {{
+              __t('ui.prompt-presets', '区块 {0} · 依赖模板 {1}', [
+                presetImport.preset.framework.blocks.length,
+                presetImport.preset.documents.length,
+              ])
+            }}
+          </span>
+        </div>
+        <p>{{ __t('ui.prompt-presets', '将作为独立副本加入草稿，现有框架和模板保持不变。') }}</p>
+        <div v-if="presetImport.issues.length" class="st-import-issues">
+          <p v-for="(issue, index) in presetImport.issues" :key="index" :class="issue.level">
+            {{ issue.source }}：{{ issue.message }}
+          </p>
+        </div>
+        <label class="field">
+          {{ __t('ui.settings', '生效范围') }}
+          <PSelect
+            :model-value="presetScope.scope"
+            :options="activationOptions"
+            :disabled="busy"
+            teleport
+            @update:model-value="presetScope.scope = $event as 'all' | 'range' | 'later'"
+          />
+        </label>
+        <div v-if="presetScope.scope === 'range'" class="independent-scopes">
+          <PSelect
+            :model-value="presetScope.agentId"
+            :options="agentOptions"
+            :disabled="busy"
+            teleport
+            @update:model-value="presetScope.agentId = String($event)"
+          />
+          <PSelect
+            :model-value="presetScope.channel"
+            :options="channelOptions.filter((option) => option.value !== 'task')"
+            :disabled="busy"
+            teleport
+            @update:model-value="presetScope.channel = String($event)"
+          />
+        </div>
+        <p class="muted-text">
+          {{
+            presetScope.scope === 'all'
+              ? __t('ui.settings', '替换已有角色与频道的框架指派，发布后生效。')
+              : __t('ui.settings', '导入草稿后可编辑和预览，发布后生效。')
+          }}
+        </p>
+      </div>
+      <template #footer>
+        <PButton size="sm" variant="secondary" :disabled="busy" @click="presetImportOpen = false">
+          {{ __t('ui.settings', '取消') }}
+        </PButton>
+        <PButton
+          size="sm"
+          :disabled="busy || !presetImport || !presetImport.preset.name.trim()"
+          @click="commitPresetImport(presetScope)"
+        >
+          {{ __t('ui.settings', '导入草稿') }}
         </PButton>
       </template>
     </PDialog>

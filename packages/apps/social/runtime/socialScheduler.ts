@@ -19,6 +19,8 @@ const logger = createLogger('SocialScheduler')
 export interface SocialSchedulerDeps {
   sessionManager: SocialSessionManager
   executions?: SocialExecutionPort
+  legacyPlatform?(): string | undefined
+  allowObservation?(session: SocialSession): boolean
   maintain?(): Promise<void>
   allowSession?(session: SocialSession): boolean
 }
@@ -53,9 +55,18 @@ export class SocialScheduler {
     this.rebaseReviews()
   }
 
-  getGroupPolicy(agentId: string, accountId: string, groupId: string): SocialGroupPolicy {
+  getGroupPolicy(
+    agentId: string,
+    accountId: string,
+    groupId: string,
+    platform?: string,
+  ): SocialGroupPolicy {
     return normalizeSocialGroupPolicy(
-      this.groupPolicies[socialGroupPolicyKey(agentId, accountId, groupId)] ?? {},
+      this.groupPolicies[socialGroupPolicyKey(agentId, accountId, groupId, platform)] ??
+        (platform === this.deps.legacyPlatform?.()
+          ? this.groupPolicies[socialGroupPolicyKey(agentId, accountId, groupId)]
+          : undefined) ??
+        {},
       this.config,
     )
   }
@@ -101,18 +112,29 @@ export class SocialScheduler {
   }
 
   private policy(session: SocialSession): SocialGroupPolicy {
-    return this.getGroupPolicy(session.agentId, session.accountId ?? '', session.channelId)
+    return this.getGroupPolicy(
+      session.agentId,
+      session.accountId ?? '',
+      session.channelId,
+      session.platform,
+    )
   }
 
-  policyGate(agentId: string, accountId: string, groupId: string): string {
-    const policy = this.getGroupPolicy(agentId, accountId, groupId)
+  policyGate(agentId: string, accountId: string, groupId: string, platform?: string): string {
+    const policy = this.getGroupPolicy(agentId, accountId, groupId, platform)
     if (!policy.proactiveGroupEnabled) return 'disabled'
     return this.isNightSilence(policy) ? 'night_silence' : 'ready'
   }
 
   reviewGate(session: SocialSession, now = Date.now()): string {
     if (this.deps.allowSession && !this.deps.allowSession(session)) return 'activation_policy'
-    const gate = this.policyGate(session.agentId, session.accountId ?? '', session.channelId)
+    if (this.deps.allowObservation?.(session) === false) return 'platform_visibility'
+    const gate = this.policyGate(
+      session.agentId,
+      session.accountId ?? '',
+      session.channelId,
+      session.platform,
+    )
     if (gate !== 'ready') return gate
     const policy = this.policy(session)
     if (

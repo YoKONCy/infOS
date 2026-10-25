@@ -1,5 +1,6 @@
 import { t as __t } from '../utils/i18n'
 import { getClientCredential } from '../utils/clientCredential'
+import { getBackendOrigin } from './clientConnection'
 import { BrowserWindow, app, session } from 'electron'
 import http from 'node:http'
 import { desktopTabs } from '../windows/desktopTabs'
@@ -206,13 +207,10 @@ export async function startNapCatWithDashboard(replaceId?: string) {
   if (!getNapCatStatus().running) {
     try {
       const token = getClientCredential()
-      const response = await fetch(
-        `http://127.0.0.1:${Number(process.env.PERO_PORT ?? 9120)}/api/social/status`,
-        {
-          headers: token ? { Authorization: `Bearer ${token}` } : undefined,
-          signal: AbortSignal.timeout(5000),
-        },
-      )
+      const response = await fetch(`${getBackendOrigin()}/api/social/status`, {
+        headers: token ? { Authorization: `Bearer ${token}` } : undefined,
+        signal: AbortSignal.timeout(5000),
+      })
       const body = (await response.json()) as { data?: { adapters?: Array<{ platform: string }> } }
       if (!response.ok || !body.data?.adapters?.some((a) => a.platform === 'qq'))
         throw new Error('社交服务未就绪')

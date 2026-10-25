@@ -3,6 +3,7 @@ import { BrowserWindow, type WebContents } from 'electron'
 import path from 'node:path'
 import type { DesktopToastAction, DesktopToastSnapshot } from '@infos/shared'
 import { logger } from '../utils/logger'
+import { guardTransparentWindowMaterial } from './windowConfig'
 
 const emptySnapshot = (): DesktopToastSnapshot => ({
   revision: -1,
@@ -171,6 +172,7 @@ export class DesktopToastLayer {
       },
     })
     this.overlay = overlay
+    guardTransparentWindowMaterial(overlay)
     const contents = overlay.webContents
     this.overlayContents = contents
     this.ready = false

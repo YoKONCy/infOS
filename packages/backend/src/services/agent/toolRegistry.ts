@@ -36,6 +36,8 @@ export type ToolHandler = (
  * - source/sessionId: 保留向后兼容，新代码请用 threadId/channel
  */
 export interface ToolContext {
+  requestedBy?: 'user' | 'agent'
+  browserScope?: import('@infos/shared').AgentBrowserScope
   /** 消息来源（向后兼容，等价于 channel） */
   source: string
   /** Agent ID */
@@ -81,6 +83,8 @@ export interface ToolContext {
 
 /** 注册的工具 */
 interface RegisteredTool {
+  /** 调试贡献只属于启用它的桌面会话，不进入全局工具菜单。 */
+  runtimeScope?: { threadId: string; agentId: string }
   definition: ToolDefinition
   handler: ToolHandler
   /** 允许的 source 模式 (空=全部允许) */
@@ -94,13 +98,17 @@ interface RegisteredTool {
 export class ToolRegistry {
   private readonly definitionProviders = new Map<
     string,
-    (definition: ToolDefinition, agentId: string) => Promise<ToolDefinition>
+    (definition: ToolDefinition, agentId: string, threadId?: string) => Promise<ToolDefinition>
   >()
 
   /** 每次模型请求按调用者生成工具文档，不把其他角色的步骤说明写入全局定义。 */
   registerDefinitionProvider(
     name: string,
-    provider: (definition: ToolDefinition, agentId: string) => Promise<ToolDefinition>,
+    provider: (
+      definition: ToolDefinition,
+      agentId: string,
+      threadId?: string,
+    ) => Promise<ToolDefinition>,
   ): () => void {
     if (this.definitionProviders.has(name)) throw new Error('工具文档提供者重复注册')
     this.definitionProviders.set(name, provider)
@@ -112,11 +120,18 @@ export class ToolRegistry {
   async resolveDefinitions(
     definitions: ToolDefinition[],
     agentId: string,
+    threadId?: string,
   ): Promise<ToolDefinition[]> {
     return Promise.all(
       definitions.map(async (definition) => {
         const provider = this.definitionProviders.get(definition.name)
-        return provider ? provider(structuredClone(definition), agentId) : definition
+        if (!provider) return definition
+        // 每次从注册原件生成说明，保留本轮门控信息，不能以上次加工结果继续追加。
+        const original = this.tools.get(definition.name)?.definition
+        const base = original
+          ? { ...definition, description: original.description, parameters: original.parameters }
+          : definition
+        return provider(structuredClone(base), agentId, threadId)
       }),
     )
   }
@@ -135,13 +150,14 @@ export class ToolRegistry {
     definition: ToolDefinition,
     handler: ToolHandler,
     allowedSources?: string[],
-    options?: { chatEnabled?: boolean },
+    options?: { chatEnabled?: boolean; runtimeScope?: { threadId: string; agentId: string } },
   ): void {
     this.tools.set(definition.name, {
       definition,
       handler,
       allowedSources,
       chatEnabled: options?.chatEnabled === true,
+      runtimeScope: options?.runtimeScope,
     })
     logger.debug(__t('logs.agent', '工具已注册: {0}', [definition.name]))
   }
@@ -153,6 +169,15 @@ export class ToolRegistry {
 
   isChatEnabled(name: string): boolean {
     return this.tools.get(name)?.chatEnabled === true
+  }
+
+  isRuntimeScoped(name: string): boolean {
+    return !!this.tools.get(name)?.runtimeScope
+  }
+
+  isVisibleTo(name: string, agentId: string, threadId?: string): boolean {
+    const scope = this.tools.get(name)?.runtimeScope
+    return !scope || (scope.agentId === agentId && scope.threadId === threadId)
   }
 
   setChatEnabled(name: string, enabled: boolean): void {

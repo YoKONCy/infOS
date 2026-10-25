@@ -10,7 +10,7 @@ Model Role: 当前角色主模型
 -->
 
 [系统通知: 收到新的好友申请]
-申请人QQ: {{ user_id }}
+申请人账号: {{ user_id }}
 申请备注: "{{ comment }}"
 
 <System_Context>
