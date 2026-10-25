@@ -17,6 +17,7 @@ Var InfosCurrentUserControl
 Var InfosOptions
 Var InfosOptionsCreated
 Var InfosDestinationControl
+Var InfosStartAppArgs
 
 ; 保留命令行选项，并把界面上的快捷方式选择交回原安装逻辑。
 !macro _InfosNoDesktop _a _b _t _f
@@ -262,7 +263,13 @@ Function InfosFinishCreate
 FunctionEnd
 Function InfosLaunch
   Pop $0
-  !insertmacro StartApp
+  ; 上游 StartApp 宏内声明全局变量，安装节也会展开；完成页使用独立参数避免重复声明。
+  ${If} ${isUpdated}
+    StrCpy $InfosStartAppArgs "--updated"
+  ${Else}
+    StrCpy $InfosStartAppArgs ""
+  ${EndIf}
+  ${StdUtils.ExecShellAsUser} $0 "$launchLink" "open" "$InfosStartAppArgs"
   SendMessage $HWNDPARENT ${WM_COMMAND} 1 0
 FunctionEnd
 Function InfosFinish
