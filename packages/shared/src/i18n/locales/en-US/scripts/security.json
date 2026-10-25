@@ -1,11 +1,12 @@
 {
   "运行时安全检查失败：{0}（{1}）": "Runtime security check failed: {0} ({1})",
-  "必须更新到包含安全补丁的运行时；不允许使用版本豁免绕过发布检查。": "Update to a runtime containing the security fixes; version exemptions cannot bypass release checks.",
-  "运行时安全检查通过。": "Runtime security check passed.",
   "运行时安全检查无法完成：{0}": "Runtime security check could not complete: {0}",
   "原始审计报告已保留；{0} 项公告已核验精确补丁及回归测试。": "The raw audit report is preserved; exact patches and regression tests were verified for {0} advisories.",
   "依赖安全检查通过；原始扫描结果与本地回补记录分开保存。": "Dependency security check passed; raw findings and local backport records are saved separately.",
   "依赖安全检查失败：{0}": "Dependency security check failed: {0}",
   "未修复依赖漏洞：{0}，等级：{1}，公告：{2}": "Unpatched dependency vulnerability: {0}, severity: {1}, advisory: {2}",
-  "已核验 {0} 项私有工作区路径误报；原始报告与锁文件证据分别保留。": "Verified {0} false findings caused by private workspace paths; the original report and lockfile evidence are preserved separately."
+  "已核验 {0} 项私有工作区路径误报；原始报告与锁文件证据分别保留。": "Verified {0} false findings caused by private workspace paths; the original report and lockfile evidence are preserved separately.",
+  "运行时门禁检查通过。": "Runtime gate checks passed.",
+  "Electron 内嵌 Node {0} 未达到独立 Node 安全基线 {1}，按稳定版兼容策略继续。": "Electron embeds Node {0}, below the standalone Node security baseline {1}; continuing under the stable-release compatibility policy.",
+  "必须使用符合对应运行时基线的正式版本；声明、锁文件与实际二进制必须一致。": "Use a stable release that meets the applicable runtime baseline; declarations, lockfile and actual binaries must agree."
 }

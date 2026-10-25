@@ -19,7 +19,9 @@ function meetsMinimum(version, minimums) {
 
 function runtimeIssues(versions, expectedElectron) {
   const issues = []
-  if (!meetsMinimum(versions.node, policy.nodeMinimums)) {
+  // 独立 Node 与稳定 Electron 的内嵌版本分别核验，保留各自的最低版本约束。
+  const nodeMinimums = expectedElectron ? policy.electronEmbeddedNodeMinimums : policy.nodeMinimums
+  if (!meetsMinimum(versions.node, nodeMinimums)) {
     issues.push({ code: 'UNSAFE_NODE_RUNTIME', detail: versions.node || 'unknown' })
   }
   if (expectedElectron) {
@@ -34,6 +36,37 @@ function runtimeIssues(versions, expectedElectron) {
     }
   }
   return issues
+}
+
+function runtimeWarnings(versions, expectedElectron) {
+  if (
+    !expectedElectron ||
+    !meetsMinimum(versions.node, policy.electronEmbeddedNodeMinimums) ||
+    meetsMinimum(versions.node, policy.nodeMinimums)
+  )
+    return []
+  return [
+    {
+      code: 'ELECTRON_NODE_BELOW_STANDALONE_BASELINE',
+      version: versions.node,
+      minimum: policy.nodeMinimums[versions.node.split('.')[0]] || 'unknown',
+    },
+  ]
+}
+
+async function reportRuntimeWarnings(versions, expectedElectron) {
+  const warnings = runtimeWarnings(versions, expectedElectron)
+  if (!warnings.length) return
+  const { t } = await import('./i18n.mjs')
+  for (const warning of warnings) {
+    console.warn(
+      t(
+        'scripts.security',
+        'Electron 内嵌 Node {0} 未达到独立 Node 安全基线 {1}，按稳定版兼容策略继续。',
+        [warning.version, warning.minimum],
+      ),
+    )
+  }
 }
 
 /** 清除可注入 Node 代码的继承选项，只探测指定可执行文件的内嵌运行时。 */
@@ -116,12 +149,16 @@ async function main() {
   if (arguments_.includes('--node')) issues.push(...runtimeIssues(process.versions))
   if (arguments_.includes('--electron-installed')) {
     const electronRequire = createRequire(path.join(root, 'electron/package.json'))
-    issues.push(...runtimeIssues(probeElectron(electronRequire('electron')), configuredElectron()))
+    const versions = probeElectron(electronRequire('electron'))
+    issues.push(...runtimeIssues(versions, configuredElectron()))
+    await reportRuntimeWarnings(versions, configuredElectron())
   }
   if (arguments_.includes('--electron-binary')) {
     const executable = arguments_[arguments_.indexOf('--electron-binary') + 1]
     if (!executable || executable.startsWith('--')) throw new Error('ELECTRON_BINARY_PATH_REQUIRED')
-    issues.push(...runtimeIssues(probeElectron(path.resolve(executable)), configuredElectron()))
+    const versions = probeElectron(path.resolve(executable))
+    issues.push(...runtimeIssues(versions, configuredElectron()))
+    await reportRuntimeWarnings(versions, configuredElectron())
   }
   if (issues.length) {
     for (const issue of issues)
@@ -129,17 +166,22 @@ async function main() {
         t('scripts.security', '运行时安全检查失败：{0}（{1}）', [issue.code, issue.detail]),
       )
     console.error(
-      t('scripts.security', '必须更新到包含安全补丁的运行时；不允许使用版本豁免绕过发布检查。'),
+      t(
+        'scripts.security',
+        '必须使用符合对应运行时基线的正式版本；声明、锁文件与实际二进制必须一致。',
+      ),
     )
     process.exitCode = 1
   } else {
-    console.log(t('scripts.security', '运行时安全检查通过。'))
+    console.log(t('scripts.security', '运行时门禁检查通过。'))
   }
 }
 
 module.exports = {
   meetsMinimum,
   runtimeIssues,
+  runtimeWarnings,
+  reportRuntimeWarnings,
   configurationIssues,
   probeElectron,
   configuredElectron,

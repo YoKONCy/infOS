@@ -1,5 +1,10 @@
 const path = require('node:path')
-const { configuredElectron, probeElectron, runtimeIssues } = require('./runtime-security.cjs')
+const {
+  configuredElectron,
+  probeElectron,
+  runtimeIssues,
+  reportRuntimeWarnings,
+} = require('./runtime-security.cjs')
 
 module.exports = async function checkPackagedElectron(context, executablePath) {
   if (context.electronPlatformName !== 'win32') throw new Error('UNREVIEWED_ELECTRON_TARGET')
@@ -7,7 +12,9 @@ module.exports = async function checkPackagedElectron(context, executablePath) {
   const executable =
     executablePath ||
     path.join(context.appOutDir, filename.endsWith('.exe') ? filename : `${filename}.exe`)
-  const issues = runtimeIssues(probeElectron(executable), configuredElectron())
+  const versions = probeElectron(executable)
+  const issues = runtimeIssues(versions, configuredElectron())
+  await reportRuntimeWarnings(versions, configuredElectron())
   if (issues.length) {
     const { t } = await import('./i18n.mjs')
     throw new Error(

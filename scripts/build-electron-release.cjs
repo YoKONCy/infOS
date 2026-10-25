@@ -21,19 +21,19 @@ async function main() {
     throw new Error('请指定有效发行版：standard、portable 或 steam')
   }
   const root = path.resolve(__dirname, '..')
-  // 实际内嵌 Node 未修复时立即阻止打包，不能用构建机的 Node 版本代替。
+  // 核验稳定 Electron 及其实际内嵌 Node，不能用构建机的 Node 版本代替。
   const {
     configurationIssues,
     configuredElectron,
     probeElectron,
     runtimeIssues,
+    reportRuntimeWarnings,
   } = require('./runtime-security.cjs')
   const { createRequire } = require('node:module')
   const electronRequire = createRequire(path.join(root, 'electron/package.json'))
-  const issues = [
-    ...configurationIssues(),
-    ...runtimeIssues(probeElectron(electronRequire('electron')), configuredElectron()),
-  ]
+  const versions = probeElectron(electronRequire('electron'))
+  const issues = [...configurationIssues(), ...runtimeIssues(versions, configuredElectron())]
+  await reportRuntimeWarnings(versions, configuredElectron())
   if (issues.length) {
     const { t } = await import('./i18n.mjs')
     throw new Error(
