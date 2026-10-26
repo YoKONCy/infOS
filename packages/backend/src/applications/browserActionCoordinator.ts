@@ -6,6 +6,9 @@ export interface BrowserRecoverableAction {
   target?: string
   handle?: string
   allowOccluded?: boolean
+  screenshotId?: string
+  x?: number
+  y?: number
 }
 
 /** Browser Application 层的单次、受限恢复协调器。 */

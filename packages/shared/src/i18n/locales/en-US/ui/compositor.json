@@ -1,4 +1,7 @@
 {
+  "执行过程": "Execution details",
+  "{0} 次调用": "{0} calls",
+  "{0} 项异常": "{0} issues",
   "正在等待你的确认……": "is waiting for your confirmation...",
   "正在等待你的回答……": "is waiting for your answer...",
   "碎碎念": "Inner monologue",

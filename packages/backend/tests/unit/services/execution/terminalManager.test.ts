@@ -1,10 +1,14 @@
 import path from 'node:path'
-import { mkdir, mkdtemp, realpath, rm } from 'node:fs/promises'
+import { mkdir, mkdtemp, realpath, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { ExecutionSessionManager } from '@infos/backend/services/execution/executionSession'
 import { LocalPolicyRunner } from '@infos/backend/services/execution/sandboxRunner'
 import { TerminalManager } from '@infos/backend/services/execution/terminalManager'
+import {
+  planReadOnlyTerminal,
+  grantReadOnlyTerminal,
+} from '@infos/backend/services/execution/readOnlyTerminal'
 
 let root = ''
 const managers = new Set<TerminalManager>()
@@ -37,6 +41,33 @@ afterEach(async () => {
 }, 30_000)
 
 describe('TerminalManager', () => {
+  it('只读脚本内容保留终端历史，且不启动系统进程', async () => {
+    const sessions = new ExecutionSessionManager()
+    const runner = new HeadlessPolicyRunner()
+    const spawn = vi.spyOn(runner, 'spawnTerminal')
+    const manager = createManager(sessions, runner)
+    const session = await sessions.getOrCreate({
+      ownerAgentId: 'pero',
+      threadId: 'readonly',
+      channel: 'desktop',
+      workspaceRoot: root,
+    })
+    await writeFile(path.join(root, 'read.py'), 'print("不执行脚本")\n')
+    const args = { command: 'cat', argv: ['read.py'] }
+    const plan = planReadOnlyTerminal(args, 'linux')!
+    const readOnly = await grantReadOnlyTerminal(plan, root, '.', () => true)
+    expect(readOnly).not.toBeNull()
+    const result = await manager.run({
+      ...args,
+      executionSessionId: session.id,
+      readOnly: readOnly!,
+    })
+    expect(result.output).toBe('print("不执行脚本")')
+    expect(result.terminal).toMatchObject({ status: 'exited', exitCode: 0, pid: null })
+    expect(manager.read(result.terminal.id, session.id).output).toBe('print("不执行脚本")')
+    expect(spawn).not.toHaveBeenCalled()
+  })
+
   it('不存在的可执行文件立即报告失败，失败日志保留历史句柄', async () => {
     const sessions = new ExecutionSessionManager()
     const manager = createManager(sessions, new HeadlessPolicyRunner())

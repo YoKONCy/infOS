@@ -21,6 +21,7 @@ export interface TaskToolRuntime {
     executionId: string | undefined,
     name: string,
     callId: string,
+    readOnly?: boolean,
   ): Promise<void>
   afterTool(taskId: string, executionId: string | undefined, callId: string): Promise<void>
 }

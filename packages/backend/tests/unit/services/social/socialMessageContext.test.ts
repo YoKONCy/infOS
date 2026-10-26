@@ -157,9 +157,6 @@ describe('社交消息身份与附件上下文', () => {
       ],
     })
     expect(compiled.messages.map((message) => message.content).join('\n')).toContain(
-      '当前主要对话对象不是你的主人',
-    )
-    expect(compiled.messages.map((message) => message.content).join('\n')).toContain(
       '平台账号:123456 身份:普通联系人',
     )
     const prompt = compiled.messages
@@ -169,6 +166,7 @@ describe('社交消息身份与附件上下文', () => {
           : (entry.content?.flatMap((part) => (part.type === 'text' ? [part.text] : [])) ?? []),
       )
       .join('\n')
+    expect(prompt).toContain('当前主要对话对象不是你的主人')
     expect(prompt).toContain('bot_hint="无需刻意回应@"')
     expect(prompt).toContain('身份:普通联系人] [bot·无需刻意回应@]')
     expect(compiled.messages.at(-1)?.content).toEqual([

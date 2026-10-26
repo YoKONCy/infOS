@@ -28,10 +28,12 @@ import type {
   ToolResultSurfaceProps,
 } from '@infos/shared'
 import type { CompositorSurface } from '../../stores'
+import { StreamMarkdownSegmenter } from '../../compositor/markdownSegmentation'
 import {
-  StreamMarkdownSegmenter,
-  type MarkdownRenderBlock,
-} from '../../compositor/markdownSegmentation'
+  groupExecutionItems,
+  type ConversationRenderItem as RenderItem,
+} from '../../compositor/executionGroups'
+import ExecutionProcess from './ExecutionProcess.vue'
 import StreamMarkdown from './StreamMarkdown.vue'
 import type { ApprovalDecision, ApprovalRequest } from '../../api/modules/approvalsApi'
 import { ApprovalCard } from '../approval'
@@ -115,16 +117,6 @@ watch(
   { immediate: true },
 )
 
-type RenderItem =
-  | {
-      type: 'node'
-      id: string
-      node: SurfaceNode
-      toolResult?: ToolResultSurfaceProps
-      children?: ToolCallView[]
-    }
-  | { type: 'markdown-block'; id: string; block: MarkdownRenderBlock }
-
 function formatDuration(value?: number): string {
   if (value === undefined) return '—'
   return value < 1000 ? `${value} ms` : `${(value / 1000).toFixed(1)} s`
@@ -197,6 +189,10 @@ const renderItems = computed<RenderItem[]>(() => {
   }
   return (previousItems = items)
 })
+
+const executionGroups = computed(() =>
+  groupExecutionItems(renderItems.value, props.surface.state !== 'open'),
+)
 
 function toolChain(node: SurfaceNode): string {
   const name = toolProps(node).name
@@ -481,193 +477,203 @@ function errorMessage(node: SurfaceNode): string {
 
 <template>
   <div class="conversation-surface" :data-surface-id="surface.surfaceId">
-    <template v-for="(item, itemIndex) in renderItems" :key="item.id">
-      <div
-        v-if="item.type === 'markdown-block'"
-        class="surface-markdown-block"
-        :class="{ 'surface-markdown-block--stable': item.block.stable }"
-      >
-        <MermaidSurfaceNode
-          v-if="item.block.kind === 'mermaid'"
-          :source="item.block.source"
-          :active="!surface.suspended"
-        />
-        <ChatRichText
-          v-else
-          :content="item.block.source"
-          :agent-id="surface.principalId"
-          :thread-id="surface.threadId"
-          :active="!surface.suspended"
-          :cache="item.block.stable"
-          :stable="item.block.stable"
-        />
-      </div>
-      <template v-else>
-        <ModelRetryRecord
-          v-if="item.node.kind === 'model-retry'"
-          :record="item.node.props as ModelRetrySurfaceProps"
-          :active="surface.state === 'open' && !surface.suspended && mainVisible"
-        />
-        <details v-else-if="item.node.kind === 'thinking'" class="surface-thinking" open>
-          <summary>
-            <span class="surface-thinking__spark" aria-hidden="true" />
-            <strong>{{ __t('ui.compositor', '碎碎念') }}</strong>
-            <span class="surface-thinking__meta">
-              {{
-                thinkingProps(item.node).phase === 'preview'
-                  ? __t('ui.compositor', '正在冒泡')
-                  : __t('ui.compositor', '暂告一段')
-              }}
-            </span>
-            <time v-if="thinkingProps(item.node).durationMs !== undefined">
-              {{ formatDuration(thinkingProps(item.node).durationMs) }}
-            </time>
-            <PixelIcon name="chevron-down" size="xs" />
-          </summary>
-          <div class="surface-thinking__body">
-            <p v-if="thinkingProps(item.node).phase === 'preview'" class="surface-thinking__live">
-              {{ thinkingProps(item.node).source }}
-              <i class="surface-thinking__cursor" />
-            </p>
-            <ChatRichText
-              v-else
-              :content="thinkingProps(item.node).source"
-              :active="!surface.suspended"
-              :web-preview="false"
-            />
-          </div>
-        </details>
-        <details
-          v-else-if="item.node.kind === 'native-reasoning'"
-          class="surface-native-reasoning"
-          :open="reasoningOpen[item.node.nodeId]"
-          @toggle="
-            reasoningOpen[item.node.nodeId] = ($event.currentTarget as HTMLDetailsElement).open
-          "
+    <ExecutionProcess
+      v-for="group in executionGroups"
+      :key="group.id"
+      v-slot="{ expanded }"
+      :enabled="group.toolCount > 0"
+      :ended="surface.state !== 'open'"
+      :tool-count="group.toolCount"
+      :failure-count="group.failureCount"
+    >
+      <template v-for="{ item, index: itemIndex } in group.items" :key="item.id">
+        <div
+          v-if="item.type === 'markdown-block'"
+          class="surface-markdown-block"
+          :class="{ 'surface-markdown-block--stable': item.block.stable }"
         >
-          <summary>
-            <span class="surface-native-reasoning__cube" aria-hidden="true" />
-            <strong>{{ __t('ui.compositor', '思考过程') }}</strong>
-            <span class="surface-native-reasoning__meta">
-              {{
-                reasoningProps(item.node).mode === 'stream'
-                  ? __t('ui.compositor', '流式')
-                  : __t('ui.compositor', '非流式')
-              }}
-              <template v-if="reasoningProps(item.node).turn">
-                {{ __t('ui.compositor', '· 第') }} {{ reasoningProps(item.node).turn }}
-                {{ __t('ui.compositor', '轮') }}
-              </template>
-            </span>
-            <time v-if="reasoningProps(item.node).durationMs !== undefined">
-              {{ formatDuration(reasoningProps(item.node).durationMs) }}
-            </time>
-            <PixelIcon name="chevron-down" size="xs" />
-          </summary>
-          <div class="surface-native-reasoning__body">
-            <StreamMarkdown
-              v-if="reasoningOpen[item.node.nodeId]"
-              :source="reasoningProps(item.node).source"
-              :node-id="item.node.nodeId"
-              :committed="
-                reasoningProps(item.node).phase === 'committed' || surface.state !== 'open'
-              "
-              :active="!surface.suspended"
-            />
-          </div>
-        </details>
-        <ResourceCard
-          v-else-if="item.node.kind === 'tool-call' && toolResource(item.node, item.toolResult)"
-          :resource="toolResource(item.node, item.toolResult)!"
-          :active="!surface.suspended && mainVisible"
-        />
-        <ToolCallCard
-          v-else-if="item.node.kind === 'tool-call'"
-          :active="!surface.suspended && mainVisible"
-          :chain-start="!toolChainEdge(itemIndex, -1)"
-          :chain-end="!toolChainEdge(itemIndex, 1)"
-          :children="item.children"
-          :tool="toolCallView(toolProps(item.node), item.toolResult, surface.state !== 'open')"
-        />
-        <div v-else-if="item.node.kind === 'tool-result'" class="surface-tool-result">
-          {{ resultProps(item.node).result }}
-        </div>
-        <RunPulse
-          v-else-if="item.node.kind === 'status'"
-          :state="pulseState(runState(statusProps(item.node)))"
-          :label="runLabel(statusProps(item.node))"
-          :elapsed-ms="pulseDuration(statusProps(item.node))"
-          :live="runLive(statusProps(item.node))"
-          class="surface-run-pulse"
-        />
-        <div v-else-if="item.node.kind === 'progress'" class="surface-progress">
-          <span>{{ progressProps(item.node).stage || __t('ui.compositor', '任务进度') }}</span>
-          <div class="surface-progress__track">
-            <i :style="{ width: `${progressProps(item.node).value ?? 0}%` }" />
-          </div>
-          <strong v-if="progressProps(item.node).value != null">
-            {{ progressProps(item.node).value }}%
-          </strong>
-        </div>
-        <AgentInputCard
-          v-else-if="
-            item.node.kind === 'input' && inputProps(item.node).inputKind === 'agent_question'
-          "
-          :key="inputProps(item.node).inputId"
-          :request="inputProps(item.node)"
-          :error="inputErrors[item.node.nodeId]"
-          :loading="submittingNodeId === item.node.nodeId"
-          @answer="(payload) => submitAgentInput(item.node, payload)"
-        />
-        <div v-else-if="item.node.kind === 'input'" class="surface-input">
-          <strong>{{ inputProps(item.node).title }}</strong>
-          <p>{{ inputProps(item.node).question }}</p>
-          <textarea
-            v-model="inputMessage"
-            rows="2"
-            maxlength="2000"
-            :placeholder="__t('ui.compositor', '附言（可选）')"
+          <MermaidSurfaceNode
+            v-if="item.block.kind === 'mermaid'"
+            :source="item.block.source"
+            :active="!surface.suspended"
           />
-          <p v-if="inputErrors[item.node.nodeId]" role="alert">
-            {{ inputErrors[item.node.nodeId] }}
-          </p>
-          <div>
-            <button
-              v-for="action in inputProps(item.node).actions"
-              :key="action.id"
-              type="button"
-              :class="`surface-input__${action.tone ?? 'neutral'}`"
-              :disabled="submittingNodeId === item.node.nodeId"
-              @click="submitInput(item.node, action.id)"
-            >
-              {{ action.label }}
-            </button>
+          <ChatRichText
+            v-else
+            :content="item.block.source"
+            :agent-id="surface.principalId"
+            :thread-id="surface.threadId"
+            :active="!surface.suspended"
+            :cache="item.block.stable"
+            :stable="item.block.stable"
+          />
+        </div>
+        <template v-else>
+          <ModelRetryRecord
+            v-if="item.node.kind === 'model-retry'"
+            :record="item.node.props as ModelRetrySurfaceProps"
+            :active="expanded && surface.state === 'open' && !surface.suspended && mainVisible"
+          />
+          <details v-else-if="item.node.kind === 'thinking'" class="surface-thinking" open>
+            <summary>
+              <span class="surface-thinking__spark" aria-hidden="true" />
+              <strong>{{ __t('ui.compositor', '碎碎念') }}</strong>
+              <span class="surface-thinking__meta">
+                {{
+                  thinkingProps(item.node).phase === 'preview'
+                    ? __t('ui.compositor', '正在冒泡')
+                    : __t('ui.compositor', '暂告一段')
+                }}
+              </span>
+              <time v-if="thinkingProps(item.node).durationMs !== undefined">
+                {{ formatDuration(thinkingProps(item.node).durationMs) }}
+              </time>
+              <PixelIcon name="chevron-down" size="xs" />
+            </summary>
+            <div class="surface-thinking__body">
+              <p v-if="thinkingProps(item.node).phase === 'preview'" class="surface-thinking__live">
+                {{ thinkingProps(item.node).source }}
+                <i class="surface-thinking__cursor" />
+              </p>
+              <ChatRichText
+                v-else
+                :content="thinkingProps(item.node).source"
+                :active="expanded && !surface.suspended"
+                :web-preview="false"
+              />
+            </div>
+          </details>
+          <details
+            v-else-if="item.node.kind === 'native-reasoning'"
+            class="surface-native-reasoning"
+            :open="reasoningOpen[item.node.nodeId]"
+            @toggle="
+              reasoningOpen[item.node.nodeId] = ($event.currentTarget as HTMLDetailsElement).open
+            "
+          >
+            <summary>
+              <span class="surface-native-reasoning__cube" aria-hidden="true" />
+              <strong>{{ __t('ui.compositor', '思考过程') }}</strong>
+              <span class="surface-native-reasoning__meta">
+                {{
+                  reasoningProps(item.node).mode === 'stream'
+                    ? __t('ui.compositor', '流式')
+                    : __t('ui.compositor', '非流式')
+                }}
+                <template v-if="reasoningProps(item.node).turn">
+                  {{ __t('ui.compositor', '· 第') }} {{ reasoningProps(item.node).turn }}
+                  {{ __t('ui.compositor', '轮') }}
+                </template>
+              </span>
+              <time v-if="reasoningProps(item.node).durationMs !== undefined">
+                {{ formatDuration(reasoningProps(item.node).durationMs) }}
+              </time>
+              <PixelIcon name="chevron-down" size="xs" />
+            </summary>
+            <div class="surface-native-reasoning__body">
+              <StreamMarkdown
+                v-if="reasoningOpen[item.node.nodeId]"
+                :source="reasoningProps(item.node).source"
+                :node-id="item.node.nodeId"
+                :committed="
+                  reasoningProps(item.node).phase === 'committed' || surface.state !== 'open'
+                "
+                :active="expanded && !surface.suspended"
+              />
+            </div>
+          </details>
+          <ResourceCard
+            v-else-if="item.node.kind === 'tool-call' && toolResource(item.node, item.toolResult)"
+            :resource="toolResource(item.node, item.toolResult)!"
+            :active="expanded && !surface.suspended && mainVisible"
+          />
+          <ToolCallCard
+            v-else-if="item.node.kind === 'tool-call'"
+            :active="expanded && !surface.suspended && mainVisible"
+            :chain-start="!toolChainEdge(itemIndex, -1)"
+            :chain-end="!toolChainEdge(itemIndex, 1)"
+            :children="item.children"
+            :tool="toolCallView(toolProps(item.node), item.toolResult, surface.state !== 'open')"
+          />
+          <div v-else-if="item.node.kind === 'tool-result'" class="surface-tool-result">
+            {{ resultProps(item.node).result }}
           </div>
-        </div>
-        <ResourceCard
-          v-else-if="item.node.kind === 'attachment'"
-          :resource="attachmentProps(item.node)"
-          :active="!surface.suspended && mainVisible"
-        />
-        <ApprovalCard
-          v-else-if="item.node.kind === 'approval'"
-          :request="approvalRequest(item.node)"
-          :error="inputErrors[item.node.nodeId]"
-          :loading="submittingNodeId === item.node.nodeId"
-          compact
-          @resolve="(decision, message) => resolveApproval(item.node, decision, message)"
-        />
-        <ProgrammableSurfaceNode
-          v-else-if="item.node.kind === 'programmable-island'"
-          :descriptor="programmableProps(item.node)"
-          :active="!surface.suspended"
-          @input="handleProgrammableInput"
-        />
-        <div v-else-if="item.node.kind === 'error'" class="surface-error">
-          {{ errorMessage(item.node) }}
-        </div>
+          <RunPulse
+            v-else-if="item.node.kind === 'status'"
+            :state="pulseState(runState(statusProps(item.node)))"
+            :label="runLabel(statusProps(item.node))"
+            :elapsed-ms="pulseDuration(statusProps(item.node))"
+            :live="expanded && runLive(statusProps(item.node))"
+            class="surface-run-pulse"
+          />
+          <div v-else-if="item.node.kind === 'progress'" class="surface-progress">
+            <span>{{ progressProps(item.node).stage || __t('ui.compositor', '任务进度') }}</span>
+            <div class="surface-progress__track">
+              <i :style="{ width: `${progressProps(item.node).value ?? 0}%` }" />
+            </div>
+            <strong v-if="progressProps(item.node).value != null">
+              {{ progressProps(item.node).value }}%
+            </strong>
+          </div>
+          <AgentInputCard
+            v-else-if="
+              item.node.kind === 'input' && inputProps(item.node).inputKind === 'agent_question'
+            "
+            :key="inputProps(item.node).inputId"
+            :request="inputProps(item.node)"
+            :error="inputErrors[item.node.nodeId]"
+            :loading="submittingNodeId === item.node.nodeId"
+            @answer="(payload) => submitAgentInput(item.node, payload)"
+          />
+          <div v-else-if="item.node.kind === 'input'" class="surface-input">
+            <strong>{{ inputProps(item.node).title }}</strong>
+            <p>{{ inputProps(item.node).question }}</p>
+            <textarea
+              v-model="inputMessage"
+              rows="2"
+              maxlength="2000"
+              :placeholder="__t('ui.compositor', '附言（可选）')"
+            />
+            <p v-if="inputErrors[item.node.nodeId]" role="alert">
+              {{ inputErrors[item.node.nodeId] }}
+            </p>
+            <div>
+              <button
+                v-for="action in inputProps(item.node).actions"
+                :key="action.id"
+                type="button"
+                :class="`surface-input__${action.tone ?? 'neutral'}`"
+                :disabled="submittingNodeId === item.node.nodeId"
+                @click="submitInput(item.node, action.id)"
+              >
+                {{ action.label }}
+              </button>
+            </div>
+          </div>
+          <ResourceCard
+            v-else-if="item.node.kind === 'attachment'"
+            :resource="attachmentProps(item.node)"
+            :active="!surface.suspended && mainVisible"
+          />
+          <ApprovalCard
+            v-else-if="item.node.kind === 'approval'"
+            :request="approvalRequest(item.node)"
+            :error="inputErrors[item.node.nodeId]"
+            :loading="submittingNodeId === item.node.nodeId"
+            compact
+            @resolve="(decision, message) => resolveApproval(item.node, decision, message)"
+          />
+          <ProgrammableSurfaceNode
+            v-else-if="item.node.kind === 'programmable-island'"
+            :descriptor="programmableProps(item.node)"
+            :active="!surface.suspended"
+            @input="handleProgrammableInput"
+          />
+          <div v-else-if="item.node.kind === 'error'" class="surface-error">
+            {{ errorMessage(item.node) }}
+          </div>
+        </template>
       </template>
-    </template>
+    </ExecutionProcess>
     <span v-if="surface.state === 'open'" class="msg-streaming-cursor" />
   </div>
 </template>

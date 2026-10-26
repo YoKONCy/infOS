@@ -8,6 +8,7 @@
  */
 
 import type { Attachment } from '../../runtime/types'
+import { t as __t } from '../../runtime/i18n'
 
 // ─────────────────────────────────────────────
 // OneBot v11 类型
@@ -125,6 +126,7 @@ export function extractAttachments(segments: OneBotSegment[]): Attachment[] {
         type: 'native_emoji',
         name:
           typeof raw.faceText === 'string' ? raw.faceText.slice(0, 100) : `QQ表情 ${seg.data.id}`,
+        ...(typeof seg.data.url === 'string' ? { url: seg.data.url } : {}),
         nativeEmoji: { kind: 'face', faceId: String(seg.data.id) },
       })
     } else if (
@@ -223,10 +225,23 @@ export function checkIsMentioned(segments: OneBotSegment[], selfId: string): boo
 // 出站转换 (后端 → 平台)
 // ─────────────────────────────────────────────
 
-/**
- * 将 OutboundMessage 的内容转换为 OneBot v11 消息段数组
- */
+/** 拒绝把入站表情占位当作正文或发送指令。 */
+export function assertQQOutboundContent(content: string): void {
+  if (/\[\s*QQ(?:表情\s*[:：][^\]\r\n]*|商城表情)\s*\]/u.test(content))
+    throw Object.assign(
+      new Error(
+        __t(
+          'errors.social',
+          'QQ 表情占位不能直接发送；请用 emoji_list 返回的 native_emoji 引用，或改写正文',
+        ),
+      ),
+      { code: 'DELIVERY_NOT_SENT', rejected: true },
+    )
+}
+
+/** 将 OutboundMessage 的内容转换为 OneBot v11 消息段数组。 */
 export function toOneBotSegments(content: string, attachments?: Attachment[]): OneBotSegment[] {
+  assertQQOutboundContent(content)
   const segments: OneBotSegment[] = []
 
   // 文本段

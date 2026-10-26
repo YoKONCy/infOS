@@ -34,6 +34,13 @@ describe('TriviumDB 文件组与升级副本', () => {
       '.publish.1',
       '.publish.2',
       '.publish.2.tmp',
+      '.publish.3',
+      '.publish.4',
+      '.publish.5',
+      '.publish.6',
+      '.publish.7',
+      '.publish.8',
+      '.publish.8.tmp',
     ])
       expect(isTriviumFile(`memory.tdb${suffix}`, 'memory.tdb')).toBe(true)
     for (const suffix of [
@@ -42,12 +49,13 @@ describe('TriviumDB 文件组与升级副本', () => {
       '.pld.bad',
       '.pld.123.zip',
       '.pidx.backup',
-      '.publish.3',
+      '.publish.9',
       '.publish.notes',
     ])
       expect(isTriviumFile(`memory.tdb${suffix}`, 'memory.tdb')).toBe(false)
     expect(managedStoreBase('agent_pero/memory.tdb.pld.123')).toBe('agent_pero/memory.tdb')
     expect(managedStoreBase('knowledge/facts.tdb.pidx')).toBe('knowledge/facts.tdb')
+    expect(managedStoreBase('knowledge/facts.tdb.publish.8')).toBe('knowledge/facts.tdb')
     expect(managedStoreBase('principals/pero/workspace/agent_pero/memory.tdb')).toBeNull()
   })
 
@@ -62,6 +70,7 @@ describe('TriviumDB 文件组与升级副本', () => {
     writeFileSync(`${source}.vec`, '向量制品')
     writeFileSync(`${source}.wal`, 'WAL 制品')
     writeFileSync(`${source}.lock`, '')
+    writeFileSync(`${source}.publish.8`, '图索引恢复副本')
     writeFileSync(`${source}.vec.tmp`, '未提交制品')
     expect(databaseFormat(source)).toBe(7)
     expect(databaseFormat(`${source}-missing`)).toBeNull()
@@ -69,9 +78,10 @@ describe('TriviumDB 文件组与升级副本', () => {
     expect(backup.startsWith(`${upgradeBackupPath(root, source)}${path.sep}`)).toBe(true)
     expect(readFileSync(path.join(backup, 'memory.tdb'))).toEqual(header)
     expect(readFileSync(path.join(backup, 'memory.tdb.vec'), 'utf8')).toBe('向量制品')
+    expect(readFileSync(path.join(backup, 'memory.tdb.publish.8'), 'utf8')).toBe('图索引恢复副本')
     expect(existsSync(path.join(backup, 'memory.tdb.vec.tmp'))).toBe(false)
     expect(JSON.parse(readFileSync(path.join(backup, 'backup.json'), 'utf8'))).toMatchObject({
-      targetVersion: '0.8.11',
+      targetVersion: '0.9.0-beta.2',
       format: 7,
       source: path.join('agent_pero', 'memory.tdb'),
     })

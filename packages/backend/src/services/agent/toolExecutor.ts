@@ -51,6 +51,11 @@ import {
 import type { FileWritePreviewBaseline } from '@infos/shared'
 import { resolveExecutionMode, parseAutomaticApproval, type ExecutionMode } from '@infos/shared'
 import { realpath } from 'node:fs/promises'
+import {
+  grantReadOnlyTerminal,
+  planReadOnlyTerminal,
+  type ReadOnlyTerminalGrant,
+} from '../execution/readOnlyTerminal'
 import path from 'node:path'
 import { getDataDir } from '../../lib/env'
 import { protectedResourceWrite } from '../debug/resourceWritePolicy'
@@ -973,11 +978,86 @@ export class RegistryToolExecutor implements ToolExecutor {
       : resolveExecutionMode(runtimeContext?.executionMode, runtimeContext?.autoExecuteTools)
     const fullAccess = executionMode === 'full'
     const autoExecuteTools = executionMode !== 'manual'
+    if (!fullAccess && TERMINAL_APPROVAL_TOOLS.has(name)) {
+      const denied = this.approvalService?.consumeDeniedOnce({
+        agentId,
+        sessionId,
+        threadId,
+        taskId: runtimeContext?.taskId,
+        toolName: name,
+        args,
+      })
+      if (denied)
+        return {
+          output: JSON.stringify({
+            code: 'APPROVAL_DENIED',
+            source: 'user',
+            message: __t('server.agent', '用户拒绝了本次工具调用'),
+            userMessage: denied,
+          }),
+          durationMs: Date.now() - startTime,
+          isError: true,
+          shouldTerminate: false,
+        }
+    }
+    let readOnlyTerminal: ReadOnlyTerminalGrant | undefined
+    if (
+      !fullAccess &&
+      this.policyEngine &&
+      !pathViolation &&
+      !isSkillTool &&
+      !this.registry.isRuntimeScoped(name) &&
+      ['terminal_execute', 'terminal_create'].includes(name)
+    ) {
+      const definition = this.registry.getDefinition(name)
+      const permission = this.capabilityGate?.getToolPermission(agentId, channel, name)
+      const plan = planReadOnlyTerminal(args)
+      const allowed = permission?.paramPolicy?.allowedCommands?.map((command) =>
+        command.toLowerCase(),
+      )
+      if (
+        plan &&
+        !definition?.requiresApproval &&
+        !permission?.requiresApproval &&
+        !definition?.actionPermissions?.[String(args.action)]?.requiresApproval &&
+        (!allowed?.length ||
+          plan.commands.every((command) => allowed.includes(command.toLowerCase()))) &&
+        this.policyEngine.evaluate({
+          agentId,
+          channel,
+          sessionId,
+          threadId,
+          taskId: runtimeContext?.taskId,
+          toolName: name,
+          args,
+          permission,
+          readOnlyTerminal: true,
+        }).action === 'allow'
+      ) {
+        // 固定 Hook 后参数；只读授权随本次调用传递，不写入用户审批记录。
+        args = JSON.parse(JSON.stringify(args)) as Record<string, unknown>
+        const session = await resolveExecutionSession({
+          agentId,
+          threadId,
+          channel,
+          taskId: runtimeContext?.taskId,
+        })
+        readOnlyTerminal =
+          (await grantReadOnlyTerminal(
+            plan,
+            session.workspaceRoot,
+            args.cwd,
+            (target) =>
+              this.checkPathAllowed(name, { file_path: target }, agentId, channel) === null,
+            runtimeContext?.signal,
+          )) ?? undefined
+      }
+    }
     const needsAutomaticReview =
       executionMode === 'auto_approve' &&
       ((name === 'runtime_debug' && typeof args.code === 'string' && !!args.code.trim()) ||
         this.registry.isRuntimeScoped(name) ||
-        TERMINAL_APPROVAL_TOOLS.has(name) ||
+        (TERMINAL_APPROVAL_TOOLS.has(name) && !readOnlyTerminal) ||
         [
           'remote_terminal_create',
           'remote_terminal_write',
@@ -1112,8 +1192,8 @@ export class RegistryToolExecutor implements ToolExecutor {
       (!autoExecuteTools && remoteTerminalTool) ||
       (!remoteTerminalTool &&
         (pathRequiresApproval ||
-          TERMINAL_APPROVAL_TOOLS.has(name) ||
-          (!autoExecuteTools && ALWAYS_APPROVE_EACH_CALL_TOOLS.has(name))))
+          (TERMINAL_APPROVAL_TOOLS.has(name) && !readOnlyTerminal) ||
+          (!autoExecuteTools && ALWAYS_APPROVE_EACH_CALL_TOOLS.has(name) && !readOnlyTerminal)))
     if (!skipApprovalPolicy && forceApprovalEachCall && !this.policyEngine) {
       return {
         output: JSON.stringify({
@@ -1155,6 +1235,7 @@ export class RegistryToolExecutor implements ToolExecutor {
         toolName: name,
         args,
         permission: declaredPermission,
+        readOnlyTerminal: !!readOnlyTerminal,
       })
       const policyDecision = remoteTerminalTool
         ? autoExecuteTools
@@ -1441,6 +1522,7 @@ export class RegistryToolExecutor implements ToolExecutor {
         pairId: runtimeContext?.pairId,
         toolCallId: runtimeContext?.toolCallId,
         ...(approvedSensitiveAction ? { approvedSensitiveAction: true } : {}),
+        ...(readOnlyTerminal ? { readOnlyTerminal } : {}),
         ...(isDeviceReadTool ? { deviceReadScope: true } : {}),
         ...(approvedOutsideWorkspace ? { approvedOutsideWorkspace: true } : {}),
       }
@@ -1451,6 +1533,7 @@ export class RegistryToolExecutor implements ToolExecutor {
           context.executionId,
           name,
           context.toolCallId ?? '',
+          !!readOnlyTerminal,
         )
       const rawResult = await handler(args, context)
       if (context.taskId)
@@ -1512,6 +1595,7 @@ export class RegistryToolExecutor implements ToolExecutor {
         durationMs,
         isError,
         metadata: {
+          ...(readOnlyTerminal ? { readOnly: true } : {}),
           ...(isStructuredToolResult(structuredResult) ? structuredResult.metadata : {}),
           ...(automaticReview
             ? { automaticApproval: parseAutomaticApproval(automaticReview) }

@@ -337,8 +337,8 @@ importers:
         specifier: 7.0.0
         version: 7.0.0
       triviumdb:
-        specifier: 0.8.11
-        version: 0.8.11
+        specifier: 0.9.0-beta.2
+        version: 0.9.0-beta.2
       uuid:
         specifier: ^14.0.0
         version: 14.0.0
@@ -458,8 +458,8 @@ importers:
         specifier: 1.0.22
         version: 1.0.22
       triviumdb:
-        specifier: 0.8.11
-        version: 0.8.11
+        specifier: 0.9.0-beta.2
+        version: 0.9.0-beta.2
       typescript:
         specifier: ^5.9.3
         version: 5.9.3
@@ -6423,8 +6423,8 @@ packages:
   trim-lines@3.0.1:
     resolution: {integrity: sha512-kRj8B+YHZCc9kQYdWfJB2/oUl9rA99qbowYYBtr4ui4mZyAQ2JpvVBd/6U2YloATfqBhBTSMhTpgBHtU0Mf3Rg==}
 
-  triviumdb@0.8.11:
-    resolution: {integrity: sha512-kC3ka3+nO29pbsefVHiYgnVlYyniR04K8WOTuTjam+yOPZb9ahxavljvxtWeUZWiWoBj603gpzh1MgvsbLyaXQ==}
+  triviumdb@0.9.0-beta.2:
+    resolution: {integrity: sha512-oobUAKfGlz6dcMQnpUv7pPzh5zuvAG+bOSwjFkvytw18DWiyRgbWpySgFEdv5DgSfc6lR+Um+tv1ITcMJGCUzw==}
 
   truncate-utf8-bytes@1.0.2:
     resolution: {integrity: sha512-95Pu1QXQvruGEhv62XCMO3Mm90GscOCClvrIUwCM0PYOXK3kaF3l3sIHxx71ThJfcbM2O5Au6SO3AWCSEfW4mQ==}
@@ -13288,7 +13288,7 @@ snapshots:
 
   trim-lines@3.0.1: {}
 
-  triviumdb@0.8.11: {}
+  triviumdb@0.9.0-beta.2: {}
 
   truncate-utf8-bytes@1.0.2:
     dependencies:

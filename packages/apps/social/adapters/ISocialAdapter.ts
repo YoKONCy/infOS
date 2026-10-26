@@ -92,6 +92,8 @@ export abstract class AbstractSocialAdapter extends EventEmitter {
   canObserveGroup(_accountId: string, _channelId: string): boolean {
     return true
   }
+  /** 平台在拆分混合媒体之前校验完整正文，拒绝不能直接发送的内部标记。 */
+  validateOutbound(_message: OutboundMessage): void {}
   async getSendReadiness(message: OutboundMessage): Promise<{ ready: boolean; reason?: string }> {
     const accounts = this.getConnectedAccountIds()
     return {

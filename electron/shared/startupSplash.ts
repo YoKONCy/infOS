@@ -20,6 +20,7 @@ export interface StartupSplashState {
   connection: StartupConnectionView | null
   connectionLabels: Record<string, string>
   labels: {
+    brandCaption: string
     loading: string
     title: string
     message: string

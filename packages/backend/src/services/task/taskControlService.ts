@@ -104,6 +104,10 @@ export class TaskControlService {
     const input = parsed.data
     if (!agentId) throw new AppError('FORBIDDEN', { message: '任务入口缺少可信角色绑定' })
     if (input.action === 'create') {
+      if (context.taskId)
+        throw new AppError('FORBIDDEN', {
+          message: __t('server.task', '后台任务不能派发通用子任务'),
+        })
       if (!input.instruction)
         throw new AppError('VALIDATION_ERROR', { message: '创建任务需要指令' })
       const instruction = input.instruction
@@ -116,12 +120,9 @@ export class TaskControlService {
           agentId,
           instruction,
           title: input.title,
-          requestedBy: context.taskId ? 'agent' : (context.requestedBy ?? 'user'),
+          requestedBy: context.requestedBy ?? 'user',
           targetThreadId: link?.originThreadId ?? threadId,
-          completionAction:
-            !context.taskId && (link?.originThreadId ?? threadId) ? 'send_to_chat' : 'notify',
-          parentTaskId: context.taskId,
-          parentExecutionId: context.executionId,
+          completionAction: (link?.originThreadId ?? threadId) ? 'send_to_chat' : 'notify',
           metadata: { ...link, ...(threadId ? { originThreadId: threadId } : {}) },
           idempotencyKey: link
             ? `plan:${link.planId}:${link.planStepId}`
@@ -175,7 +176,7 @@ export class TaskControlService {
       (task.id === context.taskId ? input.action !== 'get' : task.parentTaskId !== context.taskId)
     )
       throw new AppError('FORBIDDEN', {
-        message: __t('server.task', '后台任务只能读取自身或管理自己派发的子任务'),
+        message: __t('server.task', '后台任务只能读取自身或管理直接关联的任务'),
       })
     if (task.category === 'resident')
       throw new AppError('CONFLICT', {

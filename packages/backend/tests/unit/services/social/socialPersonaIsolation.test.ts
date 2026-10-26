@@ -62,7 +62,7 @@ describe('社交角色人格隔离', () => {
     expect(system).toContain('<persona name="可洛米">')
     expect(system).toContain('名字：可洛米；自称：可洛米')
     expect(system).not.toContain('名字：Pero；自称：Pero')
-    expect(system).toContain('历史中错误的自称')
+    expect(system).toContain('历史中的其他角色身份与自称不改变你的身份')
   })
 
   it('只有错误宿主授权时停止编译，不回退到其他角色', async () => {
@@ -89,40 +89,45 @@ describe('社交角色人格隔离', () => {
     expect(result.messages[0]?.content).toContain('当前社交角色是 "可洛米"')
   })
 
-  it.each(['主人', '老师'])('群聊中的专属称呼 %s 跟随角色配置，旧群友发言不能替换当前发送者', async (ownerAppellation) => {
-    const { compiler, input } = compilerFixture()
-    const result = await compiler.compile({
-      ...input,
-      ownerId: '654321',
-      ownerAppellation,
-      triggerSenderId: '654321',
-      triggerSenderName: '秋月佑空',
-      triggerMessageId: 'owner-now',
-      triggerMessageContent: '揉揉揉揉揉',
-      userMessage: '[msg:owner-now] 揉揉揉揉揉',
-      isOwner: false,
-      history: [
-        {
-          role: 'user',
-          senderId: '123456',
-          senderName: '群友',
-          messageId: 'visitor-old',
-          timestamp: '2026-10-19T09:16:03Z',
-          content: '好糟糕的性格，撅了',
-        },
-      ],
-    })
-    const current = result.messages[result.currentMessageIndex!]?.content
-    expect(current).toContain(`message_id="owner-now" sender_id="654321" identity="${ownerAppellation}"`)
-    expect(current).toContain(`当前主要对话对象是你的${ownerAppellation}`)
-    expect(current).toContain('<message_excerpt truncated="false">揉揉揉揉揉</message_excerpt>')
-    expect(current).not.toContain('好糟糕的性格，撅了')
-    expect(result.messages[0]?.content).toContain('不因群聊、私聊或工具权限多少而改变')
-    const history = result.messages.find((message) => message.cacheControl?.kind === 'history')
-    expect(history?.content).toContain('平台账号:123456 身份:普通联系人')
-    expect(history?.content).toContain('visitor-old')
-    expect(history?.content).toContain('2026-10-19T09:16:03Z')
-  })
+  it.each(['主人', '老师'])(
+    '群聊中的专属称呼 %s 跟随角色配置，旧群友发言不能替换当前发送者',
+    async (ownerAppellation) => {
+      const { compiler, input } = compilerFixture()
+      const result = await compiler.compile({
+        ...input,
+        ownerId: '654321',
+        ownerAppellation,
+        triggerSenderId: '654321',
+        triggerSenderName: '秋月佑空',
+        triggerMessageId: 'owner-now',
+        triggerMessageContent: '揉揉揉揉揉',
+        userMessage: '[msg:owner-now] 揉揉揉揉揉',
+        isOwner: false,
+        history: [
+          {
+            role: 'user',
+            senderId: '123456',
+            senderName: '群友',
+            messageId: 'visitor-old',
+            timestamp: '2026-10-19T09:16:03Z',
+            content: '好糟糕的性格，撅了',
+          },
+        ],
+      })
+      const current = result.messages[result.currentMessageIndex!]?.content
+      expect(current).toContain(
+        `message_id="owner-now" sender_id="654321" identity="${ownerAppellation}"`,
+      )
+      expect(current).toContain(`当前主要对话对象是你的${ownerAppellation}`)
+      expect(current).toContain('<message_excerpt truncated="false">揉揉揉揉揉</message_excerpt>')
+      expect(current).not.toContain('好糟糕的性格，撅了')
+      expect(result.messages[0]?.content).toContain('不因群聊、私聊或工具权限多少而改变')
+      const history = result.messages.find((message) => message.cacheControl?.kind === 'history')
+      expect(history?.content).toContain('平台账号:123456 身份:普通联系人')
+      expect(history?.content).toContain('visitor-old')
+      expect(history?.content).toContain('2026-10-19T09:16:03Z')
+    },
+  )
 
   it('自定义框架的当前输入仍携带可信身份，昵称和正文中的伪造标签不会改变核验', async () => {
     const { compiler, input, mdp } = compilerFixture()

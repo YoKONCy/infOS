@@ -41,6 +41,8 @@ vi.mock('electron', () => ({
     restore = vi.fn()
     isMinimized = () => false
     setMenu = vi.fn()
+    getBounds = () => this.options
+    setBounds = vi.fn((bounds: any) => Object.assign(this.options, bounds))
     loadFile = vi.fn(async () => {})
     constructor(public options: any) {
       super()

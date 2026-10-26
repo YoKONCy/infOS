@@ -52,9 +52,20 @@ export class IndexMaintenanceService {
         try {
           if (this.ctx.storeRegistry.isMaintaining(path))
             return { ...target, exists: true, dimension: null, nodeCount: null, maintenance: true }
-          return { ...target, ...this.ctx.storeRegistry.describeStore(path), warnings: this.ctx.storeRegistry.storeDiagnostics(path) }
+          return {
+            ...target,
+            ...this.ctx.storeRegistry.describeStore(path),
+            warnings: this.ctx.storeRegistry.storeDiagnostics(path),
+          }
         } catch (error) {
-          return { ...target, exists: true, dimension: null, nodeCount: null, error: String(error), diagnostic: storeDiagnostic(error) }
+          return {
+            ...target,
+            exists: true,
+            dimension: null,
+            nodeCount: null,
+            error: String(error),
+            diagnostic: storeDiagnostic(error),
+          }
         }
       }),
       jobs: this.jobs.map((job) => {
@@ -78,8 +89,15 @@ export class IndexMaintenanceService {
         targets.push(...ids.map((id) => ({ scope: kind, agentId: id })))
       else targets.push({ scope: kind })
     }
-    const job: Job = { scope, agentId, total: targets.length, completed: 0, processed: 0, failed: 0,
-      results: targets.map((target): IndexMaintenanceTarget => ({ ...target, state: 'queued' })) }
+    const job: Job = {
+      scope,
+      agentId,
+      total: targets.length,
+      completed: 0,
+      processed: 0,
+      failed: 0,
+      results: targets.map((target): IndexMaintenanceTarget => ({ ...target, state: 'queued' })),
+    }
     this.pending = true
     this.jobs = [...this.jobs.slice(-9), job]
     const dimension = this.ctx.storeRegistry.getDimension()
@@ -102,11 +120,18 @@ export class IndexMaintenanceService {
                 embeddingConfig !== this.ctx.embeddingService.getConfig()
               )
                 throw new Error('向量配置已变化，请重新重建索引')
-              const result = job.results.find((item) => item.scope === target.scope && item.agentId === target.agentId)!
+              const result = job.results.find(
+                (item) => item.scope === target.scope && item.agentId === target.agentId,
+              )!
               result.state = 'running'
               const storePath = target.agentId
-                ? this.ctx.storeRegistry.resolveAgentStorePath(target.agentId, target.scope as 'main' | 'social')
-                : this.ctx.storeRegistry.resolveSharedStorePath(target.scope as 'facts' | 'knowledge')
+                ? this.ctx.storeRegistry.resolveAgentStorePath(
+                    target.agentId,
+                    target.scope as 'main' | 'social',
+                  )
+                : this.ctx.storeRegistry.resolveSharedStorePath(
+                    target.scope as 'facts' | 'knowledge',
+                  )
               try {
                 if (target.agentId && !this.ctx.agentManager.getAgent(target.agentId))
                   throw new Error('角色已删除，已停止该角色的索引重建')
@@ -117,8 +142,11 @@ export class IndexMaintenanceService {
                     signal,
                   )
                 else if (target.scope === 'social')
-                  await this.ctx.storeRegistry.withMaintenance(storePath,
-                    () => this.ctx.storeRegistry.rebuildSocialStore(target.agentId!), signal)
+                  await this.ctx.storeRegistry.withMaintenance(
+                    storePath,
+                    () => this.ctx.storeRegistry.rebuildSocialStore(target.agentId!),
+                    signal,
+                  )
                 else if (target.scope === 'facts') await this.ctx.factsRepo.rebuildStore(signal)
                 else {
                   await this.ctx.knowledgeService.reindex(true, context)
@@ -143,8 +171,14 @@ export class IndexMaintenanceService {
                 result.warnings = this.ctx.storeRegistry.storeDiagnostics(storePath)
               }
             }
-            if (job.failed) throw new AggregateError(job.results.filter((item) => item.error).map((item) => item.error),
-              __t('server.index-maintenance', '索引重建部分失败：成功 {0}，失败 {1}', [job.completed, job.failed]))
+            if (job.failed)
+              throw new AggregateError(
+                job.results.filter((item) => item.error).map((item) => item.error),
+                __t('server.index-maintenance', '索引重建部分失败：成功 {0}，失败 {1}', [
+                  job.completed,
+                  job.failed,
+                ]),
+              )
           } catch (error) {
             job.error = error instanceof Error ? error.message : String(error)
             throw error

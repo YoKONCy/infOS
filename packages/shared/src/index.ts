@@ -457,4 +457,9 @@ export * from './attachmentUpload'
 export * from './nativeAudio'
 export * from './agentPresence'
 export type * from './types/backup.types'
-export type { IndexScope, IndexMaintenanceDiagnostic, IndexMaintenanceTarget, IndexMaintenanceStatus } from './types/indexMaintenance.types'
+export type {
+  IndexScope,
+  IndexMaintenanceDiagnostic,
+  IndexMaintenanceTarget,
+  IndexMaintenanceStatus,
+} from './types/indexMaintenance.types'

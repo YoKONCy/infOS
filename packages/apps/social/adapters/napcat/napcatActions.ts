@@ -122,7 +122,7 @@ add('social', 'forward_read', '读取合并转发', { forward_id: id('转发 ID'
 add(
   'social',
   'image_read',
-  '按来源消息读取图片像素；历史中的图片占位或名称不代表已经看过画面',
+  '按需读取来源消息的图片像素，每次最多 3 张；原生表情只有编号时不提供画面',
   { message_ids: list(id('消息 ID'), 3), max_images: integer('图片数量', 1, 3) },
   ['message_ids'],
   { legacy: 'social_read_image' },
@@ -189,11 +189,19 @@ add(
 for (const action of ['list', 'search', 'read', 'collect', 'describe', 'delete']) {
   const parameters: Record<string, [SocialParameters, string[]]> = {
     list: [
-      { offset: integer('起始位置', 0, 4096), limit: integer('数量', 1, 60), refresh: { ...boolean, description: '跳过缓存重新读取收藏；核验结果不明的收藏写入时使用' } },
+      {
+        offset: integer('起始位置', 0, 4096),
+        limit: integer('数量', 1, 60),
+        refresh: { ...boolean, description: '跳过缓存重新读取收藏；核验结果不明的收藏写入时使用' },
+      },
       [],
     ],
     search: [
-      { query: text('关键词', 200), limit: integer('数量', 1, 60), refresh: { ...boolean, description: '跳过缓存重新读取收藏' } },
+      {
+        query: text('关键词', 200),
+        limit: integer('数量', 1, 60),
+        refresh: { ...boolean, description: '跳过缓存重新读取收藏' },
+      },
       ['query'],
     ],
     read: [{ sticker_id: id('表情 ID') }, ['sticker_id']],

@@ -90,18 +90,30 @@ export class MemoryStoreRegistry {
   private assertAvailable(target: string): void {
     const owner = this.maintenance.get(target)
     if (owner && owner !== this.maintenanceScope.getStore())
-      throw new StoreOperationError({ code: 'STORE_MAINTENANCE', phase: 'drain', path: target,
-        message: __t('server.index-maintenance', '数据库正在维护，请稍后重试') })
+      throw new StoreOperationError({
+        code: 'STORE_MAINTENANCE',
+        phase: 'drain',
+        path: target,
+        message: __t('server.index-maintenance', '数据库正在维护，请稍后重试'),
+      })
   }
 
   private assertNoActiveCalls(target: string): void {
     if (this.activeCalls.get(target)?.size)
-      throw new StoreOperationError({ code: 'STORE_MAINTENANCE', phase: 'drain', path: target,
-        message: __t('server.index-maintenance', '数据库仍有操作未结束，已保留原索引') })
+      throw new StoreOperationError({
+        code: 'STORE_MAINTENANCE',
+        phase: 'drain',
+        path: target,
+        message: __t('server.index-maintenance', '数据库仍有操作未结束，已保留原索引'),
+      })
   }
 
   /** 停止新访问并等待已进入的异步原生调用；同步重建和文件替换仍沿用现有流程。 */
-  async withMaintenance<T>(target: string, operation: () => T | Promise<T>, signal?: AbortSignal): Promise<T> {
+  async withMaintenance<T>(
+    target: string,
+    operation: () => T | Promise<T>,
+    signal?: AbortSignal,
+  ): Promise<T> {
     this.assertManagedStorePath(target)
     signal?.throwIfAborted()
     this.assertAvailable(target)
@@ -113,12 +125,25 @@ export class MemoryStoreRegistry {
     try {
       signal?.throwIfAborted()
       const interrupted = new Promise<never>((_, reject) => {
-        timer = setTimeout(() => reject(new StoreOperationError({ code: 'STORE_DRAIN_TIMEOUT', phase: 'drain', path: target,
-          message: __t('server.index-maintenance', '数据库仍有操作未结束，已保留原索引') })), 5000)
+        timer = setTimeout(
+          () =>
+            reject(
+              new StoreOperationError({
+                code: 'STORE_DRAIN_TIMEOUT',
+                phase: 'drain',
+                path: target,
+                message: __t('server.index-maintenance', '数据库仍有操作未结束，已保留原索引'),
+              }),
+            ),
+          5000,
+        )
         abort = () => reject(signal?.reason ?? new Error('Aborted'))
         signal?.addEventListener('abort', abort, { once: true })
       })
-      await Promise.race([Promise.allSettled([...(this.activeCalls.get(target) ?? [])]), interrupted])
+      await Promise.race([
+        Promise.allSettled([...(this.activeCalls.get(target) ?? [])]),
+        interrupted,
+      ])
       signal?.throwIfAborted()
       return await this.maintenanceScope.run(owner, operation)
     } finally {
@@ -136,8 +161,15 @@ export class MemoryStoreRegistry {
         const check = () => {
           this.assertAvailable(target)
           if (this.stores.get(target) !== view)
-            throw new StoreOperationError({ code: 'STORE_STALE_HANDLE', phase: 'access', path: target,
-              message: __t('server.index-maintenance', '数据库索引已切换，旧访问已取消，请重新读取') })
+            throw new StoreOperationError({
+              code: 'STORE_STALE_HANDLE',
+              phase: 'access',
+              path: target,
+              message: __t(
+                'server.index-maintenance',
+                '数据库索引已切换，旧访问已取消，请重新读取',
+              ),
+            })
         }
         check()
         const value = Reflect.get(store, property, store)
@@ -145,10 +177,17 @@ export class MemoryStoreRegistry {
         return (...args: unknown[]) => {
           check()
           const result: unknown = Reflect.apply(value, store, args)
-          if (result && typeof result === 'object' && typeof (result as PromiseLike<unknown>).then === 'function') {
+          if (
+            result &&
+            typeof result === 'object' &&
+            typeof (result as PromiseLike<unknown>).then === 'function'
+          ) {
             const pending = Promise.resolve(result)
             calls.add(pending)
-            void pending.then(() => calls.delete(pending), () => calls.delete(pending))
+            void pending.then(
+              () => calls.delete(pending),
+              () => calls.delete(pending),
+            )
           }
           return result === native ? view : result
         }
@@ -157,11 +196,18 @@ export class MemoryStoreRegistry {
     return view
   }
 
-  storeDiagnostics(target: string): StoreDiagnostic[] { return this.warnings.get(target) ?? [] }
-  private warnStore(target: string, error: unknown, phase: string): void {
-    this.warnings.set(target, [...this.storeDiagnostics(target).slice(-7), storeDiagnostic(error, phase)])
+  storeDiagnostics(target: string): StoreDiagnostic[] {
+    return this.warnings.get(target) ?? []
   }
-  isMaintaining(target: string): boolean { return this.maintenance.has(target) }
+  private warnStore(target: string, error: unknown, phase: string): void {
+    this.warnings.set(target, [
+      ...this.storeDiagnostics(target).slice(-7),
+      storeDiagnostic(error, phase),
+    ])
+  }
+  isMaintaining(target: string): boolean {
+    return this.maintenance.has(target)
+  }
 
   /**
    * Agent 专属事件记忆 Store (物理隔离)
@@ -377,17 +423,26 @@ export class MemoryStoreRegistry {
   /** 在同步边界内冻结写入和自动压实，SQLite 与各 Store 的复制之间不让出事件循环。 */
   captureSnapshot(destination: string, captureSqlite: () => void): void {
     if (this.maintenance.size || [...this.activeCalls.values()].some((calls) => calls.size))
-      throw new StoreOperationError({ code: 'STORE_MAINTENANCE', phase: 'snapshot',
-        message: __t('server.index-maintenance', '数据库正在维护，请稍后重试') })
+      throw new StoreOperationError({
+        code: 'STORE_MAINTENANCE',
+        phase: 'snapshot',
+        message: __t('server.index-maintenance', '数据库正在维护，请稍后重试'),
+      })
     const root = this.pathResolver.resolve('@data')
     const relativeDestination = path.relative(path.resolve(root), path.resolve(destination))
-    const backupWork = path.relative(path.join(path.resolve(root), '.backup-state', 'work'), path.resolve(destination))
-    const privateBackup = Boolean(backupWork && !backupWork.startsWith('..') && !path.isAbsolute(backupWork))
+    const backupWork = path.relative(
+      path.join(path.resolve(root), '.backup-state', 'work'),
+      path.resolve(destination),
+    )
+    const privateBackup = Boolean(
+      backupWork && !backupWork.startsWith('..') && !path.isAbsolute(backupWork),
+    )
     if (
       !relativeDestination ||
       (!relativeDestination.startsWith(`..${path.sep}`) &&
         relativeDestination !== '..' &&
-        !path.isAbsolute(relativeDestination) && !privateBackup)
+        !path.isAbsolute(relativeDestination) &&
+        !privateBackup)
     )
       throw new Error('数据库快照必须写入独立暂存目录或备份专用工作目录')
     const paths = new Set<string>(this.stores.keys())
@@ -480,8 +535,9 @@ export class MemoryStoreRegistry {
     const store = this.stores.get(tdbPath)
     if (store) return { exists: true, dimension: store.dim(), nodeCount: store.nodeCount() }
     const stat = (() => {
-      try { return statSync(tdbPath) }
-      catch (error) {
+      try {
+        return statSync(tdbPath)
+      } catch (error) {
         if ((error as NodeJS.ErrnoException).code === 'ENOENT') return null
         throw error
       }
@@ -548,8 +604,9 @@ export class MemoryStoreRegistry {
       const cached = this.stores.get(target)
       phase = 'close-active'
       operationPath = target
-      try { cached?.close() }
-      finally {
+      try {
+        cached?.close()
+      } finally {
         this.stores.delete(target)
         this.activeCalls.delete(target)
         this.textIndexDirty.delete(target)
@@ -592,65 +649,126 @@ export class MemoryStoreRegistry {
           for (const file of movedOld) renameSync(path.join(previous, path.basename(file)), file)
         } catch (rollbackError) {
           preserveStaging = true
-          throw new StoreOperationError({
-            code: 'STORE_ROLLBACK_FAILED', phase: 'rollback', path: staging,
-            message: __t('server.index-maintenance', '数据库维护未完成，阶段：{0}，路径：{1}', ['rollback', staging]),
-            causes: [storeDiagnostic(error, phase), storeDiagnostic(rollbackError, 'rollback')],
-          }, new AggregateError([error, rollbackError]))
+          throw new StoreOperationError(
+            {
+              code: 'STORE_ROLLBACK_FAILED',
+              phase: 'rollback',
+              path: staging,
+              message: __t('server.index-maintenance', '数据库维护未完成，阶段：{0}，路径：{1}', [
+                'rollback',
+                staging,
+              ]),
+              causes: [storeDiagnostic(error, phase), storeDiagnostic(rollbackError, 'rollback')],
+            },
+            new AggregateError([error, rollbackError]),
+          )
         }
         throw error
       }
     } catch (error) {
       if (error instanceof StoreOperationError) throw error
-      throw new StoreOperationError({
-        code: 'STORE_REBUILD_FAILED', phase, path: operationPath,
-        message: __t('server.index-maintenance', '数据库维护未完成，阶段：{0}，路径：{1}', [phase, operationPath]),
-        causes: [storeDiagnostic(error, phase)],
-      }, error)
+      throw new StoreOperationError(
+        {
+          code: 'STORE_REBUILD_FAILED',
+          phase,
+          path: operationPath,
+          message: __t('server.index-maintenance', '数据库维护未完成，阶段：{0}，路径：{1}', [
+            phase,
+            operationPath,
+          ]),
+          causes: [storeDiagnostic(error, phase)],
+        },
+        error,
+      )
     } finally {
       // 附带关闭、暂存清理的错误单独保留，避免覆盖最初的发布或回滚错误。
-      try { replacement?.close() }
-      catch (error) { this.warnStore(target, error, 'close-candidate') }
+      try {
+        replacement?.close()
+      } catch (error) {
+        this.warnStore(target, error, 'close-candidate')
+      }
       if (!preserveStaging && path.dirname(staging) === path.dirname(target)) {
-        try { rmSync(staging, { recursive: true, force: true }) }
-        catch (error) { this.warnStore(target, error, 'cleanup') }
+        try {
+          rmSync(staging, { recursive: true, force: true })
+        } catch (error) {
+          this.warnStore(target, error, 'cleanup')
+        }
       }
     }
   }
 
   /** 社交节点不做 Embedding，保留全部摘要、关键词与关系，只重建零向量和索引。 */
-  exportSocialBackup(agentId: string): Array<{ id: number; agent_id: string; payload_json: string; edges_json: string }> {
+  exportSocialBackup(
+    agentId: string,
+  ): Array<{ id: number; agent_id: string; payload_json: string; edges_json: string }> {
     const target = this.resolveAgentStorePath(agentId, 'social')
     if (!existsSync(target) && !this.stores.has(target)) return []
     const store = this.getAgentStore(agentId, 'social')
     const ids = new Set(store.allNodeIds())
     return [...ids].flatMap((id) => {
       const node = store.get(id)
-      return node ? [{ id, agent_id: agentId, payload_json: JSON.stringify(node.payload), edges_json: JSON.stringify(node.edges.filter((edge) => ids.has(edge.targetId))) }] : []
+      return node
+        ? [
+            {
+              id,
+              agent_id: agentId,
+              payload_json: JSON.stringify(node.payload),
+              edges_json: JSON.stringify(node.edges.filter((edge) => ids.has(edge.targetId))),
+            },
+          ]
+        : []
     })
   }
 
   /** 社交摘要只存在于 TDB；逻辑导入保留特征哈希 ID，并对摘要与关系同步重映射。 */
-  importSocialBackup(agentId: string, rows: Array<{ id: number; payload_json: string; edges_json: string }>, mode: 'skip' | 'replace' | 'duplicate', importId: string): void {
+  importSocialBackup(
+    agentId: string,
+    rows: Array<{ id: number; payload_json: string; edges_json: string }>,
+    mode: 'skip' | 'replace' | 'duplicate',
+    importId: string,
+  ): void {
     type Edge = { targetId: number; label: string; weight: number }
     type Payload = Record<string, unknown> & { type?: string; content?: string }
     const old = mode === 'replace' ? [] : this.exportSocialBackup(agentId)
-    const nodes = new Map<number, { payload: Payload; edges: Edge[] }>(old.map((row) => [row.id, { payload: JSON.parse(row.payload_json), edges: JSON.parse(row.edges_json) }]))
+    const nodes = new Map<number, { payload: Payload; edges: Edge[] }>(
+      old.map((row) => [
+        row.id,
+        { payload: JSON.parse(row.payload_json), edges: JSON.parse(row.edges_json) },
+      ]),
+    )
     const remap = new Map<number, number>()
     // 新摘要使用 u32 区间外的 ID，避免与社交 Scorer 的时间 ID 和特征哈希碰撞。
     let next = 2 ** 32
     for (const id of nodes.keys()) next = Math.max(next, id)
-    const clean = (payload: Payload) => JSON.stringify(Object.fromEntries(Object.entries(payload).filter(([key]) => !key.startsWith('_backup'))))
-    const existing = new Map<string, number>([...nodes].map(([id, node]) => [clean(node.payload), id]))
+    const clean = (payload: Payload) =>
+      JSON.stringify(
+        Object.fromEntries(Object.entries(payload).filter(([key]) => !key.startsWith('_backup'))),
+      )
+    const existing = new Map<string, number>(
+      [...nodes].map(([id, node]) => [clean(node.payload), id]),
+    )
     const retried = new Map<number, number>()
-    for (const [id, node] of nodes) if (node.payload._backupImportId === importId && typeof node.payload._backupSourceNodeId === 'number') retried.set(node.payload._backupSourceNodeId, id)
-    const incoming = rows.map((row) => ({ ...row, payload: JSON.parse(row.payload_json) as Payload, edges: JSON.parse(row.edges_json) as Edge[] }))
+    for (const [id, node] of nodes)
+      if (
+        node.payload._backupImportId === importId &&
+        typeof node.payload._backupSourceNodeId === 'number'
+      )
+        retried.set(node.payload._backupSourceNodeId, id)
+    const incoming = rows.map((row) => ({
+      ...row,
+      payload: JSON.parse(row.payload_json) as Payload,
+      edges: JSON.parse(row.edges_json) as Edge[],
+    }))
     for (const row of incoming) {
       row.payload.agentId = agentId
       if (row.payload.type === 'feature') {
         delete row.payload.agentId
         const previous = nodes.get(row.id)
-        if (previous && (previous.payload.type !== 'feature' || previous.payload.content !== row.payload.content)) throw new Error('BACKUP_SOCIAL_FEATURE_CONFLICT')
+        if (
+          previous &&
+          (previous.payload.type !== 'feature' || previous.payload.content !== row.payload.content)
+        )
+          throw new Error('BACKUP_SOCIAL_FEATURE_CONFLICT')
         remap.set(row.id, row.id)
         if (!previous) nodes.set(row.id, { payload: row.payload, edges: [] })
         continue
@@ -660,13 +778,21 @@ export class MemoryStoreRegistry {
       const id = retry ?? duplicate ?? ++next
       if (!Number.isSafeInteger(id)) throw new Error('BACKUP_RECORD_LIMIT')
       remap.set(row.id, id)
-      if (!nodes.has(id)) nodes.set(id, { payload: { ...row.payload, _backupImportId: importId, _backupSourceNodeId: row.id }, edges: [] })
+      if (!nodes.has(id))
+        nodes.set(id, {
+          payload: { ...row.payload, _backupImportId: importId, _backupSourceNodeId: row.id },
+          edges: [],
+        })
     }
     for (const row of incoming) {
       const node = nodes.get(remap.get(row.id)!)!
       for (const edge of row.edges) {
         const targetId = remap.get(edge.targetId)
-        if (targetId !== undefined && !node.edges.some((item) => item.targetId === targetId && item.label === edge.label)) node.edges.push({ ...edge, targetId })
+        if (
+          targetId !== undefined &&
+          !node.edges.some((item) => item.targetId === targetId && item.label === edge.label)
+        )
+          node.edges.push({ ...edge, targetId })
       }
     }
     this.replaceAgentStore(agentId, 'social', (store) => {
@@ -678,7 +804,9 @@ export class MemoryStoreRegistry {
           else store.indexText(id, node.payload.content)
         }
       }
-      for (const [id, node] of nodes) for (const edge of node.edges) if (nodes.has(edge.targetId)) store.link(id, edge.targetId, edge.label, edge.weight)
+      for (const [id, node] of nodes)
+        for (const edge of node.edges)
+          if (nodes.has(edge.targetId)) store.link(id, edge.targetId, edge.label, edge.weight)
     })
   }
 
@@ -862,8 +990,9 @@ export class MemoryStoreRegistry {
     this.descriptions.delete(tdbPath)
     const store = this.stores.get(tdbPath)
     if (store) {
-      try { store.close() }
-      finally {
+      try {
+        store.close()
+      } finally {
         this.stores.delete(tdbPath)
         this.activeCalls.delete(tdbPath)
       }
@@ -884,8 +1013,9 @@ export class MemoryStoreRegistry {
     this.descriptions.delete(tdbPath)
     const store = this.stores.get(tdbPath)
     if (store) {
-      try { store.close() }
-      finally {
+      try {
+        store.close()
+      } finally {
         this.stores.delete(tdbPath)
         this.activeCalls.delete(tdbPath)
       }

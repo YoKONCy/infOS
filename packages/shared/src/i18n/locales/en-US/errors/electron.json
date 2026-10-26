@@ -1,4 +1,9 @@
 {
+  "SCREENSHOT_REGION_INVALID: 选区必须是参考画面内的有效矩形": "SCREENSHOT_REGION_INVALID: The region must be a valid rectangle within the reference image",
+  "SCREENSHOT_SIZE_INVALID: maxWidth 必须是 320 到 2560 的整数": "SCREENSHOT_SIZE_INVALID: maxWidth must be an integer between 320 and 2560",
+  "SCREENSHOT_REFERENCE_REQUIRED: 区域截图需要有效的参考截图编号": "SCREENSHOT_REFERENCE_REQUIRED: A region capture requires a valid reference screenshot ID",
+  "WEB_SCREENSHOT_STALE: 参考截图已过期或页面视口已变化，请重新截图": "WEB_SCREENSHOT_STALE: The reference screenshot expired or the page viewport changed; take a new screenshot",
+  "WEB_SCREENSHOT_POINT_INVALID: 点击坐标必须位于参考截图内": "WEB_SCREENSHOT_POINT_INVALID: Pointer coordinates must be within the reference screenshot",
   "仅桌宠与主应用可以管理桌宠输入": "Only the desktop pet and the main application can manage the desktop pet input",
   "桌面设置格式不正确": "Desktop settings format is incorrect",
   "不支持的页面": "Unsupported page",

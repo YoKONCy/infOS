@@ -17,6 +17,33 @@ import {
   assertBrowserTargetScope,
   type BrowserInvocationScope,
 } from './browserScope'
+import {
+  mapScreenshotRegion,
+  screenshotMaxWidth,
+  screenshotPixelRect,
+  type ScreenshotRect,
+} from './screenshotGeometry'
+
+interface BrowserViewport {
+  width: number
+  height: number
+  scrollX: number
+  scrollY: number
+  revision: number
+  zoomFactor: number
+}
+
+interface BrowserScreenshot {
+  owner: string
+  targetId: string
+  scopeKey: string
+  generation: number
+  createdAt: number
+  viewport: BrowserViewport
+  bounds: ScreenshotRect
+  width: number
+  height: number
+}
 
 interface BrowserTarget {
   scope: BrowserInvocationScope
@@ -76,6 +103,21 @@ const PARTITION = 'persist:infos-browser'
 const SEARCH_ENDPOINT = 'https://www.bing.com/search?q='
 const NAVIGATION_TIMEOUT_MS = 15_000
 const SCREENSHOT_TIMEOUT_MS = 8_000
+// 独立世界只维护观察版本，不向页面脚本暴露截图引用或宿主状态。
+const SCREENSHOT_WORLD_ID = 1105
+const SCREENSHOT_READ_OPERATIONS = new Set([
+  'screenshot',
+  'elementScreenshot',
+  'inspect',
+  'extract',
+  'listTargets',
+  'domQuery',
+  'sourceSearch',
+  'frameQuery',
+  'runtimeStatus',
+  'networkQuery',
+  'networkBody',
+])
 const MAX_TEXT_LENGTH = 120_000
 const MAX_TARGETS = 8
 const IDLE_TIMEOUT_MS = 5 * 60 * 1000
@@ -92,6 +134,7 @@ type SearchEngine = keyof typeof SEARCH_ENGINES
 
 export class ElectronBrowserRuntime {
   private readonly targets = new Map<string, BrowserTarget>()
+  private readonly screenshots = new Map<string, BrowserScreenshot>()
   private defaultActiveTargetId?: string
   private readonly scopedActiveTargets = new Map<string, string>()
   private get activeTargetId(): string | undefined {
@@ -126,6 +169,7 @@ export class ElectronBrowserRuntime {
   private invocationRunning = false
   private readonly invocationContext = new AsyncLocalStorage<{
     scope: BrowserInvocationScope
+    screenshotCaller?: string
     targetId?: string
     cancelled: boolean
   }>()
@@ -150,6 +194,8 @@ export class ElectronBrowserRuntime {
       return this.invocationContext.run(
         {
           scope,
+          screenshotCaller:
+            typeof input.__screenshotCaller === 'string' ? input.__screenshotCaller : undefined,
           targetId:
             this.scopedActiveTargets.get(scope.key) ??
             (scope.key === 'legacy' ? this.defaultActiveTargetId : undefined),
@@ -200,6 +246,12 @@ export class ElectronBrowserRuntime {
   }
 
   private async dispatch(operation: string, input: Record<string, unknown>): Promise<unknown> {
+    // 坐标动作先验证自己的截图引用，其余页面变更在执行前作废旧图。
+    if (
+      !SCREENSHOT_READ_OPERATIONS.has(operation) &&
+      !['click', 'nativeClick', 'hover'].includes(operation)
+    )
+      this.clearScreenshots(this.scope().key)
     switch (operation) {
       case 'open':
         return this.open(String(input.url ?? 'about:blank'))
@@ -210,13 +262,17 @@ export class ElectronBrowserRuntime {
       case 'search':
         return this.search(input)
       case 'screenshot':
-        return this.screenshot()
+        return this.screenshot(input)
       case 'elementScreenshot':
         return this.elementScreenshot(input)
       case 'click':
       case 'nativeClick':
+        if (input.screenshotId !== undefined || input.x !== undefined || input.y !== undefined)
+          return this.pointAction(input, false)
         return this.click(String(input.handle ?? input.target ?? ''))
       case 'hover':
+        if (input.screenshotId !== undefined || input.x !== undefined || input.y !== undefined)
+          return this.pointAction(input, true)
         return this.hover(String(input.handle ?? input.target ?? ''))
       case 'type':
       case 'setValue':
@@ -280,6 +336,7 @@ export class ElectronBrowserRuntime {
       assertBrowserTargetScope(target.scope.key, this.scope().key)
     if (this.invocationContext.getStore()?.cancelled)
       throw new Error('WEB_OPERATION_CANCELLED: 浏览器操作已结束')
+    if (this.activeTargetId !== target.id) this.clearScreenshots(target.scope.key)
     this.activeTargetId = target.id
     // Agent 的操作目标与用户正在查看的标签分别维护。
     const context = this.invocationContext.getStore()
@@ -376,6 +433,7 @@ export class ElectronBrowserRuntime {
       if (!target.view.webContents.isDestroyed()) await desktopTabs.close(target.tabId, true)
     }
     this.targets.clear()
+    this.screenshots.clear()
     this.scopedActiveTargets.clear()
     this.programmaticCloseTargetIds.clear()
     this.activeTargetId = undefined
@@ -709,6 +767,7 @@ export class ElectronBrowserRuntime {
   }
 
   private async elementScreenshot(input: Record<string, unknown>): Promise<unknown> {
+    if (input.maxWidth !== undefined) screenshotMaxWidth(input.maxWidth)
     const key = String(input.imageId ?? input.handle ?? input.target ?? '')
     if (!key) throw new Error('WEB_IMAGE_TARGET_REQUIRED: 缺少图片ID或元素句柄')
     this.assertHandleGeneration(key)
@@ -750,34 +809,222 @@ export class ElectronBrowserRuntime {
     )
       throw new Error('WEB_IMAGE_TARGET_HIDDEN: 目标元素没有可见的截图区域')
     this.assertScreenshotTarget(target, generation)
+    const viewport = await this.screenshotViewport(target)
     const image = await this.captureViewport(target)
-    const viewport = (await contents.executeJavaScript(
-      '({ width: innerWidth, height: innerHeight, scrollX, scrollY })',
-    )) as { width: number; height: number; scrollX: number; scrollY: number }
+    const after = await this.screenshotViewport(target)
     this.assertScreenshotTarget(target, generation)
     if (
       viewport.width !== bounds.viewportWidth ||
       viewport.height !== bounds.viewportHeight ||
       viewport.scrollX !== bounds.scrollX ||
-      viewport.scrollY !== bounds.scrollY
+      viewport.scrollY !== bounds.scrollY ||
+      JSON.stringify(viewport) !== JSON.stringify(after)
     )
       throw new Error('WEB_SCREENSHOT_STALE: 截图期间页面尺寸或位置已变化，请重新读取元素后截图')
-    // 先统一获取当前视口，再按实际图像比例裁剪，兼容缩放与高 DPI。
-    const size = image.getSize()
-    const scaleX = size.width / bounds.viewportWidth
-    const scaleY = size.height / bounds.viewportHeight
-    const x = Math.max(0, Math.floor(bounds.x * scaleX))
-    const y = Math.max(0, Math.floor(bounds.y * scaleY))
-    const right = Math.min(size.width, Math.ceil((bounds.x + bounds.width) * scaleX))
-    const bottom = Math.min(size.height, Math.ceil((bounds.y + bounds.height) * scaleY))
-    const cropped = image.crop({ x, y, width: right - x, height: bottom - y })
-    if (cropped.isEmpty()) throw new Error('WEB_SCREENSHOT_EMPTY: 未生成元素截图')
-    return { base64: cropped.toPNG().toString('base64'), mimeType: 'image/png', target: key }
+    return {
+      ...this.screenshotResult(target, image, viewport, bounds, input.maxWidth),
+      target: key,
+    }
   }
 
-  private async screenshot(): Promise<unknown> {
-    const image = await this.captureViewport(this.activeTarget())
-    return { base64: image.toPNG().toString('base64'), mimeType: 'image/png' }
+  private async screenshot(input: Record<string, unknown>): Promise<unknown> {
+    const target = this.activeTarget()
+    const generation = target.generation
+    const viewport = await this.screenshotViewport(target)
+    const reference =
+      input.region !== undefined
+        ? this.screenshotReference(input.screenshotId, target, viewport)
+        : undefined
+    const bounds = reference
+      ? mapScreenshotRegion(input.region, reference, reference.bounds)
+      : { x: 0, y: 0, width: viewport.width, height: viewport.height }
+    if (input.maxWidth !== undefined) screenshotMaxWidth(input.maxWidth)
+    const image = await this.captureViewport(target)
+    const after = await this.screenshotViewport(target)
+    this.assertScreenshotTarget(target, generation)
+    if (JSON.stringify(viewport) !== JSON.stringify(after)) throw this.staleScreenshot()
+    return {
+      ...this.screenshotResult(target, image, viewport, bounds, input.maxWidth),
+      ...(reference ? { referenceScreenshotId: input.screenshotId } : {}),
+    }
+  }
+
+  private staleScreenshot(): Error {
+    return new Error(
+      __t('errors.electron', 'WEB_SCREENSHOT_STALE: 参考截图已过期或页面视口已变化，请重新截图'),
+    )
+  }
+
+  private async screenshotViewport(target: BrowserTarget): Promise<BrowserViewport> {
+    const generation = target.generation
+    const viewport = (await target.view.webContents.executeJavaScriptInIsolatedWorld(
+      SCREENSHOT_WORLD_ID,
+      [
+        {
+          code: `(() => {
+        if (!globalThis.__infosScreenshotViewport) {
+          const state = { revision: 0 };
+          globalThis.__infosScreenshotViewport = state;
+          const changed = () => state.revision++;
+          addEventListener('scroll', changed, true);
+          addEventListener('resize', changed);
+          visualViewport?.addEventListener('resize', changed);
+          visualViewport?.addEventListener('scroll', changed);
+        }
+        return { width: innerWidth, height: innerHeight, scrollX, scrollY,
+          revision: globalThis.__infosScreenshotViewport.revision };
+      })()`,
+        },
+      ],
+    )) as Omit<BrowserViewport, 'zoomFactor'>
+    this.assertScreenshotTarget(target, generation)
+    return { ...viewport, zoomFactor: target.view.webContents.getZoomFactor() }
+  }
+
+  private screenshotReference(
+    id: unknown,
+    target: BrowserTarget,
+    viewport: BrowserViewport,
+  ): BrowserScreenshot {
+    const reference = this.screenshots.get(String(id ?? ''))
+    if (
+      !reference ||
+      reference.owner !== this.screenshotOwner() ||
+      reference.targetId !== target.id ||
+      reference.scopeKey !== this.scope().key ||
+      reference.generation !== target.generation ||
+      Date.now() - reference.createdAt > 120_000 ||
+      JSON.stringify(reference.viewport) !== JSON.stringify(viewport)
+    )
+      throw this.staleScreenshot()
+    return reference
+  }
+
+  private screenshotOwner(): string {
+    return JSON.stringify([
+      this.activeOperator,
+      this.invocationContext.getStore()?.screenshotCaller,
+    ])
+  }
+
+  private clearScreenshots(scopeKey: string): void {
+    for (const [id, reference] of this.screenshots)
+      if (reference.scopeKey === scopeKey) this.screenshots.delete(id)
+  }
+
+  private screenshotResult(
+    target: BrowserTarget,
+    image: NativeImage,
+    viewport: BrowserViewport,
+    area: ScreenshotRect,
+    maxWidth?: unknown,
+  ) {
+    const size = image.getSize()
+    const pixels = screenshotPixelRect(
+      {
+        x: (area.x * size.width) / viewport.width,
+        y: (area.y * size.height) / viewport.height,
+        width: (area.width * size.width) / viewport.width,
+        height: (area.height * size.height) / viewport.height,
+      },
+      size,
+    )
+    const bounds = {
+      x: (pixels.x * viewport.width) / size.width,
+      y: (pixels.y * viewport.height) / size.height,
+      width: (pixels.width * viewport.width) / size.width,
+      height: (pixels.height * viewport.height) / size.height,
+    }
+    let cropped = image.crop(pixels)
+    if (maxWidth !== undefined && cropped.getSize().width > screenshotMaxWidth(maxWidth))
+      cropped = cropped.resize({ width: screenshotMaxWidth(maxWidth), quality: 'best' })
+    if (cropped.isEmpty()) throw new Error('WEB_SCREENSHOT_EMPTY: 未生成元素截图')
+    const screenshotId = randomUUID()
+    const outputSize = cropped.getSize()
+    this.screenshots.set(screenshotId, {
+      owner: this.screenshotOwner(),
+      targetId: target.id,
+      scopeKey: this.scope().key,
+      generation: target.generation,
+      createdAt: Date.now(),
+      viewport,
+      bounds,
+      ...outputSize,
+    })
+    while (this.screenshots.size > 32)
+      this.screenshots.delete(this.screenshots.keys().next().value!)
+    return {
+      base64: cropped.toPNG().toString('base64'),
+      mimeType: 'image/png',
+      screenshotId,
+      coordinateContext: {
+        screenshotId,
+        targetId: target.id,
+        generation: target.generation,
+        coordinateSpace: 'screenshot',
+        screenshotWidth: outputSize.width,
+        screenshotHeight: outputSize.height,
+        sourceCoordinateSpace: 'viewport-css',
+        bounds,
+        viewport,
+      },
+    }
+  }
+
+  private async pointAction(input: Record<string, unknown>, hover: boolean): Promise<unknown> {
+    const target = this.activeTarget()
+    await this.attachDebugger(target)
+    const viewport = await this.screenshotViewport(target)
+    const reference = this.screenshotReference(input.screenshotId, target, viewport)
+    const x = input.x,
+      y = input.y
+    if (
+      typeof x !== 'number' ||
+      typeof y !== 'number' ||
+      !Number.isFinite(x) ||
+      !Number.isFinite(y) ||
+      x < 0 ||
+      y < 0 ||
+      x >= reference.width ||
+      y >= reference.height ||
+      input.target ||
+      input.handle
+    )
+      throw new Error(
+        __t('errors.electron', 'WEB_SCREENSHOT_POINT_INVALID: 点击坐标必须位于参考截图内'),
+      )
+    const point = {
+      x: reference.bounds.x + (x * reference.bounds.width) / reference.width,
+      y: reference.bounds.y + (y * reference.bounds.height) / reference.height,
+    }
+    this.clearScreenshots(reference.scopeKey)
+    await target.view.webContents.debugger.sendCommand('Input.dispatchMouseEvent', {
+      type: 'mouseMoved',
+      ...point,
+    })
+    this.assertScreenshotTarget(target, reference.generation)
+    if (!hover) {
+      if (JSON.stringify(await this.screenshotViewport(target)) !== JSON.stringify(viewport))
+        throw this.staleScreenshot()
+      try {
+        await target.view.webContents.debugger.sendCommand('Input.dispatchMouseEvent', {
+          type: 'mousePressed',
+          button: 'left',
+          buttons: 1,
+          clickCount: 1,
+          ...point,
+        })
+      } finally {
+        await target.view.webContents.debugger.sendCommand('Input.dispatchMouseEvent', {
+          type: 'mouseReleased',
+          button: 'left',
+          buttons: 0,
+          clickCount: 1,
+          ...point,
+        })
+      }
+    }
+    return { dispatched: true, screenshotId: input.screenshotId, viewportPoint: point }
   }
 
   private assertScreenshotTarget(target: BrowserTarget, generation: number): void {
@@ -853,6 +1100,7 @@ export class ElectronBrowserRuntime {
   }
 
   private async click(target: string): Promise<unknown> {
+    this.clearScreenshots(this.scope().key)
     this.assertHandleGeneration(target)
     await this.withElement(target, `(element) => element.click()`)
     await this.wait({ ms: 250 })
@@ -860,6 +1108,7 @@ export class ElectronBrowserRuntime {
   }
 
   private async hover(target: string): Promise<unknown> {
+    this.clearScreenshots(this.scope().key)
     await this.withElement(
       target,
       `(element) => element.dispatchEvent(new MouseEvent('mouseover', { bubbles: true }))`,
@@ -1128,6 +1377,8 @@ export class ElectronBrowserRuntime {
       )
     } catch (error) {
       this.targets.delete(id)
+      for (const [screenshotId, reference] of this.screenshots)
+        if (reference.targetId === id) this.screenshots.delete(screenshotId)
       view.webContents.close({ waitForBeforeUnload: false })
       throw error
     }
@@ -1156,6 +1407,8 @@ export class ElectronBrowserRuntime {
       }
       this.lastCloseReason = programmatic ? 'programmatic' : 'user-closed'
       this.targets.delete(id)
+      for (const [screenshotId, reference] of this.screenshots)
+        if (reference.targetId === id) this.screenshots.delete(screenshotId)
       for (const [key, selected] of this.scopedActiveTargets)
         if (selected === id) this.scopedActiveTargets.delete(key)
       if (this.defaultActiveTargetId === id)
@@ -1208,7 +1461,10 @@ export class ElectronBrowserRuntime {
     view.webContents.on('did-navigate', sync)
     view.webContents.on('did-navigate-in-page', sync)
     view.webContents.on('did-start-navigation', (_event, _url, _isInPlace, isMainFrame) => {
-      if (isMainFrame) target.generation += 1
+      if (isMainFrame) {
+        target.generation += 1
+        this.clearScreenshots(target.scope.key)
+      }
     })
     view.webContents.on('did-finish-load', () => {
       target.generation = Math.max(1, target.generation)

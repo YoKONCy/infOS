@@ -65,12 +65,14 @@ describe('MemoryStoreRegistry维度联动', () => {
         registry.replaceAgentStore('pero', 'social', () => {
           throw new Error('模拟构建失败')
         }),
-      ).toThrow(expect.objectContaining({
-        diagnostic: expect.objectContaining({
-          phase: 'build',
-          causes: [expect.objectContaining({ message: '模拟构建失败' })],
+      ).toThrow(
+        expect.objectContaining({
+          diagnostic: expect.objectContaining({
+            phase: 'build',
+            causes: [expect.objectContaining({ message: '模拟构建失败' })],
+          }),
         }),
-      }))
+      )
       expect(registry.getAgentStore('pero', 'social').get(1)?.payload).toEqual({
         content: '保留的记忆',
       })
@@ -144,7 +146,7 @@ describe('MemoryStoreRegistry维度联动', () => {
     registry.closeAll()
   })
 
-  it('重置 Store 时清理 0.8.11 文件组与历代升级备份，保留相邻文件', () => {
+  it('重置 Store 时清理完整文件组与历代升级备份，保留相邻文件', () => {
     const root = join(temporaryRoot, `infos-store-reset-${Date.now()}-${Math.random()}`)
     roots.push(root)
     mkdirSync(root, { recursive: true })
@@ -179,6 +181,13 @@ describe('MemoryStoreRegistry维度联动', () => {
       '.publish.0',
       '.publish.1',
       '.publish.2',
+      '.publish.3',
+      '.publish.4',
+      '.publish.5',
+      '.publish.6',
+      '.publish.7',
+      '.publish.8',
+      '.publish.8.tmp',
       '.publish.0.tmp',
     ]
     for (const suffix of suffixes) writeFileSync(`${storePath}${suffix}`, '测试')
@@ -220,9 +229,11 @@ describe('MemoryStoreRegistry维度联动', () => {
       const store = registry.getAgentStore('pero', 'main')
       const path = registry.resolveAgentStorePath('pero', 'main')
       registry.markTextIndexDirty(path)
-      const build = vi.spyOn(Object.getPrototypeOf(store), 'buildTextIndex').mockImplementationOnce(() => {
-        throw new Error('模拟文本索引损坏')
-      })
+      const build = vi
+        .spyOn(Object.getPrototypeOf(store), 'buildTextIndex')
+        .mockImplementationOnce(() => {
+          throw new Error('模拟文本索引损坏')
+        })
       expect(() => registry.ensureTextIndexReady('pero', 'desktop')).toThrow('模拟文本索引损坏')
       expect(registry.ensureTextIndexReady('pero', 'desktop')).toBe(store)
       expect(build).toHaveBeenCalledTimes(2)

@@ -330,7 +330,16 @@ exports.default = async function afterPack(context) {
   const resourcesDir = path.join(appOutDir, 'resources')
 
   // 壳层开屏独立于业务服务，发行包必须携带完整本地资源。
-  for (const name of ['index.html', 'splash.css', 'splash.js', 'artwork.png']) {
+  for (const name of [
+    'index.html',
+    'splash.css',
+    'splash.js',
+    'artwork.png',
+    'penora-artwork.png',
+    'penora-logo-patch.png',
+    'penora-happy.woff2',
+    'penora.css',
+  ]) {
     await assertFile(path.join(resourcesDir, 'splash', name), `splash/${name}`)
   }
 

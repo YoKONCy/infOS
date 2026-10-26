@@ -1,5 +1,35 @@
 // 连接选择、启动进度与失败恢复共用开屏；凭据只在提交时传给主进程。
 const bridge = window.startupSplash
+const penora = document.querySelector('#penora-splash')
+const rail = penora.querySelector('#progress-rail')
+const railLength = rail.getTotalLength()
+let stageProgress = 0
+
+// 显示启动阶段的完成比例，不按时间虚增，也不把资源加载量冒充精确进度。
+function updateStageProgress(phase) {
+  const stages = { opening: 0, connection: 0, backend: 33, launcher: 67, ready: 100 }
+  if (Object.hasOwn(stages, phase)) stageProgress = stages[phase]
+  const normalized = stageProgress * 10
+  for (const item of penora.querySelectorAll('.progress-fill'))
+    item.setAttribute('stroke-dasharray', `${normalized} 1000`)
+  const tail = penora.querySelector('.progress-tail')
+  const length = Math.min(68, normalized)
+  tail.setAttribute('stroke-dasharray', `${length} 1000`)
+  tail.setAttribute('stroke-dashoffset', String(-(normalized - length)))
+  const position = (railLength * stageProgress) / 100
+  const point = rail.getPointAtLength(position)
+  const before = rail.getPointAtLength(Math.max(0, position - 1))
+  const after = rail.getPointAtLength(Math.min(railLength, position + 1))
+  const head = penora.querySelector('[data-progress-head]')
+  const angle = (Math.atan2(after.y - before.y, after.x - before.x) * 180) / Math.PI
+  head.setAttribute('transform', `translate(${point.x} ${point.y}) rotate(${angle})`)
+  penora.dataset.empty = String(stageProgress === 0)
+  penora.querySelector('[data-progress-label]').textContent = String(stageProgress)
+  penora
+    .querySelector('[data-terminal-light]')
+    .setAttribute('opacity', stageProgress === 100 ? '.93' : '.18')
+  progress.setAttribute('aria-valuenow', String(stageProgress))
+}
 let revision = -1
 const failure = document.querySelector('#failure')
 const progress = document.querySelector('#progress')
@@ -70,6 +100,9 @@ function render(state) {
   revision = state.revision
   document.documentElement.lang = state.language
   document.body.dataset.phase = state.phase
+  updateStageProgress(state.phase)
+  for (const caption of document.querySelectorAll('.brand-caption'))
+    caption.textContent = state.labels.brandCaption
   const wasChoosing = !connection.hidden
   connection.hidden = !state.connection
   if (state.connection) {
@@ -119,10 +152,7 @@ function render(state) {
   if (state.phase === 'failed' && !previouslyFailed) document.querySelector('#retry').focus()
 }
 bridge.onState(render)
-bridge
-  .getState()
-  .then(render)
-  .catch(() => bridge.failed())
+const initialState = bridge.getState().then(render)
 for (const action of ['retry', 'logs', 'quit'])
   document.querySelector(`#${action}`).addEventListener('click', () => bridge.action(action))
 document.querySelector('#close').addEventListener('click', () => bridge.action('quit'))
@@ -205,10 +235,17 @@ form.addEventListener('submit', async (event) => {
     if (!connection.hidden) updateConnectionControls()
   }
 })
-// 必须等 PNG 解码及实际排版帧完成，不能在空白底上就通知主进程显示。
-document
-  .querySelector('#artwork')
-  .decode()
+// 两套本地插画、字体和初始状态均准备好，再通知主进程显示，避免切到配置时出现空白。
+Promise.all([
+  initialState,
+  document.querySelector('#artwork').decode(),
+  ...Array.from(penora.querySelectorAll('image'), (element) => {
+    const image = new Image()
+    image.src = element.getAttribute('href')
+    return image.decode()
+  }),
+  document.fonts.ready,
+])
   .then(() => {
     requestAnimationFrame(() => requestAnimationFrame(() => bridge.painted()))
   })

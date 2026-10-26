@@ -5,14 +5,95 @@
     <meta name="viewport" content="width=device-width,initial-scale=1" />
     <meta
       http-equiv="Content-Security-Policy"
-      content="default-src 'none'; img-src 'self'; style-src 'self'; script-src 'self'; connect-src 'none'; object-src 'none'; base-uri 'none'; form-action 'none'"
+      content="default-src 'none'; img-src 'self'; style-src 'self'; font-src 'self'; script-src 'self'; connect-src 'none'; object-src 'none'; base-uri 'none'; form-action 'none'"
     />
     <title>infOS</title>
     <link rel="stylesheet" href="splash.css" />
+    <link rel="stylesheet" href="penora.css" />
     <script src="splash.js" defer></script>
   </head>
   <body data-phase="opening">
     <main class="scene">
+<svg id="penora-splash" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1920 1080" aria-hidden="true">
+<defs>
+ <image id="penora-source" href="penora-artwork.png" width="1920" height="1080"/>
+ <image id="penora-logo-background" href="penora-logo-patch.png" x="1545" y="95" width="225" height="170" preserveAspectRatio="none"/>
+ <filter id="logo-seam" x="-30%" y="-30%" width="160%" height="160%"><feGaussianBlur stdDeviation="6"/></filter>
+ <mask id="logo-repair" maskUnits="userSpaceOnUse" x="1545" y="95" width="225" height="170"><rect x="1578" y="119" width="139" height="110" rx="27" fill="white" filter="url(#logo-seam)"/></mask>
+
+<path id="frame-shape" d="M42 64Q0 64 0 106V958Q0 980 17 995L94 1063Q111 1080 136 1080H445Q461 1080 473 1069L498 1047Q510 1036 526 1036H588Q604 1036 616 1047L641 1069Q653 1080 669 1080H1774Q1788 1080 1797 1069L1808 1056Q1815 1048 1827 1045L1860 1035Q1877 1030 1889 1017L1907 997Q1920 984 1920 965V54Q1920 18 1884 18H1266Q1249 18 1237 29L1212 52Q1200 63 1183 63H1091Q1074 63 1062 51L1028 17Q1011 0 987 0H314Q295 0 282 14L248 50Q235 64 216 64Z"/>
+<symbol id="official-brand-mark" viewBox="0 0 160 160"><defs><linearGradient id="official-mark-cool" x1="0" y1="0" x2="1" y2="1"><stop stop-color="#6c9bed"/><stop offset="1" stop-color="#ad8cdb"/></linearGradient></defs><path d="M80 67 18 36 12 82 57 107Z" fill="#6c9bed"/><path d="M80 67 142 36 148 82 103 107Z" fill="#6e58a8"/><path d="M57 107 46 133 80 119 114 133 103 107 80 91Z" fill="url(#official-mark-cool)"/><path d="M80 52 99 76 80 96 61 76Z" fill="#ad8cdb"/><path d="M18 36 80 67 57 107 48 78Z" fill="url(#official-mark-cool)"/></symbol>
+<symbol id="official-brand-type" viewBox="0 0 260 82"><defs><symbol id="penora-official-type" viewBox="0 0 260 82">
+      <g fill="none" stroke="currentColor" stroke-width="8" stroke-linecap="butt" stroke-linejoin="round">
+        <path d="M8 34V70M33 70V34H54C63 34 68 40 68 49V70M94 70V24C94 16 100 12 109 12H122M82 35H116" />
+        <path d="M157 12H169C183 12 190 23 190 41S183 70 169 70H157C143 70 136 59 136 41S143 12 157 12ZM248 17C239 11 214 8 209 24 203 43 248 35 248 54 248 74 219 74 205 64" />
+      </g><rect x="4" y="11" width="8" height="8" rx="1" fill="#6c9bed" />
+    </symbol></defs><use href="#penora-official-type" width="260" height="82" /></symbol>
+<linearGradient id="fold-material" x1="0" y1="0" x2="1" y2="1"><stop stop-color="#a5c6ff" stop-opacity=".2"/><stop offset=".5" stop-color="#bca4e7" stop-opacity=".06"/><stop offset="1" stop-color="#d4c7ff" stop-opacity=".23"/></linearGradient>
+<linearGradient id="fold-highlight" x1="0" y1="0" x2="1" y2="1"><stop stop-color="#a2ddff" stop-opacity=".15"/><stop offset=".45" stop-color="#e3d9ff" stop-opacity=".8"/><stop offset="1" stop-color="#b0bffa" stop-opacity=".2"/></linearGradient>
+<linearGradient id="stream-light" x1="1280" y1="350" x2="1858" y2="1024" gradientUnits="userSpaceOnUse"><stop stop-color="#a0d8ff"/><stop offset=".25" stop-color="#e9dbff"/><stop offset=".52" stop-color="#c4baff"/><stop offset=".78" stop-color="#c4edff"/><stop offset="1" stop-color="#f4c5ef"/></linearGradient>
+<radialGradient id="brand-aura"><stop stop-color="#d2baff" stop-opacity=".19"/><stop offset="1" stop-color="#bcbeff" stop-opacity="0"/></radialGradient>
+<radialGradient id="head-aura"><stop stop-color="#f7f8ff" stop-opacity=".9"/><stop offset=".2" stop-color="#b6e3ff" stop-opacity=".5"/><stop offset="1" stop-color="#a5d3ff" stop-opacity="0"/></radialGradient>
+<filter id="stream-glow" x="-6%" y="-6%" width="112%" height="112%"><feGaussianBlur stdDeviation="5"/></filter>
+<filter id="brand-soft" x="-25%" y="-25%" width="150%" height="150%"><feGaussianBlur stdDeviation="3"/></filter>
+<filter id="crystal-charge" x="0" y="0" width="100%" height="100%" color-interpolation-filters="sRGB"><feColorMatrix values="1 0 0 0 0  0 1 0 0 0  0 0 1 0 0  .6378 2.1456 .2166 0 -2.05"/><feGaussianBlur stdDeviation=".7"/></filter>
+<path id="progress-rail" d="M1278 359C1500 363 1780 381 1876 424C1995 478 1750 577 1370 671C1260 750 1182 798 1065 814C910 818 744 767 562 708C375 653 280 671 328 738C379 793 534 780 689 816C1073 922 1550 992 1858 1024" pathLength="1000"/>
+<mask id="stream-charge" maskUnits="userSpaceOnUse" x="0" y="0" width="1920" height="1080"><use class="progress-fill" href="#progress-rail" fill="none" stroke="white" stroke-width="62" stroke-dasharray="240 1000"/></mask>
+<mask id="progress-occlusion" maskUnits="userSpaceOnUse" x="0" y="0" width="1920" height="1080"><rect width="1920" height="1080" fill="white"/><g fill="black" stroke="black" stroke-width="7" stroke-linejoin="round"><path d="M0 170H370L398 56L692 0L800 145L901 137L1010 205L1166 279L1320 248L1327 369L1173 395L1106 466L1064 516L896 535L807 656L693 748L510 742L500 858L420 938L160 945L0 837Z"/><path d="M1008 506Q1040 483 1077 516L1266 665L1390 746L1550 828L1752 947L1762 1041L1660 1055L1517 1008L1430 974L1316 947L1202 812L1116 712L1038 651L957 691L886 744L743 758L756 651L912 542Z"/><path d="M936 640L1017 622L1168 732L1254 828L1343 863L1436 970L1436 1014L1340 1034L1221 989L1175 920L1142 855L1063 789L1025 750L977 719Z"/></g></mask>
+
+ <clipPath id="window-outline"><use href="#frame-shape"/></clipPath>
+ <linearGradient id="frame-rim" x1="0" y1="0" x2="1920" y2="1080" gradientUnits="userSpaceOnUse"><stop stop-color="#c8deff" stop-opacity=".5"/><stop offset=".28" stop-color="#a9bafa" stop-opacity=".12"/><stop offset=".62" stop-color="#d4bbf4" stop-opacity=".34"/><stop offset="1" stop-color="#a4d7ff" stop-opacity=".36"/></linearGradient>
+</defs>
+<g clip-path="url(#window-outline)">
+ <g id="penora-art"><use href="#penora-source"/><use href="#penora-logo-background" mask="url(#logo-repair)"/></g>
+
+<g id="progress-stream" data-layer="progress-stream">
+ <g mask="url(#progress-occlusion)" fill="none" stroke-linecap="round">
+  <g mask="url(#stream-charge)"><use href="#penora-art" filter="url(#crystal-charge)" opacity=".78" class="penora-inline-0"/></g>
+  <use href="#progress-rail" stroke="#c9d6fa" stroke-width=".7" opacity=".12"/>
+  <use class="progress-fill" href="#progress-rail" stroke="url(#stream-light)" stroke-width="23" opacity=".36" filter="url(#stream-glow)" stroke-dasharray="240 1000"/>
+  <use class="progress-fill" href="#progress-rail" stroke="url(#stream-light)" stroke-width="1.7" opacity=".7" stroke-dasharray="240 1000"/>
+  <use class="progress-fill" href="#progress-rail" stroke="#f4f6ff" stroke-width=".75" opacity=".86" stroke-dasharray="240 1000"/>
+  <use class="progress-tail" href="#progress-rail" stroke="#dfefff" stroke-width="3.3" opacity=".65" stroke-dasharray="68 1000" stroke-dashoffset="-172"/>
+  <g data-progress-head="" transform="translate(1643.7680930000001 594.75065) rotate(162.134545285068)"><g class="light-core" stroke="none">
+   <ellipse cx="-10" rx="43" ry="21" fill="url(#head-aura)"/><path d="M-31 0H5M0 -12V12" fill="none" stroke="#d7f0ff" stroke-width="4" filter="url(#stream-glow)"/><path d="M-19 0H3M0 -9V9" stroke="#fff8ff" stroke-width="1.1"/>
+   <circle r="2" fill="#fff"/><path d="M-39 -8L-35 -11L-31 -8L-35 -5ZM-59 6L-56 4L-53 6L-56 9Z" fill="#d9c9ff" opacity=".85"/>
+  </g></g>
+ </g>
+</g>
+
+
+<g id="fold-layer" data-layer="folds" fill="url(#fold-material)" stroke="url(#fold-highlight)" stroke-width=".9" stroke-linejoin="round">
+ <path d="M987 0Q1011 0 1028 17L1062 51Q1074 63 1091 63H1183Q1200 63 1212 52L1237 29Q1249 18 1266 18L1225 94Q1218 107 1202 107H1082Q1066 107 1054 95Z"/><path d="M445 1080Q461 1080 473 1069L498 1047Q510 1036 526 1036H588Q604 1036 616 1047L641 1069Q653 1080 669 1080L631 1008Q624 995 609 995H511Q496 995 486 1008Z"/><path d="M1745 1080H1774Q1788 1080 1797 1069L1808 1056Q1815 1048 1827 1045L1860 1035Q1877 1030 1889 1017L1907 997Q1920 984 1920 965L1860 988L1838 1015L1794 1029Z"/>
+ <g fill="none" stroke-width="1.2"><path d="M987 1L1082 106L1091 64M1202 106L1183 64M511 996L526 1036M609 996L588 1036M1794 1029L1827 1045M1860 989V1035"/></g>
+ <g fill="#d4d6ff" stroke="none" opacity=".6"><path d="M1121 81L1125 77L1129 81L1125 85Z"/><rect x="1138" y="79" width="3" height="3" rx=".5"/><rect x="1148" y="79" width="3" height="3" rx=".5"/></g>
+</g>
+
+
+<g id="brand-layer" data-layer="brand"><g class="brand-float">
+ <ellipse cx="1380" cy="151" rx="145" ry="114" fill="url(#brand-aura)"/>
+ <use href="#official-brand-mark" x="1258" y="34" width="241" height="241" opacity=".48" filter="url(#brand-soft)"/>
+ <use href="#official-brand-mark" x="1258" y="34" width="241" height="241"/>
+ <g transform="translate(1258 34) scale(1.50625)" fill="none" stroke="#ddd9ff" stroke-opacity=".53" stroke-width=".7"><path d="M18 36L80 67L57 107L12 82ZM80 67L142 36L148 82L103 107ZM80 52L99 76L80 96L61 76ZM57 107L46 133L80 119L114 133L103 107"/></g>
+</g></g>
+<g id="title-layer" data-layer="titles">
+ <use href="#official-brand-type" x="1503" y="77" width="336" height="106" class="penora-inline-1"/>
+ <text class="brand-caption" x="1508" y="224" data-splash-caption=""></text>
+ <path d="M1510 244H1828" fill="none" stroke="url(#fold-highlight)" stroke-width=".7" opacity=".35"/>
+</g>
+
+
+<g id="progress-layer" data-layer="progress" role="progressbar"  aria-valuemin="0" aria-valuemax="100" aria-valuenow="24">
+ <g data-progress-readout="" transform="translate(1750 327) rotate(-4)"><g>
+  <text class="progress-digits" data-progress-label="" x="-8" y="-10" text-anchor="end">0</text><text class="progress-unit" x="3" y="-23">%</text>
+  <path d="M-96 -2Q-54 7-11 1" fill="none" stroke="#e8bcf0" stroke-width="1.4" opacity=".5"/><rect x="34" y="-20" width="4" height="4" rx=".7" fill="#ebc6ef"/>
+ </g></g>
+ <path data-terminal-light="" d="M1774 1078Q1787 1078 1795 1068L1807 1054Q1815 1046 1826 1043L1859 1033Q1876 1028 1887 1016L1905 996" fill="none" stroke="url(#stream-light)" stroke-width="2.3" stroke-linecap="round" opacity=".18"/>
+</g>
+
+ <use href="#frame-shape" fill="none" stroke="url(#frame-rim)" stroke-width="2"/>
+</g>
+</svg>
       <img
         id="artwork"
         src="artwork.png"
@@ -21,42 +102,7 @@
         alt="infOS"
         draggable="false"
       />
-      <svg id="progress" class="progress" viewBox="0 0 518 12" role="progressbar">
-        <defs>
-          <linearGradient id="track">
-            <stop stop-color="#7a9bc9" />
-            <stop offset="1" stop-color="#9486bb" />
-          </linearGradient>
-          <linearGradient id="light" gradientUnits="userSpaceOnUse" x1="205" y1="6" x2="313" y2="6">
-            <stop stop-color="#8caedc" stop-opacity=".35" />
-            <stop offset=".5" stop-color="#e2efff" />
-            <stop offset="1" stop-color="#b8a9e4" stop-opacity=".35" />
-          </linearGradient>
-          <clipPath id="track-clip"><rect x="1" y="3" width="516" height="6" rx="3" /></clipPath>
-        </defs>
-        <rect
-          x=".5"
-          y="2.5"
-          width="517"
-          height="7"
-          rx="3.5"
-          fill="#52678c"
-          fill-opacity=".25"
-          stroke="#7c94ba"
-          stroke-opacity=".3"
-        />
-        <rect x="1" y="3" width="516" height="6" rx="3" fill="url(#track)" fill-opacity=".3" />
-        <g clip-path="url(#track-clip)">
-          <path
-            class="waiting"
-            d="M205 6H313"
-            stroke="url(#light)"
-            stroke-width="5"
-            stroke-linecap="round"
-          />
-          <rect class="complete" x="1" y="3" width="516" height="6" rx="3" fill="#c7dcf7" />
-        </g>
-      </svg>
+      <div id="progress" class="sr-only" role="progressbar" aria-valuemin="0" aria-valuemax="100"></div>
     </main>
     <button id="close" class="close" type="button">×</button>
     <!-- 品牌路径沿用 infos-mark.svg 与 infos-wordmark.svg，开屏无需加载主应用的资源协议。 -->
@@ -91,7 +137,7 @@
         </g>
         <rect x="4" y="11" width="8" height="8" rx="1" fill="#6c9bed" />
       </svg>
-      <span class="brand-caption">萌动链接：PeroperoChat</span>
+      <span class="brand-caption"></span>
     </div>
     <section id="connection" class="connection" hidden aria-labelledby="connection-title">
       <header class="connection-heading">

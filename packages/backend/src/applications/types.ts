@@ -1,15 +1,14 @@
 /**
  * Agent 应用层类型定义
  *
- * 定义 AgentApplication + SubAgent 体系的所有核心类型。
- * 这是"系统 + 独立应用"架构的基础类型层，包含：
+ * 定义内置社交应用兼容运行时的清单、资源授权和生命周期类型。
+ * 包含：
  * - AgentAppManifest：应用清单（应用的自描述）
  * - GrantRegistry 类型：资源授权声明
  * - AppManager 类型：应用生命周期管理
  * - AppRuntime 类型：应用运行时接口
  *
  * 设计原则：
- * - 主 Agent 内核零改动，所有类型都是插件层
  * - 授权的是"资源引用"而非"上下文快照"（活资源，非死快照）
  * - 应用自带工具 + 可申请使用主 Agent 工具（点号前缀隔离）
  *
@@ -30,7 +29,7 @@
  */
 export interface AgentAppManifest {
   // ── 身份信息 ──
-  /** 应用 ID（全局唯一，如 'coding' / 'research' / 'office'） */
+  /** 应用 ID（全局唯一，如 'social'） */
   id: string
   /** 显示名称 */
   name: string
@@ -62,9 +61,7 @@ export interface AgentAppManifest {
    *
    * 这些工具注册到 ToolRegistry，但仅在应用内可用。
    * 主 Agent 不自动获得这些工具。
-   * 工具名自动加 appId 前缀（如 coding.git_diff）。
-   *
-   * 例如 Coding App 提供：git_diff / run_tests / lint_code / format_code
+   * 工具名自动加 appId 前缀（如 social.social_group）。
    */
   providesTools?: AppToolDeclaration[]
 
@@ -74,7 +71,7 @@ export interface AgentAppManifest {
    * 应用内的 agent 可使用主 Agent 已有的这些工具，
    * 受 AppToolCapability 约束。
    *
-   * 例如 Coding App 需要：read_file / write_file / file_edit / terminal_execute
+   * 例如社交应用需要：web_search / web_fetch / query_event_notes
    */
   requiresTools?: string[]
 
@@ -113,7 +110,7 @@ export interface AgentAppManifest {
    * 工作区模式
    *
    * - 'fixed'：固定工作区（@data/apps/{appId}/）
-   * - 'dynamic'：可打开任意目录（如 Coding App 打开任意项目）
+   * - 'dynamic'：按授权选择工作区目录
    * - 'none'：无工作区（如纯对话型应用）
    */
   workspaceMode: 'fixed' | 'dynamic' | 'none'
@@ -130,7 +127,7 @@ export interface AgentAppManifest {
   /**
    * 是否支持应用内多会话
    *
-   * true：应用可创建多个独立 agent 会话（如 Cursor 多开）
+   * true：应用可管理多个独立会话
    * false：应用单会话模式
    */
   supportsMultipleSessions?: boolean
@@ -156,7 +153,7 @@ export interface AppActionDeclaration {
  * 应用提供的工具声明
  */
 export interface AppToolDeclaration {
-  /** 工具名（注册时自动加 appId 前缀，如 coding.git_diff） */
+  /** 工具名（注册时自动加 appId 前缀，如 social.social_group） */
   name: string
   /** 工具描述 */
   description: string
@@ -186,7 +183,6 @@ export interface AppPermission {
     | 'terminal.execute' // 执行终端命令
     | 'network.access' // 网络访问
     | 'platform.capability' // 平台能力（截图/通知等）
-    | 'subagent.spawn' // 创建子 agent
   /** 权限说明（给用户看） */
   description: string
   /** 是否必须（false=可选，用户可拒绝） */

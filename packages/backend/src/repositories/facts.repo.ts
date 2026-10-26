@@ -632,68 +632,72 @@ export class FactsRepository {
   }
 
   async rebuildStore(signal?: AbortSignal): Promise<void> {
-    await this.stores.withMaintenance(this.stores.resolveSharedStorePath('facts'), () => {
-      const objects = this.db.select().from(factObjects).all()
-      const facts = this.db.select().from(factRecords).all()
-      this.stores.resetSharedStore('facts')
-      const store = this.stores.getSharedStore('facts')
-      const operations: TransactionOperation[] = []
-      for (const object of objects)
-        operations.push({
-          type: 'insertWithId',
-          id: object.tdbId,
-          vector: this.zeroVector(),
-          payload: this.objectPayload(object),
-        })
-      for (const row of facts)
-        operations.push({
-          type: 'insertWithId',
-          id: row.tdbId,
-          vector: this.zeroVector(),
-          payload: this.factPayload(
-            row,
-            objects.find((object) => object.id === row.objectId)?.standardName ?? '',
-          ),
-        })
-      for (const row of facts) {
-        const object = objects.find((item) => item.id === row.objectId)
-        if (!object) continue
-        operations.push(
-          { type: 'upsertEdge', src: object.tdbId, dst: row.tdbId, label: 'has_fact', weight: 1 },
-          { type: 'upsertEdge', src: row.tdbId, dst: object.tdbId, label: 'fact_of', weight: 1 },
-        )
-        if (row.supersededBy) {
-          const replacement = facts.find((item) => item.id === row.supersededBy)
-          if (replacement)
-            operations.push(
-              {
-                type: 'upsertEdge',
-                src: row.tdbId,
-                dst: replacement.tdbId,
-                label: 'superseded_by',
-                weight: 1,
-              },
-              {
-                type: 'upsertEdge',
-                src: replacement.tdbId,
-                dst: row.tdbId,
-                label: 'supersedes',
-                weight: 1,
-              },
-            )
+    await this.stores.withMaintenance(
+      this.stores.resolveSharedStorePath('facts'),
+      () => {
+        const objects = this.db.select().from(factObjects).all()
+        const facts = this.db.select().from(factRecords).all()
+        this.stores.resetSharedStore('facts')
+        const store = this.stores.getSharedStore('facts')
+        const operations: TransactionOperation[] = []
+        for (const object of objects)
+          operations.push({
+            type: 'insertWithId',
+            id: object.tdbId,
+            vector: this.zeroVector(),
+            payload: this.objectPayload(object),
+          })
+        for (const row of facts)
+          operations.push({
+            type: 'insertWithId',
+            id: row.tdbId,
+            vector: this.zeroVector(),
+            payload: this.factPayload(
+              row,
+              objects.find((object) => object.id === row.objectId)?.standardName ?? '',
+            ),
+          })
+        for (const row of facts) {
+          const object = objects.find((item) => item.id === row.objectId)
+          if (!object) continue
+          operations.push(
+            { type: 'upsertEdge', src: object.tdbId, dst: row.tdbId, label: 'has_fact', weight: 1 },
+            { type: 'upsertEdge', src: row.tdbId, dst: object.tdbId, label: 'fact_of', weight: 1 },
+          )
+          if (row.supersededBy) {
+            const replacement = facts.find((item) => item.id === row.supersededBy)
+            if (replacement)
+              operations.push(
+                {
+                  type: 'upsertEdge',
+                  src: row.tdbId,
+                  dst: replacement.tdbId,
+                  label: 'superseded_by',
+                  weight: 1,
+                },
+                {
+                  type: 'upsertEdge',
+                  src: replacement.tdbId,
+                  dst: row.tdbId,
+                  label: 'supersedes',
+                  weight: 1,
+                },
+              )
+          }
         }
-      }
-      if (operations.length) store.commitTransaction(operations)
-      for (const object of objects) {
-        store.indexText(
-          object.tdbId,
-          [object.standardName, ...this.aliases(object.aliasesJson)].join(' '),
-        )
-      }
-      for (const row of facts) store.indexText(row.tdbId, row.statement)
-      store.buildTextIndex()
-      store.flush()
-    }, signal)
+        if (operations.length) store.commitTransaction(operations)
+        for (const object of objects) {
+          store.indexText(
+            object.tdbId,
+            [object.standardName, ...this.aliases(object.aliasesJson)].join(' '),
+          )
+        }
+        for (const row of facts) store.indexText(row.tdbId, row.statement)
+        store.buildTextIndex()
+        store.flush()
+      },
+      signal,
+    )
   }
 
   private async changeAlias(

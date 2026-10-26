@@ -12,11 +12,15 @@ import { t as __t } from '../../lib/i18n'
  */
 
 import type { BuiltinTool } from '../index'
+import type { ToolContext } from '../../services/agent/toolRegistry'
 import { createLogger } from '../../lib/logger'
 
 const logger = createLogger('ScreenVision')
 
 export interface ScreenshotCoordinateContext {
+  observationId?: string
+  referenceObservationId?: string
+  sourceCoordinateSpace?: 'desktop-dip'
   displayId: string
   coordinateSpace: 'screenshot'
   screenshotWidth: number
@@ -34,7 +38,7 @@ export interface ScreenshotCapture {
 /** 截图提供者接口 */
 export interface ScreenshotProvider {
   /** 截取当前屏幕，返回 PNG 与坐标上下文 */
-  capture(): Promise<ScreenshotCapture | null>
+  capture(input?: Record<string, unknown>, context?: ToolContext): Promise<ScreenshotCapture | null>
 }
 
 /** 模块引用 */
@@ -50,7 +54,7 @@ export function setScreenshotProvider(provider: ScreenshotProvider | null): void
 export const takeScreenshotTool: BuiltinTool = {
   name: 'take_screenshot',
 
-  async execute(args) {
+  async execute(args, context) {
     if (!_screenshotProvider) {
       return JSON.stringify({
         error: '截图服务未初始化。当前环境可能不支持屏幕截图。',
@@ -63,7 +67,7 @@ export const takeScreenshotTool: BuiltinTool = {
       const screenshots: ScreenshotCapture[] = []
 
       for (let i = 0; i < count; i++) {
-        const capture = await _screenshotProvider.capture()
+        const capture = await _screenshotProvider.capture(args, context)
         if (capture) {
           screenshots.push(capture)
         } else {
@@ -84,6 +88,7 @@ export const takeScreenshotTool: BuiltinTool = {
 
       return JSON.stringify({
         success: true,
+        observationId: screenshots[0]?.coordinateContext?.observationId,
         screenshots: screenshots.map((capture, i) => ({
           index: i,
           dataUri: `data:image/png;base64,${capture.base64}`,

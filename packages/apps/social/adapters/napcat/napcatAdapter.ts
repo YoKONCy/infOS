@@ -36,6 +36,7 @@ import {
   extractReplyId,
   checkIsMentioned,
   toOneBotSegments,
+  assertQQOutboundContent,
   buildSendParams,
   segmentsToCQString,
 } from './napcatParser'
@@ -217,6 +218,10 @@ export class NapcatAdapter extends AbstractSocialAdapter {
     this.defaultConnection = null
     for (const sender of senders) sender.close()
     this.emitDisconnected('手动断开')
+  }
+
+  override validateOutbound(msg: OutboundMessage): void {
+    assertQQOutboundContent(msg.content)
   }
 
   async sendMessage(

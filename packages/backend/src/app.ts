@@ -174,7 +174,9 @@ export function createApp(ctx: AppContext) {
         '/html-previews',
       ],
     })
-    app.use('*', (c, next) => isBackupDownloadRequest(c.req.method, c.req.path) ? next() : legacyAuth(c, next))
+    app.use('*', (c, next) =>
+      isBackupDownloadRequest(c.req.method, c.req.path) ? next() : legacyAuth(c, next),
+    )
   }
 
   // ── 全局错误处理 ──
@@ -182,9 +184,16 @@ export function createApp(ctx: AppContext) {
   app.use('/api/*', async (c, next) => {
     const path = c.req.path
     const readOnly = ['GET', 'HEAD', 'OPTIONS'].includes(c.req.method)
-    const backupControl = path === '/api/backups' || path.startsWith('/api/backups/') || path === '/api/distributed/snapshot'
+    const backupControl =
+      path === '/api/backups' ||
+      path.startsWith('/api/backups/') ||
+      path === '/api/distributed/snapshot'
     const release = !readOnly && !backupControl ? ctx.backupService?.beginWrite() : undefined
-    try { await next() } finally { release?.() }
+    try {
+      await next()
+    } finally {
+      release?.()
+    }
   })
 
   // ── 健康检查 (白名单，无需鉴权) ──

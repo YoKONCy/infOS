@@ -11,7 +11,7 @@
 
   "toolDefinition": {
     "name": "terminal_execute",
-    "description": "运行短命令并等待退出。超时会终止进程树，返回 TERMINAL_TIMEOUT、已有输出及 terminalId；可用 terminal_read 读取保留日志。已知长时、静默等待（例如 Start-Sleep）或服务任务请用 terminal_create + terminal_wait，不要反复重跑超时命令。JSON、引号或复杂参数优先用 command+argv 直接执行；Windows PowerShell 不能用反斜杠转义双引号。",
+    "description": "运行短命令并等待退出。常量目录查询、文本读取及受限只读管道可免审；脚本、动态表达式与未识别命令按会话模式审批。超时会终止进程树，返回 TERMINAL_TIMEOUT、已有输出及 terminalId；可用 terminal_read 读取保留日志。已知长时、静默等待（例如 Start-Sleep）或服务任务请用 terminal_create + terminal_wait，不要反复重跑超时命令。JSON、引号或复杂参数优先用 command+argv 直接执行；Windows PowerShell 不能用反斜杠转义双引号。",
     "display": {
       "label": "执行终端命令",
       "description": "运行命令行指令，用于构建、测试或管理项目。",

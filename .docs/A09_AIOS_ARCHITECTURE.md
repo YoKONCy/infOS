@@ -60,7 +60,7 @@ infOS 只有一种通用自治 Application 形态：稳定身份、独立领域�
 
 ### 2.1 Agent 身份边界
 
-PrincipalAgent 是有长期人格、记忆和工作区的逻辑身份，不是会话、上下文包、工具清单或未来 SubAgent。
+PrincipalAgent 是有长期人格、记忆和工作区的逻辑身份；会话、上下文包、工具清单和后台任务均不构成新的 PrincipalAgent。
 
 ```text
 PrincipalAgent
@@ -771,7 +771,7 @@ interface ExecutionDescriptor {
 }
 ```
 
-状态机固定为`created → queued → running → waiting_io | waiting_approval | suspended → running → completed | failed | cancelled | timed_out`，终态必须携带结构化ExitStatus。聊天Turn、后台任务、Application命令、主动行为和SubAgent均使用同一Execution身份与预算语义。
+状态机固定为`created → queued → running → waiting_io | waiting_approval | suspended → running → completed | failed | cancelled | timed_out`，终态必须携带结构化ExitStatus。聊天Turn、后台任务、Application命令和主动行为均使用同一Execution身份与预算语义。后台任务使用所属 PrincipalAgent 执行，不创建独立开发子 Agent，也不递归派发通用后台任务；应用交办遵循对应应用的适配层协议。
 
 ### 13.5 Capability Handle与Tool ABI
 

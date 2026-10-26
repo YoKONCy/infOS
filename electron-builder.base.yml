@@ -51,6 +51,10 @@ extraResources:
       - splash.css
       - splash.js
       - artwork.png
+      - penora-artwork.png
+      - penora-logo-patch.png
+      - penora-happy.woff2
+      - penora.css
   # 主应用 Web 入口独立供 Daemon 发布，不依赖 Electron 的 file 协议。
   - from: dist/renderer
     to: frontend

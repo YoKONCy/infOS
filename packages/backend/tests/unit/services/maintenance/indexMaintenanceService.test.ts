@@ -40,7 +40,9 @@ describe('已删除角色的索引维护边界', () => {
   it('部分目标失败时进度仍记录全部已处理目标，并保留每个原始错误', async () => {
     const { service, context } = fixture()
     context.eventMemoryService.rebuildAgentStore.mockRejectedValue(new Error('主记忆发布失败'))
-    context.factsRepo.rebuildStore.mockRejectedValue(Object.assign(new Error('共享文件占用'), { code: 'EPERM', path: 'facts.tdb.wal' }))
+    context.factsRepo.rebuildStore.mockRejectedValue(
+      Object.assign(new Error('共享文件占用'), { code: 'EPERM', path: 'facts.tdb.wal' }),
+    )
     context.knowledgeService.reindex.mockRejectedValue(new Error('文档向量失败'))
     await service.rebuild('all')
     const input = context.kernelScheduler.submit.mock.calls[0]![0]
@@ -49,9 +51,15 @@ describe('已删除角色的索引维护边界', () => {
     // 单角色包含主记忆、社交图谱，加上两套共享库；只有社交目标成功。
     expect(job).toMatchObject({ processed: 4, total: 4, completed: 1, failed: 3 })
     expect(Object.fromEntries(job.results.map((item) => [item.scope, item.state]))).toEqual({
-      main: 'failed', social: 'completed', facts: 'failed', knowledge: 'failed',
+      main: 'failed',
+      social: 'completed',
+      facts: 'failed',
+      knowledge: 'failed',
     })
-    expect(job.results.find((item) => item.scope === 'facts')?.error).toMatchObject({ code: 'EPERM', path: 'facts.tdb.wal' })
+    expect(job.results.find((item) => item.scope === 'facts')?.error).toMatchObject({
+      code: 'EPERM',
+      path: 'facts.tdb.wal',
+    })
   })
   it('磁盘残留 lin 的向量库不能让已删除角色重新出现在列表', () => {
     const { service } = fixture()
@@ -76,8 +84,17 @@ describe('已删除角色的索引维护边界', () => {
     agents.splice(0)
     const input = context.kernelScheduler.submit.mock.calls[0]![0]
     await expect(input.run({ signal: new AbortController().signal } as never)).rejects.toThrow()
-    expect(service.status().jobs[0]).toMatchObject({ processed: 1, completed: 0, failed: 1,
-      results: [{ state: 'failed', error: { code: 'STORE_OPERATION_FAILED', message: '角色已删除，已停止该角色的索引重建' } }] })
+    expect(service.status().jobs[0]).toMatchObject({
+      processed: 1,
+      completed: 0,
+      failed: 1,
+      results: [
+        {
+          state: 'failed',
+          error: { code: 'STORE_OPERATION_FAILED', message: '角色已删除，已停止该角色的索引重建' },
+        },
+      ],
+    })
     expect(context.storeRegistry.rebuildSocialStore).not.toHaveBeenCalled()
   })
 })

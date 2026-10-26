@@ -1240,7 +1240,8 @@ export class EventMemoryService {
         const node = previous.get<TdbMemoryPayload>(id)
         if (node?.payload.id) {
           vectors.set(node.payload.id, Array.from(node.vector))
-          if ('narrative' in node.payload && typeof node.payload.narrative === 'string') vectorTexts.set(node.payload.id, node.payload.narrative)
+          if ('narrative' in node.payload && typeof node.payload.narrative === 'string')
+            vectorTexts.set(node.payload.id, node.payload.narrative)
         }
       }
     }
@@ -1339,17 +1340,21 @@ export class EventMemoryService {
           })
       }
     }
-    await this.stores.withMaintenance(this.stores.resolveAgentStorePath(agentId, 'main'), async () => {
-      const current = await this.repo.list(agentId, query)
-      guard()
-      if (JSON.stringify(current) !== JSON.stringify(notes))
-        throw new Error('重建期间记忆发生变化，请稍后重试')
-      this.stores.replaceAgentStore(agentId, 'main', (store) => {
-        if (insertOperations.length) store.commitTransaction(insertOperations)
-        if (edgeOperations.length) store.commitTransaction(edgeOperations)
-        for (const [id, text] of texts) store.indexText(id, text)
-      })
-    }, signal)
+    await this.stores.withMaintenance(
+      this.stores.resolveAgentStorePath(agentId, 'main'),
+      async () => {
+        const current = await this.repo.list(agentId, query)
+        guard()
+        if (JSON.stringify(current) !== JSON.stringify(notes))
+          throw new Error('重建期间记忆发生变化，请稍后重试')
+        this.stores.replaceAgentStore(agentId, 'main', (store) => {
+          if (insertOperations.length) store.commitTransaction(insertOperations)
+          if (edgeOperations.length) store.commitTransaction(edgeOperations)
+          for (const [id, text] of texts) store.indexText(id, text)
+        })
+      },
+      signal,
+    )
     this.invalidateForDeletion()
   }
 

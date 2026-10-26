@@ -6,7 +6,7 @@ MDP (Modular Dynamic Prompt) 是 infOS 的核心提示词管理系统。它通�
 
 1.  **模块化 (Modularity)**: 将庞大的 System Prompt 拆解为细粒度的组件（如 `rules`, `abilities`, `personas`），通过组合构建最终提示词。
 2.  **动态性 (Dynamism)**: 基于 **Jinja2** 引擎，支持运行时根据上下文（如当前时间、用户状态、Agent 记忆、NIT 工具描述）动态注入变量。
-3.  **继承与覆盖 (Inheritance & Override)**: 支持基于 Agent 身份的差异化配置，子 Agent 可以继承通用模板并覆盖特定组件。
+3.  **继承与覆盖 (Inheritance & Override)**: 支持基于角色身份的差异化配置，各角色共享通用模板并覆盖特定组件。
 4.  **三明治结构 (Sandwich Structure)**: 通过 `header` 和 `footer` 分离核心指令与约束，防止模型在长上下文中产生“注意力溃散”。
 5.  **递归展开 (Recursive Expansion)**: 支持高达 5 层的嵌套变量引用，实现复杂的提示词逻辑。
 

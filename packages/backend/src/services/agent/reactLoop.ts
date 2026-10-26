@@ -2362,7 +2362,10 @@ export async function* runReActLoop(params: {
                     detail:
                       fnName === 'take_screenshot' ||
                       fnName === 'screen_capture' ||
-                      fnName === 'automation_execute'
+                      fnName === 'automation_execute' ||
+                      (fnName === 'browser_screenshot' &&
+                        typeof parsed.referenceScreenshotId === 'string') ||
+                      fnName === 'browser_page_image'
                         ? ('high' as const)
                         : ('low' as const),
                   },

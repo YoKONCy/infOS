@@ -147,25 +147,47 @@ function setup() {
 }
 
 describe('BackgroundTask KernelScheduler迁移', () => {
-  it('同一父任务并发派发仍遵守八个子任务上限', async () => {
+  it('同一父任务并发社交交办仍遵守八个任务上限', async () => {
     const { service, executeTurn } = setup()
     executeTurn.mockImplementation(() => new Promise(() => {}))
-    const parent = await service.dispatch({ agentId: 'pero', instruction: '分配工作' })
+    service.registerDelegatedExecutor('social', {
+      run: async () => ({ outcome: 'deliver', summary: '已确认送达' }),
+    })
+    const parent = await service.dispatch({ agentId: 'pero', instruction: '通知群聊' })
     await vi.waitFor(() => expect(executeTurn).toHaveBeenCalled())
     const children = await Promise.allSettled(
       Array.from({ length: 9 }, (_, index) =>
         service.dispatch({
           agentId: 'pero',
-          instruction: `工作 ${index}`,
+          instruction: `通知群聊 ${index}`,
           parentTaskId: parent.id,
           parentExecutionId: 'execution-task-1',
           idempotencyKey: `child-${index}`,
+          metadata: { delegatedExecutor: 'social' },
         }),
       ),
     )
     expect(children.filter((result) => result.status === 'fulfilled')).toHaveLength(8)
     expect(children.filter((result) => result.status === 'rejected')).toHaveLength(1)
   })
+
+  it('底层调度器拒绝通用子任务，且不创建执行会话或任务记录', async () => {
+    const { service, executeTurn, threadService, repo } = setup()
+    executeTurn.mockImplementation(() => new Promise(() => {}))
+    const parent = await service.dispatch({ agentId: 'pero', instruction: '处理当前工作' })
+    await vi.waitFor(() => expect(executeTurn).toHaveBeenCalled())
+    await expect(
+      service.dispatch({
+        agentId: 'pero',
+        instruction: '另开开发任务',
+        parentTaskId: parent.id,
+        parentExecutionId: 'execution-task-1',
+      }),
+    ).rejects.toMatchObject({ code: 'FORBIDDEN' })
+    expect(threadService.createThread).toHaveBeenCalledTimes(1)
+    expect((await repo.query({ parentTaskId: parent.id })).items).toEqual([])
+  })
+
   it('社交来源的后台工作继承账号登录态，但使用任务自己的页面会话', async () => {
     const { service, executeTurn } = setup()
     await service.dispatch({
@@ -240,17 +262,21 @@ describe('BackgroundTask KernelScheduler迁移', () => {
     expect(scheduler.submit).toHaveBeenCalledWith(expect.objectContaining({ taskId: 'parent' }))
   })
 
-  it('子任务绑定真实父执行、限制预算，并拒绝迟到的派发', async () => {
+  it('社交交办绑定真实父执行、限制预算，并拒绝迟到的派发', async () => {
     const { service, executeTurn, repo } = setup()
     executeTurn.mockImplementation(() => new Promise(() => {}))
+    service.registerDelegatedExecutor('social', {
+      run: async () => ({ outcome: 'deliver', summary: '已确认送达' }),
+    })
     const parent = await service.dispatch({ agentId: 'pero', instruction: '汇总资料' })
     await vi.waitFor(() => expect(executeTurn).toHaveBeenCalled())
     const child = await service.dispatch({
       agentId: 'pero',
-      instruction: '收集资料',
+      instruction: '向群聊收集反馈',
       parentTaskId: parent.id,
       parentExecutionId: 'execution-task-1',
       idempotencyKey: 'child-1',
+      metadata: { delegatedExecutor: 'social' },
     })
     expect(child.parentTaskId).toBe(parent.id)
     expect(child.lifecycle.maxLlmCalls).toBeLessThan(parent.lifecycle.maxLlmCalls)
@@ -263,6 +289,7 @@ describe('BackgroundTask KernelScheduler迁移', () => {
         instruction: '迟到任务',
         parentTaskId: parent.id,
         parentExecutionId: 'old-execution',
+        metadata: { delegatedExecutor: 'social' },
       }),
     ).rejects.toMatchObject({ code: 'CONFLICT' })
   })

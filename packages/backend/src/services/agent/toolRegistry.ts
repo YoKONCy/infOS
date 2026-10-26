@@ -75,6 +75,8 @@ export interface ToolContext {
   deadline?: string
   /** 本次敏感调用获执行模式或审批授权；不得跨调用持久化或复用。 */
   approvedSensitiveAction?: boolean
+  /** 本次调用经宿主确认的只读查询；不代表用户审批，不得跨调用复用。 */
+  readOnlyTerminal?: import('../execution/readOnlyTerminal').ReadOnlyTerminalGrant
   /** 纯读取/搜索工具可访问设备路径；不表示用户批准过写入越界。 */
   deviceReadScope?: boolean
   /** 本次调用获越界访问授权；不得跨调用持久化。 */

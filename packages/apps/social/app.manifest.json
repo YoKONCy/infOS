@@ -2,7 +2,7 @@
   "id": "social",
   "name": "Social Bridge",
   "description": "对外社交平台桥接应用（QQ/Discord 等），管理社交会话、缓冲、调度与回复。独立编译上下文，不依赖主 Agent 的 chat pipeline。",
-  "version": "0.9.6",
+  "version": "0.9.7",
   "author": "infOS",
   "icon": "icon.png",
   "frontendEntry": "./frontend/index.js",
@@ -32,7 +32,9 @@
             "description": "发送账号；该平台有多个账号时必须指定"
           }
         },
-        "required": ["group_id"]
+        "required": [
+          "group_id"
+        ]
       }
     },
     {
@@ -46,7 +48,9 @@
             "type": "string"
           }
         },
-        "required": ["task_id"],
+        "required": [
+          "task_id"
+        ],
         "additionalProperties": false
       }
     },
@@ -61,7 +65,9 @@
             "type": "string"
           }
         },
-        "required": ["task_id"],
+        "required": [
+          "task_id"
+        ],
         "additionalProperties": false
       }
     }
@@ -82,7 +88,10 @@
         },
         "type": "object",
         "additionalProperties": false,
-        "required": ["action", "input"]
+        "required": [
+          "action",
+          "input"
+        ]
       },
       "name": "social",
       "description": "日常社交"
@@ -102,7 +111,10 @@
         },
         "type": "object",
         "additionalProperties": false,
-        "required": ["action", "input"]
+        "required": [
+          "action",
+          "input"
+        ]
       },
       "name": "social_group",
       "description": "群聊事务"
@@ -122,7 +134,10 @@
         },
         "type": "object",
         "additionalProperties": false,
-        "required": ["action", "input"]
+        "required": [
+          "action",
+          "input"
+        ]
       },
       "name": "social_account",
       "description": "账号与空间"

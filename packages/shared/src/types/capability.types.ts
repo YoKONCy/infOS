@@ -115,11 +115,38 @@ export type CapabilityTransportMessage = DaemonToNodeMessage | NodeToDaemonMessa
  */
 export interface ScreenCaptureResult {
   success: boolean
+  observationId?: string
+  screenshotId?: string
+  referenceScreenshotId?: string
   screenshots: Array<{
     /** 截图索引（多显示器场景） */
     index: number
     /** Data URI 格式的图片（data:image/png;base64,...） */
     dataUri: string
+    /** 局部图坐标到桌面 DIP 或网页 CSS 视口的映射，由采集客户端签发。 */
+    coordinateContext?: {
+      coordinateSpace: 'screenshot'
+      sourceCoordinateSpace?: 'desktop-dip' | 'viewport-css'
+      observationId?: string
+      screenshotId?: string
+      referenceObservationId?: string
+      displayId?: string
+      targetId?: string
+      generation?: number
+      screenshotWidth: number
+      screenshotHeight: number
+      bounds: { x: number; y: number; width: number; height: number }
+      workArea?: { x: number; y: number; width: number; height: number }
+      scaleFactor?: number
+      viewport?: {
+        width: number
+        height: number
+        scrollX: number
+        scrollY: number
+        revision: number
+        zoomFactor: number
+      }
+    }
   }>
   /** 人类可读的摘要 */
   message: string

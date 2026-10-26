@@ -126,25 +126,55 @@ export async function startServer(options: StartServerOptions): Promise<void> {
   const ctx = await createAppContext(config)
   const reindexFile = path.join(getDataDir(), BACKUP_STATE, 'reindex.json')
   if (existsSync(reindexFile)) {
-    const pending = JSON.parse(await readFile(reindexFile, 'utf8')) as { agents: string[]; facts: boolean; knowledge: boolean; socialFile?: string; policy?: ImportPolicy; importId?: string }
+    const pending = JSON.parse(await readFile(reindexFile, 'utf8')) as {
+      agents: string[]
+      facts: boolean
+      knowledge: boolean
+      socialFile?: string
+      policy?: ImportPolicy
+      importId?: string
+    }
     for (const agentId of pending.agents) {
       await ctx.eventMemoryService.rebuildAgentStore(agentId, true)
       ctx.storeRegistry.rebuildSocialStore(agentId)
     }
     if (pending.facts) await ctx.factsRepo.rebuildStore()
     if (pending.knowledge) ctx.knowledgeService.index.rebuild()
-    if (pending.socialFile && pending.policy && pending.importId && /^social-import-[a-f0-9-]{36}\.jsonl$/i.test(pending.socialFile)) {
-      const groups = new Map<string, Array<{ id: number; payload_json: string; edges_json: string }>>()
-      for await (const row of readBackupRowFile(path.join(getDataDir(), BACKUP_STATE, pending.socialFile))) {
+    if (
+      pending.socialFile &&
+      pending.policy &&
+      pending.importId &&
+      /^social-import-[a-f0-9-]{36}\.jsonl$/i.test(pending.socialFile)
+    ) {
+      const groups = new Map<
+        string,
+        Array<{ id: number; payload_json: string; edges_json: string }>
+      >()
+      for await (const row of readBackupRowFile(
+        path.join(getDataDir(), BACKUP_STATE, pending.socialFile),
+      )) {
         const agentId = pending.policy.agentTargets[String(row.agent_id)] ?? String(row.agent_id)
         const entries = groups.get(agentId) ?? []
-        entries.push({ id: Number(row.id), payload_json: String(row.payload_json), edges_json: String(row.edges_json) })
+        entries.push({
+          id: Number(row.id),
+          payload_json: String(row.payload_json),
+          edges_json: String(row.edges_json),
+        })
         groups.set(agentId, entries)
       }
-      for (const [agentId, rows] of groups) ctx.storeRegistry.importSocialBackup(agentId, rows, pending.policy.conflict, pending.importId)
+      for (const [agentId, rows] of groups)
+        ctx.storeRegistry.importSocialBackup(
+          agentId,
+          rows,
+          pending.policy.conflict,
+          pending.importId,
+        )
     }
     await rm(reindexFile)
-    if (pending.socialFile && /^social-import-[a-f0-9-]{36}\.jsonl$/i.test(pending.socialFile)) await rm(path.join(getDataDir(), BACKUP_STATE, pending.socialFile), { force: true }).catch(() => {})
+    if (pending.socialFile && /^social-import-[a-f0-9-]{36}\.jsonl$/i.test(pending.socialFile))
+      await rm(path.join(getDataDir(), BACKUP_STATE, pending.socialFile), { force: true }).catch(
+        () => {},
+      )
   }
   setLocale(
     (await ctx.configRepo.get(LANGUAGE_CONFIG_KEY)) ??

@@ -1,4 +1,7 @@
 {
+  "默认 false；true 在本轮结束后退出活跃续聊，可单独使用或与回复合用，不影响之后的新提及和群聊观察。不能与等待、yield 或 next:continue 合用。": "Defaults to false. Set true to leave active conversation when this turn ends, alone or with a reply. Future mentions and group reviews can still wake you. Cannot be combined with waiting, yield, or next:continue.",
+  "以下是本次实际提供的图片（最多 3 张），超出上限的图片未查看：": "These are the images actually provided for this request (up to 3). Images exceeding the limit have not been viewed:",
+  "可按需通过 call 调用 social 的 image_read，每次最多 3 张；需要依据画面作答时，用 yield 或 next:continue 先返回模型。": "Optionally call social's image_read in a call step, up to 3 images at a time; use yield or next:continue to return to the model before composing a response based on the images.",
   "图片 {0} 来源：{1}": "Picture {0} Source: {1}",
   "维护当前社交会话的私有临时心流。仅在跨轮目标或私有事实发生变化时调用。": "maintains a private temporary flow for the current social session. Only called when the target or private fact changes across rounds.",
   "当前持续目标；省略表示保留，空字符串表示清空。": "is the current persistent target; omitting it means retaining it, and an empty string means clearing it.",

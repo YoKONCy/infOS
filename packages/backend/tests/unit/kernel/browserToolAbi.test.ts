@@ -75,14 +75,69 @@ describe('Browser Tool ABI', () => {
   })
 
   it('网页截图应转换为统一多模态截图结构', async () => {
+    const coordinateContext = {
+      screenshotId: 'crop-2',
+      targetId: 'tab-1',
+      generation: 3,
+      coordinateSpace: 'screenshot',
+      sourceCoordinateSpace: 'viewport-css',
+      screenshotWidth: 800,
+      screenshotHeight: 400,
+      bounds: { x: 200, y: 100, width: 400, height: 200 },
+    }
+    const invoke = vi.fn().mockResolvedValue({
+      output: {
+        result: {
+          base64: 'YWJj',
+          mimeType: 'image/png',
+          screenshotId: 'crop-2',
+          referenceScreenshotId: 'full-1',
+          coordinateContext,
+        },
+      },
+    })
     const tools = createBrowserToolContributions({
-      invoke: vi.fn().mockResolvedValue({
-        output: { result: { base64: 'YWJj', mimeType: 'image/png' } },
-      }),
+      invoke,
     } as unknown as BoundCapabilityPort)
     const screenshot = tools.find((tool) => tool.definition.name === 'browser_screenshot')!
-    const output = JSON.parse(String(await screenshot.handler({}, context)))
+    const input = { screenshotId: 'full-1', region: { x: 200, y: 100, width: 400, height: 200 } }
+    const output = JSON.parse(String(await screenshot.handler(input, context)))
+    expect(invoke).toHaveBeenCalledWith(
+      'screenshot',
+      {
+        ...input,
+        __screenshotCaller: JSON.stringify(['pero', context.threadId]),
+      },
+      expect.any(Object),
+      undefined,
+    )
+    expect(output).toMatchObject({ screenshotId: 'crop-2', referenceScreenshotId: 'full-1' })
     expect(output.screenshots[0].dataUri).toBe('data:image/png;base64,YWJj')
+    expect(output.screenshots[0].coordinateContext).toEqual(coordinateContext)
+  })
+
+  it('局部截图坐标通过原交互入口传递，不改写为元素定位', async () => {
+    const invoke = vi.fn().mockResolvedValue({ dispatched: true })
+    const tools = createBrowserToolContributions({
+      invoke,
+    } as unknown as BoundCapabilityPort)
+    const interact = tools.find((tool) => tool.definition.name === 'browser_interact')!
+    await interact.handler({ action: 'click', screenshotId: 'crop-2', x: 80, y: 40 }, context)
+    expect(invoke).toHaveBeenCalledWith(
+      'nativeClick',
+      {
+        action: 'click',
+        screenshotId: 'crop-2',
+        x: 80,
+        y: 40,
+        target: undefined,
+        handle: undefined,
+        allowOccluded: false,
+        __screenshotCaller: JSON.stringify(['pero', context.threadId]),
+      },
+      expect.objectContaining({ principalId: 'pero' }),
+      undefined,
+    )
   })
 
   it('网页局部图片应转换为统一多模态截图结构', async () => {

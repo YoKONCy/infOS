@@ -42,15 +42,34 @@ export function createBrowserToolContributions(
     dispose: () => port.dispose(),
     invoke(operation, input, context, signal) {
       const caller = calling.getStore()
-      const { __browserScope: _untrusted, ...parameters } = input as Record<string, unknown>
+      const {
+        __browserScope: _untrusted,
+        __screenshotCaller: _untrustedCaller,
+        ...parameters
+      } = input as Record<string, unknown>
+      const screenshotCall =
+        ['screenshot', 'elementScreenshot'].includes(operation) ||
+        (['nativeClick', 'hover', 'click'].includes(operation) &&
+          parameters.screenshotId !== undefined)
+      const scopedInput = {
+        ...parameters,
+        ...(caller && screenshotCall
+          ? {
+              __screenshotCaller: JSON.stringify([
+                caller.agentId,
+                caller.taskId ?? caller.threadId,
+              ]),
+            }
+          : {}),
+      }
       return port.invoke(
         operation,
         caller?.browserScope
           ? {
-              ...parameters,
+              ...scopedInput,
               __browserScope: { ...caller.browserScope, principalId: caller.agentId },
             }
-          : parameters,
+          : scopedInput,
         context,
         signal,
       )
@@ -78,20 +97,28 @@ export function createBrowserToolContributions(
       const result = observed.result
       await onObservation?.({ operation, result, context })
       if (operation === 'screenshot' || operation === 'elementScreenshot') {
-        const runtime = result as {
+        type ScreenshotOutput = {
           base64?: string
           mimeType?: string
-          output?: { result?: { base64?: string; mimeType?: string } }
+          screenshotId?: string
+          referenceScreenshotId?: string
+          coordinateContext?: Record<string, unknown>
+          target?: string
         }
+        const runtime = result as ScreenshotOutput & { output?: { result?: ScreenshotOutput } }
         const image = runtime.base64 ? runtime : runtime.output?.result
         if (image?.base64) {
           return JSON.stringify({
             success: true,
+            screenshotId: image.screenshotId,
+            referenceScreenshotId: image.referenceScreenshotId,
+            target: image.target,
             message: __t('server.tools', '已截取当前网页'),
             screenshots: [
               {
                 index: 0,
                 dataUri: `data:${image.mimeType ?? 'image/png'};base64,${image.base64}`,
+                coordinateContext: image.coordinateContext,
               },
             ],
           })
@@ -168,6 +195,13 @@ export function createBrowserToolContributions(
               target: typeof args.target === 'string' ? args.target : undefined,
               handle: typeof args.handle === 'string' ? args.handle : undefined,
               allowOccluded: args.allowOccluded === true,
+              ...(args.screenshotId !== undefined || args.x !== undefined || args.y !== undefined
+                ? {
+                    screenshotId: args.screenshotId as string,
+                    x: args.x as number,
+                    y: args.y as number,
+                  }
+                : {}),
             },
             {
               principalId: context.agentId,

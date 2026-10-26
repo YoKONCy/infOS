@@ -16,7 +16,8 @@ export const terminalExecutorTool: BuiltinTool = {
   name: 'terminal_execute',
 
   async execute(args, ctx) {
-    if (!ctx.approvedSensitiveAction) throw new Error('终端命令缺少本次用户审批凭证')
+    if (!ctx.approvedSensitiveAction && !ctx.readOnlyTerminal)
+      throw new Error('终端命令缺少本次用户审批凭证')
     const command = String(args.command ?? '').trim()
     if (!command) throw new Error('command 不能为空')
     const timeout = Math.max(100, Math.min(Number(args.timeout ?? DEFAULT_TIMEOUT_MS), 10 * 60_000))
@@ -24,6 +25,7 @@ export const terminalExecutorTool: BuiltinTool = {
     try {
       const result = await getProductivityRuntime().terminals.run({
         approvedOutsideWorkspace: ctx.approvedOutsideWorkspace,
+        readOnly: ctx.readOnlyTerminal,
         executionSessionId: session.id,
         command,
         argv: args.argv as string[] | undefined,

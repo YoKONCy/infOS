@@ -22,6 +22,27 @@ const approvalPermission: ToolPermission = {
 afterEach(() => vi.useRealTimers())
 
 describe('PolicyEngine', () => {
+  it('宿主只读判定仍不能绕过显式审批与参数禁止策略', () => {
+    const engine = new PolicyEngine()
+    const query = { ...base, args: { command: 'Get-Location' }, readOnlyTerminal: true }
+    expect(
+      engine.evaluate({ ...query, permission: { ...approvalPermission, requiresApproval: false } }),
+    ).toMatchObject({ action: 'allow' })
+    expect(engine.evaluate({ ...query, permission: approvalPermission })).toMatchObject({
+      action: 'require_approval',
+    })
+    expect(
+      engine.evaluate({
+        ...query,
+        permission: {
+          ...approvalPermission,
+          requiresApproval: false,
+          paramPolicy: { deniedPatterns: ['Get-Location'] },
+        },
+      }),
+    ).toMatchObject({ action: 'deny', code: 'PARAM_PATTERN_DENIED' })
+  })
+
   it('执行参数长度、命令白名单与禁止模式', () => {
     const engine = new PolicyEngine()
     expect(

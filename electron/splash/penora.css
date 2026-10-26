@@ -1,0 +1,63 @@
+@font-face {
+  font-family: 'Penora Happy';
+  src: url('./penora-happy.woff2') format('woff2');
+  font-weight: 400;
+  font-display: block;
+}
+
+/* 加载只切换阶段流光，人物、背景及品牌均保持静态。 */
+#penora-splash {
+  display: block;
+  width: 100%;
+  height: 100%;
+  pointer-events: none;
+}
+
+#artwork {
+  display: none;
+}
+
+body[data-phase='connection'] #penora-splash {
+  display: none;
+}
+
+body[data-phase='connection'] #artwork {
+  display: block;
+}
+
+#penora-splash[data-empty='true'] .progress-fill,
+#penora-splash[data-empty='true'] .progress-tail,
+#penora-splash[data-empty='true'] [data-progress-head] {
+  visibility: hidden;
+}
+
+#penora-splash .brand-caption {
+  font-family: 'Penora Happy', 'Microsoft YaHei', sans-serif;
+  font-size: 23px;
+  letter-spacing: .7px;
+  fill: #d2cff2;
+}
+
+.progress-digits {
+  font-family: 'Penora Happy', sans-serif;
+  font-size: 60px;
+  letter-spacing: 1.5px;
+  fill: #f0e8ff;
+  stroke: #b9a5df;
+  stroke-width: .7;
+  paint-order: stroke fill;
+}
+
+.progress-unit {
+  font-family: 'Penora Happy', sans-serif;
+  font-size: 30px;
+  fill: #f5c3e7;
+}
+
+.penora-inline-0 {
+  mix-blend-mode: screen;
+}
+
+.penora-inline-1 {
+  color: #f1efff;
+}

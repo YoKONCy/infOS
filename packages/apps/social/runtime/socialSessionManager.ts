@@ -45,8 +45,9 @@ export type SocialTurnOutcome =
       type: 'reply'
       content: string
       /** 工具已完成图片等附件投递，桥接层仅确认回合。 */ delivered?: boolean
+      endParticipation?: boolean
     }
-  | { type: 'pass' }
+  | { type: 'pass'; endParticipation?: boolean }
   | { type: 'wait'; wait: SocialWaitRequest }
   | {
       type: 'defer'
@@ -319,6 +320,17 @@ export class SocialSessionManager {
     this.cooldownReview(session)
   }
 
+  private endParticipation(session: SocialSession): void {
+    this.clearTimer(session)
+    session.participation = 'idle'
+    session.phase = 'ready'
+    session.lastActiveTime = 0
+    session.nextScanTime = 0
+    // 当前回合结束期间排队的新提及仍是独立请求，不能随退出决定一起丢弃。
+    session.isMentioned = session.pendingMessages.some((message) => message.isMentioned)
+    this.cooldownReview(session)
+  }
+
   private policy(session: SocialSession): SocialGroupPolicy {
     return this.groupPolicy?.(session) ?? DEFAULT_SOCIAL_SCHEDULER_CONFIG
   }
@@ -525,6 +537,7 @@ export class SocialSessionManager {
       session.waitingTurnId = undefined
       session.deferredIntent = undefined
       this.markReplied(session)
+      if (outcome.endParticipation) this.endParticipation(session)
       return
     }
     if (outcome.type === 'pass') {
@@ -535,6 +548,7 @@ export class SocialSessionManager {
       session.nextScanTime = 0
       this.cooldownReview(session)
       if (session.participation !== 'engaged') session.participation = 'idle'
+      if (outcome.endParticipation) this.endParticipation(session)
       return
     }
     if (outcome.type === 'wait') {

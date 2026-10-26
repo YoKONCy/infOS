@@ -304,6 +304,12 @@ export class BackgroundScheduler {
    */
   async dispatch(input: DispatchTaskInput): Promise<BackgroundTaskInfo> {
     if (input.parentTaskId) {
+      // 父子关系仅用于已注册的应用交办执行器，调度层不解释具体应用业务。
+      const executor = input.metadata?.delegatedExecutor
+      if (typeof executor !== 'string' || !this.delegatedExecutors.has(executor))
+        throw new AppError('FORBIDDEN', {
+          message: __t('server.task', '后台任务不能派发通用子任务'),
+        })
       const key = input.parentTaskId
       const previous = this.parentDispatches.get(key) ?? Promise.resolve()
       const result = previous.then(() => this.dispatchDirect(input))
@@ -357,7 +363,7 @@ export class BackgroundScheduler {
     input: DispatchTaskInput,
     stableTaskId?: string,
   ): Promise<BackgroundTaskInfo> {
-    // 子任务只能由仍持有当前修订的父执行派发；限制深度与扇出，防止无限递归。
+    // 应用交办绑定当前父执行，并保留数量、深度和预算边界，兼容历史任务链。
     if (input.parentTaskId) {
       const parent = await this.repo.findById(input.parentTaskId)
       const execution = this.segments.get(input.parentTaskId)
@@ -1008,6 +1014,7 @@ export class BackgroundScheduler {
     executionId: string | undefined,
     name: string,
     callId: string,
+    readOnlyQuery = false,
   ): Promise<void> {
     const segment = this.segments.get(taskId)
     const task = await this.repo.findById(taskId)
@@ -1024,7 +1031,9 @@ export class BackgroundScheduler {
       throw new AppError('FORBIDDEN', {
         message: '持久任务请直接调用工具，确保每个动作都能保存检查点',
       })
-    const readOnly = TASK_READ_TOOLS.has(name)
+    const readOnly =
+      TASK_READ_TOOLS.has(name) ||
+      (readOnlyQuery && ['terminal_execute', 'terminal_create'].includes(name))
     if (state.recovery === 'read_only' && !readOnly)
       throw new AppError('FORBIDDEN', { message: '此任务只允许读取和查询' })
     if (!readOnly) {

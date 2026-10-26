@@ -33,49 +33,6 @@ body {
     transform 380ms cubic-bezier(0.2, 0.75, 0.3, 1),
     opacity 280ms ease;
 }
-/* 以整个开屏画面为准水平居中，不再跟随右下角品牌组合。 */
-.progress {
-  position: absolute;
-  left: 50%;
-  bottom: 2.7%;
-  width: 32.95%;
-  height: auto;
-  overflow: visible;
-  transform: translateX(-50%);
-  -webkit-app-region: no-drag;
-}
-.waiting {
-  animation: loading-drift 2.6s ease-in-out infinite;
-  transform-origin: 259px 6px;
-}
-.complete {
-  opacity: 0;
-  transition: opacity 160ms ease;
-}
-@keyframes loading-drift {
-  0%,
-  100% {
-    transform: translateX(-174px);
-    opacity: 0.7;
-  }
-  50% {
-    transform: translateX(174px);
-    opacity: 1;
-  }
-}
-body[data-phase='ready'] .waiting {
-  animation: none;
-  opacity: 0;
-}
-body[data-phase='ready'] .complete {
-  opacity: 1;
-}
-body[data-phase='failed'] .waiting {
-  animation-play-state: paused;
-}
-body[data-phase='failed'] .progress {
-  opacity: 0.25;
-}
 .close {
   z-index: 3;
   position: absolute;
@@ -104,9 +61,7 @@ summary:focus-visible {
   outline: 2px solid #c7d9f1;
   outline-offset: 3px;
 }
-/* 连接阶段采用纸翼的银白操作区，加载阶段保留原有透明插画。 */
-/* 连接阶段采用纸翼的银白操作区，加载阶段保留原有透明插画。 */
-/* 连接阶段采用纸翼的银白操作区，加载阶段保留原有透明插画。 */
+/* 连接阶段沿用 Pero 插画与纸翼操作区。 */
 .connection[hidden],
 .connection [hidden] {
   display: none;
@@ -130,9 +85,6 @@ body[data-phase='connection']::before {
 body[data-phase='connection'] #artwork {
   transform: translateX(-20%) scale(0.9);
   clip-path: polygon(0 0, 100% 0, 100% 76%, 43% 76%, 43% 100%, 0 100%);
-}
-body[data-phase='connection'] .progress {
-  opacity: 0;
 }
 .connection {
   --ink: #30324b;
@@ -757,12 +709,6 @@ body[data-phase='connection'] .connection-brand {
   white-space: nowrap;
 }
 @media (prefers-reduced-motion: reduce) {
-  .waiting {
-    animation: none;
-  }
-  .complete {
-    transition: none;
-  }
   body::before,
   #artwork,
   .mode-option,

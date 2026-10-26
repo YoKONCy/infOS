@@ -2,7 +2,7 @@ import { t as __t } from '../utils/i18n'
 import { randomUUID } from 'node:crypto'
 import fs from 'node:fs'
 import path from 'node:path'
-import { app } from 'electron'
+import { app, screen } from 'electron'
 import { runtimeDiagnostics } from './runtimeDiagnostics'
 import WebSocket from 'ws'
 import type {
@@ -22,6 +22,7 @@ import { browserRuntime } from './browserRuntime'
 import { renderStatusCard } from './statusCard'
 import { captureScreen, getActiveWindow, readClipboard, writeClipboard } from './desktopAwareness'
 import { desktopControl, type DesktopCaller } from './desktopControl'
+import { mapScreenshotRegion, screenshotMaxWidth, type ScreenshotRect } from './screenshotGeometry'
 import { windowsDesktop } from './windowsDesktop'
 import { completionAlerts } from './completionAlerts'
 import { isApplicationFocused } from './notificationVisibility'
@@ -98,6 +99,18 @@ class ElectronCapabilityProvider {
   private heartbeatTimer: NodeJS.Timeout | null = null
   private reconnectTimer: NodeJS.Timeout | null = null
   private readonly invocations = new Map<string, AbortController>()
+  private readonly screenObservations = new Map<
+    string,
+    {
+      owner: string
+      createdAt: number
+      geometry: string
+      displayId: string
+      bounds: ScreenshotRect
+      width: number
+      height: number
+    }
+  >()
   private readonly playbackStates = new Map<
     string,
     { state: 'playing' | 'completed' | 'cancelled'; startedAt: string }
@@ -122,6 +135,7 @@ class ElectronCapabilityProvider {
 
   async stop(): Promise<void> {
     this.stopped = true
+    this.screenObservations.clear()
     for (const controller of this.invocations.values()) controller.abort('客户端退出')
     await desktopControl.stop()
     await browserRuntime.close()
@@ -167,6 +181,7 @@ class ElectronCapabilityProvider {
     socket.on('close', () => {
       for (const controller of this.invocations.values()) controller.abort('能力连接断开')
       desktopControl.disconnect()
+      this.screenObservations.clear()
       if (this.socket === socket) this.socket = null
       this.sessionId = undefined
       this.stopHeartbeat()
@@ -517,17 +532,67 @@ class ElectronCapabilityProvider {
     if (operation === 'screenCapture' && process.platform === 'win32')
       return desktopControl.observe(input, caller)
     if (operation === 'screenCapture') {
-      const raw = await captureScreen(Number(input.maxWidth ?? 1280))
+      const maxWidth = screenshotMaxWidth(input.maxWidth)
+      const owner = JSON.stringify([caller.agentId, caller.taskId ?? caller.threadId])
+      const geometry = () =>
+        JSON.stringify(
+          screen
+            .getAllDisplays()
+            .map((display) => [display.id, display.bounds, display.scaleFactor]),
+        )
+      const layout = geometry()
+      const reference =
+        input.region !== undefined
+          ? this.screenObservations.get(String(input.observationId ?? ''))
+          : undefined
+      if (
+        input.region !== undefined &&
+        (!reference ||
+          reference.owner !== owner ||
+          Date.now() - reference.createdAt > 120_000 ||
+          reference.geometry !== layout ||
+          (input.displayId !== undefined && String(input.displayId) !== reference.displayId))
+      )
+        throw new Error(
+          __t('errors.electron', 'SCREENSHOT_REFERENCE_REQUIRED: 区域截图需要有效的参考截图编号'),
+        )
+      const raw = await captureScreen(maxWidth, {
+        displayId:
+          reference?.displayId ??
+          (input.displayId !== undefined ? String(input.displayId) : undefined),
+        bounds: reference
+          ? mapScreenshotRegion(input.region, reference, reference.bounds)
+          : undefined,
+      })
       if (!raw) throw new Error('SCREEN_CAPTURE_UNAVAILABLE: 无法获取屏幕内容')
+      signal.throwIfAborted()
+      if (geometry() !== layout)
+        throw new Error('DESKTOP_OBSERVATION_STALE: 观察期间控制权发生变化，请重新观察')
+      const observationId = randomUUID()
+      this.screenObservations.set(observationId, {
+        owner,
+        createdAt: Date.now(),
+        geometry: layout,
+        displayId: raw.displayId,
+        bounds: raw.bounds,
+        width: raw.width,
+        height: raw.height,
+      })
+      while (this.screenObservations.size > 16)
+        this.screenObservations.delete(this.screenObservations.keys().next().value!)
       return {
         success: true,
+        observationId,
         screenshots: [
           {
             index: 0,
             dataUri: raw.dataUrl,
             coordinateContext: {
+              observationId,
+              ...(reference ? { referenceObservationId: String(input.observationId) } : {}),
               displayId: raw.displayId,
               coordinateSpace: 'screenshot',
+              sourceCoordinateSpace: 'desktop-dip',
               screenshotWidth: raw.width,
               screenshotHeight: raw.height,
               bounds: raw.bounds,

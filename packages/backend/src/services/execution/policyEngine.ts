@@ -25,6 +25,8 @@ export interface ToolPolicyContext {
   toolName: string
   args: Record<string, unknown>
   permission?: ToolPermission
+  /** 仅接受工具执行器签发的受限读取判定，不读取模型参数中的同名字段。 */
+  readOnlyTerminal?: boolean
 }
 
 export type ApprovalRiskLevel = 'low' | 'medium' | 'high' | 'critical'
@@ -108,7 +110,7 @@ const BROWSER_SENSITIVE_CLICK =
 
 /**
  * 本地执行器目前只能约束终端 cwd，不能在操作系统层隔离 Shell 对全盘文件的访问。
- * 因此任意命令执行必须逐次审批，不能仅依赖命令文本审计或路径参数检查。
+ * 任意命令执行仍逐次审批；确认的只读查询由宿主直接执行，不进入系统 Shell。
  */
 export const ALWAYS_APPROVE_EACH_CALL_TOOLS = new Set([
   'runtime_debug',
@@ -196,6 +198,13 @@ export class PolicyEngine {
         }
       }
     }
+
+    if (
+      context.readOnlyTerminal &&
+      TERMINAL_TOOLS.has(context.toolName) &&
+      !context.permission?.requiresApproval
+    )
+      return { action: 'allow' }
 
     // 仅用于审计展示，不把参数拼接后的文本交给 Shell 执行。
     const auditedCommand =

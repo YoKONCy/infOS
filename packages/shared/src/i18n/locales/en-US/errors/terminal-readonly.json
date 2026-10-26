@@ -1,0 +1,6 @@
+{
+  "READ_ONLY_CONTEXT_CHANGED: 只读查询参数或工作区已变化": "READ_ONLY_CONTEXT_CHANGED: The read-only query arguments or workspace changed",
+  "只读查询路径超出允许范围": "The read-only query path is outside the allowed scope",
+  "只读查询仅支持不超过 2 MiB 的普通文本文件": "Read-only queries support regular text files up to 2 MiB",
+  "只读查询条目过多，请缩小查询范围": "The read-only query exceeds its result limit; narrow the query"
+}

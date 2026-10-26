@@ -81,7 +81,7 @@ describe('DistributedSyncService 完整快照', () => {
     expect(paths.some((file) => file.startsWith('.store-upgrades/'))).toBe(false)
     expect(bundle.manifest).toMatchObject({
       bundleVersion: 2,
-      triviumVersion: '0.8.11',
+      triviumVersion: '0.9.0-beta.2',
       triviumFormat: 9,
     })
   })
@@ -177,8 +177,13 @@ describe('DistributedSyncService 完整快照', () => {
     await writeFile(path.join(sourceDir, 'skills', 'source.md'), '来源数据')
     const backup = vi.fn(async (target: string) => {
       const database = new Database(target)
-      try { database.exec("CREATE TABLE snapshot_data(value TEXT); INSERT INTO snapshot_data VALUES ('来源数据库')") }
-      finally { database.close() }
+      try {
+        database.exec(
+          "CREATE TABLE snapshot_data(value TEXT); INSERT INTO snapshot_data VALUES ('来源数据库')",
+        )
+      } finally {
+        database.close()
+      }
     })
     const source = new DistributedSyncService(
       sourceDir,

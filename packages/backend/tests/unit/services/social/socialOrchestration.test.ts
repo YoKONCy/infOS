@@ -46,10 +46,12 @@ function fixture() {
     .fn<SocialOrchestrationDeps['sendResource']>()
     .mockResolvedValue(JSON.stringify({ success: true }))
   const available = vi.fn(() => true)
+  const assertAllowed = vi.fn(async () => undefined)
   const save = vi.fn(async () => undefined)
   const run = (input: Record<string, unknown>, id = 'call-1', closing = false) =>
     runSocialRecovery({ record, signal: controller.signal, save }, () =>
       new SocialOrchestration({
+        assertAllowed,
         accountId: record.accountId,
         channelId: record.channelId,
         channelType: record.channelType,
@@ -71,6 +73,7 @@ function fixture() {
     send,
     sendResource,
     available,
+    assertAllowed,
     controller,
     inbound,
     save,
@@ -86,6 +89,44 @@ function fixture() {
 afterEach(() => vi.useRealTimers())
 
 describe('统一社交入口与持久化编排', () => {
+  it('可单独退出或回复后退出，并在恢复同一计划时保留退出决定', async () => {
+    const silent = fixture()
+    expect(await silent.run({ end_participation: true })).toMatchObject({
+      status: 'completed',
+      end_participation: true,
+    })
+    expect(silent.send).not.toHaveBeenCalled()
+    const reply = fixture()
+    const input = { reply: '先聊到这里', end_participation: true }
+    expect(await reply.run(input)).toMatchObject({ status: 'completed', end_participation: true })
+    reply.restart()
+    expect(await reply.run(input)).toMatchObject({ status: 'completed', end_participation: true })
+    expect(reply.send).toHaveBeenCalledTimes(1)
+  })
+
+  it('互聊保护阻止发送时仍可纯 PASS，但不能借 PASS 执行步骤或解除保护', async () => {
+    const f = fixture()
+    const blocked = new Error('SOCIAL_LOOP_BLOCKED')
+    f.assertAllowed.mockRejectedValue(blocked)
+    expect(await f.run({ action: 'pass', end_participation: true })).toMatchObject({
+      status: 'completed',
+    })
+    expect(f.assertAllowed).not.toHaveBeenCalled()
+    await expect(f.run({ reply: '不能发送' }, 'send')).rejects.toBe(blocked)
+    await expect(f.run({ action: 'pass', reply: '不能夹带发送' }, 'invalid')).rejects.toThrow()
+    expect(f.send).not.toHaveBeenCalled()
+    expect(f.execute).not.toHaveBeenCalled()
+  })
+
+  it('退出决定不绕过取消，也不能与等待或返回模型继续编排混用', async () => {
+    const f = fixture()
+    await expect(f.run({ action: 'wait', end_participation: true })).rejects.toThrow()
+    await expect(f.run({ end_participation: 'true' })).rejects.toThrow()
+    await expect(f.run({ end_participation: true, next: 'continue' })).rejects.toThrow()
+    const cancelled = new Error('回合已取消')
+    f.controller.abort(cancelled)
+    await expect(f.run({ end_participation: true }, 'cancelled')).rejects.toBe(cancelled)
+  })
   it('普通回复入口即结束，并使用可信会话、引用与结构化提及', async () => {
     const f = fixture()
     const result = await f.run({ reply: '第一行\r\n \r\n第二行', mentions: ['234567890'] })
@@ -155,6 +196,51 @@ describe('统一社交入口与持久化编排', () => {
       ]),
     )
     expect(f.execute).toHaveBeenCalledTimes(2)
+    expect(f.send).not.toHaveBeenCalled()
+  })
+
+  it('同一入口编排多个读图步骤时，多模态返回总计最多三张且正文不含 base64', async () => {
+    const f = fixture()
+    f.execute
+      .mockResolvedValueOnce(
+        JSON.stringify({
+          success: true,
+          images: ['data:image/png;base64,YQ==', 'data:image/png;base64,Yg=='],
+        }),
+      )
+      .mockResolvedValueOnce(
+        JSON.stringify({
+          success: true,
+          images: ['data:image/png;base64,Yw==', 'data:image/png;base64,ZA=='],
+        }),
+      )
+    const result = await f.run({
+      steps: [
+        {
+          id: 'first',
+          op: 'call',
+          tool: 'social',
+          action: 'image_read',
+          input: { message_ids: ['one'] },
+        },
+        {
+          id: 'second',
+          op: 'call',
+          tool: 'social',
+          action: 'image_read',
+          input: { message_ids: ['two'] },
+        },
+        { op: 'yield' },
+      ],
+    })
+    expect(result.images).toEqual([
+      'data:image/png;base64,YQ==',
+      'data:image/png;base64,Yg==',
+      'data:image/png;base64,Yw==',
+    ])
+    expect(result.images_omitted).toBe(1)
+    expect(JSON.stringify(result.observations)).not.toContain('base64')
+    expect(result.status).toBe('continue')
     expect(f.send).not.toHaveBeenCalled()
   })
 

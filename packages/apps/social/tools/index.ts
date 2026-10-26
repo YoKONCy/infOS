@@ -1,6 +1,9 @@
 import { t as __t } from '../runtime/i18n'
 import type { BuiltinTool } from '@infos/backend/applicationHostAbi'
 import { createLogger } from '@infos/backend/applicationHostAbi'
+import { MAX_SOCIAL_IMAGES, type SocialImageReaderProvider } from '../runtime/socialImageReader'
+import { currentSocialRecovery } from '../runtime/socialRecovery'
+export type { SocialImageReaderProvider } from '../runtime/socialImageReader'
 
 const logger = createLogger('SocialOps')
 
@@ -42,10 +45,6 @@ export interface SocialMessagingProvider {
     }>
   >
   notifyOwner(content: string, importance?: string): Promise<void>
-}
-
-export interface SocialImageReaderProvider {
-  readImages(agentId: string, messageIds: string[], maxImages?: number): Promise<string[]>
 }
 
 export interface SocialContactMemoryProvider {
@@ -335,20 +334,40 @@ export const socialReadImageTool: BuiltinTool = {
       : []
     if (messageIds.length === 0) return JSON.stringify({ error: '缺少 message_ids 参数' })
     try {
-      const maxImages = typeof args.max_images === 'number' ? Math.min(args.max_images, 3) : 3
-      const images = await imageReaderProvider.readImages(context.agentId, messageIds, maxImages)
+      const maxImages = args.max_images === undefined ? MAX_SOCIAL_IMAGES : args.max_images
+      if (
+        typeof maxImages !== 'number' ||
+        !Number.isInteger(maxImages) ||
+        maxImages < 1 ||
+        maxImages > MAX_SOCIAL_IMAGES
+      )
+        return JSON.stringify({
+          success: false,
+          error: __t('errors.social', '每次最多读取 3 张图片，max_images 必须为 1 至 3 的整数'),
+        })
+      const result = await imageReaderProvider.readImages(context.agentId, messageIds, maxImages)
+      const images = result.images.slice(0, maxImages)
       if (!images.length)
         return JSON.stringify({
           success: false,
-          error: '没有读到可用图片，请勿根据图片占位文本推测内容',
+          error: __t(
+            'errors.social',
+            result.unavailable.some((item) => item.reason === 'native_emoji_no_pixels')
+              ? '来源包含原生表情编号，但没有可读取的图片像素；可用 emoji_list 查询来源，不能据此判断图片丢失'
+              : '没有读到可用图片，请勿根据图片占位文本推测内容',
+          ),
+          unavailable: result.unavailable,
         })
       return JSON.stringify({
         success: true,
         count: images.length,
         message: __t('apps.social.ui', '已读取 {0} 张图片', [images.length]),
         images,
+        sources: result.sources.slice(0, images.length),
+        unavailable: result.unavailable,
       })
     } catch (err) {
+      currentSocialRecovery()?.signal.throwIfAborted()
       return JSON.stringify({
         error: `读取图片失败: ${err instanceof Error ? err.message : String(err)}`,
       })

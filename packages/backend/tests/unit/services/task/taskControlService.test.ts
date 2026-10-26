@@ -13,7 +13,7 @@ function setup() {
     category: 'agent_task',
     lifecycle: readTaskLifecycle(null, '整理资料'),
     result: '甲'.repeat(20000),
-    parentTaskId: null,
+    parentTaskId: null as string | null,
   }
   const tasks = {
     dispatch: vi.fn(async (_input: { idempotencyKey?: string }) => task),
@@ -64,6 +64,52 @@ describe('统一任务控制入口', () => {
     expect(
       await service.execute('pero', { action: 'get', taskId: 'task', resultOffset: 19999 }),
     ).toMatchObject({ result: '甲', nextResultOffset: null })
+  })
+
+  it('后台任务不能通过统一入口再创建通用任务', async () => {
+    const { service, tasks } = setup()
+    await expect(
+      service.execute(
+        'pero',
+        { action: 'create', instruction: '另开任务写代码' },
+        undefined,
+        false,
+        'background',
+        { taskId: 'parent', executionId: 'execution' },
+      ),
+    ).rejects.toMatchObject({ code: 'FORBIDDEN' })
+    expect(tasks.dispatch).not.toHaveBeenCalled()
+  })
+
+  it('后台任务仍可读取自身和管理关联的社交交办', async () => {
+    const { service, tasks, task } = setup()
+    const context = { taskId: 'task', executionId: 'execution' }
+    expect(
+      await service.execute(
+        'pero',
+        { action: 'get', taskId: 'task' },
+        undefined,
+        false,
+        'background',
+        context,
+      ),
+    ).toMatchObject({ id: 'task' })
+    task.parentTaskId = 'task'
+    task.id = 'social-task'
+    task.status = 'running'
+    await service.execute(
+      'pero',
+      { action: 'cancel', taskId: 'social-task', expectedRevision: 1 },
+      undefined,
+      false,
+      'background',
+      context,
+    )
+    expect(tasks.changeTask).toHaveBeenCalledWith('social-task', 1, {
+      action: 'cancel',
+      taskId: 'social-task',
+      expectedRevision: 1,
+    })
   })
 
   it('后台执行不能操作自身或其他父任务的子任务', async () => {

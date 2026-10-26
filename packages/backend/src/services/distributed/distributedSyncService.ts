@@ -15,7 +15,7 @@ import {
   TRIVIUM_VERSION,
 } from '../../repositories/triviumFiles'
 
-const APP_VERSION = '0.9.6'
+const APP_VERSION = '0.9.7'
 const BUNDLE_VERSION = 2
 const SCHEMA_VERSION = 1
 const MAX_FILE_COUNT = 100_000
@@ -219,7 +219,12 @@ export class DistributedSyncService {
     transferKeyBase64: string,
     expectedSourceServerId?: string,
   ): Promise<FullSyncManifest> {
-    if (existsSync(path.join(this.dataDir, BACKUP_STATE, 'pending.json')) || await this.pending() || existsSync(path.join(this.syncRoot, 'rollback.json'))) throw new Error('BACKUP_PENDING_IMPORT')
+    if (
+      existsSync(path.join(this.dataDir, BACKUP_STATE, 'pending.json')) ||
+      (await this.pending()) ||
+      existsSync(path.join(this.syncRoot, 'rollback.json'))
+    )
+      throw new Error('BACKUP_PENDING_IMPORT')
     const transferKey = Buffer.from(transferKeyBase64, 'base64')
     if (transferKey.length !== 32) throw new Error('SYNC_TRANSFER_KEY_INVALID')
     const bundle = JSON.parse(
@@ -284,13 +289,21 @@ export class DistributedSyncService {
   }
 
   async stageRollback(): Promise<boolean> {
-    if (existsSync(path.join(this.dataDir, BACKUP_STATE, 'pending.json')) || await this.pending()) throw new Error('BACKUP_PENDING_IMPORT')
+    if (existsSync(path.join(this.dataDir, BACKUP_STATE, 'pending.json')) || (await this.pending()))
+      throw new Error('BACKUP_PENDING_IMPORT')
     const lastSync = await this.lastSync()
     if (!lastSync?.backupPath) return false
     const backupPath = path.resolve(lastSync.backupPath)
     const relative = path.relative(path.resolve(this.syncRoot), backupPath)
-    const legacyRelative = path.relative(path.join(path.dirname(this.dataDir), '.infos-sync'), backupPath)
-    if (((relative.startsWith('..') || path.isAbsolute(relative)) && (legacyRelative.startsWith('..') || path.isAbsolute(legacyRelative))) || !existsSync(backupPath)) {
+    const legacyRelative = path.relative(
+      path.join(path.dirname(this.dataDir), '.infos-sync'),
+      backupPath,
+    )
+    if (
+      ((relative.startsWith('..') || path.isAbsolute(relative)) &&
+        (legacyRelative.startsWith('..') || path.isAbsolute(legacyRelative))) ||
+      !existsSync(backupPath)
+    ) {
       throw new Error('SYNC_BACKUP_INVALID')
     }
     await mkdir(this.syncRoot, { recursive: true })
@@ -347,14 +360,15 @@ export class DistributedSyncService {
         totalBytes += bytes.length
       }
       await this.walkData(snapshotRoot, '', add)
-      if (!this.capture) await this.walkData(this.dataDir, '', async (relativePath, physicalPath) => {
-        if (relativePath === 'infos.db') return
-        if (managedStoreBase(relativePath)) {
-          if (!this.stores) throw new Error('存在向量数据库，必须通过 Store 快照协调器导出')
-          return
-        }
-        await add(relativePath, physicalPath)
-      })
+      if (!this.capture)
+        await this.walkData(this.dataDir, '', async (relativePath, physicalPath) => {
+          if (relativePath === 'infos.db') return
+          if (managedStoreBase(relativePath)) {
+            if (!this.stores) throw new Error('存在向量数据库，必须通过 Store 快照协调器导出')
+            return
+          }
+          await add(relativePath, physicalPath)
+        })
       return {
         manifest: {
           bundleVersion: BUNDLE_VERSION,
@@ -387,8 +401,11 @@ export class DistributedSyncService {
       if (!relative && EXCLUDED_ROOTS.has(entry.name)) continue
       if (!relative && entry.name.startsWith('.resource-')) continue
       // 重建暂存区不是业务数据，不能将回滚用的旧正文带进同步快照。
-      if ((/^agent_[\w-]+$/.test(relative) || relative === 'knowledge') &&
-        /^\.index-[a-f0-9-]+$/i.test(entry.name)) continue
+      if (
+        (/^agent_[\w-]+$/.test(relative) || relative === 'knowledge') &&
+        /^\.index-[a-f0-9-]+$/i.test(entry.name)
+      )
+        continue
       if (entry.name.endsWith('-wal') || entry.name.endsWith('-shm') || entry.isSymbolicLink())
         continue
       if (entry.isDirectory()) await this.walkData(root, normalized, visit)
@@ -433,8 +450,11 @@ export class DistributedSyncService {
   }
 
   private safeRelative(value: string): string {
-    try { return safeBackupPath(value.replaceAll('\\', '/')) }
-    catch { throw new Error(`SYNC_PATH_INVALID: ${value}`) }
+    try {
+      return safeBackupPath(value.replaceAll('\\', '/'))
+    } catch {
+      throw new Error(`SYNC_PATH_INVALID: ${value}`)
+    }
   }
 
   private normalizeEndpoint(value: string): string {
@@ -499,9 +519,13 @@ export class DistributedSyncService {
   static async applyPending(dataDir: string): Promise<boolean> {
     const currentRoot = path.join(dataDir, BACKUP_STATE, 'sync')
     const legacyRoot = path.join(path.dirname(dataDir), '.infos-sync')
-    const syncRoot = ['pending.bundle', 'rollback.json'].some((file) => existsSync(path.join(currentRoot, file)))
+    const syncRoot = ['pending.bundle', 'rollback.json'].some((file) =>
+      existsSync(path.join(currentRoot, file)),
+    )
       ? currentRoot
-      : ['pending.bundle', 'rollback.json'].some((file) => existsSync(path.join(legacyRoot, file))) ? legacyRoot : currentRoot
+      : ['pending.bundle', 'rollback.json'].some((file) => existsSync(path.join(legacyRoot, file)))
+        ? legacyRoot
+        : currentRoot
     const rollbackInfo = path.join(syncRoot, 'rollback.json')
     if (existsSync(rollbackInfo)) {
       const rollback = JSON.parse(await readFile(rollbackInfo, 'utf8')) as { backupPath?: string }
@@ -510,7 +534,8 @@ export class DistributedSyncService {
       const legacyRelative = backupPath ? path.relative(path.resolve(legacyRoot), backupPath) : '..'
       if (
         !backupPath ||
-        ((relative.startsWith('..') || path.isAbsolute(relative)) && (legacyRelative.startsWith('..') || path.isAbsolute(legacyRelative))) ||
+        ((relative.startsWith('..') || path.isAbsolute(relative)) &&
+          (legacyRelative.startsWith('..') || path.isAbsolute(legacyRelative))) ||
         !existsSync(backupPath)
       ) {
         throw new Error('SYNC_BACKUP_INVALID')

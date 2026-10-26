@@ -187,9 +187,35 @@
     },
     {
       "name": "browser_screenshot",
-      "description": "截取当前内置浏览器窗口内容。",
+      "description": "截取当前网页视口或参考截图中的选区，返回 screenshotId 和坐标信息。",
       "display": { "label": "浏览器截图", "icon": "camera", "color": "sky", "style": "browser" },
-      "parameters": { "type": "object", "properties": {} }
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "screenshotId": {
+            "type": "string",
+            "description": "使用 region 时必填，引用本页参考截图的 screenshotId"
+          },
+          "region": {
+            "type": "object",
+            "description": "参考截图中的像素矩形；页面滚动、缩放或切换后需重新截图。支持继续在局部图中选区",
+            "properties": {
+              "x": { "type": "number", "minimum": 0 },
+              "y": { "type": "number", "minimum": 0 },
+              "width": { "type": "number", "exclusiveMinimum": 0 },
+              "height": { "type": "number", "exclusiveMinimum": 0 }
+            },
+            "required": ["x", "y", "width", "height"],
+            "additionalProperties": false
+          },
+          "maxWidth": {
+            "type": "integer",
+            "minimum": 320,
+            "maximum": 2560,
+            "description": "可选输出最大宽度；默认保留视口采集清晰度"
+          }
+        }
+      }
     },
     {
       "name": "browser_page_image",
@@ -199,7 +225,13 @@
         "type": "object",
         "properties": {
           "imageId": { "type": "string", "description": "例如IMG1" },
-          "handle": { "type": "string", "description": "元素句柄" }
+          "handle": { "type": "string", "description": "元素句柄" },
+          "maxWidth": {
+            "type": "integer",
+            "minimum": 320,
+            "maximum": 2560,
+            "description": "可选输出最大宽度，截图仍返回 screenshotId 和坐标信息"
+          }
         }
       }
     },
@@ -240,7 +272,7 @@
     },
     {
       "name": "browser_interact",
-      "description": "执行可信原生鼠标键盘、表单选择和勾选操作，并返回验证结果。",
+      "description": "执行鼠标键盘、表单选择和勾选操作。click/hover 使用元素句柄，或用 screenshotId 与局部截图像素坐标 x/y 定位；两种定位方式互斥。",
       "parameters": {
         "type": "object",
         "properties": {
@@ -250,6 +282,12 @@
           },
           "target": { "type": "string" },
           "handle": { "type": "string" },
+          "screenshotId": {
+            "type": "string",
+            "description": "click/hover 坐标操作必填；引用当前页面最近的有效截图"
+          },
+          "x": { "type": "number", "minimum": 0, "description": "参考截图中的 X 像素坐标" },
+          "y": { "type": "number", "minimum": 0, "description": "参考截图中的 Y 像素坐标" },
           "keys": { "type": "string" },
           "value": { "type": "string" },
           "text": { "type": "string" },

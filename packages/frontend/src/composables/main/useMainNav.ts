@@ -246,7 +246,9 @@ const navGroups: MainNavGroup[] = [
       },
       {
         id: 'backups',
-        get label() { return __t('ui.backup', '数据与备份') },
+        get label() {
+          return __t('ui.backup', '数据与备份')
+        },
         icon: 'database',
       },
       {

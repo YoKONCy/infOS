@@ -53,10 +53,12 @@ describe('内置提示词正文升级', () => {
     )
       .replaceAll('\r\n', '\n')
       .trim()
-    const oldBody = body.replace(
-      '{% if knowledge_context %}<knowledge_context>\n{{ knowledge_context }}\n</knowledge_context>{% endif %}\n{% if facts_context %}<facts_context>\n{{ facts_context }}\n</facts_context>{% endif %}\n',
-      '',
+    const oldBody = readFileSync(
+      new URL('../../../fixtures/prompts/turn-context-v0.9.5-hotfix1.md', import.meta.url),
+      'utf8',
     )
+      .replaceAll('\r\n', '\n')
+      .trim()
     // 已核对的旧发行指纹保证测试原文确实属于已知内置版本。
     expect(builtinBodyHash(oldBody)).toBe(
       'ad6124337c958adcbaddcf0aacf94570ea9607e354459881731c2c1cb0a16a83',

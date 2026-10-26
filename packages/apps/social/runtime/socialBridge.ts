@@ -54,6 +54,7 @@ import { SocialScheduler, type SocialSchedulerConfig } from './socialScheduler'
 import type { ImageCacheManager } from './imageCacheManager'
 import type { StickerService } from './stickerService'
 import type { NativeEmojiScope } from './nativeEmoji'
+import { isSocialImageAttachment, MAX_SOCIAL_IMAGES } from './socialImageReader'
 import type { SocialLoopGuard } from './socialLoopGuard'
 import { splitStickerSegments } from './stickerService'
 import {
@@ -693,31 +694,7 @@ export class SocialBridge {
     })
   }
 
-  /**
-   * 将附件转换为 data URL（base64）
-   *
-   * 优先用已下载的本地路径，否则等待下载完成。
-   * 用于多模态 LLM 图片输入。
-   */
-  private async attachmentToDataUrl(att: Attachment): Promise<string | null> {
-    if (!this.imageCache) return null
-    try {
-      // att.localPath 类型是 string | undefined，download 返回 string | null
-      // 用 ?? null 统一为 string | null，避免类型不兼容
-      let localPath: string | null = att.localPath ?? null
-      if (!localPath && att.url) {
-        localPath = await this.imageCache.download(att.url)
-      }
-      if (localPath) {
-        return this.imageCache.readAsDataUrl(localPath)
-      }
-    } catch {
-      // 单张图片失败不影响其他图片
-    }
-    return null
-  }
-
-  /** 只读取当前账号、当前会话的图片；按消息标识保留来源并限制每轮图片数量。 */
+  /** 只提供当前账号和会话的可选图片来源；像素由 Agent 经编排入口主动读取。 */
   private async collectImageContext(
     messages: InboundMessage[],
     trigger: InboundMessage,
@@ -777,7 +754,7 @@ export class SocialBridge {
     // 支持先发图再单独提及，补图仅看同一发送者最近两分钟内的消息。
     if (
       accountId &&
-      !candidates.some((message) => message.attachments?.some((item) => item.type === 'image'))
+      !candidates.some((message) => message.attachments?.some(isSocialImageAttachment))
     ) {
       try {
         const rows = await this.deps.socialMessageRepo.getRecent(
@@ -809,43 +786,28 @@ export class SocialBridge {
     }
 
     const seen = new Set<string>()
-    const selected: Array<{ attachment: Attachment; source: string }> = []
+    const selected: string[] = []
     for (const message of candidates) {
       for (const attachment of message.attachments ?? []) {
-        if (attachment.type !== 'image') continue
+        if (!isSocialImageAttachment(attachment)) continue
         const key = attachment.url || attachment.localPath
         if (!key || seen.has(key)) continue
         seen.add(key)
-        selected.push({
-          attachment,
-          source: `消息 ${socialMessageId(message) || '当前'}，发送者 ${JSON.stringify(message.senderName)}（账号:${message.senderId}）`,
-        })
-        if (selected.length >= 3) break
+        selected.push(
+          `消息 ${socialMessageId(message) || '当前'}，发送者 ${JSON.stringify(message.senderName)}（账号:${message.senderId}）`,
+        )
+        if (selected.length >= MAX_SOCIAL_IMAGES) break
       }
-      if (selected.length >= 3) break
+      if (selected.length >= MAX_SOCIAL_IMAGES) break
     }
-    const loaded = await Promise.all(
-      selected.map(async (item) => ({
-        ...item,
-        image: await this.attachmentToDataUrl(item.attachment),
-      })),
-    )
     signal?.throwIfAborted()
-    const images: string[] = []
-    const sources: string[] = []
-    for (const item of loaded) {
-      if (item.image) {
-        images.push(item.image)
-        sources.push(item.source)
-      } else {
-        context.push(`${item.source} 的图片未能读取，不要声称已经看过。`)
-      }
-    }
-    if (images.length)
-      logger.info(
-        __t('apps.social.logs', '[{0}] 已准备 {1} 张社交图片', [trigger.channelId, images.length]),
+    if (selected.length) {
+      context.push(`可选图片来源：\n${[...new Set(selected)].join('\n')}`)
+      context.push(
+        '以上图片尚未查看；需要画面时可通过 social 的 image_read 按消息 ID 读取，每次最多 3 张。',
       )
-    return { images, sources, context: context.join('\n') }
+    }
+    return { images: [], sources: [...new Set(selected)], context: context.join('\n') }
   }
 
   /**
@@ -1469,6 +1431,12 @@ export class SocialBridge {
       }
       const reply = outcome.content.trim()
       if (!reply) throw new Error('角色 Agent 返回了空回复')
+      this.getAdapter(platform)?.validateOutbound({
+        accountId: botSelfId,
+        channelId,
+        channelType,
+        content: reply,
+      })
 
       // 保留原始换行与标点，仅在表情包标记处保留必要的媒体顺序。
       const segments = splitStickerSegments(reply)
@@ -1559,7 +1527,11 @@ export class SocialBridge {
         direction: 'outbound',
         content: deliveredReply.slice(0, 100),
       })
-      return { type: 'reply', content: deliveredReply }
+      return {
+        type: 'reply',
+        content: deliveredReply,
+        ...(outcome.endParticipation ? { endParticipation: true } : {}),
+      }
     } catch (error) {
       logger.error(__t('apps.social.logs', '回复生成或发送失败: {0}', [error]))
       throw error
@@ -1587,6 +1559,7 @@ export class SocialBridge {
     if (!adapter) {
       throw new Error(`社交适配器 ${platform} 未连接，无法发送到 ${msg.channelId}`)
     }
+    adapter.validateOutbound(msg)
     if (recovery?.record.platform && recovery.record.platform !== platform)
       throw Object.assign(new Error('SOCIAL_TURN_SCOPE_INVALID'), { code: 'DELIVERY_NOT_SENT' })
     if (!msg.accountId) {
@@ -1906,6 +1879,7 @@ export class SocialBridge {
       recovery.record.platform ??
       (recovery.record.checkpoint.inbound as InboundMessage[] | undefined)?.[0]?.platform
     if (!platform) throw new Error('SOCIAL_PLATFORM_REQUIRED')
+    this.getAdapter(platform)?.validateOutbound(msg)
     const receipts: SocialDeliveryReceipt[] = []
     const segments = splitStickerSegments(msg.content)
     if (!segments.length && !msg.attachments?.length)

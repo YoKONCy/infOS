@@ -1,4 +1,13 @@
-export type BackupModule = 'settings' | 'agents' | 'conversations' | 'memory' | 'facts' | 'knowledge' | 'tasks' | 'workspace' | 'applications'
+export type BackupModule =
+  | 'settings'
+  | 'agents'
+  | 'conversations'
+  | 'memory'
+  | 'facts'
+  | 'knowledge'
+  | 'tasks'
+  | 'workspace'
+  | 'applications'
 export type BackupLevel = 'settings' | 'agent' | 'content' | 'full'
 export interface BackupSelection {
   level: BackupLevel

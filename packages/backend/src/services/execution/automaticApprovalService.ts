@@ -158,7 +158,7 @@ export class AutomaticApprovalService {
     const command = String(input.args.command ?? input.args.data ?? '')
     const scripts: Awaited<ReturnType<typeof scriptSnapshot>>[] = []
     const missingScripts: string[] = []
-    // 识别常见脚本参数；无法核实的动态表达式由审批模型拒绝，不能靠文件名放行。
+    // 收集常见脚本供模型追踪间接副作用；缺失与截断仍由下方完整性检查拦截。
     const candidates = [
       ...command.matchAll(
         /"([^"\r\n]+\.(?:py|ps1|sh|bash|js|mjs|cjs|ts|bat|cmd))"|'([^'\r\n]+\.(?:py|ps1|sh|bash|js|mjs|cjs|ts|bat|cmd))'|([^\s"'|;&<>]+\.(?:py|ps1|sh|bash|js|mjs|cjs|ts|bat|cmd))(?=\s|$|[;&|])/gi,
@@ -205,7 +205,7 @@ export class AutomaticApprovalService {
     const packet = JSON.stringify({
       userRequest: request
         ? bounded(textContent(request), 6000)
-        : '没有提供用户请求；授权不足时拒绝并说明理由',
+        : '未提供独立用户请求，请结合已有上下文确认任务目标与明确约束。',
       recent,
       toolName: input.toolName,
       args: input.args,

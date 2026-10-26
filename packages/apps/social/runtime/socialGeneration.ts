@@ -20,6 +20,7 @@ import {
 } from '@infos/backend/applicationHostAbi'
 import type { SocialTurnRecord } from '@infos/shared'
 import { currentSocialRecovery, socialDelay, socialFailure } from './socialRecovery'
+import { MAX_SOCIAL_IMAGES } from './socialImageReader'
 import { prepareSocialVision } from './socialVision'
 import { requestSocialModel } from './socialModelRequest'
 
@@ -460,13 +461,22 @@ export async function runSocialGeneration(
                 toolCallId: call.id,
               },
         )
-        state.pendingImages = [...(state.pendingImages ?? []), ...images]
+        state.pendingImages = [...new Set([...(state.pendingImages ?? []), ...images])].slice(
+          0,
+          MAX_SOCIAL_IMAGES,
+        )
         if (state.index === state.pending.length - 1 && state.pendingImages.length)
           state.messages.push({
             role: 'user',
             pinned: true,
             content: [
-              { type: 'text', text: __t('apps.social.ui', '以下是工具读取到的图片：') },
+              {
+                type: 'text',
+                text: __t(
+                  'apps.social.ui',
+                  '以下是本次实际提供的图片（最多 3 张），超出上限的图片未查看：',
+                ),
+              },
               ...state.pendingImages.map((url) => ({
                 type: 'image_url' as const,
                 image_url: { url },

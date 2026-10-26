@@ -84,8 +84,13 @@ describe('NIT 内部工具轨迹', () => {
       },
     })
     try {
-      expect(wrapper.findAll('.conversation-surface > .ta-node')).toHaveLength(2)
-      const parent = wrapper.get('.conversation-surface > .ta-node')
+      expect(wrapper.findAll('.surface-execution')).toHaveLength(1)
+      const process = wrapper.get('.surface-execution')
+      expect((process.element as HTMLDetailsElement).open).toBe(false)
+      ;(process.element as HTMLDetailsElement).open = true
+      await process.trigger('toggle')
+      expect(wrapper.findAll('.surface-execution__body > .ta-node')).toHaveLength(2)
+      const parent = wrapper.get('.surface-execution__body > .ta-node')
       expect(parent.get('.ta-summary').text()).toContain('NIT · 2')
       expect(parent.get('.ta-copy small').text()).toContain('读取文件')
       expect(parent.get('.ta-copy small').text()).toContain('2/2')
@@ -100,7 +105,7 @@ describe('NIT 内部工具轨迹', () => {
       expect((children[0]!.element as HTMLDetailsElement).open).toBe(true)
       expect((parent.element as HTMLDetailsElement).open).toBe(true)
       expect((children[1]!.element as HTMLDetailsElement).open).toBe(false)
-      expect(wrapper.get('.conversation-surface > .ta-node:last-of-type').classes()).toContain(
+      expect(wrapper.get('.surface-execution__body > .ta-node:last-of-type').classes()).toContain(
         'ta-state-error',
       )
     } finally {

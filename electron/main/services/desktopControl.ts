@@ -12,6 +12,7 @@ import type {
 import { windowsDesktop } from './windowsDesktop'
 import { captureScreen } from './desktopAwareness'
 import { resolveDesktopPoint } from './desktopCoordinates'
+import { mapScreenshotRegion, screenshotMaxWidth } from './screenshotGeometry'
 import { waitForDesktopIdle } from './desktopIdle'
 import { logger } from '../utils/logger'
 
@@ -176,6 +177,18 @@ class DesktopControl {
   private owner(caller: DesktopCaller): string {
     return `${caller.agentId ?? 'system'}:${caller.taskId ?? caller.threadId ?? 'desktop'}`
   }
+  private reference(id: unknown, caller: DesktopCaller): Observation {
+    const observation = this.observations.get(String(id ?? ''))
+    if (
+      !observation ||
+      observation.owner !== this.owner(caller) ||
+      observation.epoch !== this.state.epoch ||
+      Date.now() - observation.createdAt > 120_000 ||
+      observation.geometry !== this.geometry()
+    )
+      throw new Error('DESKTOP_OBSERVATION_STALE: 请先观察桌面，再引用本次 observationId 操作')
+    return observation
+  }
   private geometry(): string {
     return JSON.stringify(
       screen.getAllDisplays().map((display) => [display.id, display.bounds, display.scaleFactor]),
@@ -211,21 +224,48 @@ class DesktopControl {
   private async capture(input: Record<string, unknown>, caller: DesktopCaller): Promise<unknown> {
     const epoch = this.state.epoch
     const geometry = this.geometry()
+    const maxWidth = screenshotMaxWidth(input.maxWidth)
+    if (input.region !== undefined && !input.observationId)
+      throw new Error(
+        __t('errors.electron', 'SCREENSHOT_REFERENCE_REQUIRED: 区域截图需要有效的参考截图编号'),
+      )
+    const reference =
+      input.region !== undefined ? this.reference(input.observationId, caller) : undefined
+    const region = reference
+      ? mapScreenshotRegion(input.region, reference, reference.bounds)
+      : undefined
+    if (
+      reference &&
+      ((input.windowId !== undefined && input.windowId !== reference.window.windowId) ||
+        (input.displayId !== undefined && String(input.displayId) !== reference.displayId))
+    )
+      throw new Error('DESKTOP_OBSERVATION_STALE: 目标窗口已变化，请重新观察')
     await windowsDesktop.start()
     const info = await windowsDesktop.observe(
-      typeof input.windowId === 'string' ? input.windowId : undefined,
+      reference?.window.windowId ??
+        (typeof input.windowId === 'string' ? input.windowId : undefined),
       input.includeElements === true,
       caller.signal,
     )
+    if (
+      reference &&
+      (info.window.pid !== reference.window.pid ||
+        JSON.stringify(info.window.bounds) !== JSON.stringify(reference.window.bounds))
+    )
+      throw new Error('DESKTOP_OBSERVATION_STALE: 目标窗口已变化，请重新观察')
     const display =
-      input.displayId != null
+      reference || input.displayId != null
         ? screen
             .getAllDisplays()
-            .find((candidate) => String(candidate.id) === String(input.displayId))
+            .find(
+              (candidate) =>
+                String(candidate.id) === String(reference?.displayId ?? input.displayId),
+            )
         : screen.getDisplayMatching(screen.screenToDipRect(null, info.window.bounds))
     if (!display) throw new Error('DESKTOP_DISPLAY_NOT_FOUND: 目标显示器已断开')
-    const crop = input.windowId ? screen.screenToDipRect(null, info.window.bounds) : undefined
-    const raw = await captureScreen(Number(input.maxWidth ?? 1280), {
+    const crop =
+      region ?? (input.windowId ? screen.screenToDipRect(null, info.window.bounds) : undefined)
+    const raw = await captureScreen(maxWidth, {
       displayId: String(display.id),
       bounds: crop,
     })
@@ -272,11 +312,14 @@ class DesktopControl {
           dataUri: raw.dataUrl,
           coordinateContext: {
             observationId: observation.id,
+            ...(reference ? { referenceObservationId: reference.id } : {}),
             displayId: raw.displayId,
             coordinateSpace: 'screenshot',
+            sourceCoordinateSpace: 'desktop-dip',
             screenshotWidth: raw.width,
             screenshotHeight: raw.height,
             bounds: raw.bounds,
+            workArea: raw.workArea,
             scaleFactor: raw.scaleFactor,
           },
         },
@@ -294,15 +337,7 @@ class DesktopControl {
     caller: DesktopCaller,
   ): Promise<unknown> {
     return this.serial(caller, async () => {
-      const observation = this.observations.get(String(input.observationId ?? ''))
-      if (
-        !observation ||
-        observation.owner !== this.owner(caller) ||
-        observation.epoch !== this.state.epoch ||
-        Date.now() - observation.createdAt > 120_000 ||
-        observation.geometry !== this.geometry()
-      )
-        throw new Error('DESKTOP_OBSERVATION_STALE: 请先观察桌面，再引用本次 observationId 操作')
+      const observation = this.reference(input.observationId, caller)
       const current = await windowsDesktop
         .windows()
         .then((windows) =>

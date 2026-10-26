@@ -24,7 +24,7 @@ vi.mock('@infos/backend/tools/productivityRuntimeHolder', () => ({
   })),
 }))
 
-function fixture(name = 'terminal_execute') {
+function fixture(name = 'terminal_execute', allowedCommands = ['safe']) {
   const registry = new ToolRegistry()
   const handler = vi.fn(async () => '操作完成')
   registry.register({ name, description: '演示操作', parameters: { type: 'object' } }, handler)
@@ -34,7 +34,7 @@ function fixture(name = 'terminal_execute') {
       (_agent: string, _channel: string, _tool: string, value: string) =>
         !value.includes('outside'),
     ),
-    getToolPermission: vi.fn(() => ({ paramPolicy: { allowedCommands: ['safe'] } })),
+    getToolPermission: vi.fn(() => ({ paramPolicy: { allowedCommands } })),
   } as unknown as CapabilityGate
   const approvals = new ApprovalService()
   const executor = new RegistryToolExecutor(registry, gate, null, null, {
@@ -49,6 +49,59 @@ function fixture(name = 'terminal_execute') {
 afterEach(() => vi.useRealTimers())
 
 describe('执行模式与审批来源', () => {
+  it.each(['manual', 'auto', 'auto_approve'] as const)(
+    '明确只读查询在 %s 中无需人工或模型审批',
+    async (executionMode) => {
+      const { executor, handler, approvals } = fixture('terminal_execute', [])
+      const review = vi.fn()
+      executor.setAutomaticApprovalService({ review } as unknown as AutomaticApprovalService)
+      const result = await executor.execute(
+        'terminal_execute',
+        {
+          command: process.platform === 'win32' ? 'Get-Location' : 'pwd',
+        },
+        'desktop',
+        { executionMode },
+      )
+      expect(result.isError).toBe(false)
+      expect(result.metadata).toMatchObject({ readOnly: true })
+      expect(handler).toHaveBeenCalledWith(
+        expect.any(Object),
+        expect.objectContaining({ readOnlyTerminal: expect.any(Object) }),
+      )
+      expect(handler).not.toHaveBeenCalledWith(
+        expect.anything(),
+        expect.objectContaining({ approvedSensitiveAction: true }),
+      )
+      expect(review).not.toHaveBeenCalled()
+      expect(approvals.list()).toEqual([])
+    },
+  )
+
+  it('已有的一次性拒绝优先于只读免审判定', async () => {
+    const { executor, handler, approvals } = fixture('terminal_execute', [])
+    const args = { command: process.platform === 'win32' ? 'Get-Location' : 'pwd' }
+    const denied = approvals.create({
+      agentId: 'pero',
+      sessionId: 'thread',
+      threadId: 'thread',
+      channel: 'desktop',
+      toolName: 'terminal_execute',
+      args,
+      reason: '用户决定',
+    })
+    approvals.resolve(denied.id, 'deny_once', '本次先不要读取')
+    const result = await executor.execute('terminal_execute', args, 'desktop', {
+      executionMode: 'auto_approve',
+    })
+    expect(JSON.parse(result.output)).toMatchObject({
+      code: 'APPROVAL_DENIED',
+      source: 'user',
+      userMessage: '本次先不要读取',
+    })
+    expect(handler).not.toHaveBeenCalled()
+  })
+
   it('旧布尔设置保留原有模式', () => {
     expect(resolveExecutionMode(undefined, true)).toBe('auto')
     expect(resolveExecutionMode(undefined, false)).toBe('manual')

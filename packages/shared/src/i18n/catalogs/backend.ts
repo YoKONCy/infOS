@@ -29,6 +29,12 @@ import packagesZhTw from '../locales/zh-TW/server/packages.json'
 import packagesEnUs from '../locales/en-US/server/packages.json'
 // 按模块、语言分别维护词库；此入口只装配当前运行端需要的资源。
 import { registerCatalog } from '../index'
+import terminalReadonlyCn from '../locales/zh-CN/errors/terminal-readonly.json'
+import terminalReadonlyTw from '../locales/zh-TW/errors/terminal-readonly.json'
+import terminalReadonlyEn from '../locales/en-US/errors/terminal-readonly.json'
+registerCatalog('errors.terminal-readonly', 'zh-CN', terminalReadonlyCn)
+registerCatalog('errors.terminal-readonly', 'zh-TW', terminalReadonlyTw)
+registerCatalog('errors.terminal-readonly', 'en-US', terminalReadonlyEn)
 import userAvatarServerZhCn from '../locales/zh-CN/server/user-avatar.json'
 import userAvatarServerZhTw from '../locales/zh-TW/server/user-avatar.json'
 import userAvatarServerEnUs from '../locales/en-US/server/user-avatar.json'

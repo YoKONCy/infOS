@@ -36,6 +36,7 @@ import { runSocialGeneration, type SocialGenerationOptions } from './socialGener
 import { readFileSync } from 'node:fs'
 import { createLogger, tokenCounter } from '@infos/backend/applicationHostAbi'
 import { socialOwnerId } from './socialMessageContext'
+import { MAX_SOCIAL_IMAGES } from './socialImageReader'
 
 const logger = createLogger('SocialAppCompiler')
 
@@ -283,12 +284,7 @@ export class SocialAppCompiler {
     /** 与当前主要对话对象绑定的平台消息 ID 和正文。 */
     triggerMessageId?: string
     triggerMessageContent?: string
-    /**
-     * 触发消息中包含的图片（data URL 格式：data:image/xxx;base64,...）
-     *
-     * 当用户在群聊/私聊中发送图片时，适配器层下载到本地后由 Bridge 转 data URL 传入。
-     * compiler 将其组装为多模态 ContentPart[]，让多模态 LLM 能"看到"图片。
-     */
+    /** 显式附带的图片；普通社交消息仅提供来源，像素由后续读图工具按需返回。 */
     images?: string[]
     imageSources?: string[]
     /**
@@ -329,7 +325,7 @@ export class SocialAppCompiler {
     const contactImpression = params.contactImpression
     const triggerSenderId = params.triggerSenderId?.trim()
     const isOwner = Boolean(ownerId && triggerSenderId && triggerSenderId === ownerId)
-    const images = params.images ?? []
+    const images = (params.images ?? []).slice(0, MAX_SOCIAL_IMAGES)
     const botSelfId = params.botSelfId
     const botNickname = params.botNickname
     // 用户自定义称呼（如 主人/哥哥/老师），默认"主人"
@@ -436,7 +432,9 @@ export class SocialAppCompiler {
     for (const msg of history) {
       if (msg.role === 'user') {
         const identity = ownerId && msg.senderId === ownerId ? ownerAppellation : '普通联系人'
-        const sender = msg.senderName || (ownerId && msg.senderId === ownerId ? ownerName : msg.senderId || '联系人')
+        const sender =
+          msg.senderName ||
+          (ownerId && msg.senderId === ownerId ? ownerName : msg.senderId || '联系人')
         historyLines.push(
           `<user sender="${escapeXmlAttribute(sender)}" user_id="${escapeXmlAttribute(msg.senderId ?? '未知')}" identity="${escapeXmlAttribute(identity)}"${isBot(msg.senderId) ? ' bot_hint="无需刻意回应@"' : ''} message_id="${escapeXmlAttribute(msg.messageId ?? '未知')}" time="${escapeXmlAttribute(msg.timestamp)}">${escapeXmlText(msg.content)}</user>`,
         )
@@ -609,7 +607,7 @@ export class SocialAppCompiler {
     const excerpt = params.triggerMessageContent?.slice(0, 600)
     const target = [
       '<current_social_turn>',
-      `视觉输入：本轮实际附带 ${images.length} 张图片。`,
+      `视觉输入：初始消息附带 ${images.length} 张图片；后续以读图工具实际返回的画面为准。`,
       `频道：${channelType === 'private' ? '私聊' : '群聊'}`,
       `<reply_target message_id="${escapeXmlAttribute(params.triggerMessageId || '未知')}" sender_id="${escapeXmlAttribute(triggerSenderId || '未知')}" identity="${escapeXmlAttribute(isOwner ? ownerAppellation : '普通联系人')}"${isBot(triggerSenderId) ? ' bot_hint="无需刻意回应@"' : ''}>`,
       `昵称：${escapeXmlText(JSON.stringify(params.triggerSenderName || triggerSenderId || '未知'))}`,

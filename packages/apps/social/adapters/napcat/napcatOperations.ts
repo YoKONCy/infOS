@@ -535,11 +535,13 @@ export class NapcatOperations {
     if (definition.action === 'image_read')
       for (const messageId of input.message_ids as string[]) {
         const row = await this.deps.storage.getByMsgId(scope.agentId, messageId, accountId)
+        // 未入库的引用可由图片 Provider 从平台读取，并再次核验完整会话范围。
         if (
-          !row ||
-          row.accountId !== accountId ||
-          (!scope.owner &&
-            (row.channelId !== scope.channelId || row.channelType !== scope.channelType))
+          row &&
+          (row.platform !== 'qq' ||
+            row.accountId !== accountId ||
+            row.channelId !== scope.channelId ||
+            row.channelType !== scope.channelType)
         )
           throw new Error('图片不属于当前账号或会话')
       }
@@ -856,6 +858,8 @@ export class NapcatOperations {
       if (action.startsWith('status_card_')) input.action = action.slice(12)
       if (definition.mutation && this.writes.getStore()) this.writes.getStore()!.submitted = true
       const result: unknown = JSON.parse(await legacy(definition.legacy, input))
+      // 读图的结构化缺失原因原样返回，不能抹成“消息不存在”或笼统异常。
+      if (action === 'image_read') return result
       if (object(result).error || object(result).success === false)
         throw Object.assign(new Error(String(object(result).error ?? '社交操作失败')), {
           rejected: !definition.mutation || object(result).rejected === true,

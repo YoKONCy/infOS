@@ -1,6 +1,7 @@
 {
   "[任务] {0}": "[Task] {0}",
-  "后台任务只能读取自身或管理自己派发的子任务": "Background tasks may only read themselves or manage their own subtasks.",
+  "后台任务不能派发通用子任务": "Background tasks cannot delegate general-purpose subtasks.",
+  "后台任务只能读取自身或管理直接关联的任务": "Background tasks may only read themselves or manage their directly linked tasks.",
   "父任务执行已失效，不能继续派发": "The parent execution is no longer valid; delegation stopped.",
   "任务委派已达到最大深度": "The task delegation depth limit has been reached.",
   "父任务已达到子任务数量上限": "The parent task has reached its subtask limit.",

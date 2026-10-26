@@ -10,6 +10,15 @@ import {
 import { splitStickerSegments } from '@infos/social/runtime/stickerService'
 
 describe('QQ 原生与收藏表情边界', () => {
+  it('入站原生表情占位不能作为出站正文泄漏，也不擅自按编号发送', () => {
+    expect(cleanCQCodes('[CQ:face,id=289]')).toBe('[QQ表情:289]')
+    expect(() => toOneBotSegments('回复正文[QQ表情:289]')).toThrow(
+      expect.objectContaining({ code: 'DELIVERY_NOT_SENT', rejected: true }),
+    )
+    expect(() => toOneBotSegments('[QQ商城表情]')).toThrow(
+      expect.objectContaining({ code: 'DELIVERY_NOT_SENT' }),
+    )
+  })
   it('收藏表情使用下划线子类型，原生系统与商城表情分别发送', () => {
     expect(
       toOneBotSegments('', [{ type: 'sticker', url: 'https://example.test/a.gif' }])[0]?.data,

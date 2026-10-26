@@ -11,6 +11,8 @@ import type { ExecutionSession, ExecutionSessionManager } from './executionSessi
 import type { SandboxRunner } from './sandboxRunner'
 import { trackCancellationCleanup, waitForCancellationCleanup } from './cancellation'
 import { createLogger } from '../../lib/logger'
+import { realpath } from 'node:fs/promises'
+import { executeReadOnlyTerminal, type ReadOnlyTerminalGrant } from './readOnlyTerminal'
 
 const logger = createLogger('TerminalManager')
 
@@ -76,6 +78,7 @@ export class TerminalRunError extends Error {
 
 export interface CreateTerminalInput {
   approvedOutsideWorkspace?: boolean
+  readOnly?: ReadOnlyTerminalGrant
   executionSessionId: string
   /** 为空时启动当前平台的交互式系统 Shell。 */
   command?: string
@@ -132,7 +135,6 @@ export class TerminalManager {
     input.signal?.throwIfAborted()
     const session = this.requireSession(input.executionSessionId)
     const ownerEpoch = this.ownerEpochs.get(session.id) ?? 0
-    const shell = this.resolveShell(input.command, input.argv)
     const terminalId = randomUUID()
     // 终端工具的相对 cwd 永远基于当前 Agent 的执行会话 workspace，而非后端进程 cwd。
     // 缺省或 "." 均指向 workspace 根目录；绝对路径仍交给 SandboxRunner 做范围校验。
@@ -142,6 +144,8 @@ export class TerminalManager {
         ? path.normalize(requestedCwd)
         : path.resolve(session.workspaceRoot, requestedCwd)
       : session.workspaceRoot
+    if (input.readOnly) return this.createReadOnlyTerminal(input, session, ownerEpoch)
+    const shell = this.resolveShell(input.command, input.argv)
     // 信号的桥接可以在正常轮次结束时解绑；终端随后由 Thread/Task 生命周期接管。
     const controller = new AbortController()
     const abort = () => {
@@ -256,6 +260,104 @@ export class TerminalManager {
       this.archive(terminalId, session.id)
       throw new Error('创建终端期间所有者已请求停止')
     }
+    return this.snapshot(record)
+  }
+
+  /** 只读查询沿用终端历史与游标，不创建系统进程或可写的交互会话。 */
+  private async createReadOnlyTerminal(
+    input: CreateTerminalInput,
+    session: ExecutionSession,
+    ownerEpoch: number,
+  ): Promise<TerminalSnapshot> {
+    const startedAt = new Date().toISOString()
+    let output: string,
+      exitCode = 0
+    try {
+      if ((await realpath(session.workspaceRoot)) !== input.readOnly!.root)
+        throw new Error(
+          __t('errors.terminal-readonly', 'READ_ONLY_CONTEXT_CHANGED: 只读查询参数或工作区已变化'),
+        )
+      const roots = await Promise.all(
+        session.sandboxProfile.readableRoots.map((root) => realpath(root)),
+      )
+      const grant = input.readOnly!
+      output = await executeReadOnlyTerminal(
+        {
+          ...grant,
+          checkPath: (target) => {
+            const allowed =
+              session.sandboxProfile.name === 'full-access' ||
+              roots.some((root) => {
+                const relative = path.relative(root, target)
+                return (
+                  relative === '' ||
+                  (relative !== '..' &&
+                    !relative.startsWith(`..${path.sep}`) &&
+                    !path.isAbsolute(relative))
+                )
+              })
+            return allowed && grant.checkPath(target)
+          },
+        },
+        {
+          command: input.command,
+          argv: input.argv,
+          cwd: input.cwd,
+        },
+        input.signal,
+      )
+    } catch (error) {
+      input.signal?.throwIfAborted()
+      exitCode = 1
+      output = error instanceof Error ? error.message : String(error)
+    }
+    input.signal?.throwIfAborted()
+    if (
+      this.closed ||
+      session.state !== 'active' ||
+      ownerEpoch !== (this.ownerEpochs.get(session.id) ?? 0)
+    )
+      throw new Error('TERMINAL_CANCELLED')
+    const buffer = Buffer.from(output)
+    const retained = buffer
+      .subarray(-session.sandboxProfile.maxOutputBytes)
+      .toString('utf8')
+      .replace(/^\uFFFD+/, '')
+    const record: TerminalRecord = {
+      id: randomUUID(),
+      executionSessionId: session.id,
+      processId: '',
+      pid: null,
+      title: input.title?.trim() || input.command?.slice(0, 80) || '',
+      command: input.command,
+      argv: input.argv,
+      cwd: input.readOnly!.cwd,
+      status: exitCode === 0 ? 'exited' : 'failed',
+      startedAt,
+      exitedAt: new Date().toISOString(),
+      exitCode,
+      exitReason: 'exit',
+      output: retained,
+      outputLength: output.length,
+      backend: 'pipe',
+      cols: input.cols ?? 120,
+      rows: input.rows ?? 30,
+      owner: input.owner ?? 'agent',
+      ownerAgentId: session.ownerAgentId,
+      threadId: session.threadId,
+      taskId: session.taskId,
+      pinned: false,
+      maxOutputBytes: session.sandboxProfile.maxOutputBytes,
+      bufferStartOffset: output.length - retained.length,
+      absoluteOutputLength: output.length,
+      writeInput: () => {},
+      resizeTerminal: () => {},
+      detachSignal: () => {},
+      releaseProcess: () => {},
+    }
+    this.terminals.set(record.id, record)
+    this.notify(record.id)
+    this.sweep()
     return this.snapshot(record)
   }
 

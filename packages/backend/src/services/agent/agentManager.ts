@@ -142,7 +142,6 @@ export interface AgentProfile {
    * 各角色的称呼独立配置，渲染提示词/台词时按该 Agent 的称呼占位。
    */
   ownerAppellation: string
-  // AIOS: workPersona 已移除（work 模式废弃），Social 由子 Agent 处理
   /** 社交模式特征标签 */
   socialTraits: string[]
   /** 社交绑定 (QQ ID 等) */
@@ -700,7 +699,6 @@ export class AgentManager {
     mkdirSync(agentDir, { recursive: true })
 
     // 写入 agent.json
-    // AIOS: work 模式已废弃（由 subagent 应用处理），Social 由子 Agent 处理
     const config = {
       name: opts.name,
       description: opts.description ?? '',
@@ -895,8 +893,6 @@ export class AgentManager {
   private loadAgentConfig(agentId: string, agentDir: string, configPath: string): AgentProfile {
     const raw = readFileSync(configPath, 'utf-8')
     const config = JSON.parse(raw) as Record<string, unknown>
-
-    // AIOS: workPersona/socialPersona 加载已移除（work 模式废弃，Social 由子 Agent 处理）
 
     // 特征
     const traits = (config.traits ?? {}) as Record<string, string[]>

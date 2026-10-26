@@ -113,6 +113,7 @@ export class StartupSplash {
         ].map((source) => [source, t(scope, source)]),
       ),
       labels: {
+        brandCaption: t(scope, '萌动链接：PeroperoChat'),
         loading: t(scope, '正在启动 infOS'),
         title: t(scope, '启动遇到问题'),
         message: t(scope, messages[this.failure]),
@@ -136,8 +137,33 @@ export class StartupSplash {
   }
 
   setPhase(phase: StartupPhase): void {
+    const changedLayout = (this.phase === 'connection') !== (phase === 'connection')
     this.phase = phase
+    if (changedLayout && this.win && !this.win.isDestroyed()) {
+      this.win.setBounds(this.windowBounds())
+    }
     this.publish()
+  }
+
+  /** 配置保留 Pero 的纵向空间，加载使用佩诺菈的横幅比例；始终复用当前窗口。 */
+  private windowBounds(): Electron.Rectangle {
+    const current = this.win && !this.win.isDestroyed() ? this.win.getBounds() : null
+    const point = current
+      ? {
+          x: Math.round(current.x + current.width / 2),
+          y: Math.round(current.y + current.height / 2),
+        }
+      : screen.getCursorScreenPoint()
+    const area = screen.getDisplayNearestPoint(point).workArea
+    const aspect = this.phase === 'connection' ? 1569 / 1080 : 1920 / 1080
+    const width = Math.round(Math.min(1040, area.width * 0.84, area.height * 0.84 * aspect))
+    const height = Math.round(width / aspect)
+    return {
+      width,
+      height,
+      x: Math.round(area.x + (area.width - width) / 2),
+      y: Math.round(area.y + (area.height - height) / 2),
+    }
   }
 
   /** 连接选择与加载进度在同一张开屏中切换；保存前不会放行启动链。 */
@@ -245,16 +271,12 @@ export class StartupSplash {
     }
     if (this.openPromise) return this.openPromise
     this.win?.destroy()
-    const area = screen.getDisplayNearestPoint(screen.getCursorScreenPoint()).workArea
-    const width = Math.round(Math.min(1040, area.width * 0.84, (area.height * 0.84 * 1569) / 1080))
-    const height = Math.round((width * 1080) / 1569)
+    this.win = null
+    const bounds = this.windowBounds()
     const win = new BrowserWindow({
       title: APPLICATION_NAME,
       icon: loadSystemIcon(256),
-      width,
-      height,
-      x: Math.round(area.x + (area.width - width) / 2),
-      y: Math.round(area.y + (area.height - height) / 2),
+      ...bounds,
       show: false,
       frame: false,
       transparent: true,

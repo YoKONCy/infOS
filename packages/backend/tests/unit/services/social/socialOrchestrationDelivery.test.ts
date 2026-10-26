@@ -2,6 +2,7 @@ import { AbstractSocialAdapter } from '@infos/social/adapters/ISocialAdapter'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { SocialBridge } from '@infos/social/runtime/socialBridge'
 import { SocialOrchestration } from '@infos/social/runtime/socialOrchestration'
+import { assertQQOutboundContent } from '@infos/social/adapters/napcat/napcatParser'
 import { finishSocialTurn, runSocialRecovery } from '@infos/social/runtime/socialRecovery'
 import type { SocialStoragePort, SocialTurnRecord } from '@infos/shared'
 import type { OutboundMessage, SocialDeliveryReceipt } from '@infos/social/runtime/types'
@@ -9,6 +10,9 @@ import type { SocialSessionManager } from '@infos/social/runtime/socialSessionMa
 
 class DeliveryAdapter extends AbstractSocialAdapter {
   readonly platform = 'qq'
+  override validateOutbound(message: OutboundMessage): void {
+    assertQQOutboundContent(message.content)
+  }
   async connect() {}
   async disconnect() {}
   async sendMessage(): Promise<SocialDeliveryReceipt> {
@@ -113,6 +117,16 @@ function fixture() {
 afterEach(() => vi.useRealTimers())
 
 describe('社交编排逐条送达与消息落盘', () => {
+  it('完整正文含入站占位时先拒绝，不先发送前面的文字或媒体段', async () => {
+    const f = fixture()
+    const result = await f.run({ reply: '前段[native_emoji:123:1]后段[QQ表情:289]' })
+    expect(result.observations[0]).toMatchObject({
+      status: 'failed',
+      error: { code: 'DELIVERY_NOT_SENT' },
+    })
+    expect(f.sendMessage).not.toHaveBeenCalled()
+    expect(f.rows).toEqual([])
+  })
   it('已确认的发送回执可在通道离线后恢复，不重复发送或消耗新预算', async () => {
     const f = fixture()
     const context = {

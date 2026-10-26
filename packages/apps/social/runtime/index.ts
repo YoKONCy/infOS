@@ -84,10 +84,10 @@ import {
   setSocialImageReaderProvider,
   setSocialDiaryReaderProvider,
   setSocialContactMemoryProvider,
-  type SocialImageReaderProvider,
   type SocialContactMemoryProvider,
 } from '../tools'
 import { SocialDataService } from './socialDataService'
+import { createSocialImageReader } from './socialImageReader'
 import {
   currentSocialRecovery,
   currentSocialStep,
@@ -803,46 +803,21 @@ export class SocialAppRuntime implements AgentAppRuntime {
           const imgCache = imageCacheManager
           const decode = (row: Parameters<AbstractSocialAdapter['restoreMessage']>[0]) =>
             this.adapter(row.platform)?.restoreMessage(row) ?? restoreSocialMessage(row)
-          const imageReader: SocialImageReaderProvider = {
-            async readImages(
-              agentId: string,
-              messageIds: string[],
-              maxImages = 3,
-            ): Promise<string[]> {
-              const images: string[] = []
-              const collectedUrls = new Set<string>() // 去重
-
-              for (const msgId of messageIds) {
-                if (images.length >= maxImages) break
-                try {
-                  const accountId = currentSocialRecovery()?.record.accountId
-                  if (!accountId) throw new Error('图片读取缺少当前社交账号')
-                  const row = await repo.getByMsgId(agentId, msgId, accountId)
-                  if (row?.accountId !== accountId) continue
-                  if (!row?.rawEventJson || row.rawEventJson === '{}') continue
-                  const urls = (decode(row).attachments ?? [])
-                    .filter((item) => item.type === 'image')
-                    .flatMap((item) => (item.url ? [item.url] : []))
-                  for (const url of urls) {
-                    if (images.length >= maxImages) break
-                    if (collectedUrls.has(url)) continue
-                    const localPath = await imgCache.download(url)
-                    if (localPath) {
-                      const dataUrl = imgCache.readAsDataUrl(localPath)
-                      if (dataUrl) {
-                        images.push(dataUrl)
-                        collectedUrls.add(url)
-                      }
-                    }
-                  }
-                } catch {
-                  // 单条消息查询失败不影响其他消息
-                }
-              }
-              return images
-            },
-          }
-          setSocialImageReaderProvider(imageReader)
+          setSocialImageReaderProvider(
+            createSocialImageReader(
+              repo,
+              decode,
+              imgCache,
+              async (source, signal) =>
+                this.adapter(source.platform)?.getMessage?.(
+                  source.messageId,
+                  source.channelId,
+                  source.channelType,
+                  source.accountId,
+                  signal,
+                ) ?? null,
+            ),
+          )
           ctx.logger.info(__t('apps.social.logs', '社交图片读取 Provider 已注入'))
         }
 
@@ -1637,7 +1612,7 @@ export class SocialAppRuntime implements AgentAppRuntime {
       history,
       botAccountIds: this.loopGuard?.botIds(platform) ?? [],
       userMessage:
-        !model.enableVision && params.images?.length
+        !model.enableVision && (params.images?.length || params.imageSources?.length)
           ? `${combinedMessage}\n[图片状态：当前角色模型未开启视觉能力，本轮没有读到图片内容，不要假装已经看过。]`
           : combinedMessage,
       channelType,
@@ -1647,7 +1622,9 @@ export class SocialAppRuntime implements AgentAppRuntime {
       // 用户称呼：取该 Agent 的 agent.json owner_appellation（兜底"主人"），用于替换社交规则/身份提示中的"主人"占位
       ownerAppellation: this.ctx.agentManager.getOwnerAppellation(this.socialAgentId),
       // 名称读取主应用登记值；未登记时沿用当前角色的专属称呼。
-      ownerName: (await this.ctx.configRepo?.get('owner.name')) || this.ctx.agentManager.getOwnerAppellation(this.socialAgentId),
+      ownerName:
+        (await this.ctx.configRepo?.get('owner.name')) ||
+        this.ctx.agentManager.getOwnerAppellation(this.socialAgentId),
       stickersAvailable,
       contactImpression: contactImpression
         ? {
@@ -2194,7 +2171,12 @@ export class SocialAppRuntime implements AgentAppRuntime {
       sendResource: (source, caption, key) =>
         runSocialStep(key, () => executeScopedTool('send_file', { source, caption })),
     })
-    const scopedDefinitions = [socialActDefinition(capabilityDefinitions, this.ctx.agentManager.getOwnerAppellation(this.socialAgentId))]
+    const scopedDefinitions = [
+      socialActDefinition(
+        capabilityDefinitions,
+        this.ctx.agentManager.getOwnerAppellation(this.socialAgentId),
+      ),
+    ]
     const replayMessages = () =>
       Object.values(
         (recovery.record.checkpoint.sentMessages as Record<
@@ -2296,8 +2278,13 @@ export class SocialAppRuntime implements AgentAppRuntime {
           (recovery.record.checkpoint.deliveries ?? {}) as Record<string, string>,
         ).includes('sent')
       outcome = delivered
-        ? { type: 'reply', content: deliveredReply, delivered: true }
-        : { type: 'pass' }
+        ? {
+            type: 'reply',
+            content: deliveredReply,
+            delivered: true,
+            ...(actResult.end_participation ? { endParticipation: true } : {}),
+          }
+        : { type: 'pass', ...(actResult.end_participation ? { endParticipation: true } : {}) }
     } else {
       throw new Error('社交回合尚未通过 social_act 提交参与行为，未发送普通文字')
     }

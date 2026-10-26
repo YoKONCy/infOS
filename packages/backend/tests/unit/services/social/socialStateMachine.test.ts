@@ -1,6 +1,7 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import {
   SocialSessionManager,
+  type FlushCallback,
   type SocialTurnOutcome,
 } from '@infos/social/runtime/socialSessionManager'
 import type { InboundMessage } from '@infos/social/runtime/types'
@@ -29,6 +30,69 @@ function message(overrides: Partial<InboundMessage> = {}): InboundMessage {
 
 describe('SocialSessionManager 单 Agent 状态机', () => {
   afterEach(() => vi.useRealTimers())
+
+  it.each(['reply', 'pass'] as const)(
+    '%s 携带退出决定后回到 idle，普通消息不再触发活跃续聊，新提及仍可唤起',
+    async (type) => {
+      vi.useFakeTimers()
+      const flush = vi
+        .fn<FlushCallback>()
+        .mockResolvedValueOnce({ type: 'reply', content: '你好呀' })
+        .mockResolvedValueOnce(
+          type === 'reply'
+            ? { type: 'reply', content: '先聊到这里', endParticipation: true }
+            : { type: 'pass', endParticipation: true },
+        )
+        .mockResolvedValue({ type: 'pass' })
+      const manager = new SocialSessionManager(flush, { groupCollectTimeout: 1, bufferTimeout: 1 })
+      try {
+        await manager.handleInbound(message({ messageId: 'first', isMentioned: true }))
+        await vi.advanceTimersByTimeAsync(1000)
+        const session = manager.listSessions()[0]!
+        expect(session.participation).toBe('engaged')
+        await manager.handleInbound(message({ messageId: 'second' }))
+        await vi.advanceTimersByTimeAsync(1000)
+        expect(session).toMatchObject({ participation: 'idle', phase: 'ready', lastActiveTime: 0 })
+        await manager.handleInbound(message({ messageId: 'ordinary' }))
+        await vi.advanceTimersByTimeAsync(2000)
+        expect(flush).toHaveBeenCalledTimes(2)
+        await manager.handleInbound(message({ messageId: 'mentioned-again', isMentioned: true }))
+        await vi.advanceTimersByTimeAsync(1000)
+        expect(flush.mock.calls[2]?.[1]).toEqual(
+          expect.arrayContaining([expect.objectContaining({ messageId: 'mentioned-again' })]),
+        )
+      } finally {
+        manager.stop()
+      }
+    },
+  )
+
+  it('退出期间排队的新提及仍作为独立请求处理，未被清掉', async () => {
+    vi.useFakeTimers()
+    let finish!: (outcome: SocialTurnOutcome) => void
+    const flush = vi
+      .fn<FlushCallback>()
+      .mockImplementationOnce(
+        () =>
+          new Promise((resolve) => {
+            finish = resolve
+          }),
+      )
+      .mockResolvedValue({ type: 'pass' })
+    const manager = new SocialSessionManager(flush, { groupCollectTimeout: 1 })
+    try {
+      await manager.handleInbound(message({ messageId: 'first', isMentioned: true }))
+      await vi.advanceTimersByTimeAsync(1000)
+      await manager.handleInbound(message({ messageId: 'new-mention', isMentioned: true }))
+      finish({ type: 'pass', endParticipation: true })
+      await vi.advanceTimersByTimeAsync(3000)
+      expect(flush.mock.calls[1]?.[1]).toEqual([
+        expect.objectContaining({ messageId: 'new-mention' }),
+      ])
+    } finally {
+      manager.stop()
+    }
+  })
 
   it('明确提及时收集消息并把 Agent 回复提交为 engaged', async () => {
     vi.useFakeTimers()

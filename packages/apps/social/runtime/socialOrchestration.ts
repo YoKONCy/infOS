@@ -4,6 +4,7 @@ import { SOCIAL_BUSINESS_TOOLS, type SocialBusinessTool } from '@infos/shared'
 import { createLogger, safeModelDiagnostic } from '@infos/backend/applicationHostAbi'
 import type { InboundMessage, OutboundMessage } from './types'
 import { currentSocialRecovery, runSocialStep, socialDelay, socialFailure } from './socialRecovery'
+import { MAX_SOCIAL_IMAGES } from './socialImageReader'
 
 type ObjectValue = Record<string, unknown>
 export type StepStatus = 'completed' | 'failed' | 'uncertain' | 'skipped'
@@ -51,6 +52,7 @@ interface Plan {
   action?: string
   reason?: string
   intention?: string
+  endParticipation?: boolean
 }
 export interface SocialOrchestrationCheckpoint {
   version: 1
@@ -66,6 +68,8 @@ export interface SocialActResult {
   observations: StepResult[]
   delivered_messages: unknown[]
   images?: string[]
+  images_omitted?: number
+  end_participation?: boolean
   wake_at?: number
   expires_at?: number
   had_errors: boolean
@@ -283,11 +287,21 @@ export class SocialOrchestration {
       'quote',
       'mentions',
       'attachments',
+      'end_participation',
     ])
+    if (input.end_participation !== undefined && typeof input.end_participation !== 'boolean')
+      throw new Error(__t('errors.social', 'end_participation 必须为布尔值'))
+    const endParticipation = input.end_participation === true
+    const exitOnly =
+      endParticipation &&
+      input.reply === undefined &&
+      input.messages === undefined &&
+      input.steps === undefined &&
+      input.attachments === undefined
     const action = oneOf(
       input.action,
       ['reply', 'pass', 'wait', 'observe', 'defer', 'continue'] as const,
-      'reply',
+      exitOnly ? 'pass' : 'reply',
     )
     if (input.intention !== undefined) text(input.intention, 500)
     if (input.reason !== undefined) text(input.reason, 500)
@@ -443,17 +457,27 @@ export class SocialOrchestration {
         ...flat(step.fallback ?? []),
       ])
     const all = flat(steps)
+    if (
+      endParticipation &&
+      (input.after !== undefined ||
+        input.next === 'continue' ||
+        all.some((step) => ['wait', 'observe', 'yield'].includes(step.op)))
+    )
+      throw new Error(
+        __t('errors.social', '退出活跃状态不能同时等待、延后、yield 或 next:continue'),
+      )
+    const next = oneOf(
+      input.next,
+      ['auto', 'end', 'continue'] as const,
+      action === 'continue' ? 'continue' : 'auto',
+    )
     return {
       id,
       fingerprint: hash(input),
       steps,
       results: {},
       attempts: {},
-      next: oneOf(
-        input.next,
-        ['auto', 'end', 'continue'] as const,
-        action === 'continue' ? 'continue' : 'auto',
-      ),
+      next: endParticipation ? 'end' : next,
       onNewMessage: oneOf(
         input.on_new_message,
         ['keep', 'cancel', 'reconsider'] as const,
@@ -467,6 +491,7 @@ export class SocialOrchestration {
       action,
       reason: input.reason as string | undefined,
       intention: input.intention as string | undefined,
+      endParticipation,
     }
   }
 
@@ -508,16 +533,15 @@ export class SocialOrchestration {
 
   async execute(input: ObjectValue, callId: string, closing = false): Promise<SocialActResult> {
     this.active()
-    await this.deps.assertAllowed?.()
     this.closing = closing
     if (JSON.stringify(input).length > 120000) throw new Error('编排参数过大，请分步处理')
     let plan = this.checkpoint.plans[callId]
     const resumed = Boolean(plan)
     if (plan && plan.fingerprint !== hash(input)) throw new Error('恢复编排参数与原计划不一致')
-    if (!plan) {
-      plan = this.normalize(input, callId)
-      this.checkpoint.plans[callId] = plan
-    }
+    plan ??= this.normalize(input, callId)
+    // 纯 PASS 不执行能力或发送，不领取或重置互聊预算；取消检查仍始终生效。
+    if (plan.action !== 'pass' || plan.steps.length > 0) await this.deps.assertAllowed?.()
+    this.checkpoint.plans[callId] = plan
     this.checkpoint.active = callId
     logger.info(
       resumed
@@ -604,6 +628,7 @@ export class SocialOrchestration {
       )
     }
     const compact = collect(observations) as StepResult[]
+    const uniqueImages = [...new Set(images)]
     const flatten = (steps: Step[]): Step[] =>
       steps.flatMap((step) => [
         step,
@@ -621,6 +646,7 @@ export class SocialOrchestration {
             ? 'completed'
             : 'continue',
       plan_id: plan.id,
+      ...(plan.status === 'completed' && plan.endParticipation ? { end_participation: true } : {}),
       observations: compact,
       delivered_messages: Object.values(
         (currentSocialRecovery()!.record.checkpoint.sentMessages ?? {}) as Record<
@@ -628,7 +654,12 @@ export class SocialOrchestration {
           { key: string }
         >,
       ).filter((message) => message.key.startsWith(plan.id)),
-      ...(images.length ? { images: [...new Set(images)].slice(-6) } : {}),
+      ...(uniqueImages.length
+        ? {
+            images: uniqueImages.slice(0, MAX_SOCIAL_IMAGES),
+            images_omitted: Math.max(0, uniqueImages.length - MAX_SOCIAL_IMAGES),
+          }
+        : {}),
       wake_at: plan.wait?.until,
       expires_at: plan.wait?.expiresAt,
       had_errors: observations.some((item) => ['failed', 'uncertain'].includes(item.status)),

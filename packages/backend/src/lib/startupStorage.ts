@@ -1,5 +1,15 @@
 import { createHash } from 'node:crypto'
-import { lstat, mkdir, mkdtemp, readFile, realpath, rename, rm, rmdir, writeFile } from 'node:fs/promises'
+import {
+  lstat,
+  mkdir,
+  mkdtemp,
+  readFile,
+  realpath,
+  rename,
+  rm,
+  rmdir,
+  writeFile,
+} from 'node:fs/promises'
 import path from 'node:path'
 import Database from 'better-sqlite3'
 
@@ -77,9 +87,11 @@ export async function acquireDaemonLease(dataDirectory: string): Promise<{
       await retryStartupIo(() => mkdir(path.dirname(file), { recursive: true, mode: 0o700 }))
       const connection = await retryStartupIo(() => new Database(file, { timeout: 0 }))
       connections.push(connection)
-      try { connection.exec('BEGIN IMMEDIATE') }
-      catch (error) {
-        if (['SQLITE_BUSY', 'SQLITE_LOCKED'].includes((error as NodeJS.ErrnoException).code ?? '')) throw new DaemonAlreadyRunningError(physical, error)
+      try {
+        connection.exec('BEGIN IMMEDIATE')
+      } catch (error) {
+        if (['SQLITE_BUSY', 'SQLITE_LOCKED'].includes((error as NodeJS.ErrnoException).code ?? ''))
+          throw new DaemonAlreadyRunningError(physical, error)
         throw error
       }
     }

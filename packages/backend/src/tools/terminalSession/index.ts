@@ -10,12 +10,14 @@ async function withSession(ctx: Parameters<BuiltinTool['execute']>[1]) {
 export const terminalCreateTool: BuiltinTool = {
   name: 'terminal_create',
   async execute(args, ctx) {
-    if (!ctx.approvedSensitiveAction) throw new Error('创建终端缺少本次用户审批凭证')
+    if (!ctx.approvedSensitiveAction && !ctx.readOnlyTerminal)
+      throw new Error('创建终端缺少本次用户审批凭证')
     const command = String(args.command ?? '').trim()
     if (!command) throw new Error('command 不能为空')
     const { runtime, session } = await withSession(ctx)
     const terminal = await runtime.terminals.create({
       approvedOutsideWorkspace: ctx.approvedOutsideWorkspace,
+      readOnly: ctx.readOnlyTerminal,
       executionSessionId: session.id,
       command,
       argv: args.argv as string[] | undefined,

@@ -289,7 +289,7 @@ describe('SocialBridge 单 Agent 社交链路', () => {
   })
 
   it.each(['private', 'group'] as const)(
-    '%s 本次图片会自动传给模型，并保留消息来源',
+    '%s 只提供可选图片来源，不在 Agent 决定前附带图片像素',
     async (channelType) => {
       const imageCache = {
         download: vi.fn(async () => 'cached-image'),
@@ -306,14 +306,16 @@ describe('SocialBridge 单 Agent 社交链路', () => {
       ])
       expect(deps.generateReply).toHaveBeenCalledWith(
         expect.objectContaining({
-          images: ['data:image/png;base64,aW1hZ2U='],
+          images: [],
           imageSources: [expect.stringContaining('消息 22')],
+          combinedMessage: expect.stringContaining('消息 22'),
         }),
       )
+      expect(imageCache.readAsDataUrl).not.toHaveBeenCalled()
     },
   )
 
-  it('引用图片按账号和会话读取，读取失败会向模型明确说明', async () => {
+  it('引用图片保留账号和会话来源，未主动读取时不误报图片损坏', async () => {
     const { bridge, deps } = createBridge({
       imageCacheManager: { download: vi.fn(async () => null), readAsDataUrl: vi.fn() },
     })
@@ -347,7 +349,7 @@ describe('SocialBridge 单 Agent 社交链路', () => {
     expect(deps.generateReply).toHaveBeenCalledWith(
       expect.objectContaining({
         images: [],
-        combinedMessage: expect.stringContaining('图片未能读取'),
+        combinedMessage: expect.stringContaining('以上图片尚未查看'),
       }),
     )
   })

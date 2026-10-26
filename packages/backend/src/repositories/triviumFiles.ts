@@ -16,7 +16,7 @@ import {
   writeFileSync,
 } from 'node:fs'
 
-export const TRIVIUM_VERSION = '0.8.11'
+export const TRIVIUM_VERSION = '0.9.0-beta.2'
 export const TRIVIUM_FORMAT = 9
 export const TRIVIUM_BACKUP_DIRECTORY = '.store-upgrades'
 
@@ -38,6 +38,12 @@ const suffixes = new Set([
   '.publish.0',
   '.publish.1',
   '.publish.2',
+  '.publish.3',
+  '.publish.4',
+  '.publish.5',
+  '.publish.6',
+  '.publish.7',
+  '.publish.8',
 ])
 
 /** 只识别指定数据库的文件组，不把同目录其他数据库或用户文档算作旁路文件。 */
@@ -55,8 +61,9 @@ export function isTriviumFile(fileName: string, baseName: string): boolean {
 export function triviumFiles(databasePath: string): string[] {
   const directory = path.dirname(databasePath)
   let names: string[]
-  try { names = readdirSync(directory) }
-  catch (error) {
+  try {
+    names = readdirSync(directory)
+  } catch (error) {
     if ((error as NodeJS.ErrnoException).code === 'ENOENT') return []
     throw error
   }

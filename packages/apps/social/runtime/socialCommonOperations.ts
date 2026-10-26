@@ -31,7 +31,12 @@ const policy = schema({
   ...Object.fromEntries(
     Object.entries(SOCIAL_GROUP_POLICY_LIMITS).map(([key, bounds]) => [
       key,
-      { type: 'integer', minimum: bounds[0], maximum: bounds[1], description: policyLabels[key as keyof typeof policyLabels] },
+      {
+        type: 'integer',
+        minimum: bounds[0],
+        maximum: bounds[1],
+        description: policyLabels[key as keyof typeof policyLabels],
+      },
     ]),
   ),
   proactiveGroupEnabled: { type: 'boolean', description: '是否主动查看群聊话题' },
@@ -42,7 +47,9 @@ export const SOCIAL_COMMON_ACTIONS: readonly SocialActionDefinition[] = [
     tool: 'social_group',
     action: 'state_get',
     description: '查看本群的参与设置与下次观察时间',
-    parameters: schema({ group_id: { ...id, description: '群号；社交回合中省略时使用当前群' } }, ['group_id']),
+    parameters: schema({ group_id: { ...id, description: '群号；社交回合中省略时使用当前群' } }, [
+      'group_id',
+    ]),
     mutation: false,
     ownerOnly: false,
   },
@@ -50,11 +57,20 @@ export const SOCIAL_COMMON_ACTIONS: readonly SocialActionDefinition[] = [
     tool: 'social_group',
     action: 'state_configure',
     description: '调整本群的主动参与设置；reset 恢复默认设置，不影响其他群',
-    parameters: schema({
-      group_id: { ...id, description: '群号；社交回合中省略时使用当前群' },
-      policy: { ...policy, description: '只填写要修改的设置，省略字段保持现有值；与 reset:true 互斥' },
-      reset: { type: 'boolean', description: '设为 true 恢复本群默认设置，此时不填写 policy；否则需提供非空 policy' },
-    }, ['group_id']),
+    parameters: schema(
+      {
+        group_id: { ...id, description: '群号；社交回合中省略时使用当前群' },
+        policy: {
+          ...policy,
+          description: '只填写要修改的设置，省略字段保持现有值；与 reset:true 互斥',
+        },
+        reset: {
+          type: 'boolean',
+          description: '设为 true 恢复本群默认设置，此时不填写 policy；否则需提供非空 policy',
+        },
+      },
+      ['group_id'],
+    ),
     mutation: true,
     ownerOnly: false,
   },
@@ -63,14 +79,14 @@ export const SOCIAL_COMMON_ACTIONS: readonly SocialActionDefinition[] = [
     action: 'contact_mark_bot',
     description:
       '标记已确认的机器人及依据，供互聊保护使用，在当前平台跨会话生效。依据已知互动或 {{ owner_appellation }} 的明确指认，不凭昵称、自称或回复速度猜测；message_id 仅作可选佐证，无需目标在当前会话发言',
-    parameters: schema({
-      user_id: { ...id, description: '目标的平台账号 ID' },
-      message_id: { ...id, description: '可选的来源消息 ID，可来自其他会话' },
-      reason: { ...id, maxLength: 500, description: '判断目标为机器人的具体依据' },
-    }, [
-      'user_id',
-      'reason',
-    ]),
+    parameters: schema(
+      {
+        user_id: { ...id, description: '目标的平台账号 ID' },
+        message_id: { ...id, description: '可选的来源消息 ID，可来自其他会话' },
+        reason: { ...id, maxLength: 500, description: '判断目标为机器人的具体依据' },
+      },
+      ['user_id', 'reason'],
+    ),
     mutation: true,
     ownerOnly: false,
   },

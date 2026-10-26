@@ -2088,8 +2088,8 @@ export async function createAppContext(config: AppConfig): Promise<AppContext> {
       taskControlService.execute(agentId, input, undefined, false, threadId, context),
     submitSegment: (taskId, executionId, result) =>
       backgroundTaskService.submitSegment(taskId, executionId, result),
-    beforeTool: (taskId, executionId, name, callId) =>
-      backgroundTaskService.beforeTool(taskId, executionId, name, callId),
+    beforeTool: (taskId, executionId, name, callId, readOnly) =>
+      backgroundTaskService.beforeTool(taskId, executionId, name, callId, readOnly),
     afterTool: (taskId, executionId) => backgroundTaskService.afterTool(taskId, executionId),
   })
   kernelLifecycle.defer(() => setTaskToolRuntime(undefined))
@@ -2193,11 +2193,31 @@ export async function createAppContext(config: AppConfig): Promise<AppContext> {
 
   const databaseSnapshotService = new DatabaseSnapshotService(db)
   const backupService = new BackupService({
-    dataDir: config.dataDir, db, stores: storeRegistry, agents: agentManager,
+    dataDir: config.dataDir,
+    db,
+    stores: storeRegistry,
+    agents: agentManager,
     sourceServerId: localNodeId,
     assertIdle: (applications) => {
-      if (kernelScheduler.list().some((execution) => execution.descriptor.class !== 'resident' && !['queued', 'completed', 'failed', 'cancelled', 'timed_out', 'interrupted'].includes(execution.state))) throw new Error('BACKUP_ACTIVE_EXECUTIONS')
-      if (applications && [arcaApplication, pictoria.controller].some((controller) => controller.status().ownership !== 'offline')) throw new Error('BACKUP_ACTIVE_APPLICATIONS')
+      if (
+        kernelScheduler
+          .list()
+          .some(
+            (execution) =>
+              execution.descriptor.class !== 'resident' &&
+              !['queued', 'completed', 'failed', 'cancelled', 'timed_out', 'interrupted'].includes(
+                execution.state,
+              ),
+          )
+      )
+        throw new Error('BACKUP_ACTIVE_EXECUTIONS')
+      if (
+        applications &&
+        [arcaApplication, pictoria.controller].some(
+          (controller) => controller.status().ownership !== 'offline',
+        )
+      )
+        throw new Error('BACKUP_ACTIVE_APPLICATIONS')
     },
   })
   await backupService.initialize()
@@ -2553,18 +2573,32 @@ export async function initAppContext(ctx: AppContext): Promise<void> {
 
   //桌面工具保留原 Tool ABI与日志，执行统一委托 Electron Capability。
   setScreenshotProvider({
-    capture: async () => {
+    capture: async (input = {}, context) => {
       const result = (await ctx.desktopCapabilities.invoke(
         'screenCapture',
-        {},
         {
-          principalId: 'system',
-          correlationId: `desktop-screenshot:${Date.now()}`,
+          ...input,
+          __desktopCaller: {
+            agentId: context?.agentId,
+            threadId: context?.threadId,
+            taskId: context?.taskId,
+          },
         },
+        {
+          principalId: context?.agentId ?? 'system',
+          correlationId: `desktop-screenshot:${Date.now()}`,
+          executionId: context?.executionId,
+          processId: context?.processId,
+          deadline: context?.deadline,
+        },
+        context?.signal,
       )) as {
         screenshots?: Array<{
           dataUri?: string
           coordinateContext?: {
+            observationId?: string
+            referenceObservationId?: string
+            sourceCoordinateSpace?: 'desktop-dip'
             displayId: string
             coordinateSpace: 'screenshot'
             screenshotWidth: number

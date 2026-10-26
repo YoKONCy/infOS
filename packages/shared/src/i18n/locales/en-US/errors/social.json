@@ -1,4 +1,10 @@
 {
+  "end_participation 必须为布尔值": "end_participation must be a boolean",
+  "退出活跃状态不能同时等待、延后、yield 或 next:continue": "Ending participation cannot be combined with waiting, deferring, yield, or next:continue",
+  "QQ 表情占位不能直接发送；请用 emoji_list 返回的 native_emoji 引用，或改写正文": "QQ emoji placeholders cannot be sent directly; use a native_emoji reference returned by emoji_list, or rewrite the text",
+  "每次最多读取 3 张图片，max_images 必须为 1 至 3 的整数": "Read at most 3 images per call; max_images must be an integer from 1 to 3",
+  "来源包含原生表情编号，但没有可读取的图片像素；可用 emoji_list 查询来源，不能据此判断图片丢失": "The source contains native emoji IDs without readable image pixels; use emoji_list to query the source. This does not establish that an image is missing",
+  "没有读到可用图片，请勿根据图片占位文本推测内容": "No usable images were read; do not infer their contents from image placeholders",
   "社交账号尚未连接，本次消息尚未发送": "social account has not been connected and this message has not been sent yet.",
   "提及账号格式不正确": "mentioned that the account format is incorrect",
   "社交平台拒绝发送": "Social platform refused to send",

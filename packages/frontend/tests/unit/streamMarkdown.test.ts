@@ -54,7 +54,9 @@ describe('增量 Markdown 分段', () => {
     for (let length = 1; length < unclosed.length; length++) {
       parser.update(unclosed.slice(0, length))
     }
-    expect(parser.update(unclosed).find((block) => block.source.includes('````text'))).toMatchObject({
+    expect(
+      parser.update(unclosed).find((block) => block.source.includes('````text')),
+    ).toMatchObject({
       kind: 'markdown',
       stable: false,
     })

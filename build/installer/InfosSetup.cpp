@@ -36,6 +36,9 @@ static ULONG_PTR gdip;
 static double scale = 1;
 static bool reduced = false, detailOpen = false, progressing = false;
 static bool active = true;
+static bool bufferedPainting = false;
+static int progressPercent = 0;
+static std::wstring progressText;
 static ULONGLONG pausedAt = 0;
 static std::wstring version, caption, subtitle, footer, tipLabel, nextLabel, assetDirectory;
 static std::wstring scene;
@@ -76,12 +79,26 @@ static void changeTip() {
   nextTip=pickTip(); tipSwap=GetTickCount64();
   tipAt=tipSwap+9000+randomEngine()%4001;
 }
+static bool readProgress() {
+  if(!IsWindow(progressBar) || !IsWindow(progressStatus)) return false;
+  // 先读取 NSIS 状态，绘制时只使用本轮快照，避免清屏后等待控件消息。
+  PBRANGE range{}; SendMessageW(progressBar,PBM_GETRANGE,TRUE,reinterpret_cast<LPARAM>(&range));
+  const auto pos=SendMessageW(progressBar,PBM_GETPOS,0,0);
+  const int percent=range.iHigh>range.iLow ? std::clamp(static_cast<int>((pos-range.iLow)*100/(range.iHigh-range.iLow)),0,100) : 0;
+  wchar_t status[2048]{}; GetWindowTextW(progressStatus,status,2048);
+  const bool changed=percent!=progressPercent || progressText!=status;
+  progressPercent=percent; progressText=status;
+  return changed;
+}
 static void paintPage(HDC dc) {
   RECT client; GetClientRect(page,&client); FillRect(dc,&client,background);
-  Gdiplus::Graphics graphics(dc);
-  graphics.SetInterpolationMode(Gdiplus::InterpolationModeHighQualityBicubic);
-  if (art && art->GetLastStatus()==Gdiplus::Ok) graphics.DrawImage(art.get(),0,0,px(552),px(570));
-  if (brand && brand->GetLastStatus()==Gdiplus::Ok) graphics.DrawImage(brand.get(),px(586),px(56),px(280),px(62));
+  {
+    // 先结束 GDI+ 位图绘制，再由 GDI 绘制文字和进度，保持提交顺序一致。
+    Gdiplus::Graphics graphics(dc);
+    graphics.SetInterpolationMode(Gdiplus::InterpolationModeHighQualityBicubic);
+    if (art && art->GetLastStatus()==Gdiplus::Ok) graphics.DrawImage(art.get(),0,0,px(552),px(570));
+    if (brand && brand->GetLastStatus()==Gdiplus::Ok) graphics.DrawImage(brand.get(),px(586),px(56),px(280),px(62));
+  }
   text(dc,subtitle,box(590,129,400,24),bodyFont,RGB(160,174,197));
   text(dc,L"PEROPEROCHAT",box(30,32,250,20),smallFont,RGB(97,121,152));
   text(dc,L"01 / LINK",box(455,32,80,20),smallFont,RGB(97,121,152));
@@ -104,28 +121,24 @@ static void paintPage(HDC dc) {
     SelectObject(dc,old); DeleteObject(pen);
   }
   if (!progressing) return;
-  // 安装与卸载均读取原控件的真实范围和位置，不按时间递增或自行判定完成。
-  PBRANGE range{}; SendMessageW(progressBar,PBM_GETRANGE,TRUE,reinterpret_cast<LPARAM>(&range));
-  const auto pos=SendMessageW(progressBar,PBM_GETPOS,0,0);
-  const int percent=range.iHigh>range.iLow ? std::clamp(static_cast<int>((pos-range.iLow)*100/(range.iHigh-range.iLow)),0,100) : 0;
-  wchar_t status[2048]{}; GetWindowTextW(progressStatus,status,2048);
-  text(dc,status,box(586,270,300,26),bodyFont,RGB(165,182,206));
-  text(dc,std::to_wstring(percent)+L"%",box(906,260,88,40),titleFont,RGB(220,233,252),DT_RIGHT|DT_VCENTER|DT_SINGLELINE);
-  for(int i=0;i<32;++i) fill(dc,box(586+i*13,314,10,10), i*100<percent*32 ? RGB(139,183,240) : RGB(40,50,72));
+  // 安装与卸载均显示原控件的真实进度，不按时间递增或自行判定完成。
+  text(dc,progressText,box(586,270,300,26),bodyFont,RGB(165,182,206));
+  text(dc,std::to_wstring(progressPercent)+L"%",box(906,260,88,40),titleFont,RGB(220,233,252),DT_RIGHT|DT_VCENTER|DT_SINGLELINE);
+  for(int i=0;i<32;++i) fill(dc,box(586+i*13,314,10,10), i*100<progressPercent*32 ? RGB(139,183,240) : RGB(40,50,72));
   for(int i=0;i<static_cast<int>(stages.size());++i) {
     fill(dc,box(586+i*140,351,4,4),RGB(69,87,114));
     text(dc,stages[i],box(597+i*140,340,128,26),smallFont,RGB(119,141,173));
   }
   text(dc,tipLabel,box(586,382,200,20),smallFont,RGB(140,165,202));
   double opacity=1;
-  const auto now=GetTickCount64();
+  int displayedTip=tip;
+  const auto now=pausedAt?pausedAt:GetTickCount64();
   if(tipSwap) {
-    const auto elapsed=now-tipSwap;
-    if(reduced || elapsed>=140) { tip=nextTip; opacity=reduced?1:std::min(1.0,(elapsed-140)/220.0); }
+    const auto elapsed=now>=tipSwap?now-tipSwap:0;
+    if(reduced || elapsed>=140) { displayedTip=nextTip; opacity=reduced?1:std::min(1.0,(elapsed-140)/220.0); }
     else opacity=1-elapsed/140.0;
-    if(reduced || elapsed>=360) tipSwap=0;
   }
-  if(tip>=0) text(dc,tips[tip],box(586,412,410,48),bodyFont,blend(RGB(160,177,202),opacity),DT_LEFT|DT_WORDBREAK);
+  if(displayedTip>=0) text(dc,tips[displayedTip],box(586,412,410,48),bodyFont,blend(RGB(160,177,202),opacity),DT_LEFT|DT_WORDBREAK);
 }
 static LRESULT CALLBACK controlProc(HWND window, UINT msg, WPARAM wp, LPARAM lp, UINT_PTR, DWORD_PTR kind) {
   if(msg==BM_SETSTYLE && kind<=2) wp=(wp&~BS_TYPEMASK)|BS_OWNERDRAW;
@@ -194,10 +207,26 @@ static LRESULT CALLBACK overlayProc(HWND window,UINT msg,WPARAM wp,LPARAM lp) {
   return DefWindowProcW(window,msg,wp,lp);
 }
 static LRESULT CALLBACK pageProc(HWND window,UINT msg,WPARAM wp,LPARAM lp,UINT_PTR,DWORD_PTR) {
+  if(window!=page) {
+    // 切页后迟到的旧窗口消息只清理自身，不能修改当前页的进度和动效状态。
+    if(msg==WM_NCDESTROY) { KillTimer(window,1); RemoveWindowSubclass(window,pageProc,1); }
+    return DefSubclassProc(window,msg,wp,lp);
+  }
   if(msg==WM_ERASEBKGND) return 1;
-  if(msg==WM_PAINT || msg==WM_PRINTCLIENT) {
-    PAINTSTRUCT ps{}; HDC dc=msg==WM_PAINT?BeginPaint(window,&ps):reinterpret_cast<HDC>(wp);
-    paintPage(dc); if(msg==WM_PAINT) EndPaint(window,&ps); return 0;
+  if(msg==WM_PAINT) {
+    PAINTSTRUCT ps{}; HDC dc=BeginPaint(window,&ps);
+    if(!IsRectEmpty(&ps.rcPaint)) {
+      // 仅为失效区域离屏合成，完整帧就绪后再提交，避免背景先露出造成闪烁。
+      HDC memory{};
+      HPAINTBUFFER buffer=bufferedPainting ? BeginBufferedPaint(dc,&ps.rcPaint,BPBF_COMPATIBLEBITMAP,nullptr,&memory) : nullptr;
+      paintPage(buffer?memory:dc);
+      if(buffer) EndBufferedPaint(buffer,TRUE);
+    }
+    EndPaint(window,&ps); return 0;
+  }
+  if(msg==WM_PRINTCLIENT) {
+    // 切页快照已经提供离屏 DC，直接绘制，不把截图请求写回屏幕。
+    paintPage(reinterpret_cast<HDC>(wp)); return 0;
   }
   if(msg==WM_CTLCOLORSTATIC || msg==WM_CTLCOLOREDIT || msg==WM_CTLCOLORBTN) {
     if(msg==WM_CTLCOLORSTATIC && scene==L"uninstall") {
@@ -210,14 +239,23 @@ static LRESULT CALLBACK pageProc(HWND window,UINT msg,WPARAM wp,LPARAM lp,UINT_P
     SetBkColor(reinterpret_cast<HDC>(wp),RGB(18,23,34)); SetTextColor(reinterpret_cast<HDC>(wp),RGB(194,205,224)); return reinterpret_cast<LRESULT>(background);
   }
   if(msg==WM_DRAWITEM && drawButton(reinterpret_cast<DRAWITEMSTRUCT*>(lp))) return TRUE;
-  if(msg==WM_TIMER && progressing) {
+  if(msg==WM_TIMER && wp==1 && progressing) {
     const auto now=GetTickCount64();
     const bool visible=IsWindowVisible(host) && !IsIconic(host) && active;
     if(!visible && !pausedAt) pausedAt=now;
     if(visible && pausedAt) { tipAt+=now-pausedAt; if(tipSwap) tipSwap+=now-pausedAt; pausedAt=0; }
+    const bool tipMoving=tipSwap!=0;
     if(visible && now>=tipAt) changeTip();
     if(!visible) return 0;
-    RECT dirty=box(580,255,425,218); InvalidateRect(window,&dirty,FALSE); return 0;
+    if(readProgress()) {
+      RECT dirty=box(580,255,425,112); InvalidateRect(window,&dirty,FALSE);
+    }
+    if(tipMoving || tipSwap) {
+      // 动画完成也要提交最后一帧，局部绘制不能提前清除其他区域的刷新状态。
+      if(tipSwap && (reduced || (now>=tipSwap && now-tipSwap>=360))) { tip=nextTip; tipSwap=0; }
+      RECT dirty=box(580,378,425,94); InvalidateRect(window,&dirty,FALSE);
+    }
+    return 0;
   }
   if(msg==WM_LBUTTONUP && progressing) {
     POINT point{static_cast<short>(LOWORD(lp)),static_cast<short>(HIWORD(lp))}; RECT rect=box(900,382,100,22);
@@ -273,7 +311,9 @@ static LRESULT CALLBACK hostProc(HWND window,UINT msg,WPARAM wp,LPARAM lp,UINT_P
     finishEnter(); art.reset(); brand.reset();
     DeleteObject(bodyFont); DeleteObject(titleFont); DeleteObject(smallFont); DeleteObject(background); DeleteObject(retentionBackground);
     RemoveFontResourceExW((assetDirectory+L"\\zpix.ttf").c_str(),FR_PRIVATE,nullptr);
-    Gdiplus::GdiplusShutdown(gdip); RemoveWindowSubclass(window,hostProc,1);
+    Gdiplus::GdiplusShutdown(gdip);
+    if(bufferedPainting) { BufferedPaintUnInit(); bufferedPainting=false; }
+    RemoveWindowSubclass(window,hostProc,1);
   }
   return DefSubclassProc(window,msg,wp,lp);
 }
@@ -281,7 +321,8 @@ extern "C" void __cdecl Init(HWND parent,int,wchar_t*,Stack** stack,void*) {
   Args args{stack}; const auto directory=args.pop(); assetDirectory=directory; version=args.pop(); caption=args.pop(); subtitle=args.pop(); footer=args.pop(); const auto license=args.pop();
   // 子类窗口过程与计时器持续使用插件代码，固定到本次安装或卸载进程退出。
   HMODULE module{}; GetModuleHandleExW(GET_MODULE_HANDLE_EX_FLAG_FROM_ADDRESS|GET_MODULE_HANDLE_EX_FLAG_PIN,reinterpret_cast<LPCWSTR>(&Init),&module);
-  host=parent; Gdiplus::GdiplusStartupInput input; Gdiplus::GdiplusStartup(&gdip,&input,nullptr);
+  host=parent; bufferedPainting=SUCCEEDED(BufferedPaintInit());
+  Gdiplus::GdiplusStartupInput input; Gdiplus::GdiplusStartup(&gdip,&input,nullptr);
   BOOL animate=TRUE; SystemParametersInfoW(SPI_GETCLIENTAREAANIMATION,0,&animate,0); reduced=!animate;
   RECT work{}; SystemParametersInfoW(SPI_GETWORKAREA,0,&work,0);
   HDC dc=GetDC(parent); const double dpi=GetDeviceCaps(dc,LOGPIXELSX)/96.0; ReleaseDC(parent,dc);
@@ -306,9 +347,11 @@ extern "C" void __cdecl Init(HWND parent,int,wchar_t*,Stack** stack,void*) {
   WNDCLASSW cls{}; cls.lpfnWndProc=overlayProc; cls.hInstance=GetModuleHandleW(nullptr); cls.lpszClassName=L"InfosInstallerMotion"; RegisterClassW(&cls);
 }
 extern "C" void __cdecl Scene(HWND,int,wchar_t*,Stack** stack,void*) {
+  if(IsWindow(page)) KillTimer(page,1);
   Args args{stack}; finishEnter(false); page=args.window(); scene=args.pop(); progressing=false;
   // 新页面不能保留上一页已销毁的控件句柄，防止误拦截确认、完成或范围选择事件。
   progressBar=progressStatus=progressTitle=details=detailButton=tipButton=nullptr;
+  progressPercent=0; progressText.clear();
   welcomeControls.clear(); optionsControls.clear();
   EnumChildWindows(host,[](HWND child,LPARAM)->BOOL {
     if(GetParent(child)==host && child!=page && GetDlgCtrlID(child)!=9502) ShowWindow(child,SW_HIDE);
@@ -329,7 +372,7 @@ extern "C" void __cdecl Control(HWND,int,wchar_t*,Stack** stack,void*) {
   } else if(type==3) SetWindowSubclass(window,controlProc,1,3);
 }
 extern "C" void __cdecl Capture(HWND,int,wchar_t*,Stack**,void*) {
-  finishEnter(); previousImage=snapshot();
+  finishEnter(); if(progressing) readProgress(); previousImage=snapshot();
 }
 extern "C" void __cdecl Enter(HWND,int,wchar_t*,Stack**,void*) {
   if(!page) return;
@@ -370,7 +413,8 @@ extern "C" void __cdecl Progress(HWND,int,wchar_t*,Stack** stack,void*) {
   SetWindowLongPtrW(detailButton,GWL_STYLE,(GetWindowLongPtrW(detailButton,GWL_STYLE)&~BS_TYPEMASK)|BS_OWNERDRAW); SetPropW(detailButton,L"InfosKind",reinterpret_cast<HANDLE>(2)); SetWindowSubclass(detailButton,controlProc,1,2);
   tipButton=CreateWindowExW(0,L"BUTTON",nextLabel.c_str(),WS_CHILD|WS_VISIBLE|WS_TABSTOP|BS_OWNERDRAW,px(900),px(378),px(100),px(26),page,nullptr,GetModuleHandleW(nullptr),nullptr);
   SetPropW(tipButton,L"InfosKind",reinterpret_cast<HANDLE>(2));
-  move(details,586,512,410,54); detailOpen=false; progressing=true; SetTimer(page,1,40,nullptr);
+  move(details,586,512,410,54); detailOpen=false;
+  readProgress(); progressing=true; SetTimer(page,1,40,nullptr);
 }
 extern "C" void __cdecl Failure(HWND,int,wchar_t*,Stack** stack,void*) {
   Args args{stack}; const auto title=args.pop(), description=args.pop(), detailLabel=args.pop(), closeLabel=args.pop();

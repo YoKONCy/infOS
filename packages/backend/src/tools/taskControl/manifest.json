@@ -6,7 +6,7 @@
   "entry": "index.ts",
   "toolDefinition": {
     "name": "manage_task",
-    "description": "创建、查询和管理持久任务。修改任务时携带当前 revision，可通过 list/get 查询；get 支持 resultOffset/resultLimit 分页读取完整结果。后台任务可创建受限子任务、读取自身，仅管理自己的子任务；使用 finish_task 的 task_result.waitForTaskId 等待子任务交付。",
+    "description": "创建、查询和管理持久任务。修改任务时携带当前 revision，可通过 list/get 查询；get 支持 resultOffset/resultLimit 分页读取完整结果。后台执行中仅可读取自身、查询和管理直接关联的交办任务，不能 create；使用 finish_task 的 task_result.waitForTaskId 等待交办结果。",
     "display": {
       "label": "管理任务",
       "description": "安排后台任务、查看结果，或暂停、恢复、取消任务及处理问答。聊天与工作模式可用。",

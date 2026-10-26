@@ -9,7 +9,7 @@
             <span class="brand-title">萌动链接</span>
             <span class="brand-sub">PEROPEROCHAT</span>
           </div>
-          <span class="pixel-tag-pill">v0.9.6</span>
+          <span class="pixel-tag-pill">v0.9.7</span>
         </a>
 
         <nav class="pixel-nav-links">
@@ -99,7 +99,7 @@
               <span class="dot yellow"></span>
               <span class="dot blue"></span>
             </div>
-            <span class="dialog-status-title">✦ infOS-TS KERNEL v0.9.6 ✦</span>
+            <span class="dialog-status-title">✦ infOS-TS KERNEL v0.9.7 ✦</span>
             <span class="dialog-badge-live">● ONLINE</span>
           </div>
 
