@@ -26,6 +26,7 @@ export interface MessageResource {
   sizeBytes: number
   caption?: string
   origin?: ResourceOrigin
+  localPath?: string
 }
 
 export const MAX_READ_IMAGE_COUNT = 8

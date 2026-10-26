@@ -5,6 +5,7 @@
  * 调用方通过这里访问领域能力，避免绕过校验直接耦合内部状态。
  */
 import { Hono } from 'hono'
+import { isAbsolute } from 'node:path'
 import { validate as zValidator } from '../lib/validation'
 import { z } from 'zod'
 import type { AppContext } from '../container'
@@ -171,6 +172,8 @@ export function createWorkspaceRouter(ctx: AppContext) {
         lineStart: input.lineStart,
         lineEnd: input.lineEnd,
         tailLines: input.tailLines,
+        // 绝对路径按本机路径读取，相对路径仍限定在工作区内。
+        deviceScope: isAbsolute(input.path),
       })
       return c.json({ code: 'OK', data: result })
     } catch (error) {

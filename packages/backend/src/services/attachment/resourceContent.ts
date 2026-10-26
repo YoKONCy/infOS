@@ -27,7 +27,19 @@ export async function resourceContent(
   name: string,
   options?: { inline: boolean; policy: string },
 ): Promise<Response> {
-  const info = await stat(filePath)
+  let info
+  try {
+    info = await stat(filePath)
+  } catch (err: unknown) {
+    const error = err as NodeJS.ErrnoException
+    if (error?.code === 'ENOENT') {
+      return c.json({ code: 'NOT_FOUND', message: '请求的资源文件不存在或已被移除' }, 404)
+    }
+    if (error?.code === 'EBUSY' || error?.code === 'EPERM') {
+      return c.json({ code: 'RESOURCE_LOCKED', message: '文件正被其他进程占用，请稍后再试' }, 423)
+    }
+    throw err
+  }
   const download = c.req.query('download') === '1'
   const inline =
     options?.inline ||

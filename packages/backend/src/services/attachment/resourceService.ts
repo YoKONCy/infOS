@@ -1,15 +1,17 @@
 import { createReadStream } from 'node:fs'
-import { stat, realpath } from 'node:fs/promises'
+import { readdir, readFile, stat, realpath } from 'node:fs/promises'
 import path from 'node:path'
 import { createHash, randomUUID } from 'node:crypto'
 import { fileURLToPath } from 'node:url'
 import type { MessageResource, ResourceOrigin, SocialResourcePort } from '@infos/shared'
 import type { AttachmentService } from './attachmentService'
 import type { ThreadService } from '../thread/threadService'
+import { AppError } from '../../lib/appError'
 import {
   getProductivityRuntime,
   resolveExecutionSession,
 } from '../../tools/productivityRuntimeHolder'
+import { getDataDir } from '../../lib/env'
 import {
   boundedResourceBytes,
   downloadResource,
@@ -71,6 +73,7 @@ export class ResourceService {
       }))
     return this.describe(row)
   }
+
   constructor(
     private attachments: AttachmentService,
     private threads: ThreadService,
@@ -84,35 +87,176 @@ export class ResourceService {
     return resolveExecutionSession({ ...context, channel: thread.channel })
   }
 
-  private async localFile(context: ResourceContext, input: string) {
-    const session = await this.scope(context)
-    const filePath = await getProductivityRuntime().virtualWorkspace.resolveReadablePath(
-      session,
-      input,
-    )
-    const relative = path.relative(session.workspaceRoot, filePath)
-    if (relative === '..' || relative.startsWith(`..${path.sep}`) || path.isAbsolute(relative))
-      throw new Error('只能交付当前工作区内的文件')
-    const info = await stat(filePath)
-    if (!info.isFile()) throw new Error('目标不是文件')
-    return {
-      filePath,
-      info,
-      origin: {
-        type: 'workspace',
-        value: relative.replaceAll('\\', '/'),
-        agentId: context.agentId,
-        threadId: context.threadId,
-        taskId: context.taskId,
-      } satisfies ResourceOrigin,
-    }
-  }
-
   private async existing(id: string, context: ResourceContext) {
     const row = await this.attachments.getActive(id)
     const thread = await this.threads.getThread(row.threadId)
     if (!thread || thread.agentId !== context.agentId) throw new Error('附件不属于当前角色')
     return row
+  }
+
+  /** 把文件系统异常与工作区越界统一成可预期的响应，避免把用户输入变成 500。 */
+  private accessError(input: string, error: unknown): Error {
+    const code = (error as NodeJS.ErrnoException)?.code
+    if (code === 'ENOENT') return new AppError('NOT_FOUND', { message: `文件不存在: ${input}` })
+    if (code === 'EBUSY' || code === 'EPERM' || code === 'EACCES')
+      return new AppError('RESOURCE_BUSY', { message: `文件暂时不可读: ${input}` })
+    if ((error as Error)?.name === 'WorkspaceError')
+      return new AppError('FORBIDDEN', { message: `文件不在可读范围内: ${input}` })
+    return error instanceof Error ? error : new Error(String(error))
+  }
+
+  /**
+   * 在工作区内按引用末段匹配文件，供裸名与「相对子目录」的引用兜底。
+   * 例如 tools/index.mjs 能匹配到 workspace/nova-creator-plugin/tools/index.mjs。
+   */
+  private async workspacePathByReference(
+    root: string,
+    target: string,
+  ): Promise<string | undefined> {
+    const wanted = target.replaceAll('\\', '/').replace(/^\.?\//, '')
+    if (!wanted) return undefined
+    const baseName = path.posix.basename(wanted)
+    const limit = 20_000
+    let visited = 0
+    const matches: Array<{ filePath: string; mtime: number }> = []
+    const walk = async (dir: string, relative: string, depth: number): Promise<void> => {
+      if (depth > 8 || visited > limit) return
+      let entries
+      try {
+        entries = await readdir(dir, { withFileTypes: true })
+      } catch {
+        return
+      }
+      for (const entry of entries) {
+        if (visited++ > limit) return
+        if (entry.name === 'node_modules' || entry.name === '.git') continue
+        const childRelative = relative ? `${relative}/${entry.name}` : entry.name
+        const full = path.join(dir, entry.name)
+        if (entry.isDirectory()) {
+          await walk(full, childRelative, depth + 1)
+          continue
+        }
+        if (entry.name !== baseName) continue
+        if (childRelative !== wanted && !childRelative.endsWith(`/${wanted}`)) continue
+        const info = await stat(full).catch(() => null)
+        if (info?.isFile()) matches.push({ filePath: full, mtime: info.mtimeMs })
+      }
+    }
+    await walk(root, '', 0)
+    matches.sort((a, b) => b.mtime - a.mtime)
+    return matches[0]?.filePath
+  }
+
+  /**
+   * 裸文件名在本会话的工具记录里反查绝对路径。
+   * 只读当前会话落盘的工具结果，找不到就返回 undefined。
+   */
+  private async recentToolPath(context: ResourceContext, name: string): Promise<string | undefined> {
+    const root = path.join(getDataDir(), 'runtime', 'tool-results')
+    let dirs: string[]
+    try {
+      dirs = await readdir(root)
+    } catch {
+      return undefined
+    }
+    const escaped = name.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
+    const pattern = new RegExp(`[A-Za-z]:[\\\\/][^"'\\s<>|]*${escaped}`, 'gi')
+    const candidates: Array<{ filePath: string; mtime: number }> = []
+    for (const dir of dirs) {
+      const full = path.join(root, dir)
+      try {
+        const owner = JSON.parse(await readFile(path.join(full, 'owner.json'), 'utf8')) as unknown
+        if (
+          !Array.isArray(owner) ||
+          owner[0] !== context.agentId ||
+          owner[1] !== context.threadId
+        )
+          continue
+      } catch {
+        continue
+      }
+      let entries: string[]
+      try {
+        entries = (await readdir(full)).filter((item) => item.endsWith('.txt'))
+      } catch {
+        continue
+      }
+      const ranked = await Promise.all(
+        entries.map(async (item) => {
+          const target = path.join(full, item)
+          const info = await stat(target).catch(() => null)
+          return { target, size: info?.size ?? 0, mtime: info?.mtimeMs ?? 0 }
+        }),
+      )
+      for (const entry of ranked.sort((a, b) => b.mtime - a.mtime).slice(0, 20)) {
+        if (entry.size > 2 * 1024 * 1024) continue
+        const raw = await readFile(entry.target, 'utf8').catch(() => '')
+        // 工具结果多为 JSON，反斜杠是转义过的，先还原成真实路径再匹配。
+        const text = raw.replace(/\\\\/g, '\\')
+        for (const match of text.matchAll(pattern)) {
+          const candidate = match[0].replaceAll('/', path.sep)
+          if (path.basename(candidate) !== name) continue
+          const info = await stat(candidate).catch(() => null)
+          if (info?.isFile()) candidates.push({ filePath: candidate, mtime: info.mtimeMs })
+        }
+      }
+    }
+    candidates.sort((a, b) => b.mtime - a.mtime)
+    return candidates[0]?.filePath
+  }
+
+  private async localFile(context: ResourceContext, input: string) {
+    const session = await this.scope(context)
+    // 本机绝对路径按原样接受，不拼进工作区；相对路径仍走工作区边界。
+    if (path.isAbsolute(input)) {
+      const absolute = path.normalize(input)
+      try {
+        const info = await stat(absolute)
+        if (!info.isFile()) throw new AppError('BAD_REQUEST', { message: '目标不是文件' })
+        return {
+          filePath: absolute,
+          info,
+          origin: {
+            type: 'workspace',
+            value: absolute.replaceAll('\\', '/'),
+            agentId: context.agentId,
+            threadId: context.threadId,
+            taskId: context.taskId,
+          } satisfies ResourceOrigin,
+        }
+      } catch (error) {
+        throw this.accessError(input, error)
+      }
+    }
+    let filePath: string
+    try {
+      filePath = await getProductivityRuntime().virtualWorkspace.resolveReadablePath(
+        session,
+        input,
+      )
+    } catch (error) {
+      throw this.accessError(input, error)
+    }
+    const relative = path.relative(session.workspaceRoot, filePath)
+    if (relative === '..' || relative.startsWith(`..${path.sep}`) || path.isAbsolute(relative))
+      throw new Error('只能交付当前工作区内的文件')
+    try {
+      const info = await stat(filePath)
+      if (!info.isFile()) throw new AppError('BAD_REQUEST', { message: '目标不是文件' })
+      return {
+        filePath,
+        info,
+        origin: {
+          type: 'workspace',
+          value: relative.replaceAll('\\', '/'),
+          agentId: context.agentId,
+          threadId: context.threadId,
+          taskId: context.taskId,
+        } satisfies ResourceOrigin,
+      }
+    } catch (error) {
+      throw this.accessError(input, error)
+    }
   }
 
   private describe(
@@ -214,10 +358,16 @@ export class ResourceService {
   }
 
   async resolveReference(context: ResourceContext, source: string): Promise<MessageResource> {
-    await this.scope(context)
+    const session = await this.scope(context)
     const value = source.replace(/^resource:/i, '').trim()
-    if (value.startsWith('attachment:'))
-      return this.describe(await this.existing(value.slice(11), context))
+    if (value.startsWith('attachment:')) {
+      const row = await this.existing(value.slice(11), context)
+      // 附件已落盘在服务端存储目录，Electron 可直接用系统程序打开原始文件。
+      return {
+        ...this.describe(row),
+        localPath: this.attachments.resolveStoragePath(row.storageKey),
+      }
+    }
     if (value.startsWith('arca:')) {
       const id = decodeURIComponent(value.slice(5))
       if (!/^[\w:-]{1,200}$/.test(id)) throw new Error('文档引用无效')
@@ -248,7 +398,15 @@ export class ResourceService {
     } catch {
       /* 普通文件名中的百分号保持原样。 */
     }
-    const local = await this.localFile(context, target)
+    const local = await this.localFile(context, target).catch(async (error: unknown) => {
+      // 只对相对引用兜底：先在工作区按末段匹配，裸名再回查本会话的工具记录。
+      if (!target || path.isAbsolute(target)) throw error
+      const recovered =
+        (await this.workspacePathByReference(session.workspaceRoot, target)) ??
+        (path.basename(target) === target ? await this.recentToolPath(context, target) : undefined)
+      if (!recovered) throw error
+      return this.localFile(context, recovered)
+    })
     const name = resourceName(local.filePath)
     const mimeType = resourceMime(name)
     return {
@@ -256,13 +414,13 @@ export class ResourceService {
       name,
       mimeType,
       sizeBytes: local.info.size,
+      localPath: local.filePath,
       origin: {
         ...local.origin,
         line: match ? Math.min(1_000_000, Math.max(1, Number(match[1]))) : undefined,
       },
     }
   }
-
   async referenceFile(context: ResourceContext, source: string) {
     const resource = await this.resolveReference(context, source)
     if (resource.origin?.type !== 'workspace') throw new Error('引用不是工作区文件')

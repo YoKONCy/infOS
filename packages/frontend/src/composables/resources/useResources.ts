@@ -6,6 +6,7 @@ import { attachmentsApi } from '../../api/modules/attachmentsApi'
 import { getApiBaseUrl, getApiResourceUrl } from '../../api/transport'
 import { useNotificationStore } from '../../stores/useNotificationStore'
 import { resourceLinkKind, resourcePreviewKind } from '../../lib/resourceLinks'
+import { invoke, isElectron } from '../../utils/ipcAdapter'
 
 export const resourcePreview = shallowRef<MessageResource | null>(null)
 export const resourceNavigation = shallowRef<{ origin: ResourceOrigin; revision: number } | null>(
@@ -93,7 +94,18 @@ export async function openResourceLink(
 ) {
   const version = ++openRequest
   const item = await resolveResourceLink(source, context)
-  if (version === openRequest) openResource(item)
+  if (version !== openRequest) return
+  // 可预览的引用一律进工作区，保留上下文便于追问；压缩包等无法预览的才交给系统。
+  const previewable = ['image', 'video', 'audio', 'pdf', 'web', 'markdown', 'text', 'office']
+  if (!previewable.includes(resourcePreviewKind(item)) && isElectron() && item.localPath) {
+    try {
+      await invoke('open-local-path', item.localPath)
+      return
+    } catch {
+      // 系统缺少关联程序时退回工作区，那里仍有下载与「系统打开」。
+    }
+  }
+  openResource(item)
 }
 
 /** 引用解析只读取元数据，滚动预览不触发导航或创建交付记录。 */

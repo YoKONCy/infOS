@@ -85,6 +85,28 @@ const execFileAsync = promisify(execFile)
 
 const CLIENT_AGENT_FILE = path.join(paths.userData, 'client-default-agent.txt')
 
+/** 这些扩展名交给系统打开等同于执行，只允许在资源管理器中定位。 */
+const LAUNCHABLE_EXTENSIONS = new Set([
+  '.exe',
+  '.bat',
+  '.cmd',
+  '.com',
+  '.scr',
+  '.msi',
+  '.ps1',
+  '.vbs',
+  '.vbe',
+  '.js',
+  '.jse',
+  '.wsf',
+  '.hta',
+  '.lnk',
+  '.reg',
+  '.pif',
+  '.cpl',
+  '.jar',
+])
+
 function readClientDefaultAgent(): string | null {
   try {
     const agentId = fs.readFileSync(CLIENT_AGENT_FILE, 'utf8').trim()
@@ -942,13 +964,33 @@ function registerSystemHandlers(): void {
     return shell.openPath(process.cwd())
   })
 
-  /** 在 Electron 所属桌面会话中打开由 Daemon 安全解析出的绝对目录。 */
+  /**
+   * 在 Electron 所属桌面会话中打开本机文件或目录。
+   * 可执行类文件一律只在资源管理器中定位，避免一次点击就执行程序。
+   */
   ipcMain.handle('open-local-path', async (_event, targetPath: unknown) => {
     if (typeof targetPath !== 'string' || !targetPath.trim()) {
-      throw new Error('缺少要打开的目录路径')
+      throw new Error('缺少要打开的文件路径')
     }
-    const errorMessage = await shell.openPath(targetPath)
+    const target = path.resolve(targetPath.trim())
+    if (!fs.existsSync(target)) throw new Error(`文件不存在: ${target}`)
+    if (LAUNCHABLE_EXTENSIONS.has(path.extname(target).toLowerCase())) {
+      shell.showItemInFolder(target)
+      return 'revealed'
+    }
+    const errorMessage = await shell.openPath(target)
     if (errorMessage) throw new Error(errorMessage)
+    return 'opened'
+  })
+
+  /** 在资源管理器中选中目标文件。 */
+  ipcMain.handle('show-item-in-folder', async (_event, targetPath: unknown) => {
+    if (typeof targetPath !== 'string' || !targetPath.trim()) {
+      throw new Error('缺少要定位的文件路径')
+    }
+    const target = path.resolve(targetPath.trim())
+    if (!fs.existsSync(target)) throw new Error(`文件不存在: ${target}`)
+    shell.showItemInFolder(target)
     return true
   })
 

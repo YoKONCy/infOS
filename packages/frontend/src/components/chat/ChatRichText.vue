@@ -147,21 +147,22 @@ async function handleClick(event: MouseEvent) {
   const link = (event.target as HTMLElement).closest<HTMLElement>('[data-resource-source]')
   if (link) {
     event.preventDefault()
+    const source = link.dataset.resourceSource || ''
     if (!props.agentId || !props.threadId) {
-      const source = (link.dataset.resourceSource || '').replace(/^resource:/i, '')
-      if (/^https?:\/\//i.test(source))
+      const plain = source.replace(/^resource:/i, '')
+      if (/^https?:\/\//i.test(plain))
         openResource({
           kind: 'web',
           name: '网页',
           mimeType: 'text/html',
           sizeBytes: 0,
-          origin: { type: 'url', value: source },
+          origin: { type: 'url', value: plain },
         })
       else notify.toast(__t('ui.chat', '请从所属会话打开文件'), { type: 'warning' })
       return
     }
     try {
-      await openResourceLink(link.dataset.resourceSource || '', {
+      await openResourceLink(source, {
         agentId: props.agentId,
         threadId: props.threadId,
       })

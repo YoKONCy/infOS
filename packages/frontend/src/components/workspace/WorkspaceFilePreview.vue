@@ -199,7 +199,7 @@ onBeforeUnmount(() => {
       <span class="file-view-spacer" />
       <button type="button" @click="emit('reload')">{{ __t('ui.workspace', '重新载入') }}</button>
       <a :href="downloadUrl" :download="file.name">{{ __t('ui.workspace', '下载') }}</a>
-      <button type="button" :disabled="opening" @click="openSystem">
+      <button v-if="isElectronRuntime()" type="button" :disabled="opening" @click="openSystem">
         {{ __t('ui.workspace', '系统打开') }}
       </button>
     </div>

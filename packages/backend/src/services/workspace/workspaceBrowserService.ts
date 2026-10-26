@@ -146,11 +146,30 @@ export class WorkspaceBrowserService {
     return { root: session.workspaceRoot, parent: relative, nodes }
   }
 
+  /** 本机绝对路径按原样接受，相对路径仍限定在当前工作区内。 */
+  private async readablePath(
+    session: Awaited<ReturnType<WorkspaceBrowserService['session']>>,
+    inputPath: string,
+  ): Promise<string> {
+    if (path.isAbsolute(inputPath)) return path.normalize(inputPath)
+    try {
+      return await this.runtime.virtualWorkspace.resolveReadablePath(session, inputPath)
+    } catch (error) {
+      if ((error as Error)?.name === 'WorkspaceError')
+        throw new AppError('FORBIDDEN', { message: `文件不在可读范围内: ${inputPath}` })
+      throw error
+    }
+  }
+
   /** 浏览器只解析当前工作区的真实文件，二进制内容不经过文本读取或模型。 */
   async file(agentId: string, threadId: string, inputPath: string) {
     const session = await this.session(agentId, threadId)
-    const filePath = await this.runtime.virtualWorkspace.resolveReadablePath(session, inputPath)
-    const handle = await open(filePath, 'r')
+    const filePath = await this.readablePath(session, inputPath)
+    const handle = await open(filePath, 'r').catch((error: NodeJS.ErrnoException) => {
+      if (error?.code === 'ENOENT')
+        throw new AppError('NOT_FOUND', { message: `文件不存在: ${inputPath}` })
+      throw error
+    })
     try {
       const info = await handle.stat()
       if (!info.isFile()) throw new AppError('VALIDATION_ERROR', { message: '目标不是普通文件' })
