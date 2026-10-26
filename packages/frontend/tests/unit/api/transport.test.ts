@@ -14,6 +14,16 @@ describe('transport runtime helpers', () => {
     vi.unstubAllGlobals()
   })
 
+  it.each([
+    [undefined, false], [{}, false],
+    [{ connectionMode: () => 'remote' }, false],
+    [{ connectionMode: () => 'local' }, true],
+  ])('系统打开只接受明确的本机后端连接：%j', async (electron, expected) => {
+    setWindow({ electron, location: { origin: 'https://server.example' } })
+    const { isLocalBackendRuntime } = await importTransport()
+    expect(isLocalBackendRuntime()).toBe(expected)
+  })
+
   it('应当在 Web 环境生成 ws 网关和 API 地址', async () => {
     setWindow({
       location: { origin: 'https://pero.example', protocol: 'https:', host: 'pero.example' },

@@ -30,6 +30,11 @@ export function isElectronRuntime(): boolean {
   )
 }
 
+/** 只有明确连接本机后端时，服务端路径才可交给客户端系统打开。 */
+export function isLocalBackendRuntime(): boolean {
+  return isElectronRuntime() && window.electron?.connectionMode?.() === 'local'
+}
+
 const WEB_SERVER_KEY = 'infos.currentServerOrigin'
 const WEB_SERVER_TOKEN_KEY = 'infos.currentServerToken'
 

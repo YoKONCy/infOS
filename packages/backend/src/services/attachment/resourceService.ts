@@ -6,6 +6,9 @@ import { fileURLToPath } from 'node:url'
 import type { MessageResource, ResourceOrigin, SocialResourcePort } from '@infos/shared'
 import type { AttachmentService } from './attachmentService'
 import type { ThreadService } from '../thread/threadService'
+import { AppError } from '../../lib/appError'
+import { t } from '../../lib/i18n'
+import { resolveWorkspaceReference } from '../workspace/workspaceReference'
 import {
   getProductivityRuntime,
   resolveExecutionSession,
@@ -28,6 +31,8 @@ export interface ResourceContext {
   toolCallId?: string
   signal?: AbortSignal
   deviceReadScope?: boolean
+  /** 用户点击引用才允许有限补全；文件交付始终使用精确路径。 */
+  lookupWorkspace?: boolean
 }
 
 const MAX_IMAGE_READ_BYTES = 20 * 1024 * 1024
@@ -78,23 +83,21 @@ export class ResourceService {
 
   private async scope(context: ResourceContext) {
     if (context.taskId && !/^[\w-]{1,128}$/.test(context.taskId))
-      throw new Error('任务资源引用无效')
+      throw new AppError('BAD_REQUEST', { message: t('server.resources', '任务资源引用无效') })
     const thread = await this.threads.getThread(context.threadId)
-    if (!thread || thread.agentId !== context.agentId) throw new Error('资源会话与角色不匹配')
+    if (!thread || thread.agentId !== context.agentId)
+      throw new AppError('FORBIDDEN', { message: t('server.resources', '资源会话与角色不匹配') })
     return resolveExecutionSession({ ...context, channel: thread.channel })
   }
 
-  private async localFile(context: ResourceContext, input: string) {
+  private async localFile(context: ResourceContext, input: string, fallback = false) {
     const session = await this.scope(context)
-    const filePath = await getProductivityRuntime().virtualWorkspace.resolveReadablePath(
+    const { filePath, info, relative } = await resolveWorkspaceReference(
+      getProductivityRuntime().virtualWorkspace,
       session,
       input,
+      { fallback, signal: context.signal },
     )
-    const relative = path.relative(session.workspaceRoot, filePath)
-    if (relative === '..' || relative.startsWith(`..${path.sep}`) || path.isAbsolute(relative))
-      throw new Error('只能交付当前工作区内的文件')
-    const info = await stat(filePath)
-    if (!info.isFile()) throw new Error('目标不是文件')
     return {
       filePath,
       info,
@@ -241,14 +244,17 @@ export class ResourceService {
       }
     }
     const match = value.match(/#L(\d+)(?:-L?\d+)?$/i)
-    let target = (match ? value.slice(0, match.index) : value).replace(/^workspace:/i, '')
-    if (/^file:/i.test(target)) target = fileURLToPath(target)
+    let target = match ? value.slice(0, match.index) : value
     try {
-      target = decodeURIComponent(target)
-    } catch {
-      /* 普通文件名中的百分号保持原样。 */
+      if (/^file:/i.test(target)) target = fileURLToPath(target)
+      else if (/^workspace:/i.test(target)) target = decodeURIComponent(target.slice(10))
+    } catch (error) {
+      throw new AppError('BAD_REQUEST', {
+        message: t('server.resources', '请提供当前服务器上的有效文件路径'),
+        cause: error,
+      })
     }
-    const local = await this.localFile(context, target)
+    const local = await this.localFile(context, target, context.lookupWorkspace === true)
     const name = resourceName(local.filePath)
     const mimeType = resourceMime(name)
     return {

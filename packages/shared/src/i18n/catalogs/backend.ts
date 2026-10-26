@@ -1,4 +1,11 @@
 import indexMaintenanceCn from '../locales/zh-CN/server/index-maintenance.json'
+import resourcesCn from '../locales/zh-CN/server/resources.json'
+import resourcesTw from '../locales/zh-TW/server/resources.json'
+import resourcesEn from '../locales/en-US/server/resources.json'
+import { registerCatalog as registerResourcesCatalog } from '../index'
+registerResourcesCatalog('server.resources', 'zh-CN', resourcesCn)
+registerResourcesCatalog('server.resources', 'zh-TW', resourcesTw)
+registerResourcesCatalog('server.resources', 'en-US', resourcesEn)
 import indexMaintenanceTw from '../locales/zh-TW/server/index-maintenance.json'
 import indexMaintenanceEn from '../locales/en-US/server/index-maintenance.json'
 import { registerCatalog as registerIndexMaintenanceCatalog } from '../index'

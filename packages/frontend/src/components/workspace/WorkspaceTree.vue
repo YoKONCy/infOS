@@ -16,8 +16,9 @@ const props = withDefaults(
     threadId: string
     active?: boolean
     opening?: boolean
+    allowReveal?: boolean
   }>(),
-  { active: true, opening: false },
+  { active: true, opening: false, allowReveal: false },
 )
 const emit = defineEmits<{
   select: [node: WorkspaceFileNode]
@@ -219,6 +220,7 @@ watch(
       </div>
       <div class="workspace-tree__actions">
         <button
+          v-if="allowReveal"
           class="workspace-tree__icon-button"
           :title="__t('ui.workspace', '在系统文件管理器中打开工作区')"
           :aria-label="__t('ui.workspace', '在系统文件管理器中打开工作区')"

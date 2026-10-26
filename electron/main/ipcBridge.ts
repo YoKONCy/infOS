@@ -24,7 +24,8 @@ import {
   webContents,
 } from 'electron'
 import AdmZip from 'adm-zip'
-import { getLocale, setLocale } from './utils/i18n'
+import { getLocale, setLocale, t } from './utils/i18n'
+import { systemFileOpenAction } from '../../packages/shared/src/resources'
 import { normalizeLocale } from '../../packages/shared/src/i18n'
 import os from 'node:os'
 import fs from 'node:fs'
@@ -251,6 +252,28 @@ function registerPetControlHandlers(): void {
   })
 }
 
+function trustedClient(url: string): boolean {
+  const development =
+    process.env.ELECTRON_RENDERER_URL ||
+    process.env.VITE_DEV_SERVER_URL ||
+    'http://localhost:7359'
+  return url.startsWith('file://') || url.startsWith(`${new URL(development).origin}/`)
+}
+
+function trustedWindow(sender: Electron.WebContents): boolean {
+  return (
+    desktopTabs.isHost(sender) ||
+    [
+      windowManager.launcherWin,
+      windowManager.petWin,
+      windowManager.dashboardWin,
+      windowManager.chatWin,
+      windowManager.strongholdWin,
+      windowManager.ideWin,
+    ].some((win) => win?.webContents === sender)
+  )
+}
+
 /** 注册所有 IPC 通道。 */
 export function registerIpcHandlers(): void {
   const languageFile = path.join(paths.data, 'client-language.txt')
@@ -271,23 +294,6 @@ export function registerIpcHandlers(): void {
       if (!contents.isDestroyed()) contents.send('i18n:changed', language)
     return language
   })
-  const trustedClient = (url: string) => {
-    const development =
-      process.env.ELECTRON_RENDERER_URL ||
-      process.env.VITE_DEV_SERVER_URL ||
-      'http://localhost:7359'
-    return url.startsWith('file://') || url.startsWith(`${new URL(development).origin}/`)
-  }
-  const trustedWindow = (sender: Electron.WebContents) =>
-    desktopTabs.isHost(sender) ||
-    [
-      windowManager.launcherWin,
-      windowManager.petWin,
-      windowManager.dashboardWin,
-      windowManager.chatWin,
-      windowManager.strongholdWin,
-      windowManager.ideWin,
-    ].some((win) => win?.webContents === sender)
   let credentialHooksInstalled = false
   ipcMain.handle('client-connection:configure', async (event) => {
     if (
@@ -942,12 +948,35 @@ function registerSystemHandlers(): void {
     return shell.openPath(process.cwd())
   })
 
-  /** 在 Electron 所属桌面会话中打开由 Daemon 安全解析出的绝对目录。 */
-  ipcMain.handle('open-local-path', async (_event, targetPath: unknown) => {
-    if (typeof targetPath !== 'string' || !targetPath.trim()) {
-      throw new Error('缺少要打开的目录路径')
+  /** 仅可信本机主界面可打开后端文件，远程路径不能解释成客户端路径。 */
+  ipcMain.handle('open-local-path', async (event, targetPath: unknown) => {
+    const tr = (source: string) => t('electron.ui.ipcBridge.ts', source)
+    if (
+      !trustedWindow(event.sender) ||
+      !trustedClient(event.sender.getURL()) ||
+      event.senderFrame !== event.sender.mainFrame
+    )
+      throw new Error(tr('只能从主应用打开本地文件'))
+    if (isRemoteConnection()) throw new Error(tr('远程文件请使用应用内预览或下载'))
+    if (typeof targetPath !== 'string' || !path.isAbsolute(targetPath) || targetPath.includes('\0'))
+      throw new Error(tr('请提供有效的绝对文件路径'))
+    let actual: string
+    let info: fs.Stats
+    try {
+      actual = await fs.promises.realpath(targetPath)
+      info = await fs.promises.stat(actual)
+    } catch (error) {
+      const code = (error as NodeJS.ErrnoException).code
+      throw new Error(
+        tr(code === 'ENOENT' || code === 'ENOTDIR' ? '文件不存在或已移动' : '文件暂不可访问'),
+      )
     }
-    const errorMessage = await shell.openPath(targetPath)
+    if (!info.isDirectory() && !info.isFile()) throw new Error(tr('目标不是普通文件或目录'))
+    if (info.isFile() && systemFileOpenAction(actual) === 'reveal') {
+      shell.showItemInFolder(actual)
+      return true
+    }
+    const errorMessage = await shell.openPath(actual)
     if (errorMessage) throw new Error(errorMessage)
     return true
   })

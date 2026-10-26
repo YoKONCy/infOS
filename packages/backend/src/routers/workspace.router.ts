@@ -10,6 +10,9 @@ import { z } from 'zod'
 import type { AppContext } from '../container'
 import { AppError } from '../lib/appError'
 import { resourceContent } from '../services/attachment/resourceContent'
+import { fileAccessError, resolveWorkspaceReference } from '../services/workspace/workspaceReference'
+import { errorHandler } from '../middleware/errorHandler'
+import { t } from '../lib/i18n'
 
 const sessionSchema = z.object({
   agentId: z.string().min(1),
@@ -52,6 +55,7 @@ const searchSchema = sessionSchema.extend({
 /** Workspace浏览器API：严格绑定Agent的执行会话根目录。 */
 export function createWorkspaceRouter(ctx: AppContext) {
   const router = new Hono()
+  router.onError((error, c) => errorHandler(fileAccessError(error), c))
   const runtime = ctx.productivityRuntime
   const resolve = (agentId: string, threadId: string) =>
     ctx.workspaceBrowserService.session(agentId, threadId)
@@ -62,7 +66,7 @@ export function createWorkspaceRouter(ctx: AppContext) {
       'json',
       sessionSchema.extend({
         resultRef: z.string().regex(/^tool-result:[0-9a-f-]{36}$/i),
-        taskId: z.string().optional(),
+        taskId: z.string().regex(/^[\w-]{1,128}$/).optional(),
         file: z.string().min(1),
         line: z.number().int().min(1).optional(),
       }),
@@ -155,7 +159,10 @@ export function createWorkspaceRouter(ctx: AppContext) {
         input.threadId,
         input.path,
       )
-      if (input.openOnNode) await ctx.systemService.openTrustedPath(filePath)
+      if (input.openOnNode)
+        throw new AppError('FORBIDDEN', {
+          message: t('server.resources', '请在本机桌面客户端打开文件，远程文件可预览或下载'),
+        })
       return c.json({ code: 'OK', data: { path: filePath, name: descriptor.name } })
     },
   )
@@ -165,7 +172,12 @@ export function createWorkspaceRouter(ctx: AppContext) {
     const input = c.req.valid('json')
     const session = await resolve(input.agentId, input.threadId)
     try {
-      const result = await runtime.virtualWorkspace.read(session, input.path, {
+      const { filePath } = await resolveWorkspaceReference(
+        runtime.virtualWorkspace,
+        session,
+        input.path,
+      )
+      const result = await runtime.virtualWorkspace.read(session, filePath, {
         offset: input.offset,
         limit: input.limit,
         lineStart: input.lineStart,
@@ -174,9 +186,7 @@ export function createWorkspaceRouter(ctx: AppContext) {
       })
       return c.json({ code: 'OK', data: result })
     } catch (error) {
-      throw new AppError('VALIDATION_ERROR', {
-        message: String(error instanceof Error ? error.message : error),
-      })
+      throw fileAccessError(error)
     }
   })
 

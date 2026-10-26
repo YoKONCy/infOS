@@ -14,6 +14,7 @@ import type { ThreadService } from '../thread/threadService'
 import { workspaceFileType } from './workspaceFileType'
 import { readToolObservation } from '../execution/toolObservation'
 import { t } from '../../lib/i18n'
+import { resolveWorkspaceReference } from './workspaceReference'
 
 export interface WorkspaceTreeNode {
   name: string
@@ -149,7 +150,11 @@ export class WorkspaceBrowserService {
   /** 浏览器只解析当前工作区的真实文件，二进制内容不经过文本读取或模型。 */
   async file(agentId: string, threadId: string, inputPath: string) {
     const session = await this.session(agentId, threadId)
-    const filePath = await this.runtime.virtualWorkspace.resolveReadablePath(session, inputPath)
+    const { filePath, relative } = await resolveWorkspaceReference(
+      this.runtime.virtualWorkspace,
+      session,
+      inputPath,
+    )
     const handle = await open(filePath, 'r')
     try {
       const info = await handle.stat()
@@ -157,7 +162,7 @@ export class WorkspaceBrowserService {
       const header = Buffer.alloc(Math.min(info.size, 8192))
       const { bytesRead } = await handle.read(header, 0, header.length, 0)
       const descriptor: WorkspaceFileDescriptor = {
-        path: inputPath,
+        path: relative,
         name: path.basename(filePath),
         ...workspaceFileType(filePath, header.subarray(0, bytesRead)),
         sizeBytes: info.size,

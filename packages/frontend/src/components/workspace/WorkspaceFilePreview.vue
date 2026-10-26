@@ -3,9 +3,9 @@ import { t as __t } from '../../i18n/index'
 
 import { computed, defineAsyncComponent, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import DOMPurify from 'dompurify'
-import type { WorkspaceFileDescriptor } from '@infos/shared'
+import { systemFileOpenAction, type WorkspaceFileDescriptor } from '@infos/shared'
 import { workspaceApi } from '../../api/modules/approvalsApi'
-import { isElectronRuntime } from '../../api/transport'
+import { isElectronRuntime, isLocalBackendRuntime } from '../../api/transport'
 import { invoke, listen } from '../../utils/ipcAdapter'
 import WorkspaceFileGlyph from './WorkspaceFileGlyph.vue'
 import WorkspaceImageViewer from './WorkspaceImageViewer.vue'
@@ -132,12 +132,12 @@ async function loadSvg() {
   }
 }
 async function openSystem() {
-  if (opening.value) return
+  if (opening.value || !isLocalBackendRuntime()) return
   opening.value = true
   actionError.value = ''
   try {
-    const result = await workspaceApi.openFile(props.session, props.file.path, !isElectronRuntime())
-    if (isElectronRuntime() && result.data) await invoke('open-local-path', result.data.path)
+    const result = await workspaceApi.openFile(props.session, props.file.path)
+    if (result.data) await invoke('open-local-path', result.data.path)
   } catch (error) {
     actionError.value = error instanceof Error ? error.message : '无法打开文件'
   } finally {
@@ -199,8 +199,12 @@ onBeforeUnmount(() => {
       <span class="file-view-spacer" />
       <button type="button" @click="emit('reload')">{{ __t('ui.workspace', '重新载入') }}</button>
       <a :href="downloadUrl" :download="file.name">{{ __t('ui.workspace', '下载') }}</a>
-      <button type="button" :disabled="opening" @click="openSystem">
-        {{ __t('ui.workspace', '系统打开') }}
+      <button v-if="isLocalBackendRuntime()" type="button" :disabled="opening" @click="openSystem">
+        {{
+          systemFileOpenAction(file.name) === 'open'
+            ? __t('ui.workspace', '系统打开')
+            : __t('ui.workspace', '在文件管理器中定位')
+        }}
       </button>
     </div>
     <small v-if="actionError" class="workspace-file-preview__action-error" role="alert">

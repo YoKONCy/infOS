@@ -1,0 +1,13 @@
+{
+  "无权访问此文件": "Access to this file is denied",
+  "文件不存在或已移动": "The file does not exist or has been moved",
+  "文件正忙，请稍后重试": "The file is busy; please try again later",
+  "请提供有效的普通文件路径": "Please provide a valid path to a regular file",
+  "请提供当前服务器上的有效文件路径": "Please provide a valid file path on the current server",
+  "此引用超出当前工作区，请从所属搜索结果打开": "This reference is outside the current workspace; open it from its search result",
+  "引用匹配到多个文件，请使用完整工作区路径：{0}": "This reference matches multiple files; use a full workspace path: {0}",
+  "查找范围较大，请使用完整工作区路径": "The search area is too large; use a full workspace path",
+  "任务资源引用无效": "Invalid task resource reference",
+  "资源会话与角色不匹配": "The resource conversation does not belong to this character",
+  "请在本机桌面客户端打开文件，远程文件可预览或下载": "Open files in the local desktop client; remote files can be previewed or downloaded"
+}

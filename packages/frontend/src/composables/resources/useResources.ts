@@ -92,7 +92,7 @@ export async function openResourceLink(
   context: { agentId: string; threadId: string; taskId?: string },
 ) {
   const version = ++openRequest
-  const item = await resolveResourceLink(source, context)
+  const item = await resolveResourceLink(source, context, undefined, true)
   if (version === openRequest) openResource(item)
 }
 
@@ -101,6 +101,7 @@ export async function resolveResourceLink(
   source: string,
   context: { agentId: string; threadId: string; taskId?: string },
   signal?: AbortSignal,
+  lookupWorkspace = false,
 ): Promise<MessageResource> {
   if (!context.agentId || !context.threadId) {
     const value = source.replace(/^resource:/i, '')
@@ -122,7 +123,7 @@ export async function resolveResourceLink(
   }
   const response = await apiClient.request<MessageResource>('/attachments/resolve-reference', {
     method: 'POST',
-    body: JSON.stringify({ ...context, source }),
+    body: JSON.stringify({ ...context, source, lookupWorkspace }),
     signal,
   })
   if (!response.data) throw new Error('资源暂不可用')

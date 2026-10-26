@@ -19,12 +19,15 @@ import {
   MAX_ATTACHMENT_UPLOAD_BYTES,
 } from '@infos/shared'
 import { readBoundedResourceFile } from '../services/attachment/resourceSource'
+import { fileAccessError } from '../services/workspace/workspaceReference'
+import { errorHandler } from '../middleware/errorHandler'
 
 const referenceSchema = z.object({
   agentId: z.string().min(1),
   threadId: z.string().min(1),
   source: z.string().trim().min(1).max(2048),
   taskId: z.string().max(128).optional(),
+  lookupWorkspace: z.boolean().optional(),
 })
 
 export function createAttachmentRouter(
@@ -32,6 +35,7 @@ export function createAttachmentRouter(
   previews = new HtmlPreviewService(ctx.resourceService, ctx.attachmentService, ctx.threadService),
 ) {
   const router = new Hono()
+  router.onError((error, c) => errorHandler(fileAccessError(error), c))
 
   router.post(
     '/browser-preview',

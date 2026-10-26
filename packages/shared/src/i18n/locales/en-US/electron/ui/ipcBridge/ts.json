@@ -1,5 +1,11 @@
 {
   "选择 Skill 文件夹": "Select Skill folder",
   "选择角色包导出目录": "Select the character package export directory",
-  "选择此文件夹": "Select this folder"
+  "选择此文件夹": "Select this folder",
+  "只能从主应用打开本地文件": "Local files can only be opened from the main application",
+  "远程文件请使用应用内预览或下载": "Preview or download remote files within the application",
+  "请提供有效的绝对文件路径": "Please provide a valid absolute file path",
+  "文件不存在或已移动": "The file does not exist or has been moved",
+  "文件暂不可访问": "The file is temporarily inaccessible",
+  "目标不是普通文件或目录": "The target is not a regular file or directory"
 }

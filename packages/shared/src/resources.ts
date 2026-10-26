@@ -1,5 +1,46 @@
 export type ResourceKind = 'image' | 'video' | 'audio' | 'pdf' | 'text' | 'file' | 'web'
 
+/** 系统关联打开仅用于常见文档与媒体；脚本、快捷方式和未知类型只定位。 */
+export function systemFileOpenAction(name: string): 'open' | 'reveal' {
+  const extension = name.split(/[\\/]/).pop()?.match(/\.[^.]+$/)?.[0]?.toLowerCase()
+  return extension &&
+    [
+      '.txt',
+      '.md',
+      '.json',
+      '.csv',
+      '.log',
+      '.yaml',
+      '.yml',
+      '.toml',
+      '.png',
+      '.jpg',
+      '.jpeg',
+      '.webp',
+      '.gif',
+      '.bmp',
+      '.avif',
+      '.ico',
+      '.mp3',
+      '.wav',
+      '.flac',
+      '.ogg',
+      '.m4a',
+      '.aac',
+      '.mp4',
+      '.webm',
+      '.mov',
+      '.pdf',
+      '.zip',
+      '.7z',
+      '.rar',
+      '.tar',
+      '.gz',
+    ].includes(extension)
+    ? 'open'
+    : 'reveal'
+}
+
 /** 搜索文件的只读打开凭据，归属由后端验证。 */
 export interface CodeSearchNavigation {
   resultRef: string

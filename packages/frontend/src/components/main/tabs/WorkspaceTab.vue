@@ -49,7 +49,7 @@ import {
   type WorkspaceFileNode,
 } from '../../../api/modules/approvalsApi'
 import { threadsApi } from '../../../api/modules/threadsApi'
-import { getApiBaseUrl, isElectronRuntime } from '../../../api/transport'
+import { getApiBaseUrl, isLocalBackendRuntime } from '../../../api/transport'
 import { invoke } from '../../../utils/ipcAdapter'
 import { resourceNavigation } from '../../../composables/resources/useResources'
 import {
@@ -301,18 +301,17 @@ async function ensureAgent(): Promise<void> {
 
 const revealingWorkspace = ref(false)
 async function revealWorkspace(): Promise<void> {
+  if (!isLocalBackendRuntime()) return
   if (!currentAgent.value || !threadId.value || revealingWorkspace.value) return
   revealingWorkspace.value = true
   try {
     const session = { agentId: currentAgent.value.id, threadId: threadId.value }
     // Electron 必须由主进程在当前桌面会话中调用 shell.openPath；Daemon 可能运行在独立服务会话中。
-    const response = await workspaceApi.reveal(session, !isElectronRuntime())
+    const response = await workspaceApi.reveal(session)
     if (!response.data) throw new Error('未能解析工作区路径')
-    if (isElectronRuntime()) await invoke('open-local-path', response.data.path)
+    await invoke('open-local-path', response.data.path)
     notification.toast(
-      isElectronRuntime()
-        ? __t('ui.workspace', '已在系统文件管理器中打开工作区')
-        : __t('ui.navigation', '已请求打开工作区'),
+      __t('ui.workspace', '已在系统文件管理器中打开工作区'),
       { type: 'success' },
     )
   } catch (error) {
@@ -1083,6 +1082,7 @@ onBeforeUnmount(() => {
               ref="workspaceTreeRef"
               :active="workspaceActive && desktopHomeVisible && !isExplorerCollapsed"
               :opening="revealingWorkspace"
+              :allow-reveal="isLocalBackendRuntime()"
               :agent-id="currentAgent.id"
               :agent-name="currentAgent.name"
               :thread-id="threadId"
@@ -1267,7 +1267,7 @@ onBeforeUnmount(() => {
                   {{ __t('ui.navigation', '协作') }}
                 </strong>
                 <span>{{ __t('ui.navigation', '从左侧选择文件，与助手一起编辑。') }}</span>
-                <button @click="revealWorkspace">
+                <button v-if="isLocalBackendRuntime()" @click="revealWorkspace">
                   <PixelIcon name="folder" size="xs" />
                   {{ __t('ui.navigation', '在文件管理器中打开') }}
                 </button>
