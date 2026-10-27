@@ -1,0 +1,77 @@
+name: 问题反馈 / Bug report
+description: 告诉我们哪里不太对，一起定位问题。 / Help us understand what went wrong.
+title: '[Bug] '
+body:
+  - type: markdown
+    attributes:
+      value: |
+        感谢反馈！任选中文或英文填写即可，不用写双语。请先搜索相同问题，上传前隐藏密钥、令牌及私人内容。
+        Thanks for reporting this! Answer in either Chinese or English; no translation needed. Please check for duplicates and redact secrets and private data.
+  - type: input
+    id: version
+    attributes:
+      label: 正在使用哪个版本？ / Which version are you using?
+      description: 发布版填版本号，源码版也可填 commit。 / A release version or source commit is fine.
+      placeholder: 例如 v0.9.7 或 commit ID / e.g. v0.9.7 or a commit ID
+    validations:
+      required: true
+  - type: dropdown
+    id: distribution
+    attributes:
+      label: 是怎样安装或运行的？ / How do you run infOS?
+      options:
+        - Windows 安装版 / Windows installer
+        - Windows 便携版 / Windows portable
+        - Steam 版 / Steam
+        - Docker
+        - 源码运行 / From source
+        - 其他或不确定 / Other or not sure
+    validations:
+      required: true
+  - type: dropdown
+    id: connection
+    attributes:
+      label: 连接哪一侧后端？ / Which backend connection do you use?
+      options:
+        - 本地后端 / Local backend
+        - 远程后端 / Remote backend
+        - 不确定 / Not sure
+    validations:
+      required: true
+  - type: textarea
+    id: environment
+    attributes:
+      label: 方便说一下运行环境吗？ / Could you share your environment?
+      description: 系统版本、架构；涉及网页时补充浏览器，源码或 Docker 问题补充运行时／镜像版本。只填知道的内容即可。 / Include OS and architecture; add the browser for web issues, or runtime/image versions for source or Docker issues. Share what you know.
+      placeholder: 例如 Windows 11、x64；远程服务器为 Ubuntu。 / e.g. Windows 11 x64, with an Ubuntu remote server.
+    validations:
+      required: true
+  - type: textarea
+    id: reproduction
+    attributes:
+      label: 怎样能遇到这个问题？ / How can we reproduce it?
+      description: 从哪个入口开始、做了什么、何时出错？偶发问题也请说明频率和最近是否升级或改过设置。 / Where did you start, what did you do, and when did it fail? For intermittent issues, include frequency and recent upgrades or setting changes.
+      placeholder: |
+        1. 打开…… / Open …
+        2. 点击或输入…… / Click or enter …
+        3. 出现…… / Observe …
+    validations:
+      required: true
+  - type: textarea
+    id: behavior
+    attributes:
+      label: 原本希望怎样，实际发生了什么？ / What did you expect, and what happened instead?
+      description: 简短具体地描述两者差别就好。 / A short, concrete comparison helps.
+      placeholder: |
+        预期 / Expected: …
+        实际 / Actual: …
+    validations:
+      required: true
+  - type: textarea
+    id: evidence
+    attributes:
+      label: 有日志或截图可以一起看看吗？ / Any logs or screenshots to help us investigate?
+      description: 可拖入图片，日志请用代码块并保留错误前后文。暂时没有日志时写明原因即可；不要上传密钥、令牌或私人聊天。 / Drag in images and use code blocks for logs with surrounding context. If unavailable, tell us why. Do not upload secrets or private chats.
+      placeholder: 贴上相关信息，或说明为什么暂时无法获取。 / Paste the relevant details, or explain why they are unavailable.
+    validations:
+      required: true

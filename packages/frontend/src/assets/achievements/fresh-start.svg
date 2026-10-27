@@ -1,0 +1,23 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="256" height="256" viewBox="0 0 80 80" fill="none">
+  <title>崭新启程</title>
+  <defs>
+    <linearGradient id="frame" x1="12" y1="8" x2="68" y2="74" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#87c2f6"/><stop offset=".55" stop-color="#a08ae0"/><stop offset="1" stop-color="#dfaddc"/>
+    </linearGradient>
+    <linearGradient id="paper" x1="28" y1="20" x2="53" y2="44" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#d7efff"/><stop offset="1" stop-color="#8d96eb"/>
+    </linearGradient>
+  </defs>
+  <path fill="#171c32" d="M0 0H80V80H0Z"/>
+  <path d="M16 5H64L75 16V64L64 75H16L5 64V16Z" fill="#22263f" stroke="url(#frame)" stroke-width="2"/>
+  <path d="M20 13H60L67 20V60L60 67H20L13 60V20Z" fill="#2b2c4a"/>
+  <path d="M17 27H20M60 53H63M27 17V20M53 60V63" stroke="#76729d"/>
+  <path d="M21 36L40 23L59 36V56H21Z" fill="#65588c" stroke="#ac96ed" stroke-width="1.5"/>
+  <path d="M21 36L40 48L59 36M21 56L34 43M59 56L46 43" stroke="#c8b7f6" stroke-width="1.5"/>
+  <path d="M29 34L53 18L45 42L39 34H29Z" fill="url(#paper)" stroke="#e2e7ff" stroke-width="1.5"/>
+  <path d="M39 34L53 18" stroke="#7465bb" stroke-width="1.5"/>
+  <path d="M61 14V24M56 19H66" stroke="#a5d9ff" stroke-width="2"/>
+  <path d="M16 57V65M12 61H20" stroke="#d8b6ef" stroke-width="2"/>
+  <path d="M35 70H45" stroke="#c0a3f3" stroke-width="2"/>
+  <path fill="#d6ddff" d="M17 16H20V19H17ZM61 60H64V63H61Z"/>
+</svg>

@@ -9,12 +9,19 @@
 
 import type {
   InteractionMode,
+  AchievementId,
   KernelExecutionDescriptor,
   KernelObjectId,
   ThreadChannel,
 } from '@infos/shared'
 import { eq, ne, desc, asc, sql, and, or, inArray, notInArray, isNull } from 'drizzle-orm'
-import { threads, threadMessages, threadSummaries, kernelOutboxEvents } from '../database/schema'
+import {
+  threads,
+  threadMessages,
+  threadSummaries,
+  kernelOutboxEvents,
+  achievements,
+} from '../database/schema'
 import { editedMessageMetadata } from './messageEdit'
 import type { DrizzleDb } from '../database'
 import type { KernelOutboxRepository } from '../kernel/kernelOutboxRepository'
@@ -50,6 +57,8 @@ export interface CreateThreadInput {
 
 /** Thread 消息创建输入 */
 export interface CreateThreadMessageInput {
+  /** 仅业务规则可提供；与有效回复在同一事务中记录，失败则一起回滚。 */
+  achievement?: { subjectId: string; id: AchievementId }
   threadId: string
   role: 'user' | 'assistant' | 'system' | 'tool'
   content: string
@@ -431,6 +440,22 @@ export class ThreadRepository {
         .returning()
         .all()
       const row = rows[0]!
+      if (
+        data.achievement &&
+        data.role === 'assistant' &&
+        (data.status ?? 'active') === 'active' &&
+        data.content.trim()
+      ) {
+        tx.insert(achievements)
+          .values({
+            subjectId: data.achievement.subjectId,
+            achievementId: data.achievement.id,
+            unlockedAt: new Date().toISOString(),
+            sourceMessageId: row.id,
+          })
+          .onConflictDoNothing({ target: [achievements.subjectId, achievements.achievementId] })
+          .run()
+      }
       if (data.execution && this.outbox) {
         const event = this.outbox.createEvent({
           protocolVersion: 1,

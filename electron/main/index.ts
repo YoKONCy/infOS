@@ -1,4 +1,5 @@
 import './utils/stdioGuard'
+import { steamAchievements } from './services/steamAchievements'
 import { t as __t } from './utils/i18n'
 /**
  * @file Electron 主进程入口
@@ -224,6 +225,7 @@ async function startDesktop(): Promise<void> {
   await startupFlow.start()
   if (!startupFlow.completed || isPreparingQuit || desktopServicesStarted) return
   desktopServicesStarted = true
+  steamAchievements.start()
   try {
     // 后端就绪后连接 Daemon 并注册桌面能力；开发模式由外部 Daemon 提供业务服务。
     const { capabilityProvider } = await import('./services/capabilityProvider')
@@ -290,6 +292,7 @@ app.on('before-quit', async (event) => {
     return
   }
   isQuitting = true
+  steamAchievements.stop()
   startupFlow.cancel()
   startupSplash.dispose()
 

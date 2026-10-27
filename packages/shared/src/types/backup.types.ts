@@ -58,3 +58,16 @@ export interface BackupPreview {
   alreadyImported: boolean
   expiresAt: string
 }
+
+export interface BackupImportProgress {
+  id: string
+  phase: 'uploading' | 'extracting' | 'validating' | 'cancelling' | 'ready' | 'failed' | 'cancelled'
+  receivedBytes: number
+  uploadBytes: number
+  unpackedBytes: number
+  unpackedTotal: number
+  completedFiles: number
+  totalFiles: number
+  preview?: BackupPreview
+  error?: string
+}

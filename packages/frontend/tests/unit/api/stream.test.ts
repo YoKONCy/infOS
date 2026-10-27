@@ -10,6 +10,17 @@ vi.mock('@infos/frontend/api/transportUtils', () => ({
 
 import { streamRequest } from '@infos/frontend/api/stream'
 
+// 使用真实传输层；测试环境也要提供当前页面来源，才能核验服务端与凭据边界。
+beforeEach(() => {
+  vi.stubGlobal(
+    'window',
+    Object.assign(new EventTarget(), {
+      location: { origin: 'http://localhost:7359' },
+    }),
+  )
+  vi.stubGlobal('document', new EventTarget())
+})
+
 function createStream(chunks: string[]) {
   const bytes = new TextEncoder().encode(chunks.join(''))
   const chinese = bytes.findIndex((byte) => byte > 127)
@@ -58,7 +69,7 @@ describe('streamRequest', () => {
       },
     )
     await vi.waitFor(() => expect(onError).toHaveBeenCalledOnce())
-    expect(onError).toHaveBeenCalledWith(expect.objectContaining({ code: 'STREAM_ERROR' }))
+    expect(onError).toHaveBeenCalledWith({ code: 'STREAM_ERROR', message: '渲染失败' })
   })
 
   beforeEach(() => {

@@ -115,11 +115,15 @@ describe('工作区资源树自动同步', () => {
   })
   it('系统文件管理器按钮交给父级安全打开，重复打开期间禁用', async () => {
     const wrapper = await view()
+    expect(wrapper.find('button[aria-label="在系统文件管理器中打开工作区"]').exists()).toBe(false)
+    await wrapper.setProps({ allowReveal: true })
     const open = wrapper.get('button[aria-label="在系统文件管理器中打开工作区"]')
     await open.trigger('click')
     expect(wrapper.emitted('reveal')).toHaveLength(1)
     await wrapper.setProps({ opening: true })
     expect(open.attributes('disabled')).toBeDefined()
+    await open.trigger('click')
+    expect(wrapper.emitted('reveal')).toHaveLength(1)
   })
   it('页面隐藏时暂停，卸载后停止轮询', async () => {
     const wrapper = await view()

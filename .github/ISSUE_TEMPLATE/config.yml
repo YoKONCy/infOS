@@ -1,0 +1,5 @@
+blank_issues_enabled: false
+contact_links:
+  - name: 贡献与设计指南 / Contribution and design guide
+    url: https://github.com/YoKONCy/infOS/blob/main/CONTRIBUTING.md
+    about: 开始前可以先看看架构、验证和截图约定。 / Read the architecture, verification and screenshot guidance before you start.

@@ -1,6 +1,6 @@
 # Steam 集成与资产联邦化规范
 
-> **版本**：0.9.7 · **更新时间**：2026-10-17
+> **版本**：0.9.7 · **更新时间**：2026-10-27
 > **适用范围**：`electron/main/services/steam*`、`packages/backend/src/core/`
 > **依赖规范**：[A04_DEPLOYMENT](./A04_DEPLOYMENT.md)、[A02_BACKEND_ARCHITECTURE](./A02_BACKEND_ARCHITECTURE.md)
 
@@ -43,13 +43,15 @@ packages/backend/src/core/
 | Steam 初始化 / Overlay | ✅ steam.ts                               | ❌ 不存在                   |
 | Workshop 发现/管理     | ✅ steam.ts（getWorkshopInstallations）   | ❌ 不存在                   |
 | Cloud 同步             | ✅ cloudSync.ts（cloudSyncService）       | ❌ 不存在                   |
-| 成就解锁               | ❌ 未实装                                 | ❌ 不存在                   |
+| Steam 成就提交         | ✅ 已达成记录由主进程提交，须配置 Steam 后台 | ❌ 无 Steam SDK；保留内部成就 |
 | PathResolver           | ✅ 含 @workshop                           | ✅ 无 @workshop             |
 | AssetRegistry          | ✅ 扫描 3 层                              | ✅ 扫描 2 层（无 workshop） |
 
 ---
 
 ## 3. 虚拟路径管理器 — PathResolver
+
+成就规则、身份范围、持久化和 Steam 回执以 [B30 成就与 Steam 提交](./B30_ACHIEVEMENTS.md) 为准。服务端记录内部成就，Electron 仅将当前凭据对应的已达成项交给 Steam；远程后端无需加载 Steam SDK。
 
 ### 3.1 逻辑前缀定义
 

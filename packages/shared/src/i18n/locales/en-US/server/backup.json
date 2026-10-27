@@ -20,5 +20,13 @@
   "当前使用自定义数据库路径，请先迁移到标准数据目录再导入": "A custom database path is in use. Move to the standard data directory before importing",
   "数据正在写入，请稍后重试备份": "Data is being written. Please try backing up again shortly",
   "社交记忆特征存在冲突，请导入为新角色或选择覆盖": "Social memory features conflict. Import as new characters or choose replace",
-  "下载链接已失效，请重新下载": "The download link expired. Request a new download"
+  "下载链接已失效，请重新下载": "The download link expired. Request a new download",
+  "导入操作已失效，服务可能已重启，请重新选择备份": "This import has expired or the server restarted; please select the backup again",
+  "导入等待超时，请检查网络连接和服务器状态后重试": "The import timed out; check the network and server before retrying",
+  "已取消导入，原有数据未修改": "Import cancelled; existing data was not changed",
+  "备份解包或校验失败，请检查口令、文件完整性和剩余磁盘空间": "Backup extraction or validation failed; check the password, file integrity and available disk space",
+  "备份中的数据库校验未通过，原有数据未修改": "The backup database failed validation; existing data was not changed",
+  "备份文件校验未通过，请重新导出或上传": "Backup file verification failed; export or upload it again",
+  "此文件不是受支持的 infOS 备份": "This file is not a supported infOS backup",
+  "备份导入阶段：{0}（{1}）": "Backup import phase: {0} ({1})"
 }

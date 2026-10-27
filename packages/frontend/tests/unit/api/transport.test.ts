@@ -15,7 +15,8 @@ describe('transport runtime helpers', () => {
   })
 
   it.each([
-    [undefined, false], [{}, false],
+    [undefined, false],
+    [{}, false],
     [{ connectionMode: () => 'remote' }, false],
     [{ connectionMode: () => 'local' }, true],
   ])('系统打开只接受明确的本机后端连接：%j', async (electron, expected) => {
@@ -77,6 +78,91 @@ describe('transport runtime helpers', () => {
     expect(new Headers(request.mock.calls[0]![1]?.headers).get('Authorization')).toBe(
       'Bearer remote-token',
     )
+  })
+})
+
+describe('本机鉴权恢复', () => {
+  afterEach(() => vi.unstubAllGlobals())
+
+  function desktop(credential: (refresh?: boolean) => string) {
+    const dispatchEvent = vi.fn()
+    setWindow({
+      dispatchEvent,
+      electron: {
+        backendOrigin: () => 'http://local.example',
+        connectionMode: () => 'local',
+        clientCredential: credential,
+      },
+    })
+    return dispatchEvent
+  }
+
+  it('凭据更新后只重试一次读取，成功恢复不广播失效事件', async () => {
+    const dispatched = desktop((refresh) => (refresh ? 'new-token' : 'old-token'))
+    const used: Array<string | null> = []
+    vi.stubGlobal(
+      'fetch',
+      vi.fn<typeof fetch>(async (_url, options) => {
+        used.push(new Headers(options?.headers).get('Authorization'))
+        return used.length === 1 ? new Response('', { status: 401 }) : new Response('{}')
+      }),
+    )
+    const { clientFetch } = await importTransport()
+    expect((await clientFetch('http://local.example/api/chat/queue/thread')).status).toBe(200)
+    expect(used).toEqual(['Bearer old-token', 'Bearer new-token'])
+    expect(dispatched).not.toHaveBeenCalled()
+  })
+
+  it('相同失效凭据不重复请求，保留真实的未授权状态', async () => {
+    const dispatched = desktop(() => 'revoked-token')
+    const request = vi.fn(async () => new Response('', { status: 401 }))
+    vi.stubGlobal('fetch', request)
+    const { clientFetch } = await importTransport()
+    expect((await clientFetch('http://local.example/api/chat/queue/thread')).status).toBe(401)
+    expect(request).toHaveBeenCalledTimes(1)
+    expect(dispatched.mock.calls[0]?.[0].type).toBe('infos:unauthorized')
+  })
+
+  it('写操作不会因凭据刷新自动重放', async () => {
+    desktop((refresh) => (refresh ? 'new-token' : 'old-token'))
+    const request = vi.fn(async () => new Response('', { status: 401 }))
+    vi.stubGlobal('fetch', request)
+    const { clientFetch } = await importTransport()
+    await clientFetch('http://local.example/api/chat', { method: 'POST', body: '{}' })
+    expect(request).toHaveBeenCalledTimes(1)
+  })
+
+  it('保留调用方显式身份，也不向其他服务器附加当前凭据', async () => {
+    desktop(() => 'current-token')
+    const used: Array<string | null> = []
+    vi.stubGlobal(
+      'fetch',
+      vi.fn<typeof fetch>(async (_url, options) => {
+        used.push(new Headers(options?.headers).get('Authorization'))
+        return new Response('{}')
+      }),
+    )
+    const { clientFetch } = await importTransport()
+    await clientFetch('http://local.example/api/client-access/status', {
+      headers: { authorization: 'Bearer explicit-token' },
+    })
+    await clientFetch('https://other.example/api/health')
+    expect(used).toEqual(['Bearer explicit-token', null])
+  })
+
+  it('切换服务器后，旧请求的迟到 401 不清退当前连接', async () => {
+    let origin = 'http://first.example'
+    const dispatchEvent = desktop(() => 'credential')
+    window.electron!.backendOrigin = () => origin
+    const request = vi.fn(async () => {
+      origin = 'https://next.example'
+      return new Response('', { status: 401 })
+    })
+    vi.stubGlobal('fetch', request)
+    const { clientFetch } = await importTransport()
+    await clientFetch('http://first.example/api/chat/queue/thread')
+    expect(request).toHaveBeenCalledTimes(1)
+    expect(dispatchEvent).not.toHaveBeenCalled()
   })
 })
 

@@ -29,7 +29,7 @@ A 类维护跨领域架构，B 类维护具体子系统的调用链和运行契�
 | 工具、资源与文档 | [B07 工具扩展](./B07_TOOLS_AND_EXTENSIONS.md)、[B12 消息资源](./B12_MESSAGE_RESOURCES.md)、[B24 文档工具](./B24_DOCUMENT_TOOLS.md) |
 | 会话与任务 | [B09 交互模式](./B09_THREAD_INTERACTION_MODE.md)、[B13 任务计划](./B13_TASK_PLANS.md)、[B19 执行模式](./B19_THREAD_EXECUTION_MODES.md)、[B20 主动工作](./B20_PROACTIVE_WORK.md)、[B26 对话队列](./B26_CONVERSATION_QUEUE.md) |
 | 模型与上下文 | [B17 提示词工作区](./B17_PROMPT_WORKSPACE.md)、[B22 服务商连接](./B22_PROVIDER_CONNECTIONS.md)、[B16 用量账本](./B16_TOKEN_USAGE.md) |
-| 界面与通知 | [B15 背景](./B15_APP_BACKGROUND.md)、[B18 完成提醒](./B18_COMPLETION_ALERTS.md)、[B23 设备通知](./B23_DEVICE_NOTIFICATIONS.md)、[B25 国际化](./B25_I18N.md) |
+| 界面与通知 | [B15 背景](./B15_APP_BACKGROUND.md)、[B18 完成提醒](./B18_COMPLETION_ALERTS.md)、[B23 设备通知](./B23_DEVICE_NOTIFICATIONS.md)、[B25 国际化](./B25_I18N.md)、[B30 成就](./B30_ACHIEVEMENTS.md) |
 | 安全与诊断 | [B27 运行时安全](./B27_RUNTIME_SECURITY.md)、[B28 运行时调试](./B28_RUNTIME_DEBUG.md)、[B29 索引维护与诊断](./B29_INDEX_MAINTENANCE.md) |
 
 模式机制见 [M01](./M01_MODE_SYSTEM.md)、[M02 能力门控](./M02_CAPABILITY_GATE.md)、[M03 NIT](./M03_NIT_ENGINE.md)、[M04 Steam](./M04_STEAM_INTEGRATION.md)。修改前同时阅读相应的 [命名](./S01_NAMING_CONVENTIONS.md)、[API](./S02_API_SPEC.md)、[日志](./S03_LOGGING_SPEC.md)、[测试](./S04_TESTING_STANDARDS.md)、[代码](./S05_CODE_STANDARDS.md) 和 [UI/UX](./S06_UI_UX_DESIGN_SPEC.md) 规范。

@@ -61,6 +61,7 @@ import {
   getCloudStatus,
 } from './services/steam'
 import { completionAlerts } from './services/completionAlerts'
+import { steamAchievements } from './services/steamAchievements'
 import { registerPictoriaSurface } from './services/pictoriaSurface'
 import { startDesktopArca } from './services/arcaLifetime'
 import { registerArcaSurface } from './services/arcaSurface'
@@ -254,9 +255,7 @@ function registerPetControlHandlers(): void {
 
 function trustedClient(url: string): boolean {
   const development =
-    process.env.ELECTRON_RENDERER_URL ||
-    process.env.VITE_DEV_SERVER_URL ||
-    'http://localhost:7359'
+    process.env.ELECTRON_RENDERER_URL || process.env.VITE_DEV_SERVER_URL || 'http://localhost:7359'
   return url.startsWith('file://') || url.startsWith(`${new URL(development).origin}/`)
 }
 
@@ -315,7 +314,10 @@ export function registerIpcHandlers(): void {
   })
   ipcMain.on('client-access:credential', (event, kind?: string) => {
     const url = event.sender.getURL()
-    const trusted = trustedWindow(event.sender) && trustedClient(url)
+    const trusted =
+      trustedWindow(event.sender) &&
+      trustedClient(url) &&
+      event.senderFrame === event.sender.mainFrame
     if (trusted && !credentialHooksInstalled) {
       // 原生 img/audio/video 等不能自设 Header，只给可信主应用帧的本机请求附加凭据。
       event.sender.session.webRequest.onBeforeSendHeaders(
@@ -332,10 +334,16 @@ export function registerIpcHandlers(): void {
             trustedWindow(source) &&
             trustedClient(source.getURL()) &&
             (!frame || frame.url.split('#')[0] === source.getURL().split('#')[0])
+          const headers = details.requestHeaders
+          const hasAuthorization = Object.entries(headers).some(
+            ([name, value]) => name.toLowerCase() === 'authorization' && String(value).trim(),
+          )
+          const credential = allowed && !hasAuthorization ? getClientCredential() : ''
+          // 媒体请求只补齐缺失的凭据，不覆盖 fetch 的显式身份，也不注入空 Bearer。
           callback({
-            requestHeaders: allowed
-              ? { ...details.requestHeaders, Authorization: `Bearer ${getClientCredential()}` }
-              : details.requestHeaders,
+            requestHeaders: credential
+              ? { ...headers, Authorization: `Bearer ${credential}` }
+              : headers,
           })
         },
       )
@@ -348,7 +356,7 @@ export function registerIpcHandlers(): void {
           ? isRemoteConnection()
             ? 'remote'
             : 'local'
-          : getClientCredential()
+          : getClientCredential(kind === 'refresh')
       : ''
   })
   logger.info('IPC', __t('electron.logs.ipcBridge.ts', '正在注册 IPC 通道...'))
@@ -1087,6 +1095,7 @@ function registerNapCatHandlers(): void {
 // Steam 集成 (IS_STEAM 门控)
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 function registerSteamHandlers(): void {
+  ipcMain.handle('steam-achievements-sync', () => steamAchievements.sync())
   // Steam 通道在运行时检查 IS_STEAM 标记
   // 非 Steam 版调用这些通道会安全返回 null
 

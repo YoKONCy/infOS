@@ -18,6 +18,7 @@ Var InfosOptions
 Var InfosOptionsCreated
 Var InfosDestinationControl
 Var InfosStartAppArgs
+Var InfosShortcutOutput
 
 ; 保留命令行选项，并把界面上的快捷方式选择交回原安装逻辑。
 !macro _InfosNoDesktop _a _b _t _f
@@ -27,6 +28,31 @@ Var InfosStartAppArgs
 !macroend
 !undef isNoDesktopShortcut
 !define isNoDesktopShortcut `"" InfosNoDesktop ""`
+
+; 更新保留已有链接时也重绑正式入口，避免旧开发运行时目标继续被使用。
+!macro InfosRepairExistingShortcut link
+  ${If} ${FileExists} "${link}"
+    CreateShortCut "${link}" "$appExe" "" "$appExe" 0 "" "" "${APP_DESCRIPTION}"
+    ClearErrors
+    WinShell::SetLnkAUMI "${link}" "${APP_ID}"
+  ${EndIf}
+!macroend
+
+!macro customInstall
+  StrCpy $InfosShortcutOutput "$OUTDIR"
+  SetOutPath "$INSTDIR"
+  !ifndef DO_NOT_CREATE_START_MENU_SHORTCUT
+    !insertmacro InfosRepairExistingShortcut "$newStartMenuLink"
+  !endif
+  !ifndef DO_NOT_CREATE_DESKTOP_SHORTCUT
+    ${IfNot} ${isNoDesktopShortcut}
+      !insertmacro InfosRepairExistingShortcut "$newDesktopLink"
+    ${EndIf}
+  !endif
+  SetOutPath "$InfosShortcutOutput"
+  ; 不重建用户主动删除的链接，安装后的启动也不依赖链接解析结果。
+  StrCpy $launchLink "$appExe"
+!macroend
 
 !macro customInit
   StrCpy $InfosShortcut "1"
@@ -269,7 +295,7 @@ Function InfosLaunch
   ${Else}
     StrCpy $InfosStartAppArgs ""
   ${EndIf}
-  ${StdUtils.ExecShellAsUser} $0 "$launchLink" "open" "$InfosStartAppArgs"
+  ${StdUtils.ExecShellAsUser} $0 "$INSTDIR\${APP_EXECUTABLE_FILENAME}" "open" "$InfosStartAppArgs"
   SendMessage $HWNDPARENT ${WM_COMMAND} 1 0
 FunctionEnd
 Function InfosFinish

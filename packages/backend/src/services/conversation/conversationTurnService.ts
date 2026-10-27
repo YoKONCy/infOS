@@ -86,6 +86,8 @@ export interface ConversationTurnDeps {
 }
 
 export interface PrepareTurnParams {
+  /** 由鉴权入口提供；内部任务和模型输出不能自行认领。 */
+  achievementSubjectId?: string
   browserScope?: import('@infos/shared').AgentBrowserScope
   /** 服务端队列的稳定身份，用于崩溃恢复时核对已保存的回复。 */
   queueMessageId?: string
@@ -150,6 +152,7 @@ export interface PrepareTurnParams {
 }
 
 export interface PreparedTurn {
+  achievementSubjectId?: string
   modelRequests?: import('../prompt/requestCompiler').ModelRequestSnapshot[]
   initialRequestMessages?: ChatMessage[]
   proactive?: boolean
@@ -490,6 +493,10 @@ export class ConversationTurnService {
       {
         workContext,
         workContextGeneration: promptReplayGeneration(),
+        achievementSubjectId:
+          !params.taskId && !params.realmId && (params.content.trim() || attachments.length)
+            ? params.achievementSubjectId
+            : undefined,
         threadId: params.threadId,
         agentId,
         channel: thread.channel,
@@ -607,7 +614,7 @@ export class ConversationTurnService {
       }
       if (params.outputPersistence !== 'ephemeral') {
         persistenceStarted = true
-        assistantMessage = await this.persistAssistant(prepared, completed)
+        assistantMessage = await this.persistAssistant(prepared, completed, params.signal)
         await this.commitEventNoteDrafts(prepared, completed, assistantMessage)
         await this.submitRetrievalFeedback(prepared, completed)
       }
@@ -768,7 +775,7 @@ export class ConversationTurnService {
     let assistantMessage: ThreadMessageInfo | undefined
     try {
       if (params.outputPersistence !== 'ephemeral') {
-        assistantMessage = await this.persistAssistant(prepared, completed)
+        assistantMessage = await this.persistAssistant(prepared, completed, params.signal)
         await this.commitEventNoteDrafts(prepared, completed, assistantMessage)
         await this.submitRetrievalFeedback(prepared, completed)
       }
@@ -1180,8 +1187,22 @@ export class ConversationTurnService {
   private async persistAssistant(
     prepared: PreparedTurn,
     completed: CompletedTurn,
+    signal?: AbortSignal,
   ): Promise<ThreadMessageInfo> {
+    const achievementEligible = Boolean(
+      prepared.achievementSubjectId &&
+      prepared.channel === 'desktop' &&
+      prepared.inputPersistence === 'persistent' &&
+      !prepared.proactive &&
+      !completed.handoff &&
+      !completed.executionPause &&
+      !signal?.aborted &&
+      completed.reply.trim(),
+    )
     const message = await this.deps.threadService.appendAssistantMessage({
+      achievement: achievementEligible
+        ? { subjectId: prepared.achievementSubjectId!, id: 'fresh_start' }
+        : undefined,
       threadId: prepared.threadId,
       content:
         completed.reply ||

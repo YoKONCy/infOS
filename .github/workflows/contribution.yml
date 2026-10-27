@@ -1,0 +1,45 @@
+name: Contribution information
+
+on:
+  pull_request_target:
+    types: [opened, edited, synchronize, reopened, ready_for_review]
+
+permissions:
+  contents: read
+  pull-requests: read
+
+concurrency:
+  group: contribution-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+jobs:
+  details:
+    name: Contribution details
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      # 只使用仓库默认分支的检查代码，不检出或执行 PR 中的代码。
+      - uses: actions/checkout@v6
+        with:
+          ref: ${{ github.event.repository.default_branch }}
+          persist-credentials: false
+
+      - name: 检查 PR 信息与截图 / Check PR details and screenshots
+        uses: actions/github-script@v9
+        with:
+          script: |
+            const { pathToFileURL } = require('node:url')
+            const { contributionReport } = await import(pathToFileURL(
+              `${process.env.GITHUB_WORKSPACE}/scripts/check-pr-contribution.mjs`,
+            ).href)
+            const request = { ...context.repo, pull_number: context.payload.pull_request.number }
+            const { data: pr } = await github.rest.pulls.get(request)
+            const files = await github.paginate(github.rest.pulls.listFiles, {
+              ...request, per_page: 100,
+            })
+            const report = contributionReport(pr.body, files, pr.changed_files)
+            if (report.errors.length) {
+              core.setFailed([report.summary, ...report.errors.map((item) => `- ${item}`)].join('\n'))
+            } else {
+              core.info(report.summary)
+            }

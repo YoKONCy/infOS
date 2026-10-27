@@ -2,7 +2,11 @@ export type ResourceKind = 'image' | 'video' | 'audio' | 'pdf' | 'text' | 'file'
 
 /** 系统关联打开仅用于常见文档与媒体；脚本、快捷方式和未知类型只定位。 */
 export function systemFileOpenAction(name: string): 'open' | 'reveal' {
-  const extension = name.split(/[\\/]/).pop()?.match(/\.[^.]+$/)?.[0]?.toLowerCase()
+  const extension = name
+    .split(/[\\/]/)
+    .pop()
+    ?.match(/\.[^.]+$/)?.[0]
+    ?.toLowerCase()
   return extension &&
     [
       '.txt',

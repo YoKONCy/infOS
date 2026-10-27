@@ -16,6 +16,12 @@
 
 进度页以 40ms 定时器读取 NSIS 原控件的真实状态，只有进度或状态文字变化时才重绘进度区域，提示切换只重绘提示区域。动画状态由定时器推进并保证提交结束帧，绘制过程只读取快照。`WM_PAINT` 使用 Windows [Buffered Paint](https://learn.microsoft.com/en-us/windows/win32/api/uxtheme/nf-uxtheme-beginbufferedpaint) 在离屏缓冲中完成背景和动态内容，再一次提交失效区域；缓冲服务在初始化时启用，宿主销毁时释放。`WM_PRINTCLIENT` 仍直接绘入切页快照提供的 DC。切页时停止旧定时器，旧页面的迟到消息不修改当前页的进度与动效状态。
 
+## 快捷方式与安装后启动
+
+Electron 44 的 Windows 通知激活器从 EXE 的 `ProductName` 取名，并自动创建或修正当前用户开始菜单的同名 `.lnk`，写入运行中 EXE、空参数及通知 AppUserModelID。仅区分开发版和正式版 AppUserModelID 无法避免同名链接互相覆盖。`scripts/dev-electron.mjs` 因此给开发运行时的原生产品名追加固定技术标识 `[dev]`，并更新缓存修订号；正式版产品名和窗口品牌保持不变。开发模式继续通过 `pnpm start` 等开发脚本启动，通知生成的开发入口不作为发行入口。上游行为见 [通知快捷方式注册](https://github.com/electron/electron/blob/v44.9.3/shell/browser/notifications/win/windows_toast_activator.cc#L227) 与 [原生产品名读取](https://github.com/electron/electron/blob/v44.9.3/shell/common/application_info_win.cc#L36)。
+
+electron-builder 更新时可能保留已有快捷方式。安装节的 `customInstall` 在其快捷方式处理之后，将仍存在的官方开始菜单和桌面链接重绑到本次安装的 `$appExe`，同步图标、工作目录和正式 AppUserModelID，避免继续指向开发运行时缓存或旧安装目录。已删除的链接不主动重建，桌面快捷方式仍遵守安装选项与 `--no-desktop-shortcut`。安装完成页及上游自动启动入口直接使用已安装 EXE，不将快捷方式目标当作启动权威。开发运行时的名称和图标不构成发行身份，正式程序入口由安装目录中的应用包决定。
+
 ## 卸载界面
 
 和安装页使用相同的 1040×652 原生直角窗口、左侧 Pero 插画、右侧官方字标及操作区、底部版本栏，沿用同一套轻量切页动效。确认页的数据说明使用细蓝边面板；默认保留聊天记录、记忆与配置，不新增清理数据复选框。原有 `--delete-app-data` 参数和编译时清理策略只用于如实展示，实际处理仍由 electron-builder 的原卸载节执行。

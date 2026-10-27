@@ -463,3 +463,4 @@ export type {
   IndexMaintenanceTarget,
   IndexMaintenanceStatus,
 } from './types/indexMaintenance.types'
+export * from './achievements'

@@ -1,0 +1,13 @@
+{
+  "问题与关联 Issue": "问题与关联 Issue / Problem and linked issue",
+  "改动范围": "改动范围 / Changes",
+  "架构依据": "架构依据 / Architecture",
+  "实际验证": "实际验证 / Verification",
+  "运行截图或不涉及前端的说明": "运行截图或不涉及前端的说明 / Screenshots or a note that no frontend is affected",
+  "兼容与升级影响": "兼容与升级影响 / Compatibility and upgrade impact",
+  "请补充：{0}": "请补充 / Please fill in: {0}",
+  "未能取得完整变更文件列表，请重试检查或联系维护者。": "未能取得完整变更文件列表，请重试检查或联系维护者。 / The changed-file list is incomplete; please retry or contact a maintainer.",
+  "这次涉及前端，请在截图栏直接附上实际运行截图；页面链接或文字说明不能代替截图。": "这次涉及前端，请在截图栏直接附上实际运行截图；页面链接或文字说明不能代替截图。 / This PR affects the frontend. Please embed actual running screenshots in the screenshot section; links or text alone are not enough.",
+  "还差几条 PR 信息，请补充后更新说明：": "还差几条 PR 信息，请补充后更新说明 / Please add these details to your PR description:",
+  "PR 必填信息与截图引用已齐全；架构和证据内容仍需人工审阅。": "PR 必填信息与截图引用已齐全；架构和证据内容仍需人工审阅。 / Required details and image references are present; architecture and evidence still need human review."
+}

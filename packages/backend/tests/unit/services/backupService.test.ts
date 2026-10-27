@@ -1,4 +1,4 @@
-import { afterEach, describe, expect, it } from 'vitest'
+import { afterEach, describe, expect, it, vi } from 'vitest'
 import Database from 'better-sqlite3'
 import { Hono } from 'hono'
 import { randomUUID, createHash } from 'node:crypto'
@@ -41,6 +41,80 @@ function directory() {
 afterEach(() => {
   for (const root of directories.splice(0)) rmSync(root, { recursive: true, force: true })
 })
+
+async function withImportFixture(
+  action: (input: {
+    service: BackupService
+    router: ReturnType<typeof createBackupRouter>
+    archive: string
+    live: Database.Database
+    backupId: string
+  }) => Promise<void>,
+) {
+  const root = directory(),
+    source = path.join(root, 'source')
+  mkdirSync(source)
+  const snapshot = new Database(path.join(source, 'infos.db'))
+  snapshot.exec("CREATE TABLE example(value TEXT); INSERT INTO example VALUES('备份内容')")
+  snapshot.close()
+  const bytes = readFileSync(path.join(source, 'infos.db'))
+  const manifest: BackupManifest = {
+    format: 'infos.backup',
+    version: 1,
+    id: randomUUID(),
+    appVersion: '0.9.7',
+    sourceServerId: 'source',
+    createdAt: '2026-10-27T00:00:00Z',
+    selection: {
+      level: 'full',
+      modules: ['settings'],
+      agentIds: [],
+      threadIds: [],
+      documentIds: [],
+      factIds: [],
+      taskIds: [],
+      includeSecrets: false,
+    },
+    tables: {},
+    files: [
+      {
+        path: 'infos.db',
+        size: bytes.length,
+        sha256: createHash('sha256').update(bytes).digest('hex'),
+      },
+    ],
+    warnings: [],
+  }
+  const archive = path.join(root, 'backup.infos-backup')
+  async function* records(): AsyncGenerator<{ table: string; row: BackupRow }> {
+    // 完整包保留 SQLite 文件，不重复输出逻辑记录。
+    yield* []
+  }
+  await writeBackupArchive(archive, manifest, source, records())
+  const live = new Database(path.join(root, 'infos.db'))
+  live.exec("CREATE TABLE example(value TEXT); INSERT INTO example VALUES('原有内容')")
+  const service = new BackupService({
+    dataDir: root,
+    db: { $client: live },
+    stores: {},
+    agents: {},
+    sourceServerId: 'target',
+    assertIdle() {},
+  } as never)
+  try {
+    await service.initialize()
+    await action({
+      service,
+      router: createBackupRouter(service),
+      archive,
+      live,
+      backupId: manifest.id,
+    })
+  } finally {
+    await service.imports.shutdown()
+    live.close()
+  }
+}
 
 describe('数据备份与恢复的关键路径', () => {
   it('下载票据必须经过鉴权签发，文件只允许下载一次', async () => {
@@ -153,6 +227,65 @@ describe('数据备份与恢复的关键路径', () => {
     await expect(
       readBackupArchive(archive, path.join(root, 'wrong-password'), '错误口令'),
     ).rejects.toThrow()
+    const controller = new AbortController()
+    await expect(
+      readBackupArchive(archive, path.join(root, 'cancelled'), '备份口令-eight', {
+        signal: controller.signal,
+        progress: ({ unpackedBytes }) => {
+          if (unpackedBytes > 0) controller.abort()
+        },
+      }),
+    ).rejects.toMatchObject({ name: 'AbortError' })
+  })
+
+  it('上传响应先返回操作编号，后台校验完成后恢复预览，期间不改业务数据', async () => {
+    await withImportFixture(async ({ service, router, archive, live, backupId }) => {
+      const state = service.imports.begin(statSync(archive).size, '')
+      const response = await router.request(`/imports/${state.id}/content`, {
+        method: 'PUT',
+        body: new Blob([new Uint8Array(readFileSync(archive))]),
+      })
+      expect(response.status).toBe(202)
+      expect((await response.json()).data.phase).toBe('extracting')
+      await vi.waitFor(() => expect(service.imports.get(state.id).phase).toBe('ready'), {
+        timeout: 10_000,
+      })
+      const status = await router.request(`/imports/${state.id}`)
+      expect((await status.json()).data.preview.manifest.id).toBe(backupId)
+      expect(live.prepare('SELECT value FROM example').get()).toEqual({ value: '原有内容' })
+    })
+  })
+
+  it('未开始上传的预约可取消，取消后释放唯一导入名额', async () => {
+    await withImportFixture(async ({ service }) => {
+      const cancelled = service.imports.begin(10, '')
+      expect(() => service.imports.begin(10, '')).toThrow('BACKUP_BUSY')
+      expect(service.imports.cancel(cancelled.id).phase).toBe('cancelled')
+      expect(service.imports.active).toBe(false)
+    })
+  })
+
+  it('不完整上传清理临时文件并保留原数据库', async () => {
+    await withImportFixture(async ({ service, router, live }) => {
+      const incomplete = service.imports.begin(100, '')
+      const rejected = await router.request(`/imports/${incomplete.id}/content`, {
+        method: 'PUT',
+        body: new Blob(['不完整']),
+      })
+      expect(rejected.status).toBe(400)
+      expect(service.imports.get(incomplete.id).phase).toBe('failed')
+      expect(existsSync(path.join(service.root, 'work', `${incomplete.id}.upload`))).toBe(false)
+      expect(live.prepare('SELECT value FROM example').get()).toEqual({ value: '原有内容' })
+    })
+  })
+
+  it('取消服务端备份的预览时不删除原备份', async () => {
+    await withImportFixture(async ({ service, archive }) => {
+      const saved = service.imports.beginFile(archive, statSync(archive).size, '')
+      service.imports.cancel(saved.id)
+      await service.imports.shutdown()
+      expect(existsSync(archive)).toBe(true)
+    })
   })
 
   it('不同会话的整数消息 ID 相同也不会覆盖本机消息，附件会指向导入后的消息', () => {

@@ -5,6 +5,7 @@ import { validate as zValidator } from '../lib/validation'
 import { AppError } from '../lib/appError'
 import { t } from '../lib/i18n'
 import { prepareBackupDownload, type BackupService } from '../services/backup/backupService'
+import type { BackupImportProgress } from '@infos/shared'
 
 const ids = z.array(z.string().min(1).max(200)).max(1000).default([])
 const selection = z
@@ -61,6 +62,13 @@ const messages: Record<string, string> = {
   BACKUP_APPLICATION_DUPLICATE_UNSUPPORTED: '子应用数据不支持复制导入，请选择跳过或覆盖',
   BACKUP_LOCAL_DOWNLOAD: '恢复点包含凭据，请设置至少八位下载口令',
   BACKUP_DATABASE_LOCATION_UNSUPPORTED: '当前使用自定义数据库路径，请先迁移到标准数据目录再导入',
+  BACKUP_IMPORT_EXPIRED: '导入操作已失效，服务可能已重启，请重新选择备份',
+  BACKUP_IMPORT_TIMEOUT: '导入等待超时，请检查网络连接和服务器状态后重试',
+  BACKUP_IMPORT_CANCELLED: '已取消导入，原有数据未修改',
+  BACKUP_IMPORT_FAILED: '备份解包或校验失败，请检查口令、文件完整性和剩余磁盘空间',
+  BACKUP_DATABASE_INVALID: '备份中的数据库校验未通过，原有数据未修改',
+  BACKUP_CHECKSUM_INVALID: '备份文件校验未通过，请重新导出或上传',
+  BACKUP_FORMAT_INVALID: '此文件不是受支持的 infOS 备份',
 }
 
 export function createBackupRouter(service: BackupService) {
@@ -88,6 +96,50 @@ export function createBackupRouter(service: BackupService) {
     )
   })
   const ok = <T>(data: T) => ({ code: 'OK', message: t('server.backup', '操作成功'), data })
+  const progress = (state: BackupImportProgress) => ({
+    ...state,
+    error: state.error
+      ? t('server.backup', messages[state.error] ?? messages.BACKUP_IMPORT_FAILED!)
+      : undefined,
+  })
+  router.post(
+    '/imports',
+    zValidator(
+      'json',
+      z.object({
+        size: z
+          .number()
+          .int()
+          .positive()
+          .max(20 * 1024 ** 3),
+        password,
+      }),
+    ),
+    async (c) => {
+      if (await service.pending()) throw new Error('BACKUP_PENDING_IMPORT')
+      const input = c.req.valid('json')
+      return c.json(ok(progress(service.imports.begin(input.size, input.password))))
+    },
+  )
+  router.get('/imports/:id', (c) => {
+    try {
+      return c.json(ok(progress(service.imports.get(c.req.param('id')))))
+    } catch (error) {
+      if (error instanceof Error && error.message === 'BACKUP_IMPORT_EXPIRED')
+        throw new AppError('NOT_FOUND', {
+          message: t('server.backup', messages.BACKUP_IMPORT_EXPIRED!),
+        })
+      throw error
+    }
+  })
+  router.put('/imports/:id/content', async (c) => {
+    if (!c.req.raw.body) throw new Error('BACKUP_FORMAT_INVALID')
+    const state = await service.imports.receive(c.req.param('id'), c.req.raw.body)
+    return c.json(ok(progress(state)), 202)
+  })
+  router.delete('/imports/:id', (c) =>
+    c.json(ok(progress(service.imports.cancel(c.req.param('id'))))),
+  )
   router.get('/downloads/:ticket', (c) => {
     const ticket = c.req.param('ticket'),
       download = downloads.get(ticket)
@@ -115,6 +167,7 @@ export function createBackupRouter(service: BackupService) {
         records: await service.list(),
         pending: await service.pending(),
         lastImport: await service.lastResult(),
+        activeImport: service.imports.current() ? progress(service.imports.current()!) : null,
       }),
     ),
   )
@@ -140,6 +193,11 @@ export function createBackupRouter(service: BackupService) {
   router.post('/:id/preview', zValidator('json', z.object({ password })), async (c) =>
     c.json(ok(await service.previewSaved(c.req.param('id'), c.req.valid('json').password))),
   )
+  router.post('/:id/import', zValidator('json', z.object({ password })), async (c) => {
+    if (await service.pending()) throw new Error('BACKUP_PENDING_IMPORT')
+    const state = await service.beginSavedImport(c.req.param('id'), c.req.valid('json').password)
+    return c.json(ok(progress(state)), 202)
+  })
   router.post('/:id/download', zValidator('json', z.object({ password })), async (c) => {
     if (downloads.size >= 32) throw new Error('BACKUP_BUSY')
     const download = await prepareBackupDownload(

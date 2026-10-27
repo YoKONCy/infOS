@@ -14,6 +14,7 @@ export type ChatStreamInput = Pick<
   | 'workspaceContext'
   | 'generationType'
   | 'queueMessageId'
+  | 'achievementSubjectId'
 > &
   Pick<import('@infos/shared').QueuedConversationInput, 'taskResultEvent'>
 
@@ -65,6 +66,7 @@ export async function runChatStream(
       agentId,
       content,
       queueMessageId: body.queueMessageId,
+      achievementSubjectId: body.achievementSubjectId,
       ...(body.taskResultEvent ? { inputPersistence: 'ephemeral' as const, proactive: true } : {}),
       attachmentIds: body.attachmentIds,
       imageMode: body.imageMode,

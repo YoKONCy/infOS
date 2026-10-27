@@ -3,7 +3,9 @@ import type { Asset, Bootstrap, HostStatus, Run, SurfaceBridge } from '../types'
 export const desktop = (window as unknown as { electron?: SurfaceBridge }).electron
 const root = '/api/applications/pictoria'
 const parameters = new URLSearchParams(window.location.search)
-export const standalone = !desktop?.embedded && !parameters.has('kernelOrigin')
+// 宿主发布路径本身可识别挂载模式，直接访问 Docker 页面无需手工补参数。
+const hostedPath = /^\/applications\/pictoria(?:\/|$)/.test(window.location.pathname)
+export const standalone = !desktop?.embedded && !parameters.has('kernelOrigin') && !hostedPath
 const standaloneOrigin = new URL(
   parameters.get('pictoriaOrigin') ||
     (window.location.port === '7363' ? 'http://127.0.0.1:7364' : window.location.origin),

@@ -135,6 +135,10 @@ const editMessageSchema = z.object({
 
 export function createChatRouter(ctx: AppContext) {
   const router = new Hono()
+  const achievementSubject = (request: Request, generationType?: string) =>
+    !generationType || generationType === 'normal'
+      ? ctx.clientAccess?.authenticate(request)?.id
+      : undefined
   const historyMutation: MiddlewareHandler = async (c, next) => {
     const threadId = c.req.param('id')
     if (!threadId) throw new AppError('INVALID_PARAMETER', { message: '缺少会话标识' })
@@ -169,7 +173,10 @@ export function createChatRouter(ctx: AppContext) {
         throw new AppError('CONFLICT', { message: '队列目标会话不一致' })
       return c.json({
         code: 'OK',
-        data: await ctx.conversationQueue.enqueue(clientMessageId, input),
+        data: await ctx.conversationQueue.enqueue(clientMessageId, {
+          ...input,
+          achievementSubjectId: achievementSubject(c.req.raw, input.generationType),
+        }),
       })
     },
   )
@@ -258,6 +265,7 @@ export function createChatRouter(ctx: AppContext) {
     let succeeded = false
     try {
       const result = await ctx.conversationTurnService.executeTurn({
+        achievementSubjectId: achievementSubject(c.req.raw, body.generationType),
         threadId,
         agentId: thread.agentId,
         signal: ctx.runtimeStateService.getAbortSignal(threadId),
@@ -346,7 +354,14 @@ export function createChatRouter(ctx: AppContext) {
       }, 15_000)
       heartbeat.unref?.()
       try {
-        await runChatStream(ctx, body, writeEvent)
+        await runChatStream(
+          ctx,
+          {
+            ...body,
+            achievementSubjectId: achievementSubject(c.req.raw, body.generationType),
+          },
+          writeEvent,
+        )
       } finally {
         clearInterval(heartbeat)
       }

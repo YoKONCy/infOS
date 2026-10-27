@@ -1,9 +1,13 @@
 import Database from 'better-sqlite3'
 import { copyFileSync, createReadStream, existsSync, mkdirSync, readdirSync } from 'node:fs'
 import { Readable } from 'node:stream'
-import { cp, lstat, mkdir, readFile, readdir, rm, stat, writeFile } from 'node:fs/promises'
+import { cp, lstat, mkdir, open, readFile, readdir, rm, stat, writeFile } from 'node:fs/promises'
 import { randomBytes, randomUUID } from 'node:crypto'
 import path from 'node:path'
+import { setImmediate as yieldLoop } from 'node:timers/promises'
+import { BackupImports } from './backupImports'
+import { checkBackupIntegrity } from './backupIntegrity'
+import type { BackupReadOptions } from './backupArchive'
 import type { DrizzleDb } from '../../database'
 import type { MemoryStoreRegistry } from '../../repositories/storeRegistry'
 import type { AgentManager } from '../agent/agentManager'
@@ -99,10 +103,16 @@ export async function prepareBackupDownload(download: {
 /** 备份、局部迁移和恢复使用同一包格式；运行中的数据库从不直接导入。 */
 export class BackupService {
   readonly root: string
+  readonly imports: BackupImports
   private busy = false
   private activeWrites = 0
   constructor(private readonly deps: Dependencies) {
     this.root = path.join(deps.dataDir, BACKUP_STATE)
+    this.imports = new BackupImports(
+      this.root,
+      () => !this.busy,
+      (file, password, options) => this.previewFile(file, password, options),
+    )
   }
   /** HTTP 写入完成后才允许同步捕获，避免异步文件写入与快照复制交错。 */
   beginWrite(): () => void {
@@ -179,10 +189,16 @@ export class BackupService {
     ) as BackupRecord
   }
   async remove(id: string): Promise<void> {
-    const pending = await this.pending()
-    if (pending?.backupId === id) throw new Error('BACKUP_PENDING_IMPORT')
-    await rm(this.archivePath(id), { force: true })
-    await rm(path.join(this.root, 'archives', `${id}.json`), { force: true })
+    if (this.busy || this.imports.active) throw new Error('BACKUP_BUSY')
+    this.busy = true
+    try {
+      const pending = await this.pending()
+      if (pending?.backupId === id) throw new Error('BACKUP_PENDING_IMPORT')
+      await rm(this.archivePath(id), { force: true })
+      await rm(path.join(this.root, 'archives', `${id}.json`), { force: true })
+    } finally {
+      this.busy = false
+    }
   }
   async pending(): Promise<{ ticket: string; backupId: string; kind?: 'sync' } | null> {
     const file = path.join(this.root, 'pending.json')
@@ -225,7 +241,7 @@ export class BackupService {
   }
 
   async create(selection: BackupSelection, password = ''): Promise<BackupRecord> {
-    if (this.busy) throw new Error('BACKUP_BUSY')
+    if (this.busy || this.imports.active) throw new Error('BACKUP_BUSY')
     if (selection.includeSecrets && password.length < 8)
       throw new Error('BACKUP_PASSWORD_TOO_SHORT')
     this.busy = true
@@ -411,24 +427,20 @@ export class BackupService {
     }
   }
 
-  async previewFile(input: string, password = ''): Promise<BackupPreview> {
+  async previewFile(
+    input: string,
+    password = '',
+    options: BackupReadOptions = {},
+  ): Promise<BackupPreview> {
     const ticket = randomUUID(),
       directory = path.join(this.root, 'previews', ticket)
     await mkdir(directory, { mode: 0o700 })
     try {
-      const manifest = await readBackupArchive(input, directory, password)
+      const manifest = await readBackupArchive(input, directory, password, options)
       this.validateManifest(manifest)
+      options.validating?.()
       if (manifest.selection.level === 'full') {
-        const check = new Database(path.join(directory, 'files', 'infos.db'), {
-          readonly: true,
-          fileMustExist: true,
-        })
-        try {
-          if (check.pragma('integrity_check', { simple: true }) !== 'ok')
-            throw new Error('BACKUP_DATABASE_INVALID')
-        } finally {
-          check.close()
-        }
+        await checkBackupIntegrity(path.join(directory, 'files', 'infos.db'), options.signal)
       }
       const counts: Record<string, number> = {},
         conflicts: Record<string, number> = {}
@@ -442,7 +454,18 @@ export class BackupService {
             (sum, agentId) => sum + this.deps.stores.exportSocialBackup(agentId).length,
             0,
           )
-        } else conflicts[table] = recordConflicts(this.client(), table, rows)
+        } else {
+          conflicts[table] = 0
+          for (let offset = 0; offset < rows.length; offset += 250) {
+            options.signal?.throwIfAborted()
+            conflicts[table] += recordConflicts(
+              this.client(),
+              table,
+              rows.slice(offset, offset + 250),
+            )
+            await yieldLoop()
+          }
+        }
       }
       for (const file of manifest.files) {
         const root = file.path.split('/')[0]!
@@ -464,7 +487,11 @@ export class BackupService {
       const recordDigests: Record<string, string> = {}
       for (const [table, count] of Object.entries(manifest.tables))
         if (count > 0)
-          recordDigests[table] = await fileDigest(path.join(directory, 'records', `${table}.jsonl`))
+          recordDigests[table] = await fileDigest(
+            path.join(directory, 'records', `${table}.jsonl`),
+            options.signal,
+          )
+      options.signal?.throwIfAborted()
       await atomicBackupJson(path.join(directory, 'preview.json'), { ...preview, recordDigests })
       this.expirePreview(ticket, 60 * 60_000)
       return preview
@@ -474,11 +501,22 @@ export class BackupService {
     }
   }
   async previewSaved(id: string, password = ''): Promise<BackupPreview> {
+    if (this.busy || this.imports.active) throw new Error('BACKUP_BUSY')
+    this.busy = true
+    try {
+      const record = await this.record(id)
+      return await this.previewFile(
+        this.archivePath(id),
+        record.protection === 'local' ? await this.localKey() : password,
+      )
+    } finally {
+      this.busy = false
+    }
+  }
+  async beginSavedImport(id: string, password = '') {
     const record = await this.record(id)
-    return this.previewFile(
-      this.archivePath(id),
-      record.protection === 'local' ? await this.localKey() : password,
-    )
+    const secret = record.protection === 'local' ? await this.localKey() : password
+    return this.imports.beginFile(this.archivePath(id), record.size, secret)
   }
   async download(
     id: string,
@@ -509,7 +547,7 @@ export class BackupService {
     }
   }
   async stage(ticket: string, policy: ImportPolicy): Promise<void> {
-    if (this.busy) throw new Error('BACKUP_BUSY')
+    if (this.busy || this.imports.active) throw new Error('BACKUP_BUSY')
     this.busy = true
     try {
       if (
@@ -613,11 +651,15 @@ export class BackupService {
     }
   }
   async receive(input: ReadableStream<Uint8Array>, password: string): Promise<BackupPreview> {
+    if (this.busy || this.imports.active) throw new Error('BACKUP_BUSY')
+    this.busy = true
     const file = path.join(this.root, 'work', `${randomUUID()}.upload`)
-    const handle = await import('node:fs/promises').then((fs) => fs.open(file, 'wx', 0o600))
-    const reader = input.getReader()
+    let handle: Awaited<ReturnType<typeof open>> | undefined
+    let reader: ReadableStreamDefaultReader<Uint8Array> | undefined
     let size = 0
     try {
+      handle = await open(file, 'wx', 0o600)
+      reader = input.getReader()
       for (;;) {
         const chunk = await reader.read()
         if (chunk.done) break
@@ -628,10 +670,14 @@ export class BackupService {
       await handle.close()
       return await this.previewFile(file, password)
     } finally {
-      await reader.cancel().catch(() => {})
-      reader.releaseLock()
-      await handle.close().catch(() => {})
-      await rm(file, { force: true })
+      try {
+        await reader?.cancel().catch(() => {})
+        reader?.releaseLock()
+        await handle?.close().catch(() => {})
+        await rm(file, { force: true })
+      } finally {
+        this.busy = false
+      }
     }
   }
 

@@ -2,7 +2,6 @@ import { createCipheriv, createDecipheriv, createHash, randomBytes, scrypt } fro
 import { createReadStream, createWriteStream } from 'node:fs'
 import { chmod, mkdir, open, stat, writeFile } from 'node:fs/promises'
 import path from 'node:path'
-import { createInterface } from 'node:readline'
 import { Readable, Transform } from 'node:stream'
 import { pipeline } from 'node:stream/promises'
 import { promisify } from 'node:util'
@@ -14,6 +13,17 @@ const MAX_BYTES = 20 * 1024 ** 3
 const MAX_LINE = 32 * 1024 ** 2
 const MAX_FILES = 100_000
 const derive = promisify(scrypt)
+
+export interface BackupReadOptions {
+  signal?: AbortSignal
+  validating?: () => void
+  progress?: (value: {
+    unpackedBytes: number
+    unpackedTotal: number
+    completedFiles: number
+    totalFiles: number
+  }) => void
+}
 
 /** 包内路径采用平台无关的相对路径，禁止 Windows 别名、设备名和目录穿越。 */
 export function safeBackupPath(value: string): string {
@@ -40,10 +50,35 @@ export function safeBackupPath(value: string): string {
   return value
 }
 
-export async function fileDigest(file: string): Promise<string> {
+export async function fileDigest(file: string, signal?: AbortSignal): Promise<string> {
   const hash = createHash('sha256')
-  for await (const chunk of createReadStream(file)) hash.update(chunk)
+  for await (const chunk of createReadStream(file, { signal })) hash.update(chunk)
   return hash.digest('hex')
+}
+
+/** 按字节限长并随消费者背压读取，不以“行数”缓存大段 base64，也不逐字节运行 JS。 */
+async function* backupLines(source: Readable, signal?: AbortSignal): AsyncGenerator<string> {
+  let fragments: Buffer[] = []
+  let size = 0
+  for await (const value of source) {
+    signal?.throwIfAborted()
+    const chunk = Buffer.isBuffer(value) ? value : Buffer.from(value)
+    let start = 0
+    while (start < chunk.length) {
+      const end = chunk.indexOf(10, start)
+      const part = chunk.subarray(start, end === -1 ? chunk.length : end)
+      size += part.length
+      if (size > MAX_LINE) throw new Error('BACKUP_RECORD_TOO_LARGE')
+      fragments.push(part)
+      if (end === -1) break
+      const line = Buffer.concat(fragments, size).toString('utf8').replace(/\r$/, '')
+      fragments = []
+      size = 0
+      yield line
+      start = end + 1
+    }
+  }
+  if (size) yield Buffer.concat(fragments, size).toString('utf8').replace(/\r$/, '')
 }
 
 /** NDJSON 分块压缩与可选口令加密，附件不整体读入内存。 */
@@ -110,7 +145,9 @@ export async function readBackupArchive(
   input: string,
   root: string,
   password = '',
+  options: BackupReadOptions = {},
 ): Promise<BackupManifest> {
+  options.signal?.throwIfAborted()
   const file = await open(input, 'r')
   let start: number, header: { encrypted: boolean; salt: string; iv: string }, authenticated: Buffer
   const bytes = (await file.stat()).size
@@ -159,28 +196,25 @@ export async function readBackupArchive(
   const source = createReadStream(input, { start, end: bytes - (header.encrypted ? 17 : 1) })
   if (decipher) source.once('error', (error) => decipher!.destroy(error))
   const compressed: Readable = decipher ? source.pipe(decipher) : source
-  let expanded = 0,
-    lineBytes = 0
+  let expanded = 0
   const limit = new Transform({
     transform(chunk: Buffer, _encoding, done) {
       expanded += chunk.length
-      for (const byte of chunk) {
-        lineBytes = byte === 10 ? 0 : lineBytes + 1
-        if (lineBytes > MAX_LINE) return done(new Error('BACKUP_RECORD_TOO_LARGE'))
-      }
       done(expanded > MAX_BYTES * 2 ? new Error('BACKUP_SIZE_INVALID') : null, chunk)
     },
   })
   const gunzip = createGunzip()
-  const completion = pipeline(compressed, gunzip, limit)
+  const completion = pipeline(compressed, gunzip, limit, { signal: options.signal })
   // 消费行时也立即挂接拒绝处理，解密或压缩损坏不能形成未处理异常。
   void completion.catch(() => {})
-  const lines = createInterface({ input: limit, crlfDelay: Infinity })
+  const lines = backupLines(limit, options.signal)
   let manifest: BackupManifest | undefined
   const seen = new Set<string>(),
     tableCounts: Record<string, number> = Object.create(null)
   const recordFiles = new Map<string, Awaited<ReturnType<typeof open>>>()
   let recordBytes = 0
+  let unpackedBytes = 0
+  let unpackedTotal = 0
   const descriptors = new Map<string, BackupManifest['files'][number]>()
   let current:
     | {
@@ -192,6 +226,7 @@ export async function readBackupArchive(
     | undefined
   try {
     for await (const line of lines) {
+      options.signal?.throwIfAborted()
       const item = JSON.parse(line)
       if (!manifest) {
         if (
@@ -238,6 +273,13 @@ export async function readBackupArchive(
           total += descriptor.size
         }
         if (total > MAX_BYTES) throw new Error('BACKUP_SIZE_INVALID')
+        unpackedTotal = total
+        options.progress?.({
+          unpackedBytes,
+          unpackedTotal,
+          completedFiles: 0,
+          totalFiles: manifest.files.length,
+        })
         await mkdir(path.join(root, 'records'), { recursive: true, mode: 0o700 })
       } else if (item.type === 'record' && !current) {
         recordBytes += Buffer.byteLength(line)
@@ -277,6 +319,13 @@ export async function readBackupArchive(
         if (current.size > current.descriptor.size) throw new Error('BACKUP_SIZE_INVALID')
         current.hash.update(data)
         await current.handle.writeFile(data)
+        unpackedBytes += data.length
+        options.progress?.({
+          unpackedBytes,
+          unpackedTotal,
+          completedFiles: seen.size,
+          totalFiles: manifest.files.length,
+        })
       } else if (item.type === 'end' && current) {
         await current.handle.close()
         if (
@@ -289,10 +338,17 @@ export async function readBackupArchive(
           0o600 | ((current.descriptor.mode ?? 0) & 0o100),
         )
         seen.add(current.descriptor.path)
+        options.progress?.({
+          unpackedBytes,
+          unpackedTotal,
+          completedFiles: seen.size,
+          totalFiles: manifest.files.length,
+        })
         current = undefined
       } else throw new Error('BACKUP_FORMAT_INVALID')
     }
     await completion
+    options.signal?.throwIfAborted()
     if (
       !manifest ||
       current ||
@@ -304,7 +360,6 @@ export async function readBackupArchive(
   } finally {
     for (const handle of recordFiles.values()) await handle.close().catch(() => {})
     await current?.handle.close().catch(() => {})
-    lines.close()
     limit.destroy()
     compressed.destroy()
     source.destroy()
@@ -318,11 +373,9 @@ export async function* readBackupRows(root: string, table: string): AsyncGenerat
 export async function* readBackupRowFile(file: string): AsyncGenerator<BackupRow> {
   if (!(await stat(file).catch(() => null))) return
   const source = createReadStream(file)
-  const lines = createInterface({ input: source, crlfDelay: Infinity })
   try {
-    for await (const line of lines) yield JSON.parse(line) as BackupRow
+    for await (const line of backupLines(source)) yield JSON.parse(line) as BackupRow
   } finally {
-    lines.close()
     source.destroy()
   }
 }

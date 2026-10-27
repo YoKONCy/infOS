@@ -10,7 +10,10 @@ import { z } from 'zod'
 import type { AppContext } from '../container'
 import { AppError } from '../lib/appError'
 import { resourceContent } from '../services/attachment/resourceContent'
-import { fileAccessError, resolveWorkspaceReference } from '../services/workspace/workspaceReference'
+import {
+  fileAccessError,
+  resolveWorkspaceReference,
+} from '../services/workspace/workspaceReference'
 import { errorHandler } from '../middleware/errorHandler'
 import { t } from '../lib/i18n'
 
@@ -66,7 +69,10 @@ export function createWorkspaceRouter(ctx: AppContext) {
       'json',
       sessionSchema.extend({
         resultRef: z.string().regex(/^tool-result:[0-9a-f-]{36}$/i),
-        taskId: z.string().regex(/^[\w-]{1,128}$/).optional(),
+        taskId: z
+          .string()
+          .regex(/^[\w-]{1,128}$/)
+          .optional(),
         file: z.string().min(1),
         line: z.number().int().min(1).optional(),
       }),

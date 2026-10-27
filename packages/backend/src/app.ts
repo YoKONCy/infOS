@@ -3,6 +3,7 @@ import { createRuntimeDebugRouter } from './routers/runtimeDebug.router'
 import { createResourceVersionsRouter } from './routers/resourceVersions.router'
 import { ResourceVersions } from '@infos/shared/resource-versions'
 import { createPackagesRouter } from './routers/packages.router'
+import { createAchievementsRouter } from './routers/achievements.router'
 import { createUserAvatarRouter } from './routers/userAvatar.router'
 import { createBackupRouter, isBackupDownloadRequest } from './routers/backup.router'
 /**
@@ -222,6 +223,7 @@ export function createApp(ctx: AppContext) {
     )
   app.route('/api/applications', createApplicationsRouter(ctx))
   app.route('/api/chat', createChatRouter(ctx))
+  app.route('/api/achievements', createAchievementsRouter(ctx))
   const htmlPreviews =
     ctx.htmlPreviewService ??
     new HtmlPreviewService(ctx.resourceService, ctx.attachmentService, ctx.threadService)

@@ -18,6 +18,20 @@ import {
 } from 'drizzle-orm/sqlite-core'
 import { sql } from 'drizzle-orm'
 
+/** 当前鉴权客户端的成就事实；跨角色共享，不把设备身份冒充独立用户账号。 */
+export const achievements = sqliteTable(
+  'achievements',
+  {
+    subjectId: text('subject_id').notNull(),
+    achievementId: text('achievement_id').notNull(),
+    unlockedAt: text('unlocked_at').notNull(),
+    sourceMessageId: integer('source_message_id').notNull(),
+    steamAccountId: text('steam_account_id'),
+    steamSubmittedAt: text('steam_submitted_at'),
+  },
+  (table) => [primaryKey({ columns: [table.subjectId, table.achievementId] })],
+)
+
 /** 每日用户牌与角色回应分开保存，切换角色仍沿用当天用户牌。 */
 export const tarotDays = sqliteTable('tarot_days', {
   day: text('day').primaryKey(),

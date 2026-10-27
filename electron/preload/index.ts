@@ -44,8 +44,10 @@ contextBridge.exposeInMainWorld('electron', {
   embedded,
   toastOverlay,
   /** 只有主应用页面可取安装实例凭据，子应用和通知层不开放。 */
-  clientCredential: () =>
-    embedded || toastOverlay ? '' : ipcRenderer.sendSync('client-access:credential'),
+  clientCredential: (refresh = false) =>
+    embedded || toastOverlay
+      ? ''
+      : ipcRenderer.sendSync('client-access:credential', refresh ? 'refresh' : undefined),
   backendOrigin: () =>
     embedded || toastOverlay ? '' : ipcRenderer.sendSync('client-access:credential', 'origin'),
   connectionMode: () =>

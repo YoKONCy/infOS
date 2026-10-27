@@ -63,8 +63,8 @@ export function clearWebClientCredential(): void {
   if (!isElectronRuntime()) sessionStorage.removeItem(WEB_SERVER_TOKEN_KEY)
 }
 
-export function getClientToken(): string {
-  if (isElectronRuntime()) return window.electron?.clientCredential?.() || ''
+export function getClientToken(refresh = false): string {
+  if (isElectronRuntime()) return window.electron?.clientCredential?.(refresh) || ''
   return typeof sessionStorage === 'undefined'
     ? ''
     : sessionStorage.getItem(WEB_SERVER_TOKEN_KEY) || ''
@@ -74,11 +74,50 @@ export function getClientToken(): string {
 export async function clientFetch(url: string, options: RequestInit = {}): Promise<Response> {
   const headers = new Headers(options.headers)
   if (!headers.has('Accept-Language')) headers.set('Accept-Language', getLocale())
-  const token = getClientToken()
-  if (token) headers.set('Authorization', 'Bearer ' + token)
-  const response = await fetch(url, { ...options, headers, credentials: 'include' })
-  if (response.status === 401 && typeof window !== 'undefined')
-    window.dispatchEvent(new Event('infos:unauthorized'))
+  const selectedOrigin = () =>
+    isElectronRuntime()
+      ? window.electron?.backendOrigin?.() || ELECTRON_BACKEND_ORIGIN
+      : getWebServerOrigin()
+  const origin = selectedOrigin()
+  const belongsToServer = new URL(url, origin).origin === new URL(origin).origin
+  let token = belongsToServer ? getClientToken() : ''
+  const explicitAuthorization = headers.has('Authorization')
+  if (token && !explicitAuthorization) headers.set('Authorization', 'Bearer ' + token)
+  const request = () => fetch(url, { ...options, headers, credentials: 'include' })
+  let response = await request()
+  const method = (options.method ?? 'GET').toUpperCase()
+  const stillCurrent = () => selectedOrigin() === origin
+  // 本机读取失败或凭据已更新时，只对只读请求用新的凭据重试一次，不重放写操作。
+  if (
+    response.status === 401 &&
+    belongsToServer &&
+    !explicitAuthorization &&
+    stillCurrent() &&
+    isLocalBackendRuntime() &&
+    ['GET', 'HEAD'].includes(method) &&
+    !options.signal?.aborted
+  ) {
+    const refreshed = getClientToken(true)
+    if (refreshed && refreshed !== token && stillCurrent()) {
+      await response.body?.cancel()
+      token = refreshed
+      headers.set('Authorization', 'Bearer ' + refreshed)
+      response = await request()
+    }
+  }
+  if (
+    response.status === 401 &&
+    belongsToServer &&
+    stillCurrent() &&
+    typeof window !== 'undefined'
+  ) {
+    const currentToken = getClientToken()
+    if (
+      token === currentToken &&
+      (!explicitAuthorization || headers.get('Authorization') === `Bearer ${currentToken}`)
+    )
+      window.dispatchEvent(new Event('infos:unauthorized'))
+  }
   return response
 }
 

@@ -1,8 +1,19 @@
 <script setup lang="ts">
-import { computed, onMounted, reactive, ref, watch } from 'vue'
+import {
+  computed,
+  onActivated,
+  onBeforeUnmount,
+  onDeactivated,
+  onMounted,
+  reactive,
+  ref,
+  watch,
+} from 'vue'
 import { PButton, PDialog, PInput, PSelect, PSwitch, PixelIcon } from '../../pixel'
 import { t, getDisplayLocale } from '../../../i18n'
 import { backupApi, type BackupCatalogue } from '../../../api/modules/backupApi'
+import { ApiError } from '../../../api/errors'
+import { getWebServerOrigin } from '../../../api/transport'
 import type {
   BackupLevel,
   BackupModule,
@@ -10,6 +21,7 @@ import type {
   BackupRecord,
   BackupSelection,
   ImportPolicy,
+  BackupImportProgress,
 } from '@infos/shared'
 
 const tr = (source: string, values: readonly unknown[] = []) => t('ui.backup', source, values)
@@ -87,6 +99,113 @@ const busy = ref(''),
   password = ref('')
 const fileInput = ref<HTMLInputElement | null>(null)
 const preview = ref<BackupPreview | null>(null)
+const importState = ref<BackupImportProgress | null>(null)
+const sentBytes = ref(0)
+const importWorking = computed(() =>
+  Boolean(importState.value && !['ready', 'failed', 'cancelled'].includes(importState.value.phase)),
+)
+const locked = computed(() => Boolean(busy.value) || importWorking.value)
+const importLabel = computed(() => {
+  const labels = {
+    uploading: '正在上传备份',
+    extracting: '正在解包备份',
+    validating: '正在校验数据库',
+    cancelling: '正在取消导入',
+    ready: '备份预览已就绪',
+    failed: '导入预览失败',
+    cancelled: '已取消导入',
+  }
+  return importState.value ? tr(labels[importState.value.phase]) : ''
+})
+const importPercent = computed(() => {
+  const state = importState.value
+  if (!state || ['validating', 'cancelling'].includes(state.phase)) return undefined
+  if (state.phase === 'uploading')
+    return Math.min(
+      100,
+      Math.floor((Math.max(sentBytes.value, state.receivedBytes) / state.uploadBytes) * 100),
+    )
+  return state.unpackedTotal
+    ? Math.min(100, Math.floor((state.unpackedBytes / state.unpackedTotal) * 100))
+    : 0
+})
+const importKey = `infos.backupImport.${getWebServerOrigin()}`
+let operationId = ''
+let pollTimer: ReturnType<typeof setTimeout> | undefined
+let pollActive = true
+let pollRevision = 0
+let uploadController: AbortController | undefined
+function rememberImport(id: string) {
+  operationId = id
+  try {
+    if (id) sessionStorage.setItem(importKey, id)
+    else sessionStorage.removeItem(importKey)
+  } catch {
+    /* 禁用浏览器存储时仍支持本页操作。 */
+  }
+}
+function stopImportPolling() {
+  pollRevision++
+  clearTimeout(pollTimer)
+}
+async function pollImport() {
+  stopImportPolling()
+  if (!pollActive || !operationId || document.hidden) return
+  const revision = pollRevision
+  const id = operationId
+  let again = true
+  try {
+    const result = await backupApi.importProgress(id)
+    if (revision !== pollRevision || id !== operationId) return
+    if (!result.data) throw new Error(tr('备份请求失败，请检查网络和服务器状态'))
+    importState.value = result.data
+    notice.value = ''
+    if (result.data.phase === 'ready' && result.data.preview) {
+      uploadController?.abort()
+      if (preview.value?.ticket !== result.data.preview.ticket) showPreview(result.data.preview)
+      again = false
+    } else if (result.data.phase === 'cancelled') {
+      uploadController?.abort()
+      notice.value = result.data.error || tr('已取消导入，原有数据未修改')
+      again = false
+    } else if (result.data.phase === 'failed') {
+      uploadController?.abort()
+      error.value = result.data.error || tr('导入预览失败')
+      again = false
+    }
+  } catch (cause) {
+    if (revision !== pollRevision) return
+    if (cause instanceof ApiError && cause.code === 'NOT_FOUND') {
+      rememberImport('')
+      importState.value = null
+      error.value = cause.message
+      again = false
+    } else notice.value = tr('连接暂时中断，正在重新查询导入进度')
+  } finally {
+    if (again && revision === pollRevision && pollActive)
+      pollTimer = setTimeout(() => {
+        void pollImport()
+      }, 1500)
+  }
+}
+async function cancelImport() {
+  if (!operationId) return
+  try {
+    const response = await backupApi.cancelImport(operationId)
+    uploadController?.abort()
+    if (response.data) importState.value = response.data
+    notice.value = tr(
+      response.data?.phase === 'cancelling' ? '正在取消导入' : '已取消导入，原有数据未修改',
+    )
+    void pollImport()
+  } catch {
+    notice.value = tr('连接暂时中断，正在重新查询导入进度')
+  }
+}
+function visibilityChanged() {
+  stopImportPolling()
+  if (!document.hidden) void pollImport()
+}
 const conflict = ref<ImportPolicy['conflict']>('skip')
 const targets = reactive<Record<string, string>>({})
 const confirmImport = ref(false),
@@ -211,6 +330,11 @@ async function refresh() {
   records.value = list.data!.records
   pending.value = list.data!.pending
   catalogue.value = options.data!
+  if (list.data?.activeImport && operationId !== list.data.activeImport.id) {
+    rememberImport(list.data.activeImport.id)
+    importState.value = list.data.activeImport
+    void pollImport()
+  }
   if (list.data?.lastImport?.status === 'failed')
     error.value = tr('上次导入未完成，原有业务数据已保留，请检查备份后重试')
 }
@@ -254,13 +378,50 @@ async function upload(event: Event) {
   const input = event.target as HTMLInputElement,
     file = input.files?.[0]
   if (file)
-    await run('preview', async () => showPreview(await backupApi.upload(file, password.value)))
+    await run('preview', async () => {
+      stopImportPolling()
+      const result = await backupApi.beginImport(file, password.value)
+      if (!result.data) throw new Error(tr('备份请求失败，请检查网络和服务器状态'))
+      preview.value = null
+      sentBytes.value = 0
+      rememberImport(result.data.id)
+      importState.value = result.data
+      uploadController = new AbortController()
+      void pollImport()
+      try {
+        await backupApi.uploadImport(file, result.data.id, uploadController.signal, (bytes) => {
+          sentBytes.value = bytes
+        })
+      } catch (cause) {
+        if (!uploadController.signal.aborted) {
+          const message =
+            cause instanceof Error ? cause.message : tr('上传连接中断，正在查询服务端进度')
+          const status = (cause as { httpStatus?: number } | undefined)?.httpStatus
+          if (status && status >= 400) {
+            error.value = message
+            // 服务器明确拒绝的上传不继续占用预约；结果未知的断线仍先查询实际进度。
+            const cancelled = await backupApi.cancelImport(result.data.id).catch(() => null)
+            if (cancelled?.data) importState.value = cancelled.data
+          } else notice.value = message
+        }
+      } finally {
+        uploadController = undefined
+        void pollImport()
+      }
+    })
   input.value = ''
 }
 async function savedPreview(record: BackupRecord) {
-  await run(`preview:${record.id}`, async () =>
-    showPreview((await backupApi.previewSaved(record.id, password.value)).data!),
-  )
+  if (importWorking.value) return
+  await run(`preview:${record.id}`, async () => {
+    const result = await backupApi.beginSavedImport(record.id, password.value)
+    if (!result.data) throw new Error(tr('备份请求失败，请检查网络和服务器状态'))
+    preview.value = null
+    sentBytes.value = 0
+    rememberImport(result.data.id)
+    importState.value = result.data
+    void pollImport()
+  })
 }
 watch(copiedAgents, (value) => {
   for (const id of importedAgents.value) {
@@ -284,17 +445,40 @@ async function commit() {
     })
     confirmImport.value = false
     preview.value = null
+    rememberImport('')
+    importState.value = null
     await refresh()
     notice.value = tr('导入已暂存，请重启当前服务端；浏览器刷新不会应用恢复')
   })
 }
 onMounted(() => {
+  try {
+    operationId = sessionStorage.getItem(importKey) || ''
+  } catch {
+    /* 存储不可用时使用服务端当前操作。 */
+  }
+  if (operationId) void pollImport()
+  document.addEventListener('visibilitychange', visibilityChanged)
   void run('load', refresh)
+})
+onActivated(() => {
+  pollActive = true
+  void pollImport()
+})
+onDeactivated(() => {
+  pollActive = false
+  stopImportPolling()
+})
+onBeforeUnmount(() => {
+  pollActive = false
+  stopImportPolling()
+  document.removeEventListener('visibilitychange', visibilityChanged)
+  // 切页不取消已提交的服务端操作，返回后按编号恢复；取消按钮才中止上传。
 })
 </script>
 
 <template>
-  <div class="backup-page" :aria-busy="Boolean(busy)">
+  <div class="backup-page" :aria-busy="Boolean(busy) && !importWorking">
     <header class="backup-heading">
       <div class="backup-brand">
         <div class="backup-mark" aria-hidden="true">
@@ -321,7 +505,7 @@ onMounted(() => {
             <dd>{{ recoveryCount }}</dd>
           </div>
         </dl>
-        <PButton variant="ghost" :disabled="Boolean(busy)" @click="run('load', refresh)">
+        <PButton variant="ghost" :disabled="locked" @click="run('load', refresh)">
           <PixelIcon name="refresh" size="sm" :animation="busy === 'load' ? 'spin' : ''" />
           {{ tr('刷新') }}
         </PButton>
@@ -337,7 +521,7 @@ onMounted(() => {
       </div>
       <PButton
         variant="ghost"
-        :disabled="Boolean(busy)"
+        :disabled="locked"
         @click="
           run('cancel', async () => {
             await backupApi.cancel()
@@ -361,7 +545,7 @@ onMounted(() => {
             :key="level"
             :class="{ selected: selection.level === level }"
             :aria-pressed="selection.level === level"
-            :disabled="Boolean(busy)"
+            :disabled="locked"
             @click="chooseLevel(level)"
           >
             <span class="backup-level-icon"><PixelIcon :name="option.icon" size="md" /></span>
@@ -383,7 +567,7 @@ onMounted(() => {
               :key="module"
               :aria-pressed="selection.modules.includes(module)"
               :class="{ selected: selection.modules.includes(module) }"
-              :disabled="Boolean(busy)"
+              :disabled="locked"
               @click="toggleModule(module)"
             >
               <span class="pixel-check" aria-hidden="true">
@@ -419,7 +603,7 @@ onMounted(() => {
               <input
                 type="checkbox"
                 :checked="selection[activeFilter].includes(item.id)"
-                :disabled="Boolean(busy)"
+                :disabled="locked"
                 @change="toggleChoice(item.id)"
               />
               <span>
@@ -440,7 +624,7 @@ onMounted(() => {
           <div class="backup-secret-row">
             <PSwitch
               v-model="selection.includeSecrets"
-              :disabled="Boolean(busy)"
+              :disabled="locked"
               :label="tr('包含 API Key 与连接凭据')"
             />
           </div>
@@ -452,7 +636,7 @@ onMounted(() => {
             <PInput
               v-model="password"
               type="password"
-              :disabled="Boolean(busy)"
+              :disabled="locked"
               :placeholder="tr('备份口令，也用于解锁导入文件')"
             />
           </label>
@@ -461,7 +645,7 @@ onMounted(() => {
           <PButton
             :loading="busy === 'create'"
             :disabled="
-              Boolean(busy) ||
+              locked ||
               !selection.modules.length ||
               (selection.level === 'agent' && !selection.agentIds.length)
             "
@@ -473,7 +657,7 @@ onMounted(() => {
           <PButton
             variant="secondary"
             :disabled="
-              Boolean(busy) ||
+              locked ||
               !selection.modules.length ||
               (selection.level === 'agent' && !selection.agentIds.length)
             "
@@ -490,6 +674,45 @@ onMounted(() => {
           <h2>{{ tr('导入数据') }}</h2>
           <span class="backup-section-index" aria-hidden="true">02</span>
         </div>
+        <div v-if="importState" class="backup-progress" role="region" :aria-label="tr('导入数据')">
+          <div class="backup-progress-title">
+            <PixelIcon name="database" size="sm" />
+            <strong role="status">{{ importLabel }}</strong>
+            <span v-if="importWorking && importPercent !== undefined">{{ importPercent }}%</span>
+          </div>
+          <progress
+            v-if="importWorking"
+            :value="importPercent"
+            max="100"
+            :aria-label="importLabel"
+          />
+          <small v-if="importState.phase === 'uploading'">
+            {{
+              tr('服务端已接收 {0} / {1}', [
+                fileBytes(importState.receivedBytes),
+                fileBytes(importState.uploadBytes),
+              ])
+            }}
+          </small>
+          <small v-else-if="importState.phase === 'extracting'">
+            {{
+              tr('已解包 {0} / {1} 个文件', [importState.completedFiles, importState.totalFiles])
+            }}
+          </small>
+          <small v-else-if="importState.phase === 'validating'">
+            {{ tr('完整校验正在后台进行，可切换页面，返回后继续查看') }}
+          </small>
+          <PButton
+            v-if="importWorking"
+            size="sm"
+            variant="secondary"
+            :loading="importState.phase === 'cancelling'"
+            :disabled="importState.phase === 'cancelling'"
+            @click="cancelImport"
+          >
+            {{ tr('取消导入') }}
+          </PButton>
+        </div>
         <div class="backup-upload">
           <div class="backup-file-art" aria-hidden="true">
             <PixelIcon name="file" size="2xl" />
@@ -499,8 +722,8 @@ onMounted(() => {
           <p>{{ tr('上传后只生成预览，确认前不会修改业务数据') }}</p>
           <PButton
             variant="secondary"
-            :loading="busy === 'preview'"
-            :disabled="Boolean(busy) || Boolean(pending)"
+            :loading="busy === 'preview' || importWorking"
+            :disabled="locked || Boolean(pending)"
             @click="fileInput?.click()"
           >
             <PixelIcon v-if="busy !== 'preview'" name="file" size="sm" />
@@ -519,7 +742,7 @@ onMounted(() => {
           <PInput
             v-model="password"
             type="password"
-            :disabled="Boolean(busy)"
+            :disabled="locked"
             :placeholder="tr('备份口令，也用于解锁导入文件')"
           />
         </label>
@@ -596,7 +819,7 @@ onMounted(() => {
             {{ tr('确认后暂存，重启时导入；覆盖前自动备份，机器身份保持不变') }}
           </p>
           <PButton
-            :disabled="Boolean(busy) || preview.alreadyImported || Boolean(pending)"
+            :disabled="locked || preview.alreadyImported || Boolean(pending)"
             @click="confirmImport = true"
           >
             {{ tr('确认导入方案') }}
@@ -652,14 +875,14 @@ onMounted(() => {
         <div class="backup-record-actions">
           <PButton
             variant="ghost"
-            :disabled="Boolean(busy) || Boolean(pending)"
+            :disabled="locked || Boolean(pending)"
             @click="savedPreview(record)"
           >
             {{ tr('查看与恢复') }}
           </PButton>
           <PButton
             variant="ghost"
-            :disabled="Boolean(busy)"
+            :disabled="locked"
             @click="run('download', () => backupApi.download(record.id, password))"
           >
             <PixelIcon name="download" size="sm" />
@@ -668,7 +891,7 @@ onMounted(() => {
           <PButton
             class="backup-delete"
             variant="ghost"
-            :disabled="Boolean(busy)"
+            :disabled="locked"
             @click="deleteRecord = record"
           >
             {{ tr('删除') }}
@@ -703,6 +926,48 @@ onMounted(() => {
 </template>
 
 <style scoped>
+.backup-progress {
+  display: grid;
+  gap: 10px;
+  margin: 0 0 18px;
+  padding: 14px 16px;
+  border: 1px solid var(--ui-border-default);
+  border-left: 3px solid var(--ui-accent-purple);
+  border-radius: 2px;
+  color: var(--ui-text-secondary);
+  background: var(--ui-bg-surface);
+  box-shadow: 3px 3px 0 color-mix(in srgb, var(--ui-accent-purple) 10%, transparent);
+}
+.backup-progress-title {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  color: var(--ui-accent-purple);
+}
+.backup-progress-title span {
+  margin-left: auto;
+  font-family: var(--font-pixel);
+  font-variant-numeric: tabular-nums;
+}
+.backup-progress progress {
+  width: 100%;
+  height: 8px;
+  border: 0;
+  border-radius: 0;
+  accent-color: var(--ui-accent-purple);
+}
+.backup-progress progress::-webkit-progress-bar {
+  background: var(--ui-bg-elevated);
+}
+.backup-progress progress::-webkit-progress-value {
+  background: var(--ui-accent-purple);
+  transition: width 180ms ease-out;
+}
+@media (prefers-reduced-motion: reduce) {
+  .backup-progress progress::-webkit-progress-value {
+    transition: none;
+  }
+}
 .backup-page {
   --backup-accent: var(--ui-accent-purple);
   --backup-paper: color-mix(in srgb, var(--ui-bg-surface) 95%, transparent);

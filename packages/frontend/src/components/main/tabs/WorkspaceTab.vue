@@ -310,10 +310,7 @@ async function revealWorkspace(): Promise<void> {
     const response = await workspaceApi.reveal(session)
     if (!response.data) throw new Error('未能解析工作区路径')
     await invoke('open-local-path', response.data.path)
-    notification.toast(
-      __t('ui.workspace', '已在系统文件管理器中打开工作区'),
-      { type: 'success' },
-    )
+    notification.toast(__t('ui.workspace', '已在系统文件管理器中打开工作区'), { type: 'success' })
   } catch (error) {
     notification.toast(
       error instanceof Error ? error.message : __t('ui.navigation', '无法打开工作区目录'),

@@ -15,6 +15,7 @@ import fs from 'node:fs'
 import { logger } from '../utils/logger'
 import { isPackagedRuntime } from '../utils/runtimeMode'
 import { isRemoteConnection } from './clientConnection'
+import { ACHIEVEMENTS, type AchievementId } from '@infos/shared'
 
 // ─── 延迟加载 steamworks.js ──────────────────────────
 // 不在模块顶层 require()，防止缺 steam_api64.dll 时 segfault
@@ -147,6 +148,23 @@ export function getSteamUser(): { name: string; steamId: string } | null {
   } catch {
     return null
   }
+}
+
+/** 只提交产品内置的成就；true 表示 SDK 已接受，不代表云端已确认。 */
+export function submitSteamAchievement(id: AchievementId): boolean {
+  const definition = ACHIEVEMENTS.find((item) => item.id === id)
+  if (!definition || !steamApi) return false
+  if (
+    !steamApi.achievement.isActivated(definition.steamApiName) &&
+    !steamApi.achievement.activate(definition.steamApiName)
+  )
+    return false
+  return steamApi.stats.store() === true
+}
+
+export function isSteamAchievementActivated(id: AchievementId): boolean {
+  const definition = ACHIEVEMENTS.find((item) => item.id === id)
+  return !!definition && !!steamApi?.achievement.isActivated(definition.steamApiName)
 }
 
 /** Workshop 已安装物品信息 */

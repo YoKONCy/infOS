@@ -293,6 +293,7 @@ export class ThreadService {
    * Agent 回复写入后更新 Thread 的消息计数。
    */
   async appendAssistantMessage(params: {
+    achievement?: { subjectId: string; id: import('@infos/shared').AchievementId }
     threadId: string
     content: string
     rawContent?: string
@@ -306,6 +307,7 @@ export class ThreadService {
     const row = await this.threadRepo.appendMessage({
       threadId: params.threadId,
       role: 'assistant',
+      achievement: params.achievement,
       content: params.content,
       rawContent: params.rawContent,
       pairId: params.pairId,

@@ -93,6 +93,7 @@ describe('ConversationTurnService 初始提示词快照', () => {
       threadId: 'origin',
       content: '任务结果已到达',
       queueMessageId: 'task-result:delivery',
+      achievementSubjectId: 'paired-device',
       inputPersistence: 'ephemeral',
       proactive: true,
     })
@@ -104,6 +105,7 @@ describe('ConversationTurnService 初始提示词快照', () => {
     const metadata = JSON.parse(appendAssistantMessage.mock.calls[0]![0].metadataJson)
     expect(metadata.proactive).toBe(true)
     expect(metadata.workContext.inputKind).toBe('proactive')
+    expect(appendAssistantMessage.mock.calls[0]![0].achievement).toBeUndefined()
   })
   it('保存实际发送的预填充和后续请求，快照与执行期间的数组修改隔离', async () => {
     const appendAssistantMessage = vi.fn().mockResolvedValue({ id: 2, status: 'active' })
@@ -1026,5 +1028,82 @@ describe('ConversationTurnService 初始提示词快照', () => {
       }),
     ).rejects.toThrow(Error)
     expect(appendUserMessage).not.toHaveBeenCalled()
+  })
+})
+
+describe('首次有效对话成就', () => {
+  it.each([
+    {
+      name: '普通正式回复',
+      reply: '你好，很高兴见到你。',
+      paused: false,
+      handoff: false,
+      eligible: true,
+    },
+    { name: '仅内部过程', reply: '   ', paused: false, handoff: false, eligible: false },
+    {
+      name: '桌面接管暂停',
+      reply: '请先完成桌面操作。',
+      paused: true,
+      handoff: false,
+      eligible: false,
+    },
+    {
+      name: '用户新输入导致交接',
+      reply: '我先查一下。',
+      paused: false,
+      handoff: true,
+      eligible: false,
+    },
+  ])('$name', async ({ reply, paused, handoff, eligible }) => {
+    const appendAssistantMessage = vi.fn().mockResolvedValue({ id: 2, status: 'active' })
+    const service = new ConversationTurnService({
+      isHandoffRequested: () => handoff,
+      threadService: {
+        getThread: vi.fn().mockResolvedValue({
+          id: 'thread',
+          agentId: 'pero',
+          channel: 'desktop',
+          disabledTools: [],
+          interactionMode: 'chat',
+        }),
+        appendUserMessage: vi.fn().mockResolvedValue({ id: 1 }),
+        appendAssistantMessage,
+      },
+      contextCompiler: {
+        compile: vi.fn().mockResolvedValue({
+          messages: [{ role: 'user', content: '你好' }],
+          currentMessageIndex: 0,
+          manifest: { disabledTools: [] },
+        }),
+      },
+      agentService: {
+        chatWithCompiledMessages: vi.fn(async (params: CompiledRunParams) => {
+          if (paused)
+            params.onExecutionPause?.({
+              kind: 'desktop',
+              code: 'DESKTOP_PAUSED',
+              message: '等待用户完成操作',
+              toolName: 'desktop_click',
+              callId: 'click',
+              pausedAt: '2026-10-27T00:00:00.000Z',
+            })
+          return reply
+        }),
+      },
+      attachmentService: {
+        validateForBinding: vi.fn().mockResolvedValue([]),
+        bindOutgoing: vi.fn(),
+      },
+      imageUnderstandingService: { transcribe: vi.fn() },
+    } as never)
+    await service.executeTurn({
+      threadId: 'thread',
+      content: '你好',
+      achievementSubjectId: 'paired-device',
+    })
+    expect(appendAssistantMessage.mock.calls[0]![0].achievement).toEqual(
+      eligible ? { subjectId: 'paired-device', id: 'fresh_start' } : undefined,
+    )
   })
 })

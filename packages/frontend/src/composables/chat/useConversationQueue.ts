@@ -7,6 +7,9 @@ import type {
   SurfaceFrame,
 } from '@infos/shared'
 import { chatApi } from '../../api/modules/chatApi'
+import { clientAccessApi } from '../../api/modules/clientAccessApi'
+import { ApiError } from '../../api/errors'
+import { getClientToken, isLocalBackendRuntime } from '../../api/transport'
 import { useThreadStore, useNotificationStore, useCompositorStore } from '../../stores'
 import { useGateway } from '../gateway/useGateway'
 import { createClientUuid } from '../../lib/clientPlatform'
@@ -35,6 +38,8 @@ export function useConversationQueue() {
   let needsHistorySync = false
   let lastFrameAt = 0
   let lastWarningAt = 0
+  let waitingForAuthentication = false
+  let nextAuthenticationCheck = 0
   useGateway({ onSurface: applyFrame })
 
   function applyFrame(frame: SurfaceFrame) {
@@ -90,6 +95,20 @@ export function useConversationQueue() {
     const epoch = revision
     const mutation = mutationVersion
     try {
+      if (isLocalBackendRuntime() && !getClientToken()) {
+        unavailable.value = true
+        waitingForAuthentication = true
+        nextAuthenticationCheck = 0
+        return
+      }
+      if (waitingForAuthentication) {
+        if (Date.now() < nextAuthenticationCheck) return
+        nextAuthenticationCheck = Date.now() + 5000
+        // 公开状态端点返回真实身份状态；不反复拿业务轮询制造同一种 401。
+        const status = await clientAccessApi.session()
+        if (!status.data?.authenticated || disposed || epoch !== revision) return
+        waitingForAuthentication = false
+      }
       const response = await chatApi.queue(threadId)
       if (
         disposed ||
@@ -158,7 +177,13 @@ export function useConversationQueue() {
           )
       }
     } catch (error) {
-      if (epoch === revision && !disposed) unavailable.value = true
+      if (epoch === revision && !disposed) {
+        unavailable.value = true
+        if (error instanceof ApiError && error.code === 'UNAUTHORIZED') {
+          waitingForAuthentication = true
+          nextAuthenticationCheck = Date.now() + 5000
+        }
+      }
       if (Date.now() - lastWarningAt > 30_000) {
         lastWarningAt = Date.now()
         logger.warn(
@@ -281,6 +306,10 @@ export function useConversationQueue() {
   const wake = () => {
     if (!document.hidden) void refresh()
   }
+  const authorized = () => {
+    nextAuthenticationCheck = 0
+    void refresh()
+  }
   const historyChanged = (event: Event) => {
     const detail = (event as CustomEvent<{ threadId: string; discardPending: boolean }>).detail
     if (detail.threadId !== threads.threadId) return
@@ -303,6 +332,7 @@ export function useConversationQueue() {
   onMounted(() => {
     void poll()
     window.addEventListener('online', wake)
+    window.addEventListener('infos:authorized', authorized)
     document.addEventListener('visibilitychange', wake)
     window.addEventListener('infos:conversation-history-changed', historyChanged)
   })
@@ -311,6 +341,7 @@ export function useConversationQueue() {
     revision++
     clearTimeout(timer)
     window.removeEventListener('online', wake)
+    window.removeEventListener('infos:authorized', authorized)
     document.removeEventListener('visibilitychange', wake)
     window.removeEventListener('infos:conversation-history-changed', historyChanged)
   })

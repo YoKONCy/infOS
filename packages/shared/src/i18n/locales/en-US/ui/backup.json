@@ -87,5 +87,21 @@
   "包含的数据": "Included data",
   "口令与凭据": "Password and credentials",
   "备份口令": "Backup password",
-  "导入文件口令": "Import file password"
+  "导入文件口令": "Import file password",
+  "正在上传备份": "Uploading backup",
+  "正在解包备份": "Extracting backup",
+  "正在校验数据库": "Validating database",
+  "正在取消导入": "Cancelling import",
+  "备份预览已就绪": "Backup preview is ready",
+  "导入预览失败": "Import preview failed",
+  "已取消导入": "Import cancelled",
+  "取消导入": "Cancel import",
+  "已取消导入，原有数据未修改": "Import cancelled; existing data was not changed",
+  "备份请求失败，请检查网络和服务器状态": "Backup request failed; check the network and server",
+  "上传失败（HTTP {0}），请检查反向代理与上传限制": "Upload failed (HTTP {0}); check reverse proxy and upload limits",
+  "上传连接中断，正在查询服务端进度": "Upload connection interrupted; checking server progress",
+  "连接暂时中断，正在重新查询导入进度": "Connection interrupted; reconnecting to check import progress",
+  "服务端已接收 {0} / {1}": "Server received {0} / {1}",
+  "已解包 {0} / {1} 个文件": "Extracted {0} / {1} files",
+  "完整校验正在后台进行，可切换页面，返回后继续查看": "Full validation is running in the background; you can leave this page and return later"
 }

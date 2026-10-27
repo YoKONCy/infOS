@@ -1,0 +1,47 @@
+name: 功能与设计建议 / Feature or design proposal
+description: 分享你的使用场景，一起讨论合适的设计。 / Share a use case and explore a design together.
+body:
+  - type: markdown
+    attributes:
+      value: |
+        欢迎分享想法！中文或英文任选一种即可，不用双语回答。普通使用建议不需要了解内部架构；涉及架构调整时，请先对照贡献指南和相关设计文档。
+        We'd love to hear your idea! Answer in either Chinese or English, without translating it. Product suggestions do not need architecture knowledge; architectural changes should reference the contribution guide and relevant design documents.
+  - type: dropdown
+    id: kind
+    attributes:
+      label: 这更接近哪类建议？ / What kind of proposal is this?
+      options:
+        - 功能或使用体验 / Feature or user experience
+        - 架构或接口设计 / Architecture or interface design
+        - 不确定，想先讨论 / Not sure, let's discuss
+    validations:
+      required: true
+  - type: textarea
+    id: problem
+    attributes:
+      label: 在什么场景下遇到了什么不便？ / What use case or problem prompted this idea?
+      description: 先说说实际想完成的事情，以及目前哪里不顺手。 / Tell us what you want to accomplish and what is difficult today.
+      placeholder: 我在……时，希望……，但目前……。 / When I …, I need …, but currently …
+    validations:
+      required: true
+  - type: textarea
+    id: proposal
+    attributes:
+      label: 你希望它怎样工作？ / How would you like it to work?
+      description: 描述理想行为或一个具体例子；也欢迎附上草图。 / Describe the desired behavior or a concrete example. Sketches are welcome.
+      placeholder: 如果能……，就可以……。 / If it could …, I would be able to …
+    validations:
+      required: true
+  - type: textarea
+    id: scope
+    attributes:
+      label: 哪些地方可能受影响？ / What might this affect?
+      description: 普通建议写涉及的页面或功能即可，不清楚可以说明。架构提案请引用相关文档，并说明职责、适配层、数据／权限边界及兼容取舍。 / For product ideas, name the affected page or feature, or say you're unsure. Architecture proposals should reference relevant docs and discuss ownership, adapters, data/permission boundaries and compatibility.
+      placeholder: 涉及……；需要保持……。 / Affects …; should preserve …
+    validations:
+      required: true
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: 还有其他思路吗？（可选） / Any alternatives or extra context? (optional)
+      description: 例如已有变通办法、相关 Issue、截图或参考。 / Workarounds, related issues, screenshots or references are helpful.

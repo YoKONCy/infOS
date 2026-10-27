@@ -7,6 +7,8 @@ export interface QueuedConversationInput {
   imageMode?: 'auto' | 'native' | 'relay'
   /** 仅宿主内部填写；HTTP 消息结构不接受该字段。 */
   taskResultEvent?: { deliveryId: string; taskId: string }
+  /** 仅 HTTP 鉴权边界填写并持久化，消息正文不能自报成就身份。 */
+  achievementSubjectId?: string
   workspaceContext?: {
     filePath?: string
     fileHash?: string

@@ -5,19 +5,28 @@ import { tmpdir } from 'node:os'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { ResourceService } from '@infos/backend/services/attachment/resourceService'
 import { WorkspaceBrowserService } from '@infos/backend/services/workspace/workspaceBrowserService'
-import { ExecutionSessionManager, createDefaultSandboxProfile } from '@infos/backend/services/execution/executionSession'
+import {
+  ExecutionSessionManager,
+  createDefaultSandboxProfile,
+} from '@infos/backend/services/execution/executionSession'
 import { VirtualWorkspace } from '@infos/backend/services/execution/virtualWorkspace'
-import { clearProductivityRuntime, setProductivityRuntime } from '@infos/backend/tools/productivityRuntimeHolder'
+import {
+  clearProductivityRuntime,
+  setProductivityRuntime,
+} from '@infos/backend/tools/productivityRuntimeHolder'
 import { createWorkspaceRouter } from '@infos/backend/routers/workspace.router'
 import { fileAccessError } from '@infos/backend/services/workspace/workspaceReference'
 
 const context = { agentId: 'pero', threadId: 'files-thread', lookupWorkspace: true }
-let root = '', workspace = ''
+let root = '',
+  workspace = ''
 let resources: ResourceService, browser: WorkspaceBrowserService
 let sessions: ExecutionSessionManager
 const attachments = { outgoingCall: vi.fn(async () => null), saveOutgoing: vi.fn() }
-const threads = { getThread: async (id: string) => id === context.threadId
-  ? { agentId: context.agentId, channel: 'desktop' } : null }
+const threads = {
+  getThread: async (id: string) =>
+    id === context.threadId ? { agentId: context.agentId, channel: 'desktop' } : null,
+}
 
 beforeEach(async () => {
   root = await realpath(await mkdtemp(path.join(tmpdir(), 'infos-references-')))
@@ -25,8 +34,11 @@ beforeEach(async () => {
   await mkdir(path.join(workspace, 'src', '工具'), { recursive: true })
   await writeFile(path.join(workspace, 'src', '工具', '结果.ts'), 'export const 结果 = 1\n')
   sessions = new ExecutionSessionManager()
-  const runtime = { sessions, virtualWorkspace: new VirtualWorkspace(),
-    workspace: { getWorkspaceRoot: () => workspace } }
+  const runtime = {
+    sessions,
+    virtualWorkspace: new VirtualWorkspace(),
+    workspace: { getWorkspaceRoot: () => workspace },
+  }
   setProductivityRuntime(runtime as never)
   resources = new ResourceService(attachments as never, threads as never)
   browser = new WorkspaceBrowserService(runtime as never, threads as never)
@@ -39,8 +51,9 @@ afterEach(async () => {
 
 describe('工作区资源引用', () => {
   it('唯一简写补全为完整工作区路径，文件 URL 保留行号和中文空格', async () => {
-    expect((await resources.resolveReference(context, '工具/结果.ts')).origin?.value)
-      .toBe('src/工具/结果.ts')
+    expect((await resources.resolveReference(context, '工具/结果.ts')).origin?.value).toBe(
+      'src/工具/结果.ts',
+    )
     const file = path.join(workspace, '中文 空格%20.txt')
     await writeFile(file, '原始文件')
     const result = await resources.resolveReference(context, `${pathToFileURL(file).href}#L12`)
@@ -51,14 +64,17 @@ describe('工作区资源引用', () => {
     await mkdir(path.join(workspace, 'other'))
     await writeFile(path.join(workspace, 'other', '结果.ts'), '不同内容')
     await expect(resources.resolveReference(context, '结果.ts')).rejects.toMatchObject({
-      code: 'CONFLICT', data: { candidates: expect.arrayContaining(['src/工具/结果.ts', 'other/结果.ts']) },
+      code: 'CONFLICT',
+      data: { candidates: expect.arrayContaining(['src/工具/结果.ts', 'other/结果.ts']) },
     })
-    expect((await resources.resolveReference(context, 'src/工具/结果.ts')).origin?.value)
-      .toBe('src/工具/结果.ts')
+    expect((await resources.resolveReference(context, 'src/工具/结果.ts')).origin?.value).toBe(
+      'src/工具/结果.ts',
+    )
   })
   it('发送文件不继承点击引用的猜测补全，越界绝对路径始终拒绝', async () => {
-    await expect(resources.resolveReference({ ...context, lookupWorkspace: false }, '结果.ts'))
-      .rejects.toMatchObject({ code: 'NOT_FOUND' })
+    await expect(
+      resources.resolveReference({ ...context, lookupWorkspace: false }, '结果.ts'),
+    ).rejects.toMatchObject({ code: 'NOT_FOUND' })
     await expect(resources.prepare(context, '结果.ts')).rejects.toMatchObject({ code: 'NOT_FOUND' })
     const outside = path.join(root, 'private.txt')
     await writeFile(outside, '私密数据')
@@ -75,43 +91,65 @@ describe('工作区资源引用', () => {
     // Windows 使用目录 Junction，无需创建文件符号链接的特权。
     await symlink(path.join(root, 'private'), path.join(workspace, 'escape'), 'junction')
     await symlink(path.join(workspace, '.infos'), path.join(workspace, 'alias'), 'junction')
-    await expect(resources.resolveReference(context, 'escape/secret.txt'))
-      .rejects.toMatchObject({ code: 'FORBIDDEN' })
-    await expect(resources.resolveReference(context, 'alias/secret.txt'))
-      .rejects.toMatchObject({ code: 'FORBIDDEN' })
+    await expect(resources.resolveReference(context, 'escape/secret.txt')).rejects.toMatchObject({
+      code: 'FORBIDDEN',
+    })
+    await expect(resources.resolveReference(context, 'alias/secret.txt')).rejects.toMatchObject({
+      code: 'FORBIDDEN',
+    })
   })
   it('文件元信息与读取接口区分不存在和越界，不返回笼统的 500 或 400', async () => {
-    const router = createWorkspaceRouter({ workspaceBrowserService: browser,
-      productivityRuntime: { virtualWorkspace: new VirtualWorkspace() } } as never)
-    const describe = await router.request(`/file?${new URLSearchParams({
-      agentId: context.agentId, threadId: context.threadId, path: 'missing.txt',
-    })}`)
+    const router = createWorkspaceRouter({
+      workspaceBrowserService: browser,
+      productivityRuntime: { virtualWorkspace: new VirtualWorkspace() },
+    } as never)
+    const describe = await router.request(
+      `/file?${new URLSearchParams({
+        agentId: context.agentId,
+        threadId: context.threadId,
+        path: 'missing.txt',
+      })}`,
+    )
     expect(describe.status).toBe(404)
-    const read = await router.request('/read', { method: 'POST', headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ ...context, path: '../private.txt' }) })
+    const read = await router.request('/read', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ ...context, path: '../private.txt' }),
+    })
     expect(read.status).toBe(403)
     expect(await read.json()).toMatchObject({ code: 'FORBIDDEN' })
   })
   it('会话和任务不能借文件引用切换到其他角色或目录', async () => {
-    await expect(resources.resolveReference({ ...context, agentId: 'other' }, '结果.ts'))
-      .rejects.toMatchObject({ code: 'FORBIDDEN' })
-    await expect(resources.resolveReference({ ...context, taskId: '../other' }, '结果.ts'))
-      .rejects.toMatchObject({ code: 'BAD_REQUEST' })
+    await expect(
+      resources.resolveReference({ ...context, agentId: 'other' }, '结果.ts'),
+    ).rejects.toMatchObject({ code: 'FORBIDDEN' })
+    await expect(
+      resources.resolveReference({ ...context, taskId: '../other' }, '结果.ts'),
+    ).rejects.toMatchObject({ code: 'BAD_REQUEST' })
   })
   it('远程请求不能让服务端直接执行工作区程序', async () => {
     await writeFile(path.join(workspace, 'run.exe'), '程序内容')
     const openTrustedPath = vi.fn()
-    const router = createWorkspaceRouter({ workspaceBrowserService: browser,
-      systemService: { openTrustedPath } } as never)
-    const response = await router.request('/open-file', { method: 'POST',
+    const router = createWorkspaceRouter({
+      workspaceBrowserService: browser,
+      systemService: { openTrustedPath },
+    } as never)
+    const response = await router.request('/open-file', {
+      method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ ...context, path: 'run.exe', openOnNode: true }) })
+      body: JSON.stringify({ ...context, path: 'run.exe', openOnNode: true }),
+    })
     expect(response.status).toBe(403)
     expect(openTrustedPath).not.toHaveBeenCalled()
   })
-  it.each([['ENOENT', 'NOT_FOUND', 404], ['EPERM', 'FORBIDDEN', 403],
-    ['EBUSY', 'RESOURCE_BUSY', 422]] as const)('将 %s 映射到明确的 API 错误', (code, expected, status) => {
-    expect(fileAccessError(Object.assign(new Error('文件系统错误'), { code })))
-      .toMatchObject({ code: expected, httpStatus: status })
+  it.each([
+    ['ENOENT', 'NOT_FOUND', 404],
+    ['EPERM', 'FORBIDDEN', 403],
+    ['EBUSY', 'RESOURCE_BUSY', 422],
+  ] as const)('将 %s 映射到明确的 API 错误', (code, expected, status) => {
+    expect(fileAccessError(Object.assign(new Error('文件系统错误'), { code }))).toMatchObject({
+      code: expected,
+      httpStatus: status,
+    })
   })
 })

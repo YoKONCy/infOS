@@ -484,3 +484,10 @@ registerCatalog('ui.knowledge-recall', 'zh-TW', knowledgeRecallTw)
 registerCatalog('ui.knowledge-recall', 'en-US', knowledgeRecallEn)
 registerCatalog('ui.audio-input', 'zh-TW', audioInputTw)
 registerCatalog('ui.audio-input', 'en-US', audioInputEn)
+import achievementsCn from '../locales/zh-CN/ui/achievements.json'
+import achievementsTw from '../locales/zh-TW/ui/achievements.json'
+import achievementsEn from '../locales/en-US/ui/achievements.json'
+import { registerCatalog as registerAchievements } from '../index'
+registerAchievements('ui.achievements', 'zh-CN', achievementsCn)
+registerAchievements('ui.achievements', 'zh-TW', achievementsTw)
+registerAchievements('ui.achievements', 'en-US', achievementsEn)

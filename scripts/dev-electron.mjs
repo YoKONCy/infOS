@@ -30,6 +30,8 @@ async function prepareWindowsRuntime(sourceOverride) {
   const sourceExe = path.resolve(sourceOverride || electronRequire('electron'))
   const sourceInfo = await fs.stat(sourceExe)
   const packageInfo = JSON.parse(await fs.readFile(path.join(root, 'package.json'), 'utf8'))
+  // Windows 通知按 EXE 的 ProductName 命名开始菜单链接，不能与正式版共用。
+  const developmentProductName = `${packageInfo.productName} [dev]`
   const icon = path.join(root, 'public/system-icons/pero.ico')
   const iconDigest = createHash('sha256')
     .update(await fs.readFile(icon))
@@ -37,12 +39,12 @@ async function prepareWindowsRuntime(sourceOverride) {
   const fingerprint = createHash('sha256')
     .update(
       JSON.stringify({
-        revision: 2,
+        revision: 3,
         root,
         sourceExe,
         size: sourceInfo.size,
         modified: sourceInfo.mtimeMs,
-        name: packageInfo.productName,
+        name: developmentProductName,
         version: packageInfo.version,
         iconDigest,
       }),
@@ -89,10 +91,10 @@ async function prepareWindowsRuntime(sourceOverride) {
         packageInfo.productName,
         '--set-version-string',
         'ProductName',
-        packageInfo.productName,
+        developmentProductName,
         '--set-version-string',
         'InternalName',
-        'PeroperoChat',
+        'PeroperoChatDevelopment',
         '--set-version-string',
         'OriginalFilename',
         executableName,

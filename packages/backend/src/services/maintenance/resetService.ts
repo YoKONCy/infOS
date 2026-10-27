@@ -46,6 +46,7 @@ import {
   durableNotifications,
   notificationFeed,
   notificationDeviceReceipts,
+  achievements,
 } from '../../database/schema'
 import { createLogger } from '../../lib/logger'
 import { disposeExecutionOwner } from '../../tools/productivityRuntimeHolder'
@@ -122,6 +123,7 @@ export class ResetService {
     // 先清空记忆/对话相关，再清空业务数据，最后清空配置与审批审计。
     // 使用显式表名映射，避免依赖 drizzle 内部 symbol 反射。
     const tables: Array<[string, Parameters<DrizzleDb['delete']>[0]]> = [
+      ['achievements', achievements],
       ['notification_device_receipts', notificationDeviceReceipts],
       ['notification_feed', notificationFeed],
       ['durable_notifications', durableNotifications],

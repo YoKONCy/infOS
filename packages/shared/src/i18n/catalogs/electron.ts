@@ -1,5 +1,11 @@
 // 按模块、语言分别维护词库；此入口只装配当前运行端需要的资源。
 import { registerCatalog } from '../index'
+import achievementsCn from '../locales/zh-CN/electron/logs/achievements.json'
+import achievementsTw from '../locales/zh-TW/electron/logs/achievements.json'
+import achievementsEn from '../locales/en-US/electron/logs/achievements.json'
+registerCatalog('electron.logs.achievements', 'zh-CN', achievementsCn)
+registerCatalog('electron.logs.achievements', 'zh-TW', achievementsTw)
+registerCatalog('electron.logs.achievements', 'en-US', achievementsEn)
 import messages0 from '../locales/zh-CN/common/tools.json'
 import messages1 from '../locales/zh-TW/common/tools.json'
 import messages2 from '../locales/en-US/common/tools.json'

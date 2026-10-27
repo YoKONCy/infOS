@@ -16,6 +16,7 @@ import { t as __t } from '../../../i18n/index'
 import { ref, computed, onMounted, onUnmounted, watch } from 'vue'
 import WeatherCard from '../../weather/WeatherCard.vue'
 import TokenUsageCard from '../../usage/TokenUsageCard.vue'
+import AchievementsCard from '../../achievements/AchievementsCard.vue'
 import { useDashboardContext } from '../../../composables/dashboard'
 import { PixelIcon, PCard } from '../../pixel'
 import { systemApi } from '../../../api/modules/systemApi'
@@ -252,6 +253,7 @@ onUnmounted(() => document.removeEventListener('pointerdown', onAgentOutside))
         <WeatherCard />
         <TokenUsageCard />
       </div>
+      <AchievementsCard />
       <!-- 统计与状态共用页面的像素卡片材质，不另设固定不透明底色。 -->
       <div class="overview-summary">
         <dl class="overview-metrics">

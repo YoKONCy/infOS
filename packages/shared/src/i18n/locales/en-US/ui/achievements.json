@@ -1,0 +1,14 @@
+{
+  "旅途成就": "Journey achievements",
+  "崭新启程": "A Fresh Start",
+  "完成与角色的首次有效对话。": "Complete your first successful conversation with a character.",
+  "成就达成 · {0}": "Achievement unlocked · {0}",
+  "刷新成就": "Refresh achievements",
+  "已达成": "Unlocked",
+  "等待启程": "A journey awaits",
+  "正在读取旅途记录…": "Loading your journey…",
+  "暂时无法读取成就，连接恢复后可重试。": "Achievements are unavailable. Try again when the connection returns.",
+  "已提交 Steam": "Submitted to Steam",
+  "等待提交 Steam": "Waiting to submit to Steam",
+  "请使用首次绑定的 Steam 账号提交": "Use the Steam account originally linked to this achievement"
+}

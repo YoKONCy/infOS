@@ -10,7 +10,7 @@ declare const __APP_VERSION__: string
 
 interface Window {
   electron?: {
-    clientCredential?: () => string
+    clientCredential?: (refresh?: boolean) => string
     backendOrigin?: () => string
     connectionMode?: () => 'local' | 'remote' | ''
     embedded?: boolean

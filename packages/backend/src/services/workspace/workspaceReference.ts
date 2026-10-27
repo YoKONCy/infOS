@@ -30,9 +30,14 @@ export function fileAccessError(error: unknown): Error {
       cause: error,
     })
   if (
-    ['EINVAL', 'ERR_INVALID_ARG_VALUE', 'EISDIR', 'ELOOP', 'ENAMETOOLONG', WS_ERROR.NOT_A_FILE].some(
-      (value) => value === code,
-    )
+    [
+      'EINVAL',
+      'ERR_INVALID_ARG_VALUE',
+      'EISDIR',
+      'ELOOP',
+      'ENAMETOOLONG',
+      WS_ERROR.NOT_A_FILE,
+    ].some((value) => value === code)
   )
     return new AppError('BAD_REQUEST', {
       message: t('server.resources', '请提供有效的普通文件路径'),
@@ -84,7 +89,9 @@ export async function resolveWorkspaceReference(
     await workspace.resolveReadablePath(session, relative)
     const info = await stat(filePath)
     if (!info.isFile())
-      throw new AppError('BAD_REQUEST', { message: t('server.resources', '请提供有效的普通文件路径') })
+      throw new AppError('BAD_REQUEST', {
+        message: t('server.resources', '请提供有效的普通文件路径'),
+      })
     return { filePath, info, relative }
   }
   try {
@@ -100,8 +107,7 @@ export async function resolveWorkspaceReference(
       throw fileAccessError(error)
   }
   const suffix = path.relative(session.workspaceRoot, lexical).replaceAll('\\', '/')
-  const comparable = (value: string) =>
-    process.platform === 'win32' ? value.toLowerCase() : value
+  const comparable = (value: string) => (process.platform === 'win32' ? value.toLowerCase() : value)
   const expected = comparable(suffix)
   const directories = ['.']
   const matches: string[] = []
@@ -147,7 +153,10 @@ export async function resolveWorkspaceReference(
       }
     } catch (error) {
       const classified = fileAccessError(error)
-      if (!(classified instanceof AppError) || !['FORBIDDEN', 'NOT_FOUND'].includes(classified.code))
+      if (
+        !(classified instanceof AppError) ||
+        !['FORBIDDEN', 'NOT_FOUND'].includes(classified.code)
+      )
         throw classified
     }
     if (incomplete || matches.length >= 2) break

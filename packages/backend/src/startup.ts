@@ -243,6 +243,8 @@ export async function startServer(options: StartServerOptions): Promise<void> {
       fetch: app.fetch,
       hostname: SERVER_HOST,
       port: SERVER_PORT,
+      // 大备份使用流式上传；接收总时限与 Docker 代理一致，头部超时仍由 Node 限制。
+      serverOptions: { requestTimeout: 60 * 60_000 },
     },
     (info) => {
       if (onHttpReady) {
@@ -266,7 +268,12 @@ export async function startServer(options: StartServerOptions): Promise<void> {
   ctx.gatewayHub.startHeartbeat()
 
   await ctx.clientAccess.attachListener(async (port) => {
-    const lan = serve({ fetch: app.fetch, hostname: '0.0.0.0', port }) as Server
+    const lan = serve({
+      fetch: app.fetch,
+      hostname: '0.0.0.0',
+      port,
+      serverOptions: { requestTimeout: 60 * 60_000 },
+    }) as Server
     await new Promise<void>((resolve, reject) => {
       if (lan.listening) return resolve()
       const onError = (error: Error) => {
@@ -320,6 +327,7 @@ export async function startServer(options: StartServerOptions): Promise<void> {
   // 10. 注册优雅退出回调
   onShutdown(async () => {
     logger.info(__t('logs.startup.ts', '{0} 正在关闭资源...', [processName]))
+    await ctx.backupService?.imports.shutdown()
     await ctx.clientAccess.dispose()
     try {
       await ctx.appManager.shutdown()

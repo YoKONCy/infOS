@@ -149,6 +149,8 @@ import { ToolContextService } from './services/context/toolContextService'
 import { ContextRegionRegistry } from './services/context/contextRegionRuntime'
 import { ContinuityRegionProvider } from './services/context/continuityRegionProvider'
 import { ConversationTurnService } from './services/conversation/conversationTurnService'
+import { AchievementRepository } from './repositories/achievement.repo'
+import { AchievementService } from './services/system/achievementService'
 import { ConversationQueueService } from './services/conversation/conversationQueueService'
 import { ConversationQueueRepository } from './repositories/conversationQueue.repo'
 import { ConversationProjectionService } from './projections/conversationProjectionService'
@@ -342,6 +344,7 @@ export interface AppContext {
 
   // ── Repository ──
   configRepo: ConfigRepository
+  achievementService: AchievementService
   storeRegistry: MemoryStoreRegistry
   threadRepo: ThreadRepository
   attachmentRepo: AttachmentRepository
@@ -643,6 +646,8 @@ export async function createAppContext(config: AppConfig): Promise<AppContext> {
 
   // ── 3. Repository ──
   const configRepo = new ConfigRepository(db)
+  const achievementService = new AchievementService(new AchievementRepository(db), configRepo)
+  await achievementService.initialize()
   const clientAccess = new ClientAccessService(
     new ClientAccessRepository(config.dataDir),
     SERVER_PORT,
@@ -2221,6 +2226,7 @@ export async function createAppContext(config: AppConfig): Promise<AppContext> {
     },
   })
   await backupService.initialize()
+  kernelLifecycle.defer(() => backupService.imports.shutdown())
   const distributedSyncService = new DistributedSyncService(
     config.dataDir,
     db,
@@ -2265,6 +2271,7 @@ export async function createAppContext(config: AppConfig): Promise<AppContext> {
     executionRuntime,
     kernelScheduler,
     configRepo,
+    achievementService,
     clientAccess,
     webFrontend,
     storeRegistry,
