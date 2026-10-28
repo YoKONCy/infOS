@@ -1,6 +1,6 @@
 # 多目标部署架构
 
-> **版本**：0.9.7 · **更新时间**：2026-10-26
+> **版本**：0.9.8 · **更新时间**：2026-10-26
 > **适用范围**：infOS 全项目部署策略
 > **依赖规范**：[A07_CROSS_PLATFORM](./A07_CROSS_PLATFORM.md)、[A08_DEVOPS](./A08_DEVOPS.md)
 >
@@ -561,6 +561,20 @@ Electron Capability Provider
 ```
 
 Backend Container 不再安装 `infos.browser`、不发布 `server.browser.chromium`、不启动 Chromium 子进程，也不拥有 Browser Profile。非 Electron 部署因此自然不带 Browser 功能。旧 `ChromiumWebRuntimeDriver` 与 `BrowserAgentApplication` 仅作为未装配的研究代码保留。
+
+#### 只读旁观画面
+
+Electron 的 `web.page/observeFrame` 提供独立的只读 JPEG 采集，不进入 Agent 操作队列，不调用导航、输入、视口模拟或标签激活，也不续期临时页面的空闲生命周期。画面来自实际目标的当前视口；压缩后的输出最大宽度为 960 像素、单帧 JPEG 上限为 384,000 字节。采集超时三秒返回暂停状态，尚未结束的采集不会叠加新请求；Agent 正式截图正在采集时，旁观返回等待状态。旁观帧没有 `screenshotId`，不能用于 Agent 的坐标操作，也不会作废已有操作截图。
+
+`browser_open_url`、`browser_search` 和 `browser_status` 的可选 `preview` 参数只表达展示意图：`true` 请求展开，`false` 请求后台，不传则沿用。后台工具绑定按可信执行上下文登记旁观会话，观看端不能传入浏览器目标或账号作用域。普通对话使用角色隔离的 `desktop` Profile，并按 Thread 与后台任务分别维护活动页面；社交渠道继续沿用其账号 Profile。旧的未限定共享 Profile 不自动迁移 Cookie，升级后普通对话可能需要重新登录网站。
+
+`/api/browser-observer/sessions` 与 `/api/browser-observer/sessions/:id/frame` 沿用主应用设备鉴权，并在每次请求中复查 Agent/Thread 归属。会话 ID 绑定提供节点、对象代际与浏览器作用域：同一提供者重连后重新绑定端口并恢复观看，不要求 Agent 再次调用工具；换绑其他节点时，旧会话不能读取新节点的页面。帧按需经现有能力传输返回，不进入数据库、对话历史或模型上下文；HTTP 禁止缓存，服务端短期复用采集并在一秒后释放帧缓存。
+
+会话发现包含当前 Thread 以及向该对话交付结果的后台任务；子任务按真实父任务链核对归属（最多八层，遇到环停止），不混入其他对话或渠道的任务。小窗默认跟随最近使用的浏览器会话，用户手动选择后保持所选；任务详情通过任务专属 Thread 复用同一旁观组件，保留抽屉内的键盘焦点边界。
+
+前端 `BrowserObserver.vue` 在当前对话中发现会话，展开时按约 750 毫秒间隔串行请求最新画面，采集与传输耗时会降低帧率。拖动、八方向调整大小及放大缩小只改变观看端矩形，图片等比缩放并留边。收起、页面隐藏、切换对话或组件停用会取消观看请求并停止后续取帧；手动选择按服务器、角色、Thread 和任务写入当前窗口的 `sessionStorage`（最多 128 项），组件重挂载及节点重连后仍优先于 Agent 的重复展开意图。存储被禁用时退回组件内状态。节点离线或传输失败显示暂停并重试，页面关闭显示关闭状态。纯 Web 客户端可观看已连接 Electron 节点的画面，Docker 本身仍不提供独立浏览器执行端。
+
+源码入口：`electron/main/services/browserRuntime.ts`、`packages/backend/src/capabilities/browserToolRuntime.ts`、`packages/backend/src/routers/browserObserver.router.ts`、`packages/frontend/src/components/chat/BrowserObserver.vue`。
 
 ### 9.8 远程连接与多 Server
 

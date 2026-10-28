@@ -1,4 +1,11 @@
 import indexMaintenanceCn from '../locales/zh-CN/ui/index-maintenance.json'
+import browserObserverCn from '../locales/zh-CN/ui/browser-observer.json'
+import browserObserverTw from '../locales/zh-TW/ui/browser-observer.json'
+import browserObserverEn from '../locales/en-US/ui/browser-observer.json'
+import { registerCatalog as registerBrowserObserver } from '../index'
+registerBrowserObserver('ui.browser-observer', 'zh-CN', browserObserverCn)
+registerBrowserObserver('ui.browser-observer', 'zh-TW', browserObserverTw)
+registerBrowserObserver('ui.browser-observer', 'en-US', browserObserverEn)
 import indexMaintenanceTw from '../locales/zh-TW/ui/index-maintenance.json'
 import indexMaintenanceEn from '../locales/en-US/ui/index-maintenance.json'
 import { registerCatalog as registerIndexMaintenanceCatalog } from '../index'

@@ -1,5 +1,6 @@
 import { t as __t } from '../utils/i18n'
 import { createHash, randomUUID } from 'node:crypto'
+import type { BrowserObserverFrame } from '@infos/shared'
 import { AsyncLocalStorage } from 'node:async_hooks'
 import {
   WebContentsView,
@@ -65,6 +66,8 @@ interface BrowserTarget {
   debuggerReady?: Promise<void>
   debuggerEventsBound?: boolean
   pendingScreenshot?: Promise<NativeImage>
+  pendingObserver?: Promise<BrowserObserverFrame>
+  observerFrame?: BrowserObserverFrame
   network: Array<Record<string, unknown>>
 }
 
@@ -188,6 +191,8 @@ export class ElectronBrowserRuntime {
     operatorName = 'Agent',
   ): Promise<unknown> {
     const scope = browserInvocationScope(input.__browserScope, operatorName)
+    // 旁观不进入操作队列，不锁页面、不续命、不创建或作废 Agent 截图引用。
+    if (operation === 'observeFrame') return this.observeFrame(scope)
     const run = this.invocationQueue.then(() => {
       this.activeOperator = operatorName
       this.touchRuntime()
@@ -209,6 +214,73 @@ export class ElectronBrowserRuntime {
       () => undefined,
     )
     return run
+  }
+
+  private async observeFrame(scope: BrowserInvocationScope): Promise<BrowserObserverFrame> {
+    const id = this.scopedActiveTargets.get(scope.key)
+    const target = id ? this.targets.get(id) : undefined
+    if (!target || target.view.webContents.isDestroyed()) return { state: 'closed' }
+    assertBrowserTargetScope(target.scope.key, scope.key)
+    const contents = target.view.webContents
+    const metadata = () => ({
+      targetId: target.id,
+      title: contents.getTitle(),
+      url: contents.getURL(),
+    })
+    // Agent 的正式截图优先；旁观采集之间共享请求，避免多个观看端叠加负载。
+    if (target.pendingScreenshot) return { state: 'waiting', ...metadata() }
+    if (target.observerFrame && Date.now() - target.observerFrame.capturedAt! < 750)
+      return target.observerFrame
+    if (!target.pendingObserver) {
+      const generation = target.generation
+      const capture = (async (): Promise<BrowserObserverFrame> => {
+        if (!contents.debugger.isAttached() || !target.debuggerEventsBound)
+          await this.attachDebugger(target)
+        const result = (await contents.debugger.sendCommand('Page.captureScreenshot', {
+          format: 'jpeg',
+          quality: 60,
+          fromSurface: true,
+          captureBeyondViewport: false,
+        })) as { data?: string }
+        if (contents.isDestroyed() || this.targets.get(id!) !== target) return { state: 'closed' }
+        if (
+          target.generation !== generation ||
+          this.scopedActiveTargets.get(scope.key) !== target.id ||
+          !result.data
+        )
+          return { state: 'waiting' }
+        let image = nativeImage.createFromBuffer(Buffer.from(result.data, 'base64'))
+        if (image.isEmpty()) return { state: 'waiting' }
+        const size = image.getSize()
+        if (size.width > 960) image = image.resize({ width: 960 })
+        const bytes = image.toJPEG(60)
+        if (bytes.length > 384_000) return { state: 'paused' }
+        const frame: BrowserObserverFrame = {
+          state: 'live',
+          ...metadata(),
+          dataUri: `data:image/jpeg;base64,${bytes.toString('base64')}`,
+          ...image.getSize(),
+          capturedAt: Date.now(),
+        }
+        target.observerFrame = frame
+        return frame
+      })().catch((): BrowserObserverFrame => ({ state: 'paused' }))
+      target.pendingObserver = capture
+      void capture.then(() => {
+        if (target.pendingObserver === capture) target.pendingObserver = undefined
+      })
+    }
+    let timer: NodeJS.Timeout | undefined
+    try {
+      return await Promise.race([
+        target.pendingObserver,
+        new Promise<BrowserObserverFrame>((resolve) => {
+          timer = setTimeout(() => resolve({ state: 'paused' }), 3_000)
+        }),
+      ])
+    } finally {
+      if (timer) clearTimeout(timer)
+    }
   }
 
   private async invokeOnce(operation: string, input: Record<string, unknown>): Promise<unknown> {
@@ -1463,6 +1535,7 @@ export class ElectronBrowserRuntime {
     view.webContents.on('did-start-navigation', (_event, _url, _isInPlace, isMainFrame) => {
       if (isMainFrame) {
         target.generation += 1
+        target.observerFrame = undefined
         this.clearScreenshots(target.scope.key)
       }
     })

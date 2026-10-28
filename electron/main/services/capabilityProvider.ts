@@ -74,6 +74,7 @@ const WEB_OPERATIONS: readonly WebPageOperation[] = [
   'emulate',
   'evaluate',
   'runtimeStatus',
+  'observeFrame',
 ]
 const DESKTOP_OPERATIONS = [
   'runtimeDiagnostics',

@@ -10,6 +10,7 @@ import PixelIcon from '../pixel/PixelIcon.vue'
 import TaskStatusBadge from './TaskStatusBadge.vue'
 import TaskLifecyclePanel from './TaskLifecyclePanel.vue'
 import DesktopControlStatus from '../desktop/DesktopControlStatus.vue'
+import BrowserObserver from '../chat/BrowserObserver.vue'
 import ConversationSurface from '../compositor/ConversationSurface.vue'
 import { backgroundTasksApi, type BackgroundTaskInfo } from '../../api/modules/backgroundTasksApi'
 import { taskElapsed, taskOriginLabel, taskTime } from './taskPresentation'
@@ -183,6 +184,12 @@ onBeforeUnmount(() => {
 
 <template>
   <PDrawer v-if="task" :title="__t('ui.taskCenter', '任务详情')" @close="emit('close')">
+    <BrowserObserver
+      :agent-id="task.agentId"
+      :thread-id="task.threadId"
+      :agent-name="agentName || task.agentId"
+      embedded
+    />
     <div class="task-detail">
       <header class="detail-hero">
         <div class="detail-eyebrow">

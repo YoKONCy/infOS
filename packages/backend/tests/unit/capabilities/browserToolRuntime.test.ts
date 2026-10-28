@@ -84,7 +84,17 @@ describe('BrowserToolRuntime', () => {
     expect(invoke).toHaveBeenCalledWith(
       expect.objectContaining({
         principalId: 'agent:test',
-        payload: { operation: 'open', input: { url: 'https://example.com' } },
+        payload: {
+          operation: 'open',
+          input: {
+            url: 'https://example.com',
+            __browserScope: {
+              profileId: 'desktop',
+              sessionId: '["thread:test",null]',
+              principalId: 'agent:test',
+            },
+          },
+        },
       }),
       undefined,
     )

@@ -28,6 +28,7 @@ type AtlasSection = 'identity' | 'persona' | 'reactions' | 'capability' | 'runti
 type ManagedChannel = 'desktop' | 'group'
 
 const notif = useNotificationStore()
+const props = defineProps<{ initialAgentId?: string }>()
 const agents = ref<AgentListItem[]>([])
 const selectedId = ref('')
 const form = ref<AgentDetail | null>(null)
@@ -858,10 +859,11 @@ async function initialize(): Promise<void> {
       'error',
     )
   }
-  await fetchAgents()
+  await fetchAgents(props.initialAgentId)
 }
 
 onMounted(initialize)
+defineExpose({ isDirty, saving, saveAgent })
 onBeforeUnmount(() => {
   window.clearTimeout(promptTokenTimer)
   releaseAvatarCropSource()

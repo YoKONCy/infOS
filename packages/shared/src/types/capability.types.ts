@@ -47,9 +47,32 @@ export const WEB_PAGE_OPERATIONS = [
   'evaluate',
   'runtimeStatus',
   'uploadFile',
+  'observeFrame',
 ] as const
 
 export type WebPageOperation = (typeof WEB_PAGE_OPERATIONS)[number]
+
+/** 旁观帧不携带可用于操作的截图引用，也不接受观看端的视口参数。 */
+export interface BrowserObserverFrame {
+  state: 'live' | 'waiting' | 'closed' | 'paused'
+  targetId?: string
+  title?: string
+  url?: string
+  dataUri?: string
+  width?: number
+  height?: number
+  capturedAt?: number
+}
+
+export interface BrowserObserverSession {
+  id: string
+  agentId: string
+  threadId: string
+  taskId?: string
+  requestedVisible: boolean
+  available: boolean
+  updatedAt: number
+}
 export const webPageCapabilityName = (operation: WebPageOperation): string =>
   `web.page.${operation}`
 

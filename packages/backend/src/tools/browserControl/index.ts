@@ -8,6 +8,7 @@ import type { ToolContext, ToolHandler } from '../../services/agent/toolRegistry
 import type { ToolDefinition } from '../../services/pipeline/types'
 import manifest from './manifest.json'
 import { browserNavigationTarget, type BrowserPreviewResolver } from './navigationTarget'
+import { browserToolScope } from './scope'
 
 interface BrowserToolContribution {
   definition: ToolDefinition
@@ -29,6 +30,7 @@ export function createBrowserToolContributions(
     WEB_PAGE_OPERATIONS,
   observer?: (observation: BrowserToolObservation) => void | Promise<void>,
   preview?: BrowserPreviewResolver,
+  presentation?: (context: ToolContext, visible?: boolean) => void,
 ): BrowserToolContribution[] {
   const availableOperations =
     typeof operationsOrObserver === 'function' ? WEB_PAGE_OPERATIONS : operationsOrObserver
@@ -64,10 +66,10 @@ export function createBrowserToolContributions(
       }
       return port.invoke(
         operation,
-        caller?.browserScope
+        caller
           ? {
               ...scopedInput,
-              __browserScope: { ...caller.browserScope, principalId: caller.agentId },
+              __browserScope: { ...browserToolScope(caller), principalId: caller.agentId },
             }
           : scopedInput,
         context,
@@ -289,7 +291,9 @@ export function createBrowserToolContributions(
     )
     .map((definition) => ({
       definition: definition as ToolDefinition,
-      handler: (args, context) =>
-        calling.run(context, () => handlers[definition.name]!(args, context)),
+      handler: (args, context) => {
+        presentation?.(context, typeof args.preview === 'boolean' ? args.preview : undefined)
+        return calling.run(context, () => handlers[definition.name]!(args, context))
+      },
     }))
 }

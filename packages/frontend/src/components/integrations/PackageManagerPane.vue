@@ -1,12 +1,20 @@
 <script setup lang="ts">
-import { ref, onMounted } from 'vue'
+import { computed, ref, onMounted } from 'vue'
 import type { ManagedPackageInfo, PackagePermission } from '@infos/shared'
 import { packagesApi } from '../../api/modules/packagesApi'
 import { t } from '../../i18n'
 import { PCard, PButton, PDialog, PixelIcon } from '../pixel'
 import PackageSlot from './PackageSlot.vue'
+import PackageWebUiPane from './PackageWebUiPane.vue'
 
+const props = defineProps<{ packageId?: string }>()
 const items = ref<ManagedPackageInfo[]>([])
+const visibleItems = computed(() =>
+  props.packageId
+    ? items.value.filter((item) => item.manifest.packageId === props.packageId)
+    : items.value,
+)
+const page = ref<{ packageId: string; contributionId: string; name: string }>()
 const busy = ref(false)
 const error = ref('')
 const input = ref<HTMLInputElement>()
@@ -79,10 +87,20 @@ async function confirm() {
   confirmation.value = undefined
   await perform(() => packagesApi[pending.action](pending.item.manifest.packageId))
 }
+function closePage() {
+  page.value = undefined
+  void perform(async () => undefined)
+}
 onMounted(() => perform(async () => undefined))
 </script>
 <template>
-  <section class="package-manager" :aria-busy="busy">
+  <PackageWebUiPane
+    v-if="page"
+    :key="`${page.packageId}/${page.contributionId}`"
+    v-bind="page"
+    @close="closePage"
+  />
+  <section v-else class="package-manager" :aria-busy="busy">
     <header class="package-toolbar">
       <div>
         <h2>{{ t('ui.packages', '插件') }}</h2>
@@ -105,11 +123,11 @@ onMounted(() => perform(async () => undefined))
       <input ref="input" type="file" accept=".zip,application/zip" hidden @change="upload" />
     </header>
     <p v-if="error" role="alert" class="package-error">{{ error }}</p>
-    <PCard v-if="!items.length" pixel padding="lg">
+    <PCard v-if="!visibleItems.length" pixel padding="lg">
       <p>{{ t('ui.packages', '尚未安装插件') }}</p>
     </PCard>
     <div class="package-list">
-      <PCard v-for="item in items" :key="item.manifest.packageId" pixel padding="lg">
+      <PCard v-for="item in visibleItems" :key="item.manifest.packageId" pixel padding="lg">
         <div class="package-heading">
           <PixelIcon name="puzzle" size="lg" />
           <div>
@@ -136,6 +154,23 @@ onMounted(() => perform(async () => undefined))
           <pre>{{ item.error }}</pre>
         </details>
         <footer class="package-actions">
+          <PButton
+            v-for="entry in item.manifest.contributions.filter((entry) => entry.kind === 'web-ui')"
+            :key="entry.id"
+            size="sm"
+            variant="secondary"
+            :disabled="busy || item.state !== 'active'"
+            @click="
+              page = {
+                packageId: item.manifest.packageId,
+                contributionId: entry.id,
+                name: item.manifest.name,
+              }
+            "
+          >
+            <PixelIcon name="window" size="xs" />
+            {{ entry.webUi?.title ?? t('ui.packages', '打开界面') }}
+          </PButton>
           <PButton
             size="sm"
             :variant="item.enabled ? 'secondary' : 'primary'"

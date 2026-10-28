@@ -5,6 +5,7 @@ import { PackageManagementService } from './packages/packageManagementService'
 import { PackageDependencies } from './packages/packageDependencies'
 import { PackageUiRegistry } from './packages/packageUiRegistry'
 import { PackageAssets } from './packages/packageAssets'
+import { PackageWebUi } from './packages/packageWebUi'
 import { registerExtensionActivators } from './packages/packageExtensionActivators'
 /**
  * 依赖注入容器
@@ -414,6 +415,7 @@ export interface AppContext {
   resourceService: ResourceService
   documentService: DocumentService
   htmlPreviewService: HtmlPreviewService
+  browserTools: BrowserToolRuntime
   chatBackgroundService: ChatBackgroundService
   userAvatarService: UserAvatarService
   /** M05: 统一任务中心（派发/队列/状态机/恢复） */
@@ -447,6 +449,7 @@ export interface AppContext {
   packageInstaller: PackageInstaller
   packageManagement: PackageManagementService
   packageUi: PackageUiRegistry
+  packageWebUi?: PackageWebUi
   runtimeDebug: RuntimeDebugService
   packageAssets: import('./packages/packageAssets').PackageAssets
   packageRuntime: PackageRuntime
@@ -968,6 +971,16 @@ export async function createAppContext(config: AppConfig): Promise<AppContext> {
   const packageHookBus = new PackageHookBus()
   const packageUi = new PackageUiRegistry()
   const packageAssets = new PackageAssets()
+  const packageWebUi = new PackageWebUi(
+    (owner) => clientAccess.identify(owner.token)?.id === owner.id,
+    (id) => packageRegistry.get(id)?.state === 'active',
+    () => backupService.beginWrite(),
+  )
+  const removeWebUiRevocation = clientAccess.onRevoke(() => packageWebUi.revalidate())
+  kernelLifecycle.defer(() => {
+    removeWebUiRevocation()
+    packageWebUi.dispose()
+  })
   const packageManagement = new PackageManagementService(
     pathResolver.resolve('@data/packages'),
     packageRegistry,
@@ -982,6 +995,7 @@ export async function createAppContext(config: AppConfig): Promise<AppContext> {
     hooks: packageHookBus,
     ui: packageUi,
     assets: packageAssets,
+    webUi: packageWebUi,
   })
   registerStandardContributionActivators({
     runtime: packageRuntime,
@@ -2332,6 +2346,7 @@ export async function createAppContext(config: AppConfig): Promise<AppContext> {
     attachmentService,
     resourceService,
     htmlPreviewService,
+    browserTools,
     documentService,
     chatBackgroundService,
     userAvatarService,
@@ -2357,6 +2372,7 @@ export async function createAppContext(config: AppConfig): Promise<AppContext> {
     packageInstaller,
     packageManagement,
     packageUi,
+    packageWebUi,
     runtimeDebug,
     packageAssets,
     packageRuntime,

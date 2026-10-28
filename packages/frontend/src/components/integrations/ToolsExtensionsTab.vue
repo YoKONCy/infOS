@@ -10,14 +10,21 @@ import FeatureSourcesPage from './FeatureSourcesPage.vue'
 import IntegrationBrand from './IntegrationBrand.vue'
 import PackageManagerPane from './PackageManagerPane.vue'
 import ResourceVersionsPane from './ResourceVersionsPane.vue'
+import InstalledExtensionsPane from './InstalledExtensionsPane.vue'
 import { useIntegrations } from '../../composables/tools/useIntegrations'
 
 const { state, error } = useIntegrations()
-const tab = ref<'extensions' | 'features' | 'mcp' | 'skills' | 'packages' | 'versions'>(
-  'extensions',
-)
+const tab = ref<
+  'installed' | 'extensions' | 'features' | 'mcp' | 'skills' | 'packages' | 'versions'
+>('installed')
 const page = ref<IntegrationFeature | null>(null)
 const tabs = [
+  {
+    id: 'installed',
+    get label() {
+      return __t('ui.integrations', '已安装')
+    },
+  },
   {
     id: 'versions',
     get label() {
@@ -89,7 +96,8 @@ const pdfLogo = computed(() => {
     </nav>
     <p v-if="error" class="integration-error" role="status">{{ error }}</p>
     <div class="integration-content">
-      <ExtensionToolsPane v-if="tab === 'extensions'" />
+      <InstalledExtensionsPane v-if="tab === 'installed'" />
+      <ExtensionToolsPane v-else-if="tab === 'extensions'" />
       <PackageManagerPane v-else-if="tab === 'packages'" />
       <ResourceVersionsPane v-else-if="tab === 'versions'" />
       <template v-else-if="tab === 'features'">

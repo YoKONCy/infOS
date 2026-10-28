@@ -2,6 +2,7 @@ import type { KernelCapabilityDefinition } from '@infos/shared'
 import { WEB_PAGE_OPERATIONS } from '@infos/shared'
 
 const READ_OPERATIONS = new Set([
+  'observeFrame',
   'inspect',
   'extract',
   'screenshot',

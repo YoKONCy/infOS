@@ -230,6 +230,8 @@ export type { ChatRole, ConversationLogDto, AnalysisStatus, AiModelConfigDto } f
 export { WEB_PAGE_OPERATIONS, webPageCapabilityName } from './types'
 export type {
   WebPageOperation,
+  BrowserObserverFrame,
+  BrowserObserverSession,
   DaemonToNodeMessage,
   NodeToDaemonMessage,
   CapabilityTransportMessage,
@@ -245,6 +247,7 @@ export type {
   PackageTrustLevel,
   PackageContributionKind,
   PackageContribution,
+  PackageWebUiDefinition,
   PackageCapabilityRequirement,
   PackageSignature,
   PackageManifest,

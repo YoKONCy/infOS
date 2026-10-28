@@ -1,4 +1,7 @@
 {
+  "插件界面操作失败：{0}": "Plugin UI action failed: {0}",
+  "插件界面已关闭或不可用，请重新打开。": "The plugin UI is closed or unavailable. Please open it again.",
+  "插件操作未完成，请重试或查看插件诊断。": "The plugin action did not complete. Retry or check the plugin diagnostics.",
   "当前处于拓展恢复模式，请在资源版本页恢复拓展并重启。": "Extension recovery mode is active. Resume extensions from Resource versions and restart.",
   "插件记录无法读取，请检查数据目录中的安装记录。": "Could not read plugin records. Check the installation index in the data directory.",
   "插件操作失败，请检查插件包与授权状态。": "Plugin operation failed. Check the package and authorization.",

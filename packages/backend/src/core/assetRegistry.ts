@@ -89,6 +89,11 @@ export class AssetRegistry {
     this.scanDir(this.pathResolver.resolve('@app/backend/src/services/mdp/prompts'), 'official')
     this.scanDir(this.pathResolver.resolve('@app/backend/src/tools'), 'official')
     this.scanDir(this.pathResolver.resolve('@app/backend/src/skills'), 'official')
+    const resourcesRoot = process.env.INFOS_RESOURCES_ROOT
+    const modelsRoot = resourcesRoot
+      ? path.join(resourcesRoot, 'assets', '3d')
+      : path.resolve(this.pathResolver.resolve('@app'), '..', 'public', 'assets', '3d')
+    this.scanDir(modelsRoot, 'official')
 
     // 2. Workshop — 每个订阅物品都是独立根，支持 item 根和常见分类子目录。
     for (const workshopRoot of this.pathResolver.getRoots('@workshop')) {
@@ -100,6 +105,7 @@ export class AssetRegistry {
     this.scanDir(this.pathResolver.resolve('@data/agents'), 'local')
     this.scanDir(this.pathResolver.resolve('@data/packages'), 'local')
     this.scanDir(this.pathResolver.resolve('@data/skills'), 'local')
+    this.scanDir(this.pathResolver.resolve('@data/models'), 'local')
 
     this.scanned = true
     logger.success(__t('logs.core', '资产扫描完成，共索引 {0} 个资产', [this.assets.size]))

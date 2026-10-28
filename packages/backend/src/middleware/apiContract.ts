@@ -9,6 +9,7 @@ const responseCodes = new Set(Object.keys(CODE_MESSAGES))
 /** REST响应契约守卫：补齐默认中文消息，并阻止未注册业务码离开后端。 */
 export const apiContractMiddleware: MiddlewareHandler = async (c, next) => {
   await next()
+  if (c.res.headers.get('X-InfOS-Package-Asset') === '1') return
   if (!c.req.path.startsWith('/api/') || !c.res.headers.get('content-type')?.includes('json'))
     return
   const body = (await c.res

@@ -10,11 +10,15 @@ import { AppError } from '../lib/appError'
 import { t } from '../lib/i18n'
 import type { PackageAssets } from '../packages/packageAssets'
 import { errorHandler } from '../middleware/errorHandler'
+import type { PackageWebUi, PackageWebUiOwner } from '../packages/packageWebUi'
+import { createPackageWebUiRouter } from './packageWebUi.router'
 
 export function createPackagesRouter(
   manager: PackageManagementService,
   ui: PackageUiRegistry,
   assets: PackageAssets,
+  webUi?: PackageWebUi,
+  identify?: (request: Request) => PackageWebUiOwner | undefined,
 ): Hono {
   const router = new Hono()
   router.onError((error, c) => {
@@ -40,13 +44,22 @@ export function createPackagesRouter(
                   ? '插件包无效，或含有不允许的路径和配置。'
                   : '插件操作失败，请检查插件包与授权状态。'
     return errorHandler(
-      new AppError('INVALID_PARAMETER', {
-        message: t('server.packages', message),
-        data: { reason },
-      }),
+      new AppError(
+        ['PACKAGE_WEB_UI_UNAVAILABLE', 'PACKAGE_WEB_UI_FILE_UNAVAILABLE'].includes(reason)
+          ? 'NOT_FOUND'
+          : 'INVALID_PARAMETER',
+        {
+          message: t(
+            'server.packages',
+            reason.startsWith('PACKAGE_WEB_UI_') ? '插件界面已关闭或不可用，请重新打开。' : message,
+          ),
+          data: { reason },
+        },
+      ),
       c,
     )
   })
+  if (webUi && identify) router.route('/web-ui', createPackageWebUiRouter(webUi, identify))
   router.get('/', (c) => c.json({ code: 'OK', data: manager.list() }))
   router.get('/assets/:id', async (c) => {
     const file = c.req.query('file')

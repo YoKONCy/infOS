@@ -2,7 +2,7 @@
   "id": "social",
   "name": "Social Bridge",
   "description": "对外社交平台桥接应用（QQ/Discord 等），管理社交会话、缓冲、调度与回复。独立编译上下文，不依赖主 Agent 的 chat pipeline。",
-  "version": "0.9.7",
+  "version": "0.9.8",
   "author": "infOS",
   "icon": "icon.png",
   "frontendEntry": "./frontend/index.js",

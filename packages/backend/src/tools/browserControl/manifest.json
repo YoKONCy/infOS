@@ -91,6 +91,10 @@
       "parameters": {
         "type": "object",
         "properties": {
+          "preview": {
+            "type": "boolean",
+            "description": "可选：true 请求展开只读旁观小窗，false 保持后台。小窗不改变真实浏览器视口；用户手动收起后不会被反复展开。"
+          },
           "url": {
             "type": "string",
             "description": "网站网址，或工作区 HTML 路径，例如 index.html、workspace:demo/index.html；也支持 attachment: 引用。"
@@ -181,7 +185,11 @@
           "safeSearch": { "type": "string", "enum": ["strict", "moderate", "off"] },
           "maxResults": { "type": "number", "description": "最大结果数，1-30" },
           "timeRange": { "type": "string", "description": "搜索时间范围参数" },
-          "bypassCache": { "type": "boolean", "description": "是否绕过短期缓存" }
+          "bypassCache": { "type": "boolean", "description": "是否绕过短期缓存" },
+          "preview": {
+            "type": "boolean",
+            "description": "可选：true 请求展开只读旁观小窗，false 保持后台。"
+          }
         }
       }
     },
@@ -417,7 +425,15 @@
     {
       "name": "browser_status",
       "description": "读取 Electron Browser Runtime、隔离 Profile 和标签页状态。",
-      "parameters": { "type": "object", "properties": {} }
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "preview": {
+            "type": "boolean",
+            "description": "可选：true 请求展开只读旁观小窗，false 收起；不改变浏览器和任务状态。"
+          }
+        }
+      }
     }
   ]
 }

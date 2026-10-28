@@ -2,7 +2,7 @@
 
 > **适用范围**：`packages/backend/src/packages/`、`packages/shared/src/types/package.types.ts`
 > **状态**：内置贡献与显式授权的用户插件共存；安装、授权、激活相互独立
-> **最后更新**：2026-10-24
+> **最后更新**：2026-10-28
 
 ---
 
@@ -62,6 +62,7 @@ Skill Resource
 Policy
 Event Subscriber
 Presenter
+Web UI
 Asset
 Schema / Migration
 ```
@@ -74,7 +75,7 @@ Manifest 只描述静态意图，不保存运行实例、连接、Handle、进�
 
 1. 用户上传包使用 `trust: user | generated`；`signed` 还须通过现有 Publisher 与文件签名验证。上传包或用户扫描目录不能靠声明 `official` 冒充内置来源。
 2. 用户确认版本、内容摘要与申请权限后，执行型贡献才能获得 `runtime:execute` Grant。更新、回退、本地修改均须重新审核；启用状态跨进程重启保留。
-3. 当前已接通 `tool`、`skill`、`event-subscriber`、`service`、`capability-provider`、`context-provider`、`agent-flow`、`presenter`、`asset`。
+3. 当前已接通 `tool`、`skill`、`event-subscriber`、`service`、`capability-provider`、`context-provider`、`agent-flow`、`presenter`、`web-ui`、`asset`。
 4. `runtime-adapter`、`application`、`policy` 仍通过原有受控入口接入；上传包直接声明这些 Kind 会激活失败，不能冒充已实现。
 5. `runtime:execute` 是明确的本机代码信任授权，不是 OS 沙箱。Node 插件具有服务进程的实际权限；其他 Permission 声明不能被宣传成隔离 Node 内置模块的安全机制。普通 Agent 工具调用仍经过 CapabilityGate、Realm、执行模式和审批。
 6. Service Process 由现有 Supervisor 管理。进程分离用于生命周期管理，不表示操作系统权限隔离；没有 Capability Binding 的 Requirement 仍不能视为已授权。
@@ -301,6 +302,29 @@ Electron 标准版、便携版和 Docker 都通过 PathResolver 使用各自的�
 | UI 插槽与动作 | `GET /api/packages/panels/:slot` / `POST /api/packages/panel-actions` |
 | 已激活静态资源 | `GET /api/packages/assets/:编码后的 packageId/contributionId?file=相对路径` |
 
+### 10.1 拓展 Tab 的统一管理投影
+
+工作台的「工具与扩展 → 已安装」通过 `GET /api/integrations/installed` 汇总当前业务服务端的插件、Skill、角色包、已登记桌宠模型、MCP 服务与拓展功能。`extensionInventory.ts` 只投影各管理器的数据，不持有安装记录、不新增资源生命周期，也不读取客户端的文件系统。
+
+数据权威与管理去向：
+
+| 分类 | 权威来源 | 操作入口 |
+| --- | --- | --- |
+| 插件与内置扩展 | PackageRegistry、PackageManagementService、IntegrationService | 用户插件进入对应插件卡片；内置扩展进入对应配置卡片 |
+| Skill | SkillLoader 的有效清单、ToolRegistry 的实际工具集合 | 独立 Skill 进入技能管理；插件内 Skill 进入所属插件管理 |
+| 角色包 | AgentManager 的有效角色与其配置元数据 | 进入指定角色档案；插件内资源归所属插件管理 |
+| 桌宠模型 | AssetRegistry 的服务端元数据索引 | 展示资源信息；插件管理的资源进入所属插件。已发现不表示客户端已加载 |
+| MCP | MCP 配置与实时连接状态 | 展开指定服务的现有管理面板 |
+| 联网搜索、PDF 解析 | IntegrationService | 进入对应来源配置 |
+
+所有操作继续走原有启停、授权、导入、回退与卸载接口。统一列表不提供绕过领域约束的文件删除功能。插件所属关系按真实注册的包根目录与资源路径边界确定，不使用字符串前缀匹配；来源按宿主登记的路径与安装记录确定，不采信资源自行声明的 `source` 或信任等级。
+
+列表提供分类、来源、状态筛选和名称、标识、作者搜索。仅展示明确声明的版本和环境要求，不为缺失版本补 `1.0.0`，不把声明要求当作已验证兼容性。Skill 的缺失依赖由已加载的技能和工具判断；不为列表额外扫描脚本或加载技能正文。角色仅投影必要元数据，不返回提示词、私密配置或社交账号绑定；MCP 不返回命令、环境变量或连接凭证。
+
+各分类独立读取，一类失败通过 `unavailable` 返回，其余分类仍可使用；前端明确标识读取失败，避免把错误显示成空列表。用户刷新会调用已有 `POST /api/assets/rescan` 更新模型索引；普通进入页面只读取已登记状态。离开管理面板后重新读取列表，保留当前筛选条件。此入口不查询市场更新，也不执行工坊订阅。
+
+AssetRegistry 补充扫描服务端 `@data/models`，打包模式读取 `INFOS_RESOURCES_ROOT/assets/3d`，源码模式读取项目 `public/assets/3d`。未部署在服务端的模型不会因为客户端存在同名文件而显示为已安装。
+
 ## 11. 编写贡献与扩展点
 
 最小工具包清单：
@@ -344,6 +368,7 @@ export function createContribution(host) {
 | `agent-flow` | `hooks`；Agent 开始、结束、模型请求前后及工具执行前后 |
 | `context-provider` | `provide(request)` 返回 ContextRegion 数组；宿主强制外部信任、可选、命名空间 ID，统一 Token 预算与过期处理 |
 | `presenter` | `panel`、可选 `onAction(actionId)`；声明式卡片、字段与按钮 |
+| `web-ui` | `webUi` 声明静态页面；可选 `entry` 导出本贡献的 `actions`，通过隔离页面桥交互 |
 | `asset` | `entry` 指向资源目录；只在激活期间开放白名单 MIME 与受限读取 |
 | `capability-provider` | `definition`、`offer`、`invoke`；复用现有 CapabilityDirectory |
 | `service` | `entry` 由既有进程 Supervisor 启动、停用和回收 |
@@ -354,6 +379,99 @@ export function createContribution(host) {
 
 普通异步钩子和上下文扩展有超时与失败隔离；钩子 `context.abort()` 只停止本次钩子链传播，不代替取消 Agent Execution。纯同步死循环等任意原生代码行为不在这个逻辑超时边界内，必须通过插件代码信任授权处理。
 
-UI 命名区域为 `dashboard.overview`、`chat.header`、`chat.footer`、`integrations`。前端使用实际 PCard/PButton 与主题变量，包含自定义背景的半透明承托；不执行插件 HTML、CSS 或 Vue 源码。插件自定义文字属于插件内容。停用立即撤销面板动作路由、工具、Hook、Context Provider 与资源注册；用户页面下次激活或定时刷新后同步撤下卡片。
+声明式 UI 命名区域为 `dashboard.overview`、`chat.header`、`chat.footer`、`integrations`，由 PCard/PButton 渲染，不执行插件 HTML/CSS。完整页面使用下述 `web-ui` 贡献，在独立 iframe 中运行；插件自定义文字属于插件内容。停用立即撤销面板动作、页面会话、工具、Hook、Context Provider 与资源注册；前端在后续状态同步时撤下对应内容。
 
 当前贡献工厂不动态开放 `application`、内核 `policy` 或底层 `runtime-adapter`；这些能力遵循各自的 Realm、Principal 和 Capability 契约。
+
+## 12. 完整 WebUI
+
+### 声明与入口
+
+一个 Package 可以同时贡献多个工具、轻量面板与多个完整页面。入口位于“工具与扩展 → 插件”的相应插件卡片，只有激活状态可打开；页面在现有拓展 Tab 内显示，不增加全局导航。静态文件与后端模块都来自当前连接后端的同一个安装版本，适用于本机 Electron、远程 Electron 与 Docker/Web。
+
+```json
+{
+  "manifestVersion": 2,
+  "packageId": "example.preferences",
+  "name": "偏好示例",
+  "version": "1.0.0",
+  "trust": "user",
+  "contributions": [
+    {
+      "id": "preferences",
+      "kind": "web-ui",
+      "entry": "preferences.mjs",
+      "webUi": {
+        "root": "web",
+        "index": "index.html",
+        "title": "偏好设置",
+        "actions": ["load", "save"]
+      }
+    }
+  ]
+}
+```
+
+`webUi.root` 是包内静态根，`index` 默认 `index.html`，HTML 使用 UTF-8 且有显式 `<head>`。Vue、React 等由作者预先构建为静态资源，使用相对资源地址，例如 Vite `base: './'`；页面内路由使用 Hash 路由。纯静态界面可以省略 `entry` 和 `actions`。带后端入口的贡献沿用 `runtime:execute` 代码信任授权，安装与上传不执行模块；完整页面不开放 Application 的自治运行时入口。
+
+### 后端模块与页面 SDK
+
+后端入口导出 `actions` 或 `createContribution(host)`；只接受清单列出的动作。它是本贡献的交互模块，不是任意 `serviceId + method` 路由。跨 Package 或 Application 协作仍使用原有 Capability/Bound Port 契约。模块可以通过 `host.dataDirectory` 保存插件数据，模块自身权限仍按 Node 代码信任约定处理。
+
+```js
+export function createContribution(host) {
+  let draft = { text: '' }
+  return {
+    actions: {
+      load() { return draft },
+      async save(input, context) {
+        context.signal.throwIfAborted()
+        if (typeof input?.text !== 'string' || input.text.length > 1000)
+          throw new Error('输入内容无效')
+        context.report({ stage: 'saving' })
+        draft = { text: input.text }
+        // 本示例仅保存内存草稿；持久数据应写入 host.dataDirectory。
+        return draft
+      }
+    }
+  }
+}
+```
+
+宿主在入口 HTML 的 `<head>` 前部注入 `window.infosPlugin`，其类型为 `PackageWebUiClient`：
+
+```js
+const unsubscribe = infosPlugin.onContext(({ theme, locale }) => {
+  // theme 为 light/dark；页面自行根据 locale 翻译自己的文案。
+})
+const controller = new AbortController()
+const result = await infosPlugin.call('save', { text: '你好' }, {
+  signal: controller.signal,
+  onProgress(value) { /* 更新页面进度。 */ }
+})
+unsubscribe()
+```
+
+动作输入、进度和返回值使用 JSON。`call` 经宿主鉴权发送一次 POST，以 SSE 返回进度和最终结果；断流不重发写操作。动作持有备份写入计数直到结束，避免 SSE 响应头返回后快照与动作文件写入交错。`context.clientId` 来自已验证的客户端身份，`context.signal` 关联页面关闭、身份撤销、停用与截止时间；处理器需在耗时操作中响应取消。取消不能撤销已经完成的写入。原始调用异常留在服务端诊断，页面收到本地化错误；SDK 本地协议异常以稳定的 `PACKAGE_WEB_UI_*` 标识报告。
+
+### 资源与生命周期
+
+| 接口 | 职责 |
+| --- | --- |
+| `POST /api/packages/web-ui/open` | 以当前客户端身份打开指定 `packageId`、`contributionId` |
+| `GET /api/packages/web-ui/sessions/:id` | 核对同一身份与激活实例，延长宿主心跳 |
+| `DELETE /api/packages/web-ui/sessions/:id` | 关闭页面会话并取消交互 |
+| `POST /api/packages/web-ui/sessions/:id/call` | 调用声明动作，通过 SSE 返回进度、结果或错误 |
+| `GET /api/packages/web-ui/files/:ticket/*` | 按只读票据提供静态文件，不接受业务调用 |
+
+插件页面使用 SDK，以上会话 API 由 infOS 前端持有；会话 ID 不作为免鉴权业务凭据。
+
+- iframe 仅使用 `sandbox="allow-scripts"`，不开放同源权限、Electron API 或宿主凭据。宿主按窗口来源、opaque origin 与随机通道校验消息；页面只获得所属贡献的桥。
+- 静态票据只能读取激活时登记并核对摘要的文件。模块脚本和 CSS 正确返回 MIME 与 CORS 头；JSON 文件不被当作 REST 信封改写。资源路径同时校验词法边界、真实路径和文件摘要。
+- 页面 CSP 允许脚本、样式、图片、字体及读取当前票据目录内的资源，业务网络交互通过页面桥；不开放直接访问宿主业务 API、任意外网、子框架、表单提交或 Worker。iframe 存储为隔离来源，持久配置应由后端动作管理。
+- 资源票据与业务会话分离；业务调用还要求创建会话时的同一客户端身份与凭据。凭据不注入 HTML、SDK 或资源 URL。角色身份与 Agent 权限不会因打开页面自动授予。
+- 每页最多八个在途动作，动作限时 60 秒；输入及最终结果上限 256 KiB，每次动作最多 128 个进度事件、每个 8 KiB。静态单文件最大 16 MiB，资源扫描有文件数量、总大小和目录深度边界；安装包仍受既有 20 MiB ZIP / 64 MiB 解包限制。
+- 页面会话五分钟无宿主心跳失效；前端每十五秒确认状态。停用、重载、更新、回退、卸载或撤销身份会取消旧会话与在途动作。旧清理函数不撤销新激活实例；后端重启后页面需重新打开。
+- Docker 的 `/api/` 使用 `^~` 前缀路由，静态扩展名正则不截获页面资源。其他反向代理也应保留外部 Host，并让 `/api/packages/web-ui/` 透传资源与 SSE，不缓存票据响应。
+
+源码入口：后端 `packages/packageWebUi.ts`、`packageWebUiBootstrap.ts` 和 `routers/packageWebUi.router.ts`；前端 `integrations/PackageWebUiPane.vue` 与 `api/modules/packageWebUiApi.ts`。隔离语义参考 [HTML iframe 规范](https://html.spec.whatwg.org/multipage/iframe-embed-object.html#attr-iframe-sandbox) 与 [CSP sandbox](https://developer.mozilla.org/en-US/docs/Web/HTTP/Reference/Headers/Content-Security-Policy/sandbox)。

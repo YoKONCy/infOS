@@ -3,6 +3,7 @@ import { createRuntimeDebugRouter } from './routers/runtimeDebug.router'
 import { createResourceVersionsRouter } from './routers/resourceVersions.router'
 import { ResourceVersions } from '@infos/shared/resource-versions'
 import { createPackagesRouter } from './routers/packages.router'
+import { isPackageWebUiFileRequest } from './routers/packageWebUi.router'
 import { createAchievementsRouter } from './routers/achievements.router'
 import { createUserAvatarRouter } from './routers/userAvatar.router'
 import { createBackupRouter, isBackupDownloadRequest } from './routers/backup.router'
@@ -29,6 +30,7 @@ import { requestLogger } from './middleware/requestLogger'
 import { createAuthMiddleware, DEFAULT_PUBLIC_PATHS } from './middleware/auth'
 import { HtmlPreviewService } from './services/attachment/htmlPreviewService'
 import { createHtmlPreviewRouter } from './routers/htmlPreview.router'
+import { createBrowserObserverRouter } from './routers/browserObserver.router'
 import { createHealthRouter } from './routers/health.router'
 import { createMetricsRouter } from './routers/metrics.router'
 import { createIntegrationsRouter } from './routers/integrations.router'
@@ -103,6 +105,7 @@ export function createApp(ctx: AppContext) {
         path === '/api/client-access' ||
         path.startsWith('/api/client-access/') ||
         isBackupDownloadRequest(c.req.method, path) ||
+        isPackageWebUiFileRequest(c.req.method, path) ||
         (!path.startsWith('/api/') && !path.startsWith('/ws') && path !== '/metrics')
       const identity = publicPath ? undefined : ctx.clientAccess.authenticate(c.req.raw)
       if (!publicPath && !identity)
@@ -176,7 +179,10 @@ export function createApp(ctx: AppContext) {
       ],
     })
     app.use('*', (c, next) =>
-      isBackupDownloadRequest(c.req.method, c.req.path) ? next() : legacyAuth(c, next),
+      isBackupDownloadRequest(c.req.method, c.req.path) ||
+      isPackageWebUiFileRequest(c.req.method, c.req.path)
+        ? next()
+        : legacyAuth(c, next),
     )
   }
 
@@ -229,6 +235,7 @@ export function createApp(ctx: AppContext) {
     new HtmlPreviewService(ctx.resourceService, ctx.attachmentService, ctx.threadService)
   app.route('/html-previews', createHtmlPreviewRouter(htmlPreviews))
   app.route('/api/attachments', createAttachmentRouter(ctx, htmlPreviews))
+  app.route('/api/browser-observer', createBrowserObserverRouter(ctx))
   app.route('/api/memories', createMemoryRouter(ctx))
   app.route('/api/knowledge', createKnowledgeRouter(ctx))
   app.route('/api/configs', createConfigRouter(ctx))
@@ -239,7 +246,13 @@ export function createApp(ctx: AppContext) {
   app.route('/api/integrations', createIntegrationsRouter(ctx))
   app.route(
     '/api/packages',
-    createPackagesRouter(ctx.packageManagement, ctx.packageUi, ctx.packageAssets),
+    createPackagesRouter(
+      ctx.packageManagement,
+      ctx.packageUi,
+      ctx.packageAssets,
+      ctx.packageWebUi,
+      (request) => ctx.clientAccess?.authenticate(request),
+    ),
   )
   app.route('/api/distributed', createDistributedRouter(ctx))
   if (ctx.backupService) app.route('/api/backups', createBackupRouter(ctx.backupService))

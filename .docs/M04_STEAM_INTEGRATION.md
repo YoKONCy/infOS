@@ -1,6 +1,6 @@
 # Steam 集成与资产联邦化规范
 
-> **版本**：0.9.7 · **更新时间**：2026-10-27
+> **版本**：0.9.8 · **更新时间**：2026-10-27
 > **适用范围**：`electron/main/services/steam*`、`packages/backend/src/core/`
 > **依赖规范**：[A04_DEPLOYMENT](./A04_DEPLOYMENT.md)、[A02_BACKEND_ARCHITECTURE](./A02_BACKEND_ARCHITECTURE.md)
 

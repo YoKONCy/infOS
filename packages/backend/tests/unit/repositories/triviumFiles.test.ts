@@ -81,7 +81,7 @@ describe('TriviumDB 文件组与升级副本', () => {
     expect(readFileSync(path.join(backup, 'memory.tdb.publish.8'), 'utf8')).toBe('图索引恢复副本')
     expect(existsSync(path.join(backup, 'memory.tdb.vec.tmp'))).toBe(false)
     expect(JSON.parse(readFileSync(path.join(backup, 'backup.json'), 'utf8'))).toMatchObject({
-      targetVersion: '0.9.0-beta.2',
+      targetVersion: '0.9.0-beta.3',
       format: 7,
       source: path.join('agent_pero', 'memory.tdb'),
     })

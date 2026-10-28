@@ -1,13 +1,14 @@
 <script setup lang="ts">
 import { t as __t } from '../../i18n/index'
 
-import { ref } from 'vue'
+import { computed, ref } from 'vue'
 import type { ExtensionToolId } from '@infos/shared'
 import { PCard, PButton, PDialog, PInput, PInputNumber, PSwitch } from '../pixel'
 import IntegrationBrand from './IntegrationBrand.vue'
 import { useIntegrations } from '../../composables/tools/useIntegrations'
 
 const { state, busy, updateExtension } = useIntegrations()
+const props = defineProps<{ packageId?: string }>()
 const extensions: Array<{
   id: ExtensionToolId
   name: string
@@ -34,6 +35,11 @@ const extensions: Array<{
     url: 'https://sciverse.space',
   },
 ]
+const visibleExtensions = computed(() =>
+  props.packageId
+    ? extensions.filter((item) => props.packageId === `infos.extension.${item.id}`)
+    : extensions,
+)
 const selected = ref<ExtensionToolId | null>(null)
 const dialog = ref(false)
 const form = ref({
@@ -70,7 +76,7 @@ async function save(): Promise<void> {
     </div>
     <div class="integration-grid">
       <PCard
-        v-for="extension in extensions"
+        v-for="extension in visibleExtensions"
         :key="extension.id"
         pixel
         padding="lg"

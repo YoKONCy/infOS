@@ -14,7 +14,7 @@ export function createHealthRouter(logQuery?: LogQueryService) {
       message: __t('server.routers', '成功'),
       data: {
         status: 'ok',
-        version: '0.9.7',
+        version: '0.9.8',
         uptime: Math.round(uptime),
         uptimeHuman: formatUptime(uptime),
         port: SERVER_PORT,

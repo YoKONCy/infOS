@@ -9,6 +9,11 @@ const context = {
   threadId: 'thread-1',
   channel: 'desktop',
 }
+const desktopScope = {
+  profileId: 'desktop',
+  sessionId: '["thread-1",null]',
+  principalId: 'pero',
+}
 
 describe('Browser Tool ABI', () => {
   it('账号范围由可信工具现场覆盖，模型不能切换其他账号的浏览器', async () => {
@@ -35,7 +40,10 @@ describe('Browser Tool ABI', () => {
       undefined,
     )
     await open.handler({ url: 'example.com', __browserScope: { profileId: 'foreign' } }, context)
-    expect(invoke.mock.calls.at(-1)![1]).toEqual({ url: 'https://example.com' })
+    expect(invoke.mock.calls.at(-1)![1]).toEqual({
+      url: 'https://example.com',
+      __browserScope: desktopScope,
+    })
   })
   it('等待工具将取消信号交给能力端，取消观察不会继续打开网页', async () => {
     const parent = new AbortController()
@@ -52,7 +60,12 @@ describe('Browser Tool ABI', () => {
       open.handler({ url: 'example.com' }, { ...context, signal: parent.signal }),
     ).rejects.toThrow('父任务已停止')
     expect(invoke).toHaveBeenCalledTimes(1)
-    expect(invoke.mock.calls[0]).toEqual(['inspect', {}, expect.any(Object), parent.signal])
+    expect(invoke.mock.calls[0]).toEqual([
+      'inspect',
+      { __browserScope: desktopScope },
+      expect.any(Object),
+      parent.signal,
+    ])
   })
 
   it('应通过 Bound Port 调用并发布观察结果', async () => {
@@ -66,7 +79,7 @@ describe('Browser Tool ABI', () => {
     const result = await open.handler({ url: 'example.com' }, context)
     expect(invoke).toHaveBeenCalledWith(
       'open',
-      { url: 'https://example.com' },
+      { url: 'https://example.com', __browserScope: desktopScope },
       expect.objectContaining({ principalId: 'pero' }),
       undefined,
     )
@@ -106,6 +119,7 @@ describe('Browser Tool ABI', () => {
       'screenshot',
       {
         ...input,
+        __browserScope: desktopScope,
         __screenshotCaller: JSON.stringify(['pero', context.threadId]),
       },
       expect.any(Object),
@@ -133,6 +147,7 @@ describe('Browser Tool ABI', () => {
         target: undefined,
         handle: undefined,
         allowOccluded: false,
+        __browserScope: desktopScope,
         __screenshotCaller: JSON.stringify(['pero', context.threadId]),
       },
       expect.objectContaining({ principalId: 'pero' }),

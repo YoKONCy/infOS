@@ -201,8 +201,10 @@ export class PackageSecurityAuthority {
   }
 
   private assertIsolatedContributions(manifest: PackageManifest): void {
-    const forbidden = manifest.contributions.find((contribution) =>
-      ['tool', 'policy', 'event-subscriber', 'runtime-adapter'].includes(contribution.kind),
+    const forbidden = manifest.contributions.find(
+      (contribution) =>
+        ['tool', 'policy', 'event-subscriber', 'runtime-adapter'].includes(contribution.kind) ||
+        (contribution.kind === 'web-ui' && !!contribution.entry),
     )
     if (forbidden) throw new Error(`PACKAGE_ISOLATION_REQUIRED: ${forbidden.kind}`)
     const service = manifest.contributions.find(

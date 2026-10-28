@@ -17,10 +17,18 @@ import McpPanel from './McpPanel.vue'
 import SkillPanel from './SkillPanel.vue'
 
 const ctx = useDashboardContext()
-const props = withDefaults(defineProps<{ embedded?: boolean; section?: 'mcp' | 'skill' }>(), {
-  embedded: false,
-  section: undefined,
-})
+const props = withDefaults(
+  defineProps<{
+    embedded?: boolean
+    section?: 'mcp' | 'skill'
+    initialResourceId?: string
+  }>(),
+  {
+    embedded: false,
+    section: undefined,
+    initialResourceId: '',
+  },
+)
 
 const {
   currentSubTab,
@@ -59,6 +67,23 @@ watch(
   () => props.section,
   (value) => {
     if (value) currentSubTab.value = value
+  },
+  { immediate: true },
+)
+
+let focusedResource = ''
+watch(
+  [() => props.initialResourceId, () => props.section, skills, servers],
+  ([id, section]) => {
+    if (!id || focusedResource === `${section}:${id}`) return
+    if (section === 'skill' && skills.value.some((item) => item.id === id)) {
+      focusedResource = `${section}:${id}`
+      void toggleSkillExpand(id)
+    }
+    if (section === 'mcp' && servers.value.some((item) => String(item.id) === id)) {
+      focusedResource = `${section}:${id}`
+      toggleExpand(Number(id))
+    }
   },
   { immediate: true },
 )

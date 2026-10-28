@@ -11,7 +11,7 @@
         <span class="title-chip">✦ BLUEPRINT ✦</span>
         <span class="title-text">infOS-TS 全栈智能体操作系统架构拓扑</span>
       </div>
-      <div class="header-badge">v0.9.7</div>
+      <div class="header-badge">v0.9.8</div>
     </div>
 
     <!-- 架构主舞台 -->

@@ -1,4 +1,9 @@
-import type { ContextRegion, ContextRegionRequest, PackagePanel } from '@infos/shared'
+import type {
+  ContextRegion,
+  ContextRegionRequest,
+  PackagePanel,
+  PackageWebUiModule,
+} from '@infos/shared'
 import type { ContextRegionRegistry } from '../services/context/contextRegionRuntime'
 import type { PackageRuntime } from './packageRuntime'
 import type { PackageHookBus } from './packageHookBus'
@@ -7,6 +12,7 @@ import type { PackageInterceptEvent, PackageInterceptor } from './packageInterce
 import { loadPackageModule } from './packageModule'
 import type { PackageAssets } from './packageAssets'
 import { packagePath } from './packageFiles'
+import type { PackageWebUi } from './packageWebUi'
 
 export function registerExtensionActivators(input: {
   runtime: PackageRuntime
@@ -14,7 +20,16 @@ export function registerExtensionActivators(input: {
   hooks: PackageHookBus
   ui: PackageUiRegistry
   assets: PackageAssets
+  webUi?: PackageWebUi
 }): void {
+  if (input.webUi) {
+    input.runtime.registerActivator('web-ui', async (context) => {
+      const module = context.contribution.entry
+        ? await loadPackageModule<PackageWebUiModule>(context)
+        : undefined
+      return input.webUi!.register(context, module)
+    })
+  }
   input.runtime.registerActivator('asset', (context) => {
     if (!context.rootDir || !context.contribution.entry) throw new Error('PACKAGE_ENTRY_REQUIRED')
     return input.assets.register(

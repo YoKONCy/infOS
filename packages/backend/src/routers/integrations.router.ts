@@ -4,11 +4,18 @@ import { z } from 'zod'
 import type { AppContext } from '../container'
 import { validate as zValidator } from '../lib/validation'
 import { sourceInputSchema } from '../services/integrations/integrationService'
+import { readExtensionInventory } from '../services/integrations/extensionInventory'
 
 export function createIntegrationsRouter(ctx: AppContext) {
   const router = new Hono()
   const extensionId = z.enum(['deepwiki', 'sciverse'])
   const featureId = z.enum(['search', 'pdf'])
+  router.get('/installed', async (c) =>
+    c.json({
+      code: 'OK',
+      data: await readExtensionInventory(ctx),
+    }),
+  )
   router.get('/', (c) =>
     c.json({
       code: 'OK',

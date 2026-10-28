@@ -97,6 +97,7 @@ export function validatePackageManifest(manifest: PackageManifest): void {
         'policy',
         'event-subscriber',
         'presenter',
+        'web-ui',
         'asset',
         'context-provider',
         'agent-flow',
@@ -108,6 +109,29 @@ export function validatePackageManifest(manifest: PackageManifest): void {
       throw new Error(`Package Contribution ID 重复或为空: ${contribution.id}`)
     }
     ids.add(contribution.id)
+    if (contribution.kind === 'web-ui') {
+      const ui = contribution.webUi
+      if (
+        typeof contribution.id !== 'string' ||
+        contribution.id.length > 160 ||
+        !ui ||
+        typeof ui.root !== 'string' ||
+        !ui.root ||
+        ui.root.length > 240 ||
+        (ui.index !== undefined && (typeof ui.index !== 'string' || !ui.index.endsWith('.html'))) ||
+        (ui.title !== undefined &&
+          (typeof ui.title !== 'string' || !ui.title.trim() || ui.title.length > 200)) ||
+        (ui.actions !== undefined &&
+          (!Array.isArray(ui.actions) ||
+            ui.actions.length > 32 ||
+            ui.actions.some(
+              (action) => typeof action !== 'string' || !/^[a-z][a-z0-9._-]{0,63}$/i.test(action),
+            ) ||
+            new Set(ui.actions).size !== ui.actions.length)) ||
+        ((ui.actions?.length ?? 0) > 0 && !contribution.entry)
+      )
+        throw new Error('PACKAGE_MANIFEST_INVALID')
+    }
     if (
       ['capability-provider', 'runtime-adapter'].includes(contribution.kind) &&
       (!contribution.capabilityType || !contribution.contractVersion)

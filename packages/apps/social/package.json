@@ -1,6 +1,6 @@
 {
   "name": "@infos/social",
-  "version": "0.9.7",
+  "version": "0.9.8",
   "private": true,
   "type": "module",
   "scripts": {
@@ -15,7 +15,7 @@
     "hono": "^4.7.0",
     "omggif": "1.0.10",
     "pngjs": "7.0.0",
-    "triviumdb": "0.9.0-beta.2",
+    "triviumdb": "0.9.0-beta.3",
     "uuid": "^14.0.0"
   },
   "devDependencies": {

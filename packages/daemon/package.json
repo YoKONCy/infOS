@@ -1,6 +1,6 @@
 {
   "name": "@infos/daemon",
-  "version": "0.9.7",
+  "version": "0.9.8",
   "private": true,
   "type": "module",
   "description": "infOS Daemon — 独立后端进程入口，不依赖 Electron",

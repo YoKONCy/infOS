@@ -47,6 +47,7 @@ export type PackageContributionKind =
   | 'policy'
   | 'event-subscriber'
   | 'presenter'
+  | 'web-ui'
   | 'asset'
   | 'context-provider'
   | 'agent-flow'
@@ -59,6 +60,15 @@ export interface PackageContribution {
   contractVersion?: string
   operations?: string[]
   metadata?: Record<string, unknown>
+  /** 完整页面的静态根与显式交互；entry 可指向本贡献的后端模块。 */
+  webUi?: PackageWebUiDefinition
+}
+
+export interface PackageWebUiDefinition {
+  root: string
+  index?: string
+  title?: string
+  actions?: string[]
 }
 
 export interface PackageCapabilityRequirement {

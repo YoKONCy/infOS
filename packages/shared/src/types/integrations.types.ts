@@ -1,5 +1,46 @@
 export type ExtensionToolId = 'deepwiki' | 'sciverse'
 export type IntegrationFeature = 'search' | 'pdf'
+
+/** 已安装拓展的只读投影；操作仍由各领域的管理接口执行。 */
+export type InstalledExtensionKind = 'package' | 'skill' | 'persona' | 'model' | 'mcp' | 'feature'
+export type InstalledExtensionSource = 'official' | 'local' | 'workshop'
+export type InstalledExtensionState =
+  | 'ready'
+  | 'available'
+  | 'disabled'
+  | 'starting'
+  | 'failed'
+  | 'needs-authorization'
+  | 'needs-configuration'
+export type ExtensionManager = 'packages' | 'extensions' | 'features' | 'skills' | 'agents' | 'mcp'
+
+export interface InstalledExtension {
+  id: string
+  resourceId: string
+  name: string
+  description?: string
+  kind: InstalledExtensionKind
+  source: InstalledExtensionSource
+  state: InstalledExtensionState
+  version?: string
+  author?: string
+  location?: string
+  ownerPackageId?: string
+  manager?: ExtensionManager
+  managerId?: string
+  /** 仅展示声明的要求，不把未知兼容性当作已验证。 */
+  requirements: string[]
+  missingRequirements: string[]
+  contributions?: string[]
+  hasRollback?: boolean
+  metadataUnavailable?: boolean
+}
+
+export interface InstalledExtensionsView {
+  items: InstalledExtension[]
+  /** 某类数据读取失败时保留其他类别，并显式报告缺失。 */
+  unavailable: InstalledExtensionKind[]
+}
 export type IntegrationProvider =
   | 'tavily'
   | 'brave'

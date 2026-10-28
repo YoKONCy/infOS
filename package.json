@@ -2,7 +2,7 @@
   "name": "infos-ts",
   "productName": "萌动链接：PeroperoChat！",
   "private": true,
-  "version": "0.9.7",
+  "version": "0.9.8",
   "description": "infOS-TS — 萌动链接：PeroperoChat！的 TypeScript 全栈引擎",
   "main": "dist-electron/main/index.js",
   "author": "YoKONCy",
