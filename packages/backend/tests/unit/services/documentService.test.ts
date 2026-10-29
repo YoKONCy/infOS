@@ -187,6 +187,7 @@ describe('统一文档工具', () => {
     expect(read.markdown).toContain('带伞')
   })
 
+  // 包含真实 PDFKit 字体解码与 PDF.js 冷启动，Windows CI 下单独保留三十秒解析预算。
   it('PDFKit 产物能由客户端阅读器读回完整中文正文，无需 Electron', async () => {
     const result = (await service.execute(
       { action: 'export', format: 'pdf', content: '# 中文标题\n这里是中文正文。' },
@@ -216,7 +217,7 @@ describe('统一文档工具', () => {
       await loading.destroy()
     }
     expect(chromium.render).not.toHaveBeenCalled()
-  })
+  }, 30_000)
 
   it('取消后不发布任何文件，也不会悄悄切换到其他 PDF 引擎', async () => {
     const controller = new AbortController()
