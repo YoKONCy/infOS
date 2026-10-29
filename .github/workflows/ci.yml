@@ -76,7 +76,11 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        os: [ubuntu-latest, windows-2022]
+        include:
+          - os: ubuntu-latest
+            maxWorkers: 4
+          - os: windows-2022
+            maxWorkers: 2
     steps:
       - uses: actions/checkout@v6
 
@@ -90,7 +94,7 @@ jobs:
       - run: pnpm install --frozen-lockfile
 
       - name: Vitest
-        run: pnpm test:run --maxWorkers=4
+        run: pnpm test:run --maxWorkers=${{ matrix.maxWorkers }}
 
   # ── 阶段 3: 类型检查 + 构建验证 ──
   build:
