@@ -1,5 +1,6 @@
 import { createRequire } from 'node:module'
-import { describe, expect, it } from 'vitest'
+import fs from 'node:fs'
+import { describe, expect, it, vi } from 'vitest'
 const require = createRequire(import.meta.url)
 const {
   evaluateAudit,
@@ -126,5 +127,20 @@ describe('依赖回补审计边界', () => {
       evaluateAudit({ metadata: { vulnerabilities: { high: 1 } }, advisories: {} }),
     ).toThrow()
     expect(() => evaluateAudit(report({ ...advisory, severity: 'unknown' }))).toThrow()
+  })
+  it('拒绝无效报告时不读取本地锁文件，错误原因不会被磁盘异常覆盖', () => {
+    const read = vi.spyOn(fs, 'readFileSync').mockImplementation(() => {
+      throw new Error('本地锁文件暂不可读取')
+    })
+    try {
+      expect(() => evaluateAudit({ error: { code: 'REGISTRY_UNAVAILABLE' } })).toThrow(
+        'INVALID_DEPENDENCY_AUDIT_REPORT',
+      )
+      expect(() =>
+        evaluateAudit({ metadata: { vulnerabilities: {} }, advisories: { bad: {} } }),
+      ).toThrow('INVALID_DEPENDENCY_ADVISORY')
+    } finally {
+      read.mockRestore()
+    }
   })
 })

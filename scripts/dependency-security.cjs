@@ -66,11 +66,7 @@ function installedWorkspaceAuditArtifacts() {
   })
 }
 
-function evaluateAudit(
-  report,
-  verify = verifyBackport,
-  workspaceArtifact = installedWorkspaceAuditArtifacts(),
-) {
+function evaluateAudit(report, verify = verifyBackport, workspaceArtifact) {
   if (report.error || !report.metadata?.vulnerabilities || !report.advisories) {
     throw new Error('INVALID_DEPENDENCY_AUDIT_REPORT')
   }
@@ -93,6 +89,8 @@ function evaluateAudit(
     ) {
       throw new Error('INVALID_DEPENDENCY_ADVISORY')
     }
+    // 先拒绝无效报告和公告，再读取锁文件；一次报告只解析一次工作区依赖图。
+    workspaceArtifact ??= installedWorkspaceAuditArtifacts()
     const findings = advisory.findings.filter((finding) => {
       const workspace = workspaceArtifact(advisory.module_name, finding)
       if (!workspace) return true
