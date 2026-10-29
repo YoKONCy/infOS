@@ -375,11 +375,15 @@ export function useModelConfig() {
   const rerankerApiBase = ref('')
   const rerankerApiKey = ref('')
   const isSavingVector = ref(false)
+  const embeddingActivationRevision = ref(0)
   const embeddingActivationResult = ref<{
     status: 'success' | 'error'
     message: string
     durationMs?: number
   } | null>(null)
+  watch([embeddingModelId, embeddingDimension], () => {
+    embeddingActivationResult.value = null
+  })
 
   // ── 多模态转述配置 ──
   const relayEnabled = ref(false)
@@ -688,7 +692,7 @@ export function useModelConfig() {
         notify.toast(__t('ui.settings', '模型 "{0}" 已添加', [payload.name]), 'success')
       }
       isEditorOpen.value = false
-      await fetchModels()
+      await Promise.all([fetchModels(), fetchMainModel()])
       window.dispatchEvent(new CustomEvent('infos:model-capabilities-changed'))
     } catch (e) {
       error.value = (e as Error).message
@@ -920,14 +924,16 @@ export function useModelConfig() {
       })
       const result = response.data
       if (!result) throw new Error('后端未返回Embedding激活结果')
+      embeddingActivationRevision.value++
       embeddingActivationResult.value = {
         status: 'success',
         durationMs: result.durationMs,
         get message() {
-          return __t('ui.settings', '激活成功：{0} 维，调用耗时 {1} ms', [
-            result.dimension,
-            result.durationMs,
-          ])
+          return __t(
+            'ui.index-maintenance',
+            '激活成功：{0} 维，调用耗时 {1} ms。旧维度索引请重建后使用。',
+            [result.dimension, result.durationMs],
+          )
         },
       }
       notify.toast(embeddingActivationResult.value.message, 'success')
@@ -1098,6 +1104,7 @@ export function useModelConfig() {
     rerankerApiKey,
     isSavingVector,
     embeddingActivationResult,
+    embeddingActivationRevision,
     saveVectorConfig,
     // 向量远程模型列表
     remoteEmbeddingModels,

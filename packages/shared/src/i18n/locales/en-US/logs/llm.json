@@ -16,7 +16,6 @@
   "按ID加载模型配置失败 (id={0}): {1}": "failed to load model configuration by ID (id={0}): {1}",
   "模型 ID {0} 在数据库中不存在 (configKey={1})": "model ID {0} does not exist in the database (configKey={1})",
   "加载模型配置失败 (key={0}): {1}": "failed to load model configuration (key={0}): {1}\nThe connection of",
-  "模型「{0}」的连接尚未配置 API Key，请配置密钥或选择无需认证": "model \"{0}\" has not been configured with API Key. Please configure the key or select no authentication.",
   "提示词轨迹续接": "prompt word track continuation",
   "Anthropic {0} 失败": "Anthropic {0} failed",
   "Gemini {0} 失败": "Gemini {0} failed",

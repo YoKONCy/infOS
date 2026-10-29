@@ -15,7 +15,7 @@ class FakeAdapter extends AbstractSocialAdapter {
   disconnect = vi.fn(() => Promise.resolve())
   sendMessage = vi.fn(() => Promise.resolve())
   getStatus = vi.fn(() => Promise.resolve({ platform: 'napcat', connected: true, latencyMs: 0 }))
-  getConnectedAccountIds = vi.fn(() => [])
+  getConnectedAccountIds = vi.fn((): string[] => [])
   getContacts = vi.fn(() => Promise.resolve([]))
   getGroups = vi.fn(() => Promise.resolve([]))
   getContactInfo = vi.fn(() =>
@@ -107,6 +107,83 @@ function executeTurn(
 describe('SocialBridge 单 Agent 社交链路', () => {
   beforeEach(() => vi.useFakeTimers())
   afterEach(() => vi.useRealTimers())
+
+  it('启动先恢复低活跃，普通消息与时间不会唤醒，只有所属账号可手动恢复', async () => {
+    const values = new Map([
+      [
+        'social.groupActivity',
+        JSON.stringify({
+          '["napcat","pero","123456789","group-1"]': {
+            mode: 'mention_only',
+            passCount: 4,
+            reviewNotBefore: 0,
+          },
+        }),
+      ],
+    ])
+    const { bridge, deps } = createBridge({
+      activityConfig: {
+        get: async (key: string) => values.get(key),
+        set: async (key: string, value: string) => {
+          values.set(key, value)
+        },
+      },
+      getAgentId: () => 'pero',
+    })
+    const adapter = new FakeAdapter()
+    adapter.getConnectedAccountIds.mockReturnValue(['123456789'])
+    vi.spyOn(adapter, 'resolveAgentId').mockReturnValue('pero')
+    bridge.registerAdapter(adapter)
+    bridge.updateSchedulerConfig({ nightSilenceEnabled: false })
+    await bridge.start()
+    try {
+      for (let index = 0; index < 3; index++) {
+        await adapter.accept(inbound({ messageId: `ordinary-${index}` }))
+        await vi.advanceTimersByTimeAsync(1)
+      }
+      vi.setSystemTime(Date.now() + 2 * 60 * 60_000)
+      await vi.advanceTimersByTimeAsync(10_000)
+      expect(deps.generateReply).not.toHaveBeenCalled()
+      expect(bridge.getGroupState('pero', '123456789', 'group-1', 'napcat')).toMatchObject({
+        activityMode: 'mention_only',
+        consecutivePasses: 4,
+        nextReviewAt: null,
+        gate: 'mention_only',
+      })
+      await expect(
+        bridge.resumeGroupObservation('pero', 'napcat', 'other-account', 'group-1'),
+      ).rejects.toThrow('SOCIAL_ACCOUNT_FORBIDDEN')
+      await bridge.resumeGroupObservation('pero', 'napcat', '123456789', 'group-1')
+      // 正常观察至少等待 180 秒，到期后最多再等一轮 10 秒扫描。
+      await vi.advanceTimersByTimeAsync(179_999)
+      expect(deps.generateReply).not.toHaveBeenCalled()
+      await vi.advanceTimersByTimeAsync(10_001)
+      expect(
+        deps.generateReply,
+        JSON.stringify(bridge.getGroupState('pero', '123456789', 'group-1', 'napcat')),
+      ).toHaveBeenCalledTimes(1)
+      expect(bridge.getGroupState('pero', '123456789', 'group-1', 'napcat')).toMatchObject({
+        activityMode: 'normal',
+        consecutivePasses: 0,
+      })
+    } finally {
+      await bridge.stop()
+    }
+  })
+
+  it('参与状态读取失败时不连接适配器，避免用默认模式启动群观察', async () => {
+    const { bridge } = createBridge({
+      activityConfig: {
+        get: async () => '{invalid-json',
+        set: async () => undefined,
+      },
+    })
+    const adapter = new FakeAdapter()
+    bridge.registerAdapter(adapter)
+    await expect(bridge.start()).rejects.toThrow()
+    expect(adapter.connect).not.toHaveBeenCalled()
+    await bridge.stop()
+  })
 
   it('接收确认等待持久化成功，但不等待后续会话处理', async () => {
     const { bridge, deps } = createBridge()

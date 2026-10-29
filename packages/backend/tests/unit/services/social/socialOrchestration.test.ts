@@ -89,6 +89,45 @@ function fixture() {
 afterEach(() => vi.useRealTimers())
 
 describe('统一社交入口与持久化编排', () => {
+  it('角色可主动选择低活跃，回复后进入的决定随计划恢复并保留到终态', async () => {
+    const silent = fixture()
+    expect(await silent.run({ low_activity: true })).toMatchObject({
+      status: 'completed',
+      low_activity: true,
+    })
+    expect(silent.send).not.toHaveBeenCalled()
+    const reply = fixture()
+    const input = { reply: '先安静看大家聊，需要我时 @ 我就好', low_activity: true }
+    expect(await reply.run(input)).toMatchObject({ status: 'completed', low_activity: true })
+    reply.restart()
+    expect(await reply.run(input)).toMatchObject({ status: 'completed', low_activity: true })
+    expect(reply.send).toHaveBeenCalledTimes(1)
+    reply.record.checkpoint.outcome = { type: 'reply', lowActivity: true }
+    const saveTurn = vi.fn(async () => undefined)
+    await finishSocialTurn({ saveTurn } as unknown as SocialStoragePort, reply.record, 'completed')
+    expect(reply.record.checkpoint).toEqual({ participation: { lowActivity: true } })
+  })
+
+  it('低活跃决定不能与等待或继续判断混用，私聊也不能设置群聊模式', async () => {
+    for (const input of [
+      { action: 'observe', low_activity: true },
+      { action: 'defer', low_activity: true },
+      { action: 'continue', low_activity: true },
+      { low_activity: true, next: 'continue' },
+      { low_activity: 'true' },
+    ]) {
+      await expect(fixture().run(input)).rejects.toThrow()
+    }
+    const privateChat = fixture()
+    privateChat.record.channelType = 'private'
+    await expect(privateChat.run({ low_activity: true })).rejects.toThrow('低活跃仅适用于群聊')
+    const delegated = fixture()
+    delegated.record.kind = 'task'
+    await expect(delegated.run({ low_activity: true })).rejects.toThrow(
+      '委派任务不能修改群聊参与模式',
+    )
+  })
+
   it('可单独退出或回复后退出，并在恢复同一计划时保留退出决定', async () => {
     const silent = fixture()
     expect(await silent.run({ end_participation: true })).toMatchObject({

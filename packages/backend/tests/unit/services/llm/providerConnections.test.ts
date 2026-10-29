@@ -63,6 +63,62 @@ afterEach(() => {
 })
 
 describe('服务商连接迁移和调用一致性', () => {
+  it.each([undefined, '', '   '])('首个保存的免密模型自动成为主模型，原指派为 %j', async (main) => {
+    sqlite.exec('DELETE FROM ai_model_configs')
+    if (main !== undefined) await config.set('model.main', main)
+    const service = new ModelService(repo, {} as never, registry, config)
+    const first = await service.create({
+      name: '首个模型',
+      provider: 'openai',
+      modelId: 'first-model',
+      apiKey: '',
+      apiBase: 'http://localhost:1234/v1',
+      connectionOverride: true,
+      connectionProtocol: 'openai',
+      connectionAuthMode: 'none',
+    })
+    expect(await config.get('model.main')).toBe(String(first.id))
+    expect(await new ModelRoleResolver(config, repo).resolve('main')).toMatchObject({
+      configId: first.id,
+      modelId: 'first-model',
+      apiKey: '',
+    })
+    await service.create({
+      name: '第二个模型',
+      provider: 'openai',
+      modelId: 'second-model',
+      apiKey: '',
+    })
+    expect(await config.get('model.main')).toBe(String(first.id))
+  })
+
+  it('新增模型保留用户已经选择的主模型', async () => {
+    await config.set('model.main', '2')
+    const service = new ModelService(repo, {} as never, registry, config)
+    await service.create({ name: '新增模型', provider: 'openai', modelId: 'new-model', apiKey: '' })
+    expect(await config.get('model.main')).toBe('2')
+  })
+
+  it('首次主模型指派保存失败时，模型创建也整体回滚', async () => {
+    sqlite.exec(`
+      DELETE FROM ai_model_configs;
+      CREATE TRIGGER reject_first_main BEFORE INSERT ON configs
+      WHEN NEW.key = 'model.main'
+      BEGIN SELECT RAISE(ABORT, '模拟主模型指派保存失败'); END;
+    `)
+    const service = new ModelService(repo, {} as never, registry, config)
+    await expect(
+      service.create({
+        name: '首次模型',
+        provider: 'openai',
+        modelId: 'first-model',
+        apiKey: '',
+      }),
+    ).rejects.toThrow()
+    expect(await repo.findAll()).toEqual([])
+    expect(await config.get('model.main')).toBeUndefined()
+  })
+
   it('独立卡片无需连接即可持久保存，重新读取不会补回旧全局密钥', async () => {
     const service = new ModelService(repo, {} as never, registry, config)
     const created = await service.create({
@@ -94,7 +150,32 @@ describe('服务商连接迁移和调用一致性', () => {
     })
     await service.update(created.id, { connectionAuthMode: 'api_key' })
     expect(await registry.getById(created.id)).toMatchObject({ apiKey: '' })
-    expect(await new ModelRoleResolver(config, repo).resolveById(created.id)).toBeNull()
+    const resolved = await new ModelRoleResolver(config, repo).resolveById(created.id)
+    expect(resolved).toMatchObject({
+      modelId: 'direct-model',
+      apiKey: '',
+      authMode: 'api_key',
+      apiBase: 'https://direct.example/api/v3',
+    })
+    const request = vi
+      .spyOn(globalThis, 'fetch')
+      .mockResolvedValue(
+        new Response(
+          JSON.stringify({ choices: [{ message: { role: 'assistant', content: '免密回复' } }] }),
+          { status: 200, headers: { 'Content-Type': 'application/json' } },
+        ),
+      )
+    const reply = await new LlmService()
+      .createProvider(resolved!)
+      .chat([{ role: 'user', content: '你好' }], {})
+    expect(reply.choices[0]?.message.content).toBe('免密回复')
+    const [url, options] = request.mock.calls[0]!
+    expect(String(url)).toBe('https://direct.example/api/v3/chat/completions')
+    expect(new Headers(options?.headers).has('Authorization')).toBe(false)
+    expect(JSON.parse(String(options?.body))).toMatchObject({
+      model: 'direct-model',
+      messages: [{ role: 'user', content: '你好' }],
+    })
   })
 
   it('清理自动生成名称的迁移标签，保留连接身份、密钥与模型引用', async () => {
@@ -244,6 +325,11 @@ describe('服务商连接迁移和调用一致性', () => {
       apiKey: '',
     })
     expect(await registry.getById(1)).toMatchObject({ apiKey: '' })
+    await config.set('model.main', '1')
+    expect(await new ModelRoleResolver(config, repo).resolveAgent('pero')).toMatchObject({
+      apiKey: '',
+      modelId: 'model-a',
+    })
     expect((await repo.findById(1))?.providerConnectionId).toBe('legacy-global-openai')
     const db = drizzle(sqlite, { schema })
     await expect(

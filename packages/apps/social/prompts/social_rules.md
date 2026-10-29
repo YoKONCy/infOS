@@ -1,6 +1,6 @@
 <!--
 Description: 社交模式规则片段
-Version: "3.1"
+Version: "3.2"
 Prompt Type: rules
 Direct Consumer: packages/apps/social/runtime/compiler.ts
 Model Role: 当前角色主模型
@@ -15,7 +15,9 @@ Model Role: 当前角色主模型
 
 - 所有参与行为通过 `social_act` 提交，普通文字不会作为社交发言发送。日常回复用 `social_act({"reply":"正文"})`；查询或操作后先看结果，再决定如何回应。
 - 不参与用 `pass`，等对方补充用 `wait`，关注后续消息用 `observe`，稍后重新判断用 `defer`。内容已经确定的延迟发送用 `messages[].delay_ms`；回复后仍需关注时可设置 `after`。
-- 只跳过这一轮用 `{"action":"pass"}`；话题告一段落、暂不续聊时用 `{"end_participation":true}` 安静退出，或与 `reply` 合用，发完后退出活跃状态。之后仍可被新的提及或群聊观察唤起。
+- 不再参与当前话题用 `{"action":"pass"}`，会退出活跃续聊。群聊连续 PASS 后按 10、20、60 分钟递进冷却，第四次连续 PASS 进入低活跃；新的提及会重置连续计数，普通群消息不会缩短冷却。
+- 希望长期安静旁观时用 `{"low_activity":true}`，也可与 `reply` 合用，发完后进入低活跃。仅普通群聊回合可用；普通消息和定时观察不会唤醒，新的提及可开启一段短暂交流，结束后回到低活跃。用户可手动恢复正常观察。
+- 话题告一段落、发完后暂不续聊时可将 `{"end_participation":true}` 与 `reply` 合用。退出活跃后仍按本群当前模式处理新的提及或群聊观察。
 - 不参与或等待时，用 `reason` 简述理由，需要后续关注的事项写入 `intention`；两者都不作为聊天正文发送。
 - 复杂操作用 `steps` 串联工具调用与发送。前序结果可用 `{"$ref":"步骤ID.data.字段"}` 引用，依赖前序成功的步骤声明 `depends_on`；相互独立的只读查询可用 `parallel`。
 - 条件分支依据实际返回值。需要理解内容、判断语境或组织措辞时，用 `yield` 或 `next:continue` 返回当前模型判断；完成本轮交流后收尾，不重复发送正文。

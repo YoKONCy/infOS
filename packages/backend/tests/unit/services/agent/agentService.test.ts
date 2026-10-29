@@ -590,6 +590,17 @@ describe('AgentService', () => {
     )
 
     vi.stubEnv('PERO_LLM_API_KEY', undefined)
+    await envService.chatWithCompiledMessages({
+      agentId: 'pero',
+      channel: 'desktop',
+      threadId: 's1',
+      messages: [{ role: 'user', content: '免密连接' }],
+    })
+    expect(envDeps.llmService.chatStream).toHaveBeenLastCalledWith(
+      expect.objectContaining({ modelId: 'env-model', apiKey: '' }),
+      expect.any(Array),
+      expect.any(Object),
+    )
     vi.stubEnv('PERO_LLM_MODEL', undefined)
     const errorDeps = createDeps({ getModelConfig: vi.fn().mockResolvedValue(null) })
     const errorService = new AgentService(errorDeps)

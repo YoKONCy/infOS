@@ -7,8 +7,8 @@
  * @module packages/backend/src/repositories/model.repo
  */
 
-import { eq } from 'drizzle-orm'
-import { aiModelConfigs } from '../database/schema'
+import { eq, sql } from 'drizzle-orm'
+import { aiModelConfigs, configs } from '../database/schema'
 import type { ReasoningEffort } from '../services/llm/types'
 import type { DrizzleDb } from '../database'
 import { ProviderConnectionRepository } from './providerConnection.repo'
@@ -94,38 +94,60 @@ export class ModelRepository {
   }
 
   /** 创建模型配置 */
-  async create(data: CreateModelInput): Promise<ModelConfigRow> {
+  async create(
+    data: CreateModelInput,
+    options: { selectMainIfFirst?: boolean } = {},
+  ): Promise<ModelConfigRow> {
     const now = new Date().toISOString()
-    const rows = await this.db
-      .insert(aiModelConfigs)
-      .values({
-        name: data.name,
-        provider: data.provider,
-        modelId: data.modelId,
-        apiKey: data.apiKey,
-        apiBase: data.apiBase,
-        providerConnectionId: data.providerConnectionId,
-        connectionOverride: data.connectionOverride ?? false,
-        connectionProtocol: data.connectionProtocol,
-        connectionAuthMode: data.connectionAuthMode ?? 'api_key',
-        temperature: data.temperature ?? null,
-        topP: data.topP ?? null,
-        maxTokens: data.maxTokens ?? null,
-        contextWindowTokens: data.contextWindowTokens ?? null,
-        maxReActTurns: data.maxReActTurns ?? null,
-        reasoningEffort: data.reasoningEffort ?? null,
-        returnNativeReasoning: data.returnNativeReasoning ?? false,
-        wireApi: data.wireApi ?? 'chat_completions',
-        reasoningDialect: data.reasoningDialect ?? 'auto',
-        stream: data.stream ?? true,
-        providerType: data.providerType ?? 'global',
-        enableVision: data.enableVision ?? false,
-        enableAudioInput: data.enableAudioInput ?? false,
-        createdAt: now,
-        updatedAt: now,
-      })
-      .returning()
-    return rows[0]!
+    return this.db.transaction((transaction) => {
+      const first =
+        options.selectMainIfFirst &&
+        !transaction.select({ id: aiModelConfigs.id }).from(aiModelConfigs).limit(1).get()
+      const rows = transaction
+        .insert(aiModelConfigs)
+        .values({
+          name: data.name,
+          provider: data.provider,
+          modelId: data.modelId,
+          apiKey: data.apiKey,
+          apiBase: data.apiBase,
+          providerConnectionId: data.providerConnectionId,
+          connectionOverride: data.connectionOverride ?? false,
+          connectionProtocol: data.connectionProtocol,
+          connectionAuthMode: data.connectionAuthMode ?? 'api_key',
+          temperature: data.temperature ?? null,
+          topP: data.topP ?? null,
+          maxTokens: data.maxTokens ?? null,
+          contextWindowTokens: data.contextWindowTokens ?? null,
+          maxReActTurns: data.maxReActTurns ?? null,
+          reasoningEffort: data.reasoningEffort ?? null,
+          returnNativeReasoning: data.returnNativeReasoning ?? false,
+          wireApi: data.wireApi ?? 'chat_completions',
+          reasoningDialect: data.reasoningDialect ?? 'auto',
+          stream: data.stream ?? true,
+          providerType: data.providerType ?? 'global',
+          enableVision: data.enableVision ?? false,
+          enableAudioInput: data.enableAudioInput ?? false,
+          createdAt: now,
+          updatedAt: now,
+        })
+        .returning()
+        .all()
+      const model = rows[0]!
+      if (first) {
+        // 与模型创建共用事务，避免并发首次创建或保存失败留下半份配置。
+        transaction
+          .insert(configs)
+          .values({ key: 'model.main', value: String(model.id) })
+          .onConflictDoUpdate({
+            target: configs.key,
+            set: { value: String(model.id), updatedAt: now },
+            setWhere: sql`trim(${configs.value}) = ''`,
+          })
+          .run()
+      }
+      return model
+    })
   }
 
   /** 更新模型配置 */

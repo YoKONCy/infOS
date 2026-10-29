@@ -1,4 +1,6 @@
 {
+  "仅普通群聊回合可用；true 在本轮结束后进入低活跃，仅新提及或手动恢复可唤醒。可单独使用或与回复合用，不能同时等待、延后或继续判断。": "Ordinary group conversation turns only. Set true to enter low activity after this turn; only a new mention or manual restore can wake the conversation. Use alone or with a reply; cannot wait, defer, or continue reasoning at the same time.",
+  "请提供平台、已连接账号和群聊标识": "Provide the platform, connected account, and group identifier",
   "默认 false；true 在本轮结束后退出活跃续聊，可单独使用或与回复合用，不影响之后的新提及和群聊观察。不能与等待、yield 或 next:continue 合用。": "Defaults to false. Set true to leave active conversation when this turn ends, alone or with a reply. Future mentions and group reviews can still wake you. Cannot be combined with waiting, yield, or next:continue.",
   "以下是本次实际提供的图片（最多 3 张），超出上限的图片未查看：": "These are the images actually provided for this request (up to 3). Images exceeding the limit have not been viewed:",
   "可按需通过 call 调用 social 的 image_read，每次最多 3 张；需要依据画面作答时，用 yield 或 next:continue 先返回模型。": "Optionally call social's image_read in a call step, up to 3 images at a time; use yield or next:continue to return to the model before composing a response based on the images.",

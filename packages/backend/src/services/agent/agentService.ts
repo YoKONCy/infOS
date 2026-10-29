@@ -594,17 +594,19 @@ export class AgentService {
     // 环境变量兜底
     const envApiKey = process.env.PERO_LLM_API_KEY
     const envModel = process.env.PERO_LLM_MODEL
-    if (!envApiKey || !envModel) {
+    if (!envModel) {
       throw new AppError('CONFIG_ERROR', {
-        message:
-          'LLM 未配置: 请在 Dashboard 模型配置中设置主模型，或设置环境变量 PERO_LLM_API_KEY / PERO_LLM_MODEL',
+        message: __t(
+          'server.agent',
+          'LLM 未配置：请在模型配置中设置主模型，或设置环境变量 PERO_LLM_MODEL',
+        ),
       })
     }
 
     return {
       provider: process.env.PERO_LLM_PROVIDER ?? 'openai',
       modelId: envModel,
-      apiKey: envApiKey,
+      apiKey: envApiKey ?? '',
       apiBase: process.env.PERO_LLM_API_BASE,
     }
   }

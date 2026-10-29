@@ -1,4 +1,8 @@
 {
+  "保存并激活": "Save and activate",
+  "填写的模型或维度尚未生效，请先保存并激活配置，再重建索引。": "The model or dimension in the form is not active. Save and activate it before rebuilding indexes.",
+  "已生效：{0} · {1} 维。修改表单不会自动切换索引。": "Active: {0} · {1} dimensions. Editing the form does not change the indexes.",
+  "激活成功：{0} 维，调用耗时 {1} ms。旧维度索引请重建后使用。": "Activated: {0} dimensions in {1} ms. Rebuild indexes with the old dimension before using them.",
   "捕获快照": "Capturing snapshot",
   "查看维护详情": "View maintenance details",
   "等待在途操作": "Waiting for active operations",

@@ -1,4 +1,5 @@
 {
+  "LLM 未配置：请在模型配置中设置主模型，或设置环境变量 PERO_LLM_MODEL": "LLM is not configured: select a main model in model settings or set the PERO_LLM_MODEL environment variable",
   "图片或音频原始内容未写入检查点，恢复后请按来源重新读取。": "The original content of the picture or audio is not written to the checkpoint. Please read it again according to the source after recovery.",
   "正在思考...": "is thinking...",
   "已自动整理输入窗口，继续当前任务": "has automatically organized the input window and continues the current task",

@@ -389,15 +389,22 @@ async function upload(event: Event) {
       uploadController = new AbortController()
       void pollImport()
       try {
-        await backupApi.uploadImport(file, result.data.id, uploadController.signal, (bytes) => {
-          sentBytes.value = bytes
-        })
+        await backupApi.uploadImport(
+          file,
+          result.data.id,
+          uploadController.signal,
+          (bytes) => {
+            sentBytes.value = bytes
+          },
+          result.data.uploadChunkBytes,
+        )
       } catch (cause) {
         if (!uploadController.signal.aborted) {
           const message =
             cause instanceof Error ? cause.message : tr('上传连接中断，正在查询服务端进度')
           const status = (cause as { httpStatus?: number } | undefined)?.httpStatus
-          if (status && status >= 400) {
+          const exhausted = (cause as { uploadExhausted?: boolean } | undefined)?.uploadExhausted
+          if ((status && status >= 400) || exhausted) {
             error.value = message
             // 服务器明确拒绝的上传不继续占用预约；结果未知的断线仍先查询实际进度。
             const cancelled = await backupApi.cancelImport(result.data.id).catch(() => null)

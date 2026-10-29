@@ -66,7 +66,7 @@ export const pictoriaManifest = defineApplicationAdapter({
   description: __t('apps.pictoria.ui', '画布创作与可编排媒体工作流'),
   adapterVersion: '1.0.0',
   protocolVersion: 1,
-  application: { versions: '>=0.9.8 <1.0.0', transports: ['websocket'] },
+  application: { versions: '>=0.9.9 <1.0.0', transports: ['websocket'] },
   backend: { entry: '@infos/pictoria' },
   frontend: {
     entry: '@infos/pictoria/client',

@@ -12,6 +12,8 @@
 
 模式是 Channel / 角色能力之上的减法层。工具定义、能力描述、Skill 菜单和实际执行使用同一模式策略。
 
+极简模式的 `MINIMAL_TOOLS` 仅包含四项：截图 `take_screenshot`、完成任务 `finish_task`、当前会话私有心流 `update_flow_state`、查询事件 `query_event_notes`。事件记录的写入和修订、事实查询与维护、知识库检索、提醒与跟进均不在此模式开放；用户禁用、角色权限、设备与模型能力仍可进一步限制这四项。
+
 聊天允许列表维护于 `packages/backend/src/tools/interactionMode.ts`：
 
 - 对话状态、事件记忆、事实查询与记录更新、文档知识库检索。
@@ -32,7 +34,7 @@
 
 ## 前端与提示词
 
-- 输入栏使用像素字体和主题变量展示模式，适配深浅主题与紧凑布局。极简模式只保留陪伴及记忆类允许项，完整集合以 `MINIMAL_TOOLS` 为准。
+- 输入栏使用像素字体和主题变量展示模式，适配深浅主题与紧凑布局。极简模式提示明确列出截图、完成任务、心流和查询事件，与 `MINIMAL_TOOLS` 一致。
 - 工具接口分别返回 `enabled`、`userEnabled`、`modeAllowed`，区分有效状态、手动设置和模式限制。
 - 工具计数只计算当前模式可用范围；受模式限制的项目标记“模式未开放”。
 - 能力说明注入 `components/abilities/interaction_mode.md`，用户名使用既有 `owner_name`；关闭工具的完整定义不注入模型。

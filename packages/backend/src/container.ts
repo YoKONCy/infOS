@@ -2448,17 +2448,12 @@ export async function createAppContext(config: AppConfig): Promise<AppContext> {
         },
       }
 
-      const previousDimension = storeRegistry.getDimension()
+      const retrievalConfig = await loadMemoryRuntimeConfig(configRepo)
+      // 先检查并关闭旧句柄；保留原文件，切换失败时可以恢复旧配置而不丢索引。
+      storeRegistry.setDimension(newConfig.dimension)
       eventMemoryService.invalidateForDeletion()
       embeddingService.reconfigure(newConfig)
-      eventMemoryService.syncAdvancedRetrievalConfig(await loadMemoryRuntimeConfig(configRepo))
-      if (previousDimension !== newConfig.dimension) {
-        storeRegistry.resetAllForDimension(newConfig.dimension)
-        for (const agent of agentManager.listAgents()) {
-          await eventMemoryService.rebuildAgentStore(agent.id)
-        }
-        await factsRepo.rebuildStore()
-      }
+      eventMemoryService.syncAdvancedRetrievalConfig(retrievalConfig)
       knowledgeService.embeddingChanged()
     },
 

@@ -1,4 +1,5 @@
 import { t as __t } from './i18n'
+import { getSocialTurnKind } from '@infos/shared'
 import { createHash } from 'node:crypto'
 import { SOCIAL_BUSINESS_TOOLS, type SocialBusinessTool } from '@infos/shared'
 import { createLogger, safeModelDiagnostic } from '@infos/backend/applicationHostAbi'
@@ -53,6 +54,7 @@ interface Plan {
   reason?: string
   intention?: string
   endParticipation?: boolean
+  lowActivity?: boolean
 }
 export interface SocialOrchestrationCheckpoint {
   version: 1
@@ -70,6 +72,7 @@ export interface SocialActResult {
   images?: string[]
   images_omitted?: number
   end_participation?: boolean
+  low_activity?: boolean
   wake_at?: number
   expires_at?: number
   had_errors: boolean
@@ -288,12 +291,20 @@ export class SocialOrchestration {
       'mentions',
       'attachments',
       'end_participation',
+      'low_activity',
     ])
     if (input.end_participation !== undefined && typeof input.end_participation !== 'boolean')
       throw new Error(__t('errors.social', 'end_participation 必须为布尔值'))
     const endParticipation = input.end_participation === true
+    if (input.low_activity !== undefined && typeof input.low_activity !== 'boolean')
+      throw new Error(__t('errors.social', 'low_activity 必须为布尔值'))
+    const lowActivity = input.low_activity === true
+    if (lowActivity && this.deps.channelType !== 'group')
+      throw new Error(__t('errors.social', '低活跃仅适用于群聊'))
+    if (lowActivity && getSocialTurnKind(currentSocialRecovery()!.record) === 'task')
+      throw new Error(__t('errors.social', '委派任务不能修改群聊参与模式'))
     const exitOnly =
-      endParticipation &&
+      (endParticipation || lowActivity) &&
       input.reply === undefined &&
       input.messages === undefined &&
       input.steps === undefined &&
@@ -458,8 +469,9 @@ export class SocialOrchestration {
       ])
     const all = flat(steps)
     if (
-      endParticipation &&
+      (endParticipation || lowActivity) &&
       (input.after !== undefined ||
+        action === 'continue' ||
         input.next === 'continue' ||
         all.some((step) => ['wait', 'observe', 'yield'].includes(step.op)))
     )
@@ -477,7 +489,7 @@ export class SocialOrchestration {
       steps,
       results: {},
       attempts: {},
-      next: endParticipation ? 'end' : next,
+      next: endParticipation || lowActivity ? 'end' : next,
       onNewMessage: oneOf(
         input.on_new_message,
         ['keep', 'cancel', 'reconsider'] as const,
@@ -492,6 +504,7 @@ export class SocialOrchestration {
       reason: input.reason as string | undefined,
       intention: input.intention as string | undefined,
       endParticipation,
+      lowActivity,
     }
   }
 
@@ -647,6 +660,7 @@ export class SocialOrchestration {
             : 'continue',
       plan_id: plan.id,
       ...(plan.status === 'completed' && plan.endParticipation ? { end_participation: true } : {}),
+      ...(plan.status === 'completed' && plan.lowActivity ? { low_activity: true } : {}),
       observations: compact,
       delivered_messages: Object.values(
         (currentSocialRecovery()!.record.checkpoint.sentMessages ?? {}) as Record<

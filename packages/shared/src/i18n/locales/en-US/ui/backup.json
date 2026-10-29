@@ -1,4 +1,6 @@
 {
+  "上传多次中断，已停止本次导入，请检查网络或反向代理后重试": "The upload repeatedly disconnected. This import has stopped. Check your network or reverse proxy and try again.",
+  "备份上传进度无效，请重新选择文件": "The backup upload progress is invalid. Select the file again.",
   "数据与备份": "Data and backups",
   "把相伴的记录，妥善收藏": "Keep your shared moments safe",
   "配置": "Settings",

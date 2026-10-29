@@ -15,6 +15,7 @@ import type {
   SocialBotMark,
   SocialSchedulerConfig,
   SocialTurnKind,
+  SocialGroupActivityItem,
 } from '@infos/shared'
 import { apiClient } from '../client'
 import { configApi } from './configApi'
@@ -130,6 +131,14 @@ export interface SocialStickerPage {
 }
 
 export const socialApi = {
+  getGroupActivity: (agentId: string) =>
+    apiClient.get<SocialGroupActivityItem[]>(
+      `/social/group-activity/${encodeURIComponent(agentId)}`,
+    ),
+  resumeGroupObservation: (
+    agentId: string,
+    input: { platform: string; accountId: string; groupId: string },
+  ) => apiClient.post<void>(`/social/group-activity/${encodeURIComponent(agentId)}/resume`, input),
   getPlatforms: () => apiClient.get<{ platforms: SocialPlatform[] }>('/social/platforms'),
   enablePlatform: (type: string) =>
     apiClient.post<void>(`/social/platforms/${encodeURIComponent(type)}/enable`),

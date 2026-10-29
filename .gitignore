@@ -61,3 +61,7 @@ __pycache__/
 # 仅保留在本地的归档与待办文档
 /.docs/archived/
 /.docs/TODO-LIST/
+
+# 仅本地归档的角色美术与 Steam 宣传图
+/.github/character-art/
+/resources/steam/artwork/

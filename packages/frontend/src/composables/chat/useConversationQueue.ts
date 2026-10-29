@@ -27,6 +27,7 @@ export function useConversationQueue() {
   const unavailable = ref(false)
   const historyVersion = ref(0)
   const pendingIds = new Map<string, string>()
+  const submittedIds = new Set<string>()
   const liveSurfaces = new Set<string>()
   let disposed = false
   let timer: ReturnType<typeof setTimeout> | undefined
@@ -121,6 +122,13 @@ export function useConversationQueue() {
       const next = response.data
       snapshot.value = next
       unavailable.value = false
+      for (const id of submittedIds) {
+        if (next.items.some((entry) => entry.id === id)) continue
+        submittedIds.delete(id)
+        // 极快完成或准备失败时，轮询可能看不到 running，也要读取已保存的消息和错误。
+        queuedRunObserved = true
+        needsHistorySync = true
+      }
       const running = next.items.find((entry) => entry.state === 'running')
       if (running) {
         queuedRunObserved = true
@@ -207,7 +215,10 @@ export function useConversationQueue() {
     try {
       const response = await chatApi.enqueue(input, id)
       pendingIds.delete(key)
-      if (epoch === revision && response.data) snapshot.value = response.data
+      if (epoch === revision && response.data) {
+        snapshot.value = response.data
+        submittedIds.add(id)
+      }
       void refresh()
       return true
     } catch (error) {
@@ -216,7 +227,10 @@ export function useConversationQueue() {
         const response = await chatApi.queue(input.threadId)
         if (response.data?.items.some((entry) => entry.id === id)) {
           pendingIds.delete(key)
-          if (epoch === revision) snapshot.value = response.data
+          if (epoch === revision) {
+            snapshot.value = response.data
+            submittedIds.add(id)
+          }
           return true
         }
       } catch {
@@ -292,6 +306,7 @@ export function useConversationQueue() {
       revision++
       historyVersion.value++
       liveSurfaces.clear()
+      submittedIds.clear()
       queuedRunObserved = false
       lastRunId = ''
       snapshot.value = { threadId: threads.threadId, paused: false, items: [] }
@@ -316,6 +331,7 @@ export function useConversationQueue() {
     revision++
     historyVersion.value++
     mutationVersion++
+    submittedIds.clear()
     snapshot.value = {
       ...snapshot.value,
       paused: true,

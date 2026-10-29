@@ -8,7 +8,6 @@ import {
   databaseFormat,
   isTriviumFile,
   managedStoreBase,
-  upgradeBackupPath,
 } from '@infos/backend/repositories/triviumFiles'
 
 const temporaryRoot = fileURLToPath(new URL('../../../../../TEMP/', import.meta.url))
@@ -59,35 +58,42 @@ describe('TriviumDB 文件组与升级副本', () => {
     expect(managedStoreBase('principals/pero/workspace/agent_pero/memory.tdb')).toBeNull()
   })
 
-  it('完整复制旧文件组、按摘要复用并拒绝损坏的已有备份', () => {
+  it.each([7, 9])('完整复制 v%i 旧文件组、按摘要复用并拒绝损坏的已有备份', (format) => {
     const root = path.join(temporaryRoot, `trivium-backup-${randomUUID()}`)
     roots.push(root)
     const source = path.join(root, 'agent_pero', 'memory.tdb')
     mkdirSync(path.dirname(source), { recursive: true })
     // 此用例只验证文件组复制；真实引擎共享锁由注册表负责。
-    const header = Buffer.from([0x54, 0x56, 0x44, 0x42, 7, 0])
+    const header = Buffer.from([0x54, 0x56, 0x44, 0x42, format, 0])
     writeFileSync(source, header)
     writeFileSync(`${source}.vec`, '向量制品')
     writeFileSync(`${source}.wal`, 'WAL 制品')
     writeFileSync(`${source}.lock`, '')
     writeFileSync(`${source}.publish.8`, '图索引恢复副本')
     writeFileSync(`${source}.vec.tmp`, '未提交制品')
-    expect(databaseFormat(source)).toBe(7)
+    expect(databaseFormat(source)).toBe(format)
     expect(databaseFormat(`${source}-missing`)).toBeNull()
-    const backup = backupLegacyStore(root, source, 7)
-    expect(backup.startsWith(`${upgradeBackupPath(root, source)}${path.sep}`)).toBe(true)
+    const backup = backupLegacyStore(root, source, format)
+    const expectedRoot = path.join(
+      root,
+      '.store-upgrades',
+      '0.9.0-beta.4',
+      'agent_pero',
+      'memory.tdb',
+    )
+    expect(backup.startsWith(`${expectedRoot}${path.sep}`)).toBe(true)
     expect(readFileSync(path.join(backup, 'memory.tdb'))).toEqual(header)
     expect(readFileSync(path.join(backup, 'memory.tdb.vec'), 'utf8')).toBe('向量制品')
     expect(readFileSync(path.join(backup, 'memory.tdb.publish.8'), 'utf8')).toBe('图索引恢复副本')
     expect(existsSync(path.join(backup, 'memory.tdb.vec.tmp'))).toBe(false)
     expect(JSON.parse(readFileSync(path.join(backup, 'backup.json'), 'utf8'))).toMatchObject({
-      targetVersion: '0.9.0-beta.3',
-      format: 7,
+      targetVersion: '0.9.0-beta.4',
+      format,
       source: path.join('agent_pero', 'memory.tdb'),
     })
-    expect(backupLegacyStore(root, source, 7)).toBe(backup)
+    expect(backupLegacyStore(root, source, format)).toBe(backup)
     writeFileSync(path.join(backup, 'memory.tdb.vec'), '损坏')
-    expect(() => backupLegacyStore(root, source, 7)).toThrow('备份校验失败')
+    expect(() => backupLegacyStore(root, source, format)).toThrow('备份校验失败')
     expect(readFileSync(source)).toEqual(header)
   })
 })

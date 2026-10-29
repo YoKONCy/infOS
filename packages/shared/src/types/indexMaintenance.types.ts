@@ -19,6 +19,9 @@ export interface IndexMaintenanceTarget {
 
 export interface IndexMaintenanceStatus {
   dimension: number
+  /** 索引注册表的目标维度，必须与当前模型一致；旧服务端可能不返回。 */
+  registryDimension?: number
+  configurationError?: string
   model: string
   embeddingAvailable: boolean
   busy: boolean

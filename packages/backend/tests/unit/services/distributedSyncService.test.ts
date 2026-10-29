@@ -81,8 +81,8 @@ describe('DistributedSyncService 完整快照', () => {
     expect(paths.some((file) => file.startsWith('.store-upgrades/'))).toBe(false)
     expect(bundle.manifest).toMatchObject({
       bundleVersion: 2,
-      triviumVersion: '0.9.0-beta.3',
-      triviumFormat: 9,
+      triviumVersion: '0.9.0-beta.4',
+      triviumFormat: 10,
     })
   })
 
@@ -131,7 +131,7 @@ describe('DistributedSyncService 完整快照', () => {
     ).rejects.toThrow('Store 快照协调器')
   })
 
-  it('接收旧版快照，但拒绝高于当前引擎的数据库格式', async () => {
+  it('接收 v9、v10 和旧版快照，但拒绝未来的 v11 数据库格式', async () => {
     const base = root()
     const dataDir = path.join(base, 'data')
     const service = new DistributedSyncService(dataDir, {} as never, 'server-target')
@@ -142,7 +142,7 @@ describe('DistributedSyncService 完整快照', () => {
       snapshotId: randomUUID(),
       sourceServerId: 'server-source',
       appVersion: 'test',
-      triviumFormat: 10,
+      triviumFormat: 11,
       createdAt: new Date().toISOString(),
       files: [],
       totalBytes: 0,
@@ -154,6 +154,26 @@ describe('DistributedSyncService 完整快照', () => {
         'server-source',
       ),
     ).rejects.toThrow('请先升级应用')
+    for (const triviumFormat of [9, 10]) {
+      const compatibleService = new DistributedSyncService(
+        path.join(root(), 'data'),
+        {} as never,
+        'server-target',
+      )
+      await expect(
+        compatibleService.stageEncryptedSnapshot(
+          encryptBundle(
+            {
+              manifest: { ...manifest, snapshotId: randomUUID(), triviumFormat },
+              files: {},
+            },
+            key,
+          ),
+          key.toString('base64'),
+          'server-source',
+        ),
+      ).resolves.toMatchObject({ bundleVersion: 2, triviumFormat })
+    }
     await expect(
       service.stageEncryptedSnapshot(
         encryptBundle(

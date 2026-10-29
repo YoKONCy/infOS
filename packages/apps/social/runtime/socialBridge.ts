@@ -51,6 +51,8 @@ import {
   type SocialTurnOutcome,
 } from './socialSessionManager'
 import { SocialScheduler, type SocialSchedulerConfig } from './socialScheduler'
+import { SocialActivityStore } from './socialActivityStore'
+import type { SocialGroupActivity, SocialGroupActivityItem } from '@infos/shared'
 import type { ImageCacheManager } from './imageCacheManager'
 import type { StickerService } from './stickerService'
 import type { NativeEmojiScope } from './nativeEmoji'
@@ -73,6 +75,10 @@ const logger = createLogger('SocialBridge')
 // ─────────────────────────────────────────────
 
 export interface SocialBridgeDeps {
+  activityConfig?: {
+    get(key: string): Promise<string | undefined>
+    set(key: string, value: string): Promise<void>
+  }
   socialEvents: SocialEventPort
   executions?: SocialExecutionPort
   socialMessageRepo: SocialStoragePort
@@ -109,6 +115,7 @@ export interface SocialBridgeDeps {
     combinedMessage: string
     trigger: FlushReason
     participation: SocialSession['participation']
+    activity?: SocialGroupActivity
     deferredIntent?: SocialSession['deferredIntent']
     routeChannel?: string
     routeThreadId?: string
@@ -214,6 +221,7 @@ export class SocialBridge {
           session.channelId,
           session.platform,
         ),
+      new SocialActivityStore(deps.activityConfig),
     )
 
     // 初始化 Scheduler：管理各群独立观察时钟与到期唤醒，不调用第二个决策模型。
@@ -273,6 +281,26 @@ export class SocialBridge {
           item.channelId === groupId,
       )
     const policyGate = this.scheduler.policyGate(agentId, accountId, groupId, platform)
+    const activity = this.sessionManager.activityStore.get({
+      platform,
+      agentId,
+      accountId,
+      channelId: groupId,
+    })
+    let gate = policyGate === 'ready' ? 'no_messages' : policyGate
+    if (
+      this.deps.shouldAllowSession &&
+      !this.deps.shouldAllowSession({
+        agentId,
+        platform,
+        channelType: 'group',
+        channelId: groupId,
+      })
+    )
+      gate = 'activation_policy'
+    else if (session) gate = this.scheduler.reviewGate(session)
+    else if (activity.mode === 'mention_only') gate = 'mention_only'
+    else if (Date.now() < activity.reviewNotBefore) gate = 'pass_cooldown'
     return {
       platform,
       agentId,
@@ -282,24 +310,85 @@ export class SocialBridge {
       phase: session?.phase ?? 'ready',
       participation: session?.participation ?? 'idle',
       pendingMessages: session?.pendingMessages.length ?? 0,
+      activityMode: activity.mode,
+      consecutivePasses: activity.passCount,
+      passCooldownUntil: activity.reviewNotBefore || null,
       lastReviewAt: session?.lastReviewTime ?? null,
-      nextReviewAt: session ? Math.max(session.nextReviewTime, session.nextScanTime) : null,
-      nextScanAt: session?.nextScanTime || null,
-      gate:
-        this.deps.shouldAllowSession &&
-        !this.deps.shouldAllowSession({
-          agentId,
-          platform,
-          channelType: 'group',
-          channelId: groupId,
-        })
-          ? 'activation_policy'
+      nextReviewAt:
+        activity.mode === 'mention_only'
+          ? null
           : session
-            ? this.scheduler.reviewGate(session)
-            : policyGate === 'ready'
-              ? 'no_messages'
-              : policyGate,
+            ? Math.max(session.nextReviewTime, session.nextScanTime, activity.reviewNotBefore)
+            : activity.reviewNotBefore || null,
+      nextScanAt: session?.nextScanTime || null,
+      gate,
     }
+  }
+
+  getGroupActivities(agentId: string): SocialGroupActivityItem[] {
+    const groups = new Map<string, SocialGroupActivityItem>()
+    for (const { identity, state } of this.sessionManager.activityStore.entries()) {
+      const [platform, owner, accountId, groupId] = identity
+      if (owner !== agentId || !platform || !accountId || !groupId) continue
+      const key = JSON.stringify(identity)
+      groups.set(key, {
+        ...state,
+        platform,
+        agentId,
+        accountId,
+        groupId,
+        participation: 'idle',
+        nextReviewAt: state.mode === 'mention_only' ? null : state.reviewNotBefore || null,
+      })
+    }
+    for (const session of this.sessionManager.listSessions()) {
+      if (session.agentId !== agentId || session.channelType !== 'group' || !session.platform)
+        continue
+      this.sessionManager.checkActiveExpiry(session)
+      const state = this.sessionManager.getActivity(session)
+      groups.set(
+        JSON.stringify([session.platform, agentId, session.accountId, session.channelId]),
+        {
+          ...state,
+          platform: session.platform,
+          agentId,
+          accountId: session.accountId,
+          groupId: session.channelId,
+          participation: session.participation,
+          nextReviewAt:
+            state.mode === 'mention_only'
+              ? null
+              : Math.max(session.nextReviewTime, state.reviewNotBefore),
+        },
+      )
+    }
+    return [...groups.values()]
+  }
+
+  async resumeGroupObservation(
+    agentId: string,
+    platform: string,
+    accountId: string,
+    groupId: string,
+  ): Promise<void> {
+    const adapter = this.getAdapter(platform)
+    if (
+      !adapter?.getConnectedAccountIds().includes(accountId) ||
+      (this.deps.getAgentId && this.deps.getAgentId() !== agentId) ||
+      adapter.resolveAgentId(accountId) !== agentId
+    )
+      throw new Error('SOCIAL_ACCOUNT_FORBIDDEN')
+    const session = this.sessionManager.getOrCreate({
+      platform,
+      agentId,
+      accountId,
+      channelType: 'group',
+      channelId: groupId,
+      senderId: 'self',
+      senderName: '',
+      content: '',
+    })
+    await this.sessionManager.setActivityMode(session, 'normal')
   }
 
   // ── 适配器管理 ──
@@ -477,6 +566,8 @@ export class SocialBridge {
   // ── 启动 / 停止 ──
 
   async start(signal?: AbortSignal): Promise<void> {
+    signal?.throwIfAborted()
+    await this.sessionManager.activityStore.load()
     signal?.throwIfAborted()
     this.running = true
 
@@ -967,9 +1058,19 @@ export class SocialBridge {
     ) {
       if (stored.status !== 'completed')
         throw new SocialTurnEndedError(stored.error || '该任务已经结束，未重复执行')
+      const saved = stored.checkpoint.participation as
+        | {
+            endParticipation?: boolean
+            lowActivity?: boolean
+          }
+        | undefined
+      const participation = {
+        ...(saved?.endParticipation === true ? { endParticipation: true } : {}),
+        ...(saved?.lowActivity === true ? { lowActivity: true } : {}),
+      }
       return stored.outcome === 'reply'
-        ? { type: 'reply', content: '', delivered: true }
-        : { type: 'pass' }
+        ? { type: 'reply', content: '', delivered: true, ...participation }
+        : { type: 'pass', ...participation }
     }
     if (
       stored &&
@@ -1124,6 +1225,8 @@ export class SocialBridge {
               }
             }
             record.outcome = outcome.type
+            if (record.kind === 'conversation')
+              await this.sessionManager.commitActivity(session, outcome)
             if (record.kind === 'task' && outcome.type !== 'orchestration')
               record.commandResult = {
                 sent: outcome.type === 'reply',
@@ -1400,6 +1503,8 @@ export class SocialBridge {
           combinedMessage: [combined, imageContext.context].filter(Boolean).join('\n'),
           trigger: reason,
           participation: session.participation,
+          activity:
+            session.channelType === 'group' ? this.sessionManager.getActivity(session) : undefined,
           deferredIntent: reason === 'intent_due' ? session.deferredIntent : undefined,
           routeChannel,
           routeThreadId,

@@ -5,16 +5,17 @@ import type { KernelScheduleInput } from '@infos/backend/kernel/kernelScheduler'
 function fixture() {
   const agents = [{ id: 'pero' }]
   const context = {
+    configRepo: { get: vi.fn(async (_key: string) => undefined as string | undefined) },
     agentManager: {
       listAgents: () => agents,
       getAgent: (id: string) => agents.find((agent) => agent.id === id),
     },
     storeRegistry: {
       listStoredAgentIds: () => ['pero', 'lin'],
-      getDimension: () => 768,
+      getDimension: vi.fn(() => 768),
       resolveAgentStorePath: (id: string, scope: string) => `${id}/${scope}`,
       resolveSharedStorePath: (scope: string) => scope,
-      describeStore: () => ({ exists: true, dimension: 768, nodeCount: 1 }),
+      describeStore: vi.fn(() => ({ exists: true, dimension: 768, nodeCount: 1 })),
       rebuildSocialStore: vi.fn(),
       isMaintaining: () => false,
       storeDiagnostics: () => [],
@@ -37,6 +38,41 @@ function fixture() {
 }
 
 describe('已删除角色的索引维护边界', () => {
+  it('配置已保存为新维度但运行时仍为旧维度时拒绝重建', async () => {
+    const { service, context } = fixture()
+    context.configRepo.get.mockImplementation(async (key) =>
+      key === 'embedding.dimension' ? '3072' : undefined,
+    )
+    await expect(service.rebuild('all')).rejects.toMatchObject({ code: 'CONFIG_ERROR' })
+    expect(context.kernelScheduler.submit).not.toHaveBeenCalled()
+  })
+
+  it('模型与索引注册表维度不一致时报告异常并拒绝重建', async () => {
+    const { service, context } = fixture()
+    context.storeRegistry.getDimension.mockReturnValue(1536)
+    expect(service.status()).toMatchObject({ dimension: 768, registryDimension: 1536 })
+    expect(service.status().configurationError).toBeTruthy()
+    await expect(service.rebuild('main')).rejects.toMatchObject({ code: 'CONFIG_ERROR' })
+  })
+
+  it('空索引重建后仍为旧维度时不能算成功', async () => {
+    const { service, context } = fixture()
+    context.storeRegistry.describeStore.mockReturnValue({
+      exists: true,
+      dimension: 1536,
+      nodeCount: 0,
+    })
+    await service.rebuild('main', 'pero')
+    const input = context.kernelScheduler.submit.mock.calls[0]![0]
+    await expect(input.run({ signal: new AbortController().signal } as never)).rejects.toThrow()
+    expect(service.status().jobs[0]).toMatchObject({
+      processed: 1,
+      completed: 0,
+      failed: 1,
+    })
+    expect(service.status().jobs[0]!.results[0]!.error?.message).toContain('1536')
+  })
+
   it('部分目标失败时进度仍记录全部已处理目标，并保留每个原始错误', async () => {
     const { service, context } = fixture()
     context.eventMemoryService.rebuildAgentStore.mockRejectedValue(new Error('主记忆发布失败'))

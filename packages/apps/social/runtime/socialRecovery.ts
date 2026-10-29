@@ -98,6 +98,16 @@ export async function finishSocialTurn(
   record.status = status
   record.error = error?.slice(0, 500)
   record.updatedAt = new Date().toISOString()
+  const outcome = record.checkpoint.outcome as
+    | { endParticipation?: boolean; lowActivity?: boolean }
+    | undefined
+  const participation =
+    outcome && (outcome.endParticipation || outcome.lowActivity)
+      ? {
+          ...(outcome.endParticipation ? { endParticipation: true } : {}),
+          ...(outcome.lowActivity ? { lowActivity: true } : {}),
+        }
+      : undefined
   // 托管等待保留恢复现场；终态仅留诊断摘要，以及尚未补存的已送达消息，不保留其余工具正文或图片。
   record.checkpoint =
     status === 'waiting' && record.checkpoint.orchestration
@@ -114,6 +124,7 @@ export async function finishSocialTurn(
               deliveryDataVersion: record.checkpoint.deliveryDataVersion,
             }
           : {}
+  if (participation && status !== 'waiting') record.checkpoint.participation = participation
   await storage.saveTurn(record)
   logger.info(__t('apps.social.logs', '社交回合状态已保存'), {
     turnId: record.id,

@@ -27,6 +27,7 @@ import type { AppContext } from '../container'
 import { createLogger, setLogLevel, parseLogLevel } from '../lib/logger'
 import { AppError } from '../lib/appError'
 import { EmbeddingService } from '../services/embedding/embeddingService'
+import { commitEmbeddingConfig } from '../services/embedding/activateEmbeddingConfig'
 import { LANGUAGE_CONFIG_KEY, normalizeLocale, SUPPORTED_LOCALES } from '@infos/shared/i18n'
 import { getLocale, setLocale } from '../lib/i18n'
 import {
@@ -136,6 +137,25 @@ const importConfigSchema = z.object({
  */
 export function createConfigRouter(ctx: AppContext) {
   const router = new Hono()
+  let writing = false
+  // 激活期间禁止另一端修改关联配置，避免验证的是一个模型、最终保存的是另一个。
+  router.use('*', async (c, next) => {
+    const mutating =
+      c.req.method === 'PUT' ||
+      c.req.method === 'DELETE' ||
+      (c.req.method === 'POST' && /\/(embedding\/activate|import)$/.test(c.req.path))
+    if (!mutating) return next()
+    if (writing)
+      throw new AppError('RESOURCE_BUSY', {
+        message: __t('server.index-maintenance', '配置正在保存，请稍后重试'),
+      })
+    writing = true
+    try {
+      await next()
+    } finally {
+      writing = false
+    }
+  })
 
   // POST /api/configs/embedding/activate — 真实验证候选Embedding配置，成功后才持久化。
   router.post('/embedding/activate', zValidator('json', activateEmbeddingSchema), async (c) => {
@@ -177,19 +197,18 @@ export function createConfigRouter(ctx: AppContext) {
       })
     }
 
-    const items = [
+    const items: Array<readonly [string, string]> = [
       ['embedding.provider', input.provider],
       ['embedding.model', input.model],
       ['embedding.dimension', String(input.dimension)],
       ['reranker.enabled', String(input.reranker.enabled)],
-    ] as const
-    for (const [key, value] of items) await ctx.configRepo.set(key, value)
-    if (input.apiBase) await ctx.configRepo.set('embedding.apiBase', input.apiBase)
-    if (input.apiKey) await ctx.configRepo.set('embedding.apiKey', input.apiKey)
-    if (input.reranker.model) await ctx.configRepo.set('reranker.model', input.reranker.model)
-    if (input.reranker.apiBase) await ctx.configRepo.set('reranker.apiBase', input.reranker.apiBase)
-    if (input.reranker.apiKey) await ctx.configRepo.set('reranker.apiKey', input.reranker.apiKey)
-    await ctx.reloadEmbeddingConfig()
+    ]
+    if (input.apiBase) items.push(['embedding.apiBase', input.apiBase])
+    if (input.apiKey) items.push(['embedding.apiKey', input.apiKey])
+    if (input.reranker.model) items.push(['reranker.model', input.reranker.model])
+    if (input.reranker.apiBase) items.push(['reranker.apiBase', input.reranker.apiBase])
+    if (input.reranker.apiKey) items.push(['reranker.apiKey', input.reranker.apiKey])
+    await commitEmbeddingConfig(ctx, items, input)
 
     return c.json({
       code: 'OK',

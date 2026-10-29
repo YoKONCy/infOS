@@ -275,6 +275,29 @@ export class ConversationTurnService {
   }
 
   async prepareTurn(params: PrepareTurnParams): Promise<PreparedTurn> {
+    let savedInput: PreparedTurn | undefined
+    try {
+      return await this.prepareTurnInput(params, (input) => {
+        savedInput = input
+      })
+    } catch (error) {
+      // 用户输入一旦落盘，模型解析、附件绑定与上下文编译失败也要留下同一消息对的失败记录。
+      if (savedInput && params.outputPersistence !== 'ephemeral') {
+        await this.persistFailedAssistant(
+          savedInput,
+          { reply: '', rawContent: '', toolCalls: [], contentBlocks: [] },
+          error,
+          params.signal?.aborted === true,
+        )
+      }
+      throw error
+    }
+  }
+
+  private async prepareTurnInput(
+    params: PrepareTurnParams,
+    onInputSaved: (input: PreparedTurn) => void,
+  ): Promise<PreparedTurn> {
     const thread = await this.deps.threadService.getThread(params.threadId)
     if (!thread) throw new Error(`Thread 不存在: ${params.threadId}`)
 
@@ -284,26 +307,26 @@ export class ConversationTurnService {
         message: `会话归属不匹配：Thread ${params.threadId} 不属于 Agent ${agentId}`,
       })
     }
-    if (
-      (params.inputPersistence ?? 'persistent') === 'persistent' &&
-      !params.taskId &&
-      !params.realmId
-    )
-      await this.deps.onUserActivity?.(agentId, params.threadId)
-    const modelConfig = this.deps.getThreadModelConfig
-      ? await this.deps.getThreadModelConfig(params.threadId, agentId, params.modelConfigId)
-      : params.modelConfigId
-        ? await this.deps.getModelConfigById?.(params.modelConfigId)
-        : await this.deps.getAgentModelConfig?.(agentId)
-    if (this.deps.getThreadModelConfig && !modelConfig)
-      throw new AppError('CONFIG_ERROR', { message: '请配置可用的主模型或选择其他模型' })
-    const contextWindowTokens = modelConfig?.contextWindowTokens ?? 0
-    const maxInputTokens =
-      params.maxInputTokens ??
-      (contextWindowTokens > 0
-        ? Math.max(1, contextWindowTokens - modelOutputReservation(modelConfig))
-        : 0)
+    const resolveModel = async () => {
+      const modelConfig = this.deps.getThreadModelConfig
+        ? await this.deps.getThreadModelConfig(params.threadId, agentId, params.modelConfigId)
+        : params.modelConfigId
+          ? await this.deps.getModelConfigById?.(params.modelConfigId)
+          : await this.deps.getAgentModelConfig?.(agentId)
+      if (this.deps.getThreadModelConfig && !modelConfig)
+        throw new AppError('CONFIG_ERROR', {
+          message: __t('server.conversation', '请配置可用的主模型或选择其他模型'),
+        })
+      const contextWindowTokens = modelConfig?.contextWindowTokens ?? 0
+      const maxInputTokens =
+        params.maxInputTokens ??
+        (contextWindowTokens > 0
+          ? Math.max(1, contextWindowTokens - modelOutputReservation(modelConfig))
+          : 0)
+      return { modelConfig, maxInputTokens }
+    }
     if (params.resumeMessages?.length) {
+      const { modelConfig, maxInputTokens } = await resolveModel()
       return this.withModel(
         {
           threadId: params.threadId,
@@ -335,6 +358,41 @@ export class ConversationTurnService {
       attachmentIds,
       params.threadId,
     )
+    const pairId = params.queueMessageId
+      ? `queue_${params.queueMessageId}`
+      : `pair_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`
+    const snapshot = attachments.map((row) => this.deps.attachmentService.toDto(row))
+    if (inputPersistence === 'persistent') {
+      const userMessage = await this.deps.threadService.appendUserMessage(
+        params.threadId,
+        params.content,
+        pairId,
+        attachmentIds.length ? JSON.stringify({ attachments: snapshot }) : undefined,
+      )
+      onInputSaved({
+        threadId: params.threadId,
+        agentId,
+        channel: thread.channel,
+        pairId,
+        disabledTools: thread.disabledTools,
+        interactionMode: thread.interactionMode,
+        executionMode: thread.executionMode,
+        autoExecuteTools: thread.autoExecuteTools,
+        capabilityScope: params.capabilityScope ?? 'default',
+        inputPersistence,
+        proactive: params.proactive,
+        maxInputTokens: 0,
+        messages: [],
+        initialPromptMessages: [],
+      })
+      if (attachmentIds.length) {
+        await this.deps.attachmentService.bind(attachmentIds, params.threadId, userMessage.id)
+      }
+    }
+
+    if (inputPersistence === 'persistent' && !params.taskId && !params.realmId)
+      await this.deps.onUserActivity?.(agentId, params.threadId)
+    const { modelConfig, maxInputTokens } = await resolveModel()
     const audioEnabled = nativeAudioEnabled(modelConfig)
     const nativeAudios = attachments.filter(
       (row) =>
@@ -347,21 +405,6 @@ export class ConversationTurnService {
       throw new AppError('PAYLOAD_TOO_LARGE', {
         message: __t('server.audio-input', '单轮原生音频不能超过 12MB'),
       })
-    const pairId = params.queueMessageId
-      ? `queue_${params.queueMessageId}`
-      : `pair_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`
-    const snapshot = attachments.map((row) => this.deps.attachmentService.toDto(row))
-    if (inputPersistence === 'persistent') {
-      const userMessage = await this.deps.threadService.appendUserMessage(
-        params.threadId,
-        params.content,
-        pairId,
-        attachmentIds.length ? JSON.stringify({ attachments: snapshot }) : undefined,
-      )
-      if (attachmentIds.length) {
-        await this.deps.attachmentService.bind(attachmentIds, params.threadId, userMessage.id)
-      }
-    }
 
     const imageRows = attachments.filter((row) => row.kind === 'image')
     const transcription = imageRows.length

@@ -25,6 +25,9 @@ electron/
 .agents/
 .codex/
 .agent/
+# 本地归档的宣传与历史角色美术不进入构建上下文
+.github/character-art/
+resources/steam/artwork/
 .vscode/
 *.md
 !packages/wiki/**/*.md

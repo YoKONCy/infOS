@@ -174,6 +174,21 @@ function jsonRequest(app: Hono, endpoint: string, body: unknown) {
 }
 
 describe('文档知识库持久化与 API', () => {
+  it('激活新维度后保留旧索引，重启可初始化，显式重建才切换文件维度', async () => {
+    const resources = await fixture()
+    const { stores, service, index, embeddingConfig } = resources
+    const target = stores.resolveSharedStorePath('knowledge')
+    expect(stores.describeStore(target).dimension).toBe(4)
+    embeddingConfig.dimension = 8
+    stores.setDimension(8)
+    expect(() => service.embeddingChanged()).not.toThrow()
+    expect(stores.describeStore(target).dimension).toBe(4)
+    await service.initialize()
+    expect(stores.describeStore(target).dimension).toBe(4)
+    await index.resetPhysicalStoreForMaintenance()
+    expect(stores.describeStore(target)).toMatchObject({ exists: true, dimension: 8, nodeCount: 0 })
+  })
+
   it('文本入库立即返回202，后台完成后真实BM25和ripgrep都能检索，删除后不再召回', async () => {
     const { app, service, repo, jobs, run, llm, embedding } = await fixture()
     const response = await jsonRequest(app, '/documents', {

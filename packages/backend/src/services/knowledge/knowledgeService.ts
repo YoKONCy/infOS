@@ -320,7 +320,7 @@ export class KnowledgeService {
           error: row.vectorStatus === 'failed' ? row.error : null,
         })
     }
-    this.index.rebuild()
+    this.index.configurationChanged()
   }
 
   async reindex(

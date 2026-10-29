@@ -56,6 +56,24 @@ export class ConfigRepository {
     await this.set(key, JSON.stringify(value))
   }
 
+  /** 一组关联配置同时提交；undefined 用于恢复此前不存在的键。 */
+  async replaceMany(items: ReadonlyArray<readonly [string, string | undefined]>): Promise<void> {
+    this.db.transaction((transaction) => {
+      for (const [key, value] of items) {
+        if (value === undefined) transaction.delete(configs).where(eq(configs.key, key)).run()
+        else
+          transaction
+            .insert(configs)
+            .values({ key, value })
+            .onConflictDoUpdate({
+              target: configs.key,
+              set: { value, updatedAt: new Date().toISOString() },
+            })
+            .run()
+      }
+    })
+  }
+
   /** 删除配置 */
   async delete(key: string): Promise<void> {
     await this.db.delete(configs).where(eq(configs.key, key))

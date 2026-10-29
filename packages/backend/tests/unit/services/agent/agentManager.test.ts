@@ -322,7 +322,7 @@ describe('AgentManager', () => {
     createAgent(builtinDir, 'pero', { name: 'Pero' }, { 'avatar.png': '新版官方头像' })
     createAgent(dataDir, 'pero', { name: '我的 Pero' })
     const legacyAvatar = readFileSync(
-      new URL('../../../../../../.github/character-art/legacy-avatars/pero.jpg', import.meta.url),
+      new URL('../../../fixtures/agents/pero-legacy-avatar.jpg', import.meta.url),
     )
     const userAvatarPath = join(dataDir, 'pero', 'avatar.jpg')
     writeFileSync(userAvatarPath, legacyAvatar)

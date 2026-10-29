@@ -215,6 +215,20 @@ describe('ModelRoleResolver', () => {
     expect(modelRepo.findById).not.toHaveBeenCalled()
   })
 
+  it('环境变量指定免密模型时不要求 API Key', async () => {
+    vi.stubEnv('PERO_LLM_API_KEY', undefined)
+    vi.stubEnv('PERO_LLM_MODEL', 'gemma-4-31b-qat-q4')
+    vi.stubEnv('PERO_LLM_PROVIDER', 'openai')
+    vi.stubEnv('PERO_LLM_API_BASE', 'http://localhost:1234/v1')
+    const { configRepo, modelRepo } = createModelDeps({}, {})
+    const resolver = new ModelRoleResolver(configRepo as never, modelRepo as never)
+    await expect(resolver.resolve('main')).resolves.toMatchObject({
+      modelId: 'gemma-4-31b-qat-q4',
+      apiKey: '',
+      apiBase: 'http://localhost:1234/v1',
+    })
+  })
+
   it('据点管家任务应读取独立模型槽', async () => {
     const { configRepo, modelRepo } = createModelDeps(
       { 'model.task.butler': '3', 'model.main': '1' },

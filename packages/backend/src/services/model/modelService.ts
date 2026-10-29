@@ -180,7 +180,7 @@ export class ModelService {
   /** 创建模型配置 */
   async create(data: CreateModelInput): Promise<ModelConfigDto> {
     await this.validateConnection(data)
-    const model = await this.modelRepo.create(data)
+    const model = await this.modelRepo.create(data, { selectMainIfFirst: true })
     this.modelRegistry.invalidateCache()
     logger.info(__t('logs.model', '模型配置已创建: {0} ({1})', [model.name, model.id]))
     return this.toDto(model)

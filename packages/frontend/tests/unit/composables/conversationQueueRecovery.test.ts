@@ -5,8 +5,11 @@ import { flushPromises, mount } from '@vue/test-utils'
 import { ApiError } from '@infos/frontend/api/errors'
 import { useConversationQueue } from '@infos/frontend/composables/chat/useConversationQueue'
 
-const api = vi.hoisted(() => ({ queue: vi.fn(), session: vi.fn() }))
-vi.mock('@infos/frontend/api/modules/chatApi', () => ({ chatApi: { queue: api.queue } }))
+const api = vi.hoisted(() => ({ queue: vi.fn(), session: vi.fn(), enqueue: vi.fn() }))
+const history = vi.hoisted(() => ({ loadThreadMessages: vi.fn(), finishStreaming: vi.fn() }))
+vi.mock('@infos/frontend/api/modules/chatApi', () => ({
+  chatApi: { queue: api.queue, enqueue: api.enqueue },
+}))
 vi.mock('@infos/frontend/api/modules/clientAccessApi', () => ({
   clientAccessApi: { session: api.session },
 }))
@@ -16,7 +19,7 @@ vi.mock('@infos/frontend/api/transport', () => ({
 }))
 vi.mock('@infos/frontend/composables/gateway/useGateway', () => ({ useGateway: () => ({}) }))
 vi.mock('@infos/frontend/stores', () => ({
-  useThreadStore: () => ({ threadId: 'thread', agentId: 'pero', messages: [] }),
+  useThreadStore: () => ({ threadId: 'thread', agentId: 'pero', messages: [], ...history }),
   useNotificationStore: () => ({}),
   useCompositorStore: () => ({}),
 }))
@@ -27,7 +30,38 @@ afterEach(() => {
   vi.restoreAllMocks()
 })
 
-describe('消息队列鉴权恢复', () => {
+describe('消息队列反馈与鉴权恢复', () => {
+  it('入队后立即失败且未收到实时帧，也读取已保存的原文与错误', async () => {
+    vi.useFakeTimers()
+    api.queue.mockResolvedValue({
+      data: { threadId: 'thread', active: false, paused: true, items: [] },
+    })
+    api.enqueue.mockResolvedValue({
+      data: { threadId: 'thread', active: false, paused: true, items: [] },
+    })
+    let queue!: ReturnType<typeof useConversationQueue>
+    const wrapper = mount(
+      defineComponent({
+        setup() {
+          queue = useConversationQueue()
+          return () => null
+        },
+      }),
+    )
+    try {
+      await flushPromises()
+      expect(history.loadThreadMessages).not.toHaveBeenCalled()
+      await expect(
+        queue.enqueue({ threadId: 'thread', agentId: 'pero', content: '请保存原文' }),
+      ).resolves.toBe(true)
+      await flushPromises()
+      expect(history.loadThreadMessages).toHaveBeenCalledWith('thread', 'pero')
+      expect(history.finishStreaming).toHaveBeenCalled()
+    } finally {
+      wrapper.unmount()
+    }
+  })
+
   it('401 后停止业务轮询，只在公开状态确认恢复后继续读取队列', async () => {
     vi.useFakeTimers()
     vi.spyOn(document, 'hidden', 'get').mockReturnValue(false)

@@ -8,8 +8,11 @@ import type { InboundMessage } from './types'
 import {
   DEFAULT_SOCIAL_SCHEDULER_CONFIG,
   SOCIAL_INITIAL_REVIEW_DELAY_MS,
+  SOCIAL_DELEGATED_TURN_PREFIX,
   type SocialGroupPolicy,
+  type SocialActivityMode,
 } from '@infos/shared'
+import { SocialActivityStore } from './socialActivityStore'
 import { createLogger, safeModelDiagnostic } from '@infos/backend/applicationHostAbi'
 import { socialFailure } from './socialRecovery'
 
@@ -46,8 +49,9 @@ export type SocialTurnOutcome =
       content: string
       /** 工具已完成图片等附件投递，桥接层仅确认回合。 */ delivered?: boolean
       endParticipation?: boolean
+      lowActivity?: boolean
     }
-  | { type: 'pass'; endParticipation?: boolean }
+  | { type: 'pass'; endParticipation?: boolean; lowActivity?: boolean }
   | { type: 'wait'; wait: SocialWaitRequest }
   | {
       type: 'defer'
@@ -131,6 +135,7 @@ export class SocialSessionManager {
     private readonly flushCallback: FlushCallback,
     config?: Partial<SessionManagerConfig>,
     private readonly groupPolicy?: (session: SocialSession) => SocialGroupPolicy,
+    readonly activityStore = new SocialActivityStore(),
   ) {
     this.config = { ...DEFAULT_CONFIG, ...config }
   }
@@ -168,12 +173,44 @@ export class SocialSessionManager {
         waitCount: 0,
       }
       this.sessions.set(key, session)
+      if (session.channelType === 'group')
+        session.nextReviewTime = Math.max(
+          session.nextReviewTime,
+          this.getActivity(session).reviewNotBefore,
+        )
     }
     return session
   }
 
   listSessions(): SocialSession[] {
     return [...this.sessions.values()].sort((a, b) => b.lastMessageTime - a.lastMessageTime)
+  }
+
+  getActivity(session: SocialSession) {
+    return this.activityStore.get(session)
+  }
+
+  async setActivityMode(session: SocialSession, mode: SocialActivityMode): Promise<void> {
+    await this.activityStore.setMode(session, mode)
+    if (session.phase === 'running' || session.phase === 'retrying' || session.orchestrationTurnId)
+      this.cooldownReview(session)
+    else this.endParticipation(session)
+  }
+
+  async commitActivity(session: SocialSession, outcome: SocialTurnOutcome): Promise<void> {
+    if (session.turnId?.startsWith(SOCIAL_DELEGATED_TURN_PREFIX)) return
+    if (session.channelType !== 'group' || (outcome.type !== 'reply' && outcome.type !== 'pass'))
+      return
+    await this.activityStore.complete(session, outcome, session.turnId)
+  }
+
+  private directlyTriggered(message: InboundMessage): boolean {
+    const event = message.rawEvent as Record<string, unknown> | undefined
+    return (
+      message.isMentioned === true ||
+      message.channelType === 'private' ||
+      (event?._infosQueuedForReply === true && event?._infosContinuation !== true)
+    )
   }
 
   closeSession(
@@ -220,11 +257,7 @@ export class SocialSessionManager {
     const session = this.getOrCreate(msg)
     this.checkActiveExpiry(session)
     const now = Date.now()
-    const rawEvent = msg.rawEvent as Record<string, unknown> | undefined
-    const directlyTriggered =
-      msg.isMentioned === true ||
-      msg.channelType === 'private' ||
-      (rawEvent?._infosQueuedForReply === true && rawEvent?._infosContinuation !== true)
+    const directlyTriggered = this.directlyTriggered(msg)
 
     const msgId = msg.messageId
     if (
@@ -327,7 +360,7 @@ export class SocialSessionManager {
     session.lastActiveTime = 0
     session.nextScanTime = 0
     // 当前回合结束期间排队的新提及仍是独立请求，不能随退出决定一起丢弃。
-    session.isMentioned = session.pendingMessages.some((message) => message.isMentioned)
+    session.isMentioned = session.pendingMessages.some((message) => this.directlyTriggered(message))
     this.cooldownReview(session)
   }
 
@@ -338,8 +371,10 @@ export class SocialSessionManager {
   private cooldownReview(session: SocialSession): void {
     if (session.channelType !== 'group') return
     session.lastReviewTime = Date.now()
-    session.nextReviewTime =
-      session.lastReviewTime + this.policy(session).reviewIntervalSeconds * 1000
+    session.nextReviewTime = Math.max(
+      session.lastReviewTime + this.policy(session).reviewIntervalSeconds * 1000,
+      this.getActivity(session).reviewNotBefore,
+    )
   }
 
   checkActiveExpiry(session: SocialSession): void {
@@ -374,6 +409,10 @@ export class SocialSessionManager {
     this.clearTimer(session)
     if (session.phase === 'running' || session.phase === 'retrying' || session.orchestrationTurnId)
       return
+    if (session.channelType === 'group' && reason === 'proactive_review') {
+      const activity = this.getActivity(session)
+      if (activity.mode === 'mention_only' || Date.now() < activity.reviewNotBefore) return
+    }
     if (
       session.channelType === 'group' &&
       session.participation !== 'engaged' &&
@@ -395,9 +434,19 @@ export class SocialSessionManager {
       reason === 'proactive_review'
         ? Math.max(this.config.maxBufferSize, this.policy(session).minMessagesForReview)
         : this.config.maxBufferSize
+    // 退出续聊后的新提及优先领取，避免普通消息积压把明确请求挤到下一轮。
+    const directIndex = session.pendingMessages.findIndex((message) =>
+      this.directlyTriggered(message),
+    )
+    const batchStart =
+      session.channelType === 'group' &&
+      session.participation !== 'engaged' &&
+      directIndex >= batchSize
+        ? directIndex
+        : 0
     const messages = recovering
       ? session.retryMessages!
-      : session.pendingMessages.splice(0, batchSize)
+      : session.pendingMessages.splice(batchStart, batchSize)
     if (!recovering) session.retryCount = 0
     session.retryMessages = undefined
     session.lastError = undefined
@@ -414,6 +463,13 @@ export class SocialSessionManager {
     )
 
     try {
+      if (
+        !recovering &&
+        session.channelType === 'group' &&
+        messages.some((message) => this.directlyTriggered(message))
+      )
+        await this.activityStore.wake(session)
+      controller.signal.throwIfAborted()
       const outcome = await this.flushCallback(session, messages, reason, controller.signal)
       controller.signal.throwIfAborted()
       session.retryCount = 0
@@ -525,6 +581,7 @@ export class SocialSessionManager {
     outcome: SocialTurnOutcome,
   ): Promise<void> {
     session.inFlightMessages = []
+    await this.commitActivity(session, outcome)
     if (outcome.type === 'orchestration') {
       session.orchestrationTurnId = session.turnId
       session.phase = 'ready'
@@ -537,18 +594,14 @@ export class SocialSessionManager {
       session.waitingTurnId = undefined
       session.deferredIntent = undefined
       this.markReplied(session)
-      if (outcome.endParticipation) this.endParticipation(session)
+      if (outcome.endParticipation || outcome.lowActivity) this.endParticipation(session)
       return
     }
     if (outcome.type === 'pass') {
       session.waitingTurnId = undefined
       session.deferredIntent = undefined
-      session.phase = 'ready'
-      session.isMentioned = false
-      session.nextScanTime = 0
-      this.cooldownReview(session)
-      if (session.participation !== 'engaged') session.participation = 'idle'
-      if (outcome.endParticipation) this.endParticipation(session)
+      // PASS 结束活跃续聊；普通积压回到旁观，新提及仍作为独立请求保留。
+      this.endParticipation(session)
       return
     }
     if (outcome.type === 'wait') {

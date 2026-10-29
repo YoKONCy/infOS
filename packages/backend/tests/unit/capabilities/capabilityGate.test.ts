@@ -361,7 +361,8 @@ channels:
         'add_fact_object_alias',
         'remove_fact_object_alias',
       ]) {
-        expect(gate.isToolAllowed('pero', 'desktop', tool, undefined, 'ambient')).toBe(true)
+        expect(gate.isToolAllowed('pero', 'desktop', tool)).toBe(true)
+        expect(gate.isToolAllowed('pero', 'desktop', tool, undefined, 'ambient')).toBe(false)
       }
       expect(gate.isToolAllowed('unknown', 'desktop', 'write_fact', undefined, 'ambient')).toBe(
         false,

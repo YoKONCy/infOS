@@ -241,6 +241,7 @@ describe('SocialSessionManager', () => {
     await manager.handleInbound(
       createMessage({ channelId: 'g3', rawEvent: { _isMentioned: true } }),
     )
+    await vi.advanceTimersByTimeAsync(0)
     const session = manager.getActiveSessions('group')[0]!
 
     expect(callback).toHaveBeenCalled()

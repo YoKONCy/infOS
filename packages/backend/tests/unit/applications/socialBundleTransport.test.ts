@@ -100,7 +100,12 @@ describe('独立 bundle 的社交传输', () => {
       socialEvents: { publish: vi.fn(async () => undefined) },
       socialExecutions: {},
       storeRegistry: {},
-      configRepo: { get: vi.fn(async () => JSON.stringify({ agentId: 'pero' })), set: vi.fn() },
+      configRepo: {
+        get: vi.fn(async (key: string) =>
+          key === 'social' ? JSON.stringify({ agentId: 'pero' }) : undefined,
+        ),
+        set: vi.fn(),
+      },
       agentManager: { getAgent: vi.fn(() => ({ id: 'pero', name: 'Pero' })) },
       mdpEngine: { addTemplateRoot: vi.fn() },
       llmService: {},

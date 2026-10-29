@@ -1,4 +1,7 @@
 {
+  "委派任务不能修改群聊参与模式": "Delegated tasks cannot change group participation modes",
+  "low_activity 必须为布尔值": "low_activity must be a boolean",
+  "低活跃仅适用于群聊": "Low activity is only available for group chats",
   "end_participation 必须为布尔值": "end_participation must be a boolean",
   "退出活跃状态不能同时等待、延后、yield 或 next:continue": "Ending participation cannot be combined with waiting, deferring, yield, or next:continue",
   "QQ 表情占位不能直接发送；请用 emoji_list 返回的 native_emoji 引用，或改写正文": "QQ emoji placeholders cannot be sent directly; use a native_emoji reference returned by emoji_list, or rewrite the text",

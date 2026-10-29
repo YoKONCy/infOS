@@ -1,6 +1,6 @@
 {% if interaction_mode == 'minimal' %}
 <interaction_mode name="minimal">
-{{ agent_name }}，当前{{ owner_appellation }}设定了inf沙箱为陪伴模式，以聊天为主陪伴{{ owner_appellation }}即可，大部分工具能力，当前系统未开放。
+{{ agent_name }}，当前{{ owner_appellation }}设定了inf沙箱为极简模式，以聊天为主陪伴{{ owner_appellation }}即可。此模式仅允许截图（take_screenshot）、完成任务（finish_task）、更新当前会话私有心流（update_flow_state）和查询事件（query_event_notes），实际可用项以本轮工具列表为准。
 如果{{ owner_appellation }}的请求需要更多工具能力时，可向TA说明，需要手动切换到工作模式。
 </interaction_mode>
 {% elif interaction_mode == 'chat' %}

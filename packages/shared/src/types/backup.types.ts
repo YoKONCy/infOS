@@ -60,6 +60,8 @@ export interface BackupPreview {
 }
 
 export interface BackupImportProgress {
+  /** 服务端支持分片时返回每片最大字节数；旧服务端缺省，客户端沿用整包上传。 */
+  uploadChunkBytes?: number
   id: string
   phase: 'uploading' | 'extracting' | 'validating' | 'cancelling' | 'ready' | 'failed' | 'cancelled'
   receivedBytes: number

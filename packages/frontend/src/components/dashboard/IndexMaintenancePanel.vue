@@ -12,7 +12,12 @@ import { getApiBaseUrl } from '../../api/transport'
 import { PButton, PCard, PixelIcon, PSelect } from '../pixel'
 import type { IndexMaintenanceDiagnostic } from '@infos/shared'
 
-const props = defineProps<{ socialAgentId?: string }>()
+const props = defineProps<{
+  socialAgentId?: string
+  candidateModel?: string
+  candidateDimension?: number
+  activationRevision?: number
+}>()
 const agents = useAgentStore()
 const notification = useNotificationStore()
 const selectedAgent = ref(agents.activeAgentId)
@@ -23,7 +28,23 @@ const failedAvatars = ref(new Set<string>())
 let timer: ReturnType<typeof setTimeout> | undefined
 let disposed = false
 let loading = false
+let refreshPending = false
 const social = computed(() => props.socialAgentId !== undefined)
+const pendingActivation = computed(
+  () =>
+    status.value &&
+    ((props.candidateModel !== undefined && props.candidateModel.trim() !== status.value.model) ||
+      (props.candidateDimension !== undefined &&
+        props.candidateDimension !== status.value.dimension)),
+)
+const rebuildDisabled = computed(
+  () =>
+    submitting.value ||
+    !status.value ||
+    status.value.busy ||
+    Boolean(status.value.configurationError) ||
+    Boolean(pendingActivation.value),
+)
 const target = computed(() => (social.value ? props.socialAgentId : selectedAgent.value))
 const names: Record<IndexScope, string> = {
   main: '主记忆',
@@ -124,7 +145,11 @@ const stateNames: Record<string, string> = {
 }
 
 async function refresh() {
-  if (loading || disposed) return
+  if (disposed) return
+  if (loading) {
+    refreshPending = true
+    return
+  }
   loading = true
   try {
     const result = await maintenanceApi.indexes()
@@ -136,7 +161,10 @@ async function refresh() {
     if (!disposed) error.value = cause instanceof Error ? cause.message : '索引状态加载失败'
   } finally {
     loading = false
-    if (!disposed)
+    if (!disposed && refreshPending) {
+      refreshPending = false
+      void refresh()
+    } else if (!disposed)
       timer = setTimeout(
         () => {
           void refresh()
@@ -146,7 +174,7 @@ async function refresh() {
   }
 }
 async function rebuild(scope: IndexScope | 'all', agentId = target.value) {
-  if (submitting.value || status.value?.busy) return
+  if (rebuildDisabled.value) return
   submitting.value = true
   try {
     await maintenanceApi.reindex(agentId || undefined, scope)
@@ -166,6 +194,13 @@ watch(target, () => {
   if (timer) clearTimeout(timer)
   void refresh()
 })
+watch(
+  () => props.activationRevision,
+  () => {
+    if (timer) clearTimeout(timer)
+    void refresh()
+  },
+)
 watch(agentProfiles, (profiles) => {
   if (selectedAgent.value && !profiles.has(selectedAgent.value))
     selectedAgent.value = profiles.has(agents.activeAgentId) ? agents.activeAgentId : ''
@@ -188,8 +223,12 @@ onUnmounted(() => {
           {{ social ? __t('ui.settings', '社交图谱维护') : __t('ui.settings', '索引维护') }}
         </h4>
         <p v-if="status">
-          {{ status.model || __t('ui.settings', '未配置向量模型') }} · {{ status.dimension }}
-          {{ __t('ui.settings', '维') }}
+          {{
+            __t('ui.index-maintenance', '已生效：{0} · {1} 维。修改表单不会自动切换索引。', [
+              status.model || __t('ui.settings', '未配置向量模型'),
+              status.dimension,
+            ])
+          }}
         </p>
       </div>
       <PSelect v-if="!social" v-model="selectedAgent" :options="choices" size="sm" teleport />
@@ -197,7 +236,7 @@ onUnmounted(() => {
         v-else
         size="sm"
         variant="secondary"
-        :disabled="submitting || status?.busy || !target"
+        :disabled="rebuildDisabled || !target"
         @click="rebuild('social')"
       >
         {{ __t('ui.settings', '重建图谱') }}
@@ -209,6 +248,14 @@ onUnmounted(() => {
           ? __t('ui.settings', '重建社交检索索引，保留摘要与关系。')
           : __t('ui.settings', '保留记忆和原文，按当前模型重建索引。')
       }}
+    </p>
+    <p v-if="pendingActivation" class="index-warning" role="status">
+      {{
+        __t('ui.index-maintenance', '填写的模型或维度尚未生效，请先保存并激活配置，再重建索引。')
+      }}
+    </p>
+    <p v-if="status?.configurationError" class="index-warning" role="alert">
+      {{ status.configurationError }}
     </p>
     <p v-if="status && !status.embeddingAvailable" class="index-warning">
       {{ __t('ui.settings', '未配置 Embedding，主记忆和文档仅建立文本索引。') }}
@@ -290,7 +337,7 @@ onUnmounted(() => {
         class="index-rebuild"
         size="sm"
         variant="ghost"
-        :disabled="submitting || status?.busy"
+        :disabled="rebuildDisabled"
         @click="rebuild(item.scope, item.agentId)"
       >
         {{ __t('ui.settings', '重建') }}
@@ -298,12 +345,7 @@ onUnmounted(() => {
     </div>
     <div v-if="!social" class="index-footer">
       <small>{{ __t('ui.settings', '主记忆和文档重建可能产生 Embedding 调用。') }}</small>
-      <PButton
-        size="sm"
-        variant="secondary"
-        :disabled="submitting || status?.busy"
-        @click="rebuild('all')"
-      >
+      <PButton size="sm" variant="secondary" :disabled="rebuildDisabled" @click="rebuild('all')">
         {{ __t('ui.settings', '重建全部') }}
       </PButton>
     </div>

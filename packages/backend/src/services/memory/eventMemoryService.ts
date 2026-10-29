@@ -412,12 +412,12 @@ export class EventMemoryService {
       topics: input.topics ?? target.topics,
       origin: {
         ...target.origin,
-        manualEdit: undefined,
         pairIds: [...new Set([...target.origin.pairIds, ...input.origin.pairIds])],
         messageIds: [...new Set([...target.origin.messageIds, ...input.origin.messageIds])],
       },
       status: 'active',
     }
+    delete replacement.origin.manualEdit
     const newTdbId = await this.allocateTdbId()
     const relations = await this.repo.listRelations(targetId)
     await this.repo.prepareRevise(operationId, target, replacement, newTdbId, relations)
@@ -1234,7 +1234,11 @@ export class EventMemoryService {
     guard()
     const vectors = new Map<string, number[]>()
     const vectorTexts = new Map<string, string>()
-    if (offline) {
+    if (
+      offline &&
+      this.stores.describeStore(this.stores.resolveAgentStorePath(agentId, 'main')).dimension ===
+        dimension
+    ) {
       const previous = this.stores.getAgentStore(agentId, 'main')
       for (const id of previous.allNodeIds()) {
         const node = previous.get<TdbMemoryPayload>(id)

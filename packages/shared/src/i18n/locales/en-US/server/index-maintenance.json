@@ -1,4 +1,11 @@
 {
+  "向量维度必须为正整数": "The embedding dimension must be a positive integer.",
+  "索引重建后未找到有效索引文件": "No valid index file was found after rebuilding.",
+  "配置正在保存，请稍后重试": "Configuration is being saved. Please try again shortly.",
+  "向量配置未完整生效，请重新保存并激活配置": "The embedding configuration is not fully active. Save and activate it again.",
+  "向量配置切换及恢复失败，请检查服务日志后重新激活": "The embedding configuration change and rollback failed. Check the service logs and activate it again.",
+  "索引重建维度不匹配：目标 {0} 维，实际 {1} 维": "Rebuilt index dimension mismatch: expected {0}, got {1}.",
+  "向量配置已变化，请重新重建索引": "The embedding configuration changed. Rebuild the indexes again.",
   "数据库仍有操作未结束，已保留原索引": "Database operations are still active. The previous index has been retained.",
   "数据库索引已切换，旧访问已取消，请重新读取": "The database index has changed. The old access was cancelled; read it again.",
   "数据库维护未完成，阶段：{0}，路径：{1}": "Database maintenance did not complete. Phase: {0}; path: {1}",

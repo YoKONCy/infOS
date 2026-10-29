@@ -273,9 +273,12 @@ export async function runChatStream(
     const code = appError?.code ?? 'INTERNAL_ERROR'
     const message = appError?.message ?? (err instanceof Error ? err.message : String(err))
     outcome = { success: false, error: message }
-    if (surfaceRef.current) {
-      await writeSurface(surfaceRef.current.fail(code, message, fullContent))
+    if (!surfaceRef.current) {
+      // 准备阶段可能尚未创建 Execution；队列观察者也必须收到可见的失败帧。
+      surfaceRef.current = new ConversationSurfaceSession(threadId, agentId)
+      await writeSurface(surfaceRef.current.open())
     }
+    await writeSurface(surfaceRef.current.fail(code, message, fullContent))
     await writeEvent({
       event: 'error',
       data: JSON.stringify({

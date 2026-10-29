@@ -252,6 +252,26 @@ export class MemoryStoreRegistry {
   getDimension(): number {
     return this.dim
   }
+
+  /** 切换目标维度但保留磁盘索引，旧库由维护任务逐项重建，失败时仍有原件。 */
+  setDimension(dimension: number): void {
+    if (!Number.isInteger(dimension) || dimension <= 0)
+      throw new Error(__t('server.index-maintenance', '向量维度必须为正整数'))
+    if (dimension === this.dim) return
+    for (const target of new Set([...this.maintenance.keys(), ...this.stores.keys()])) {
+      this.assertAvailable(target)
+      this.assertNoActiveCalls(target)
+    }
+    for (const [target, store] of this.stores) {
+      // 关闭失败时保留句柄和旧目标维度，不能继续切换或遗失原生资源的重试入口。
+      store.close()
+      this.stores.delete(target)
+      this.activeCalls.delete(target)
+      this.textIndexDirty.delete(target)
+    }
+    this.descriptions.clear()
+    this.dim = dimension
+  }
   /** 全量遗忘也覆盖已移除角色留下的受管索引目录。 */
   listStoredAgentIds(): string[] {
     const root = this.pathResolver.resolve('@data')
@@ -326,6 +346,31 @@ export class MemoryStoreRegistry {
     return `${tdbPath}.dimension`
   }
 
+  /** 用原生结构化诊断识别已有库的维度，不用候选配置重写旧索引。 */
+  private openExistingReader(tdbPath: string): TriviumDBType {
+    const options = {
+      dim: this.dim,
+      accessMode: 'readOnly' as const,
+      autoBuildQuiver: false,
+      missingIndexPolicy: 'fallback' as const,
+      payloadCacheMb: 8,
+    }
+    try {
+      return new TriviumDB(tdbPath, options)
+    } catch (error) {
+      const failure = error as { code?: string; details?: { expected?: unknown } }
+      const dimension = failure.details?.expected
+      if (
+        failure.code !== 'TDB_DIMENSION_MISMATCH' ||
+        typeof dimension !== 'number' ||
+        !Number.isSafeInteger(dimension) ||
+        dimension <= 0
+      )
+        throw error
+      return new TriviumDB(tdbPath, { ...options, dim: dimension })
+    }
+  }
+
   private removeStoresRecursively(directory: string, legacyOnly: boolean): void {
     const root = this.pathResolver.resolve('@data')
     for (const entry of readdirSync(directory, { withFileTypes: true })) {
@@ -356,13 +401,7 @@ export class MemoryStoreRegistry {
     if (format < 5) throw new Error('旧数据库格式过早，请先用对应版本导出迁移')
     let reader: TriviumDBType | undefined
     try {
-      reader = new TriviumDB(tdbPath, {
-        dim: this.dim,
-        accessMode: 'readOnly',
-        autoBuildQuiver: false,
-        missingIndexPolicy: 'fallback',
-        payloadCacheMb: 8,
-      })
+      reader = this.openExistingReader(tdbPath)
       const lockedFormat = databaseFormat(tdbPath)
       if (lockedFormat === null) throw new Error('持有共享读锁后旧库主文件缺失')
       if (lockedFormat >= TRIVIUM_FORMAT) return
@@ -470,16 +509,7 @@ export class MemoryStoreRegistry {
         this.assertManagedStorePath(source)
         const writer = this.stores.get(source)
         if (writer) writer.flush()
-        else
-          readers.push(
-            new TriviumDB(source, {
-              dim: this.dim,
-              accessMode: 'readOnly',
-              autoBuildQuiver: false,
-              missingIndexPolicy: 'fallback',
-              payloadCacheMb: 8,
-            }),
-          )
+        else readers.push(this.openExistingReader(source))
       }
       captureSqlite()
       for (const source of paths) {
@@ -490,13 +520,7 @@ export class MemoryStoreRegistry {
           if (file.endsWith('.tmp') || file.endsWith('.manifest.json')) continue
           copyFileSync(file, path.join(path.dirname(target), path.basename(file)))
         }
-        const check = new TriviumDB(target, {
-          dim: this.dim,
-          accessMode: 'readOnly',
-          autoBuildQuiver: false,
-          missingIndexPolicy: 'fallback',
-          payloadCacheMb: 8,
-        })
+        const check = this.openExistingReader(target)
         check.close()
       }
     } finally {
@@ -549,12 +573,7 @@ export class MemoryStoreRegistry {
     const key = `${stat.mtimeMs}:${stat.size}`
     const cached = this.descriptions.get(tdbPath)
     if (cached?.key === key) return cached.value
-    const reader = new TriviumDB(tdbPath, {
-      dim: this.dim,
-      accessMode: 'readOnly',
-      missingIndexPolicy: 'fallback',
-      payloadCacheMb: 8,
-    })
+    const reader = this.openExistingReader(tdbPath)
     try {
       const value = { exists: true, dimension: reader.dim(), nodeCount: reader.nodeCount() }
       this.descriptions.set(tdbPath, { key, value })
@@ -823,7 +842,7 @@ export class MemoryStoreRegistry {
     const source =
       cached ??
       new TriviumDB(target, {
-        dim: this.dim,
+        dim: this.describeStore(target).dimension ?? this.dim,
         accessMode: 'readWrite',
         missingIndexPolicy: 'fallback',
         payloadCacheMb: 32,

@@ -1,0 +1,17 @@
+{
+  "sourceVersion": "0.9.0-beta.3",
+  "format": 9,
+  "dimension": 4,
+  "encoding": "gzip-base64",
+  "files": {
+    "memory.tdb": "H4sIAAAAAAAACgsJc3HiZGBhYGBgZoAAJihtxYAKgqB0L5RmRJJjwsKGyXMwZOaV5eeUpRYzMDjYSzIwMFQrFeeXFiWnKlkpPZu+/Hlnx9PWzc8371aqDXEKdGNkMIAbFRIa6AwxJoW12QcAkVM/GKsAAAA=",
+    "memory.tdb.flush_ok": "H4sIAAAAAAAACgtx8/VmZmSAgNVQWgFKX4DSE4PtJXIeTTOWue+i+Lsz4j0AHN9EITUAAAA=",
+    "memory.tdb.gidx": "H4sIAAAAAAAACgtx94xgZmBgYGKAAEYovRpKTwy2l0CWM2VgYOj5feobsloOBgYGSTDLwT4zryw/pyy1uFqpOL+0KDlVyUrp2fTlzzs7nrZufr55t1KtB1STjaj/FmRD0Gl0B3FA2TAL0OWbLlSvAAAc30QhzQAAAA==",
+    "memory.tdb.lock": "H4sIAAAAAAAACgMAAAAAAAAAAAA=",
+    "memory.tdb.pld.1": "H4sIAAAAAAAACgsJ8HFhZGBgAGEQYILSGlA6A0ozovENofT/FTpLkfXNhNLGMH0bVz0C0dVKyfl5Jal5JUpWSk9725/vWv60s/fFug1P97cp6ShlZ+alACVSy1LzSuLz8ktSlWqxani6bt6TvZPRNaTmlWSWVCrVCjbdfwAAHN9EIdAAAAA=",
+    "memory.tdb.text": "H4sIAAAAAAAACgvxdIlgYkAARijNDaVzUtMTkysTcwoyEhnRlBCiAcjKFWZbAAAA",
+    "memory.tdb.text.meta": "H4sIAAAAAAAACgvxdQ1hZGBgWM0AAdFQ+sQp0TQA7F6pvRwAAAA=",
+    "memory.tdb.vec": "H4sIAAAAAAAACmNgaLBnwAAIMQBs4pYzIAAAAA==",
+    "memory.tdb.wal": "H4sIAAAAAAAACgsJC/dhZgAAVcH5lQYAAAA="
+  }
+}

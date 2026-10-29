@@ -30,6 +30,13 @@ import { LogQueryService } from '@infos/backend/services/system/logQueryService'
 
 function createConfigContext(initial: Record<string, string> = {}) {
   const store = new Map(Object.entries(initial))
+  const readEmbedding = () => ({
+    apiBase: store.get('embedding.apiBase') ?? '',
+    apiKey: store.get('embedding.apiKey') ?? '',
+    model: store.get('embedding.model') ?? '',
+    dimension: Number(store.get('embedding.dimension') ?? 1536),
+  })
+  let active = readEmbedding()
   const ctx = {
     configRepo: {
       listAll: vi.fn((prefix = '') =>
@@ -39,7 +46,13 @@ function createConfigContext(initial: Record<string, string> = {}) {
             .map(([key, value]) => ({ key, value })),
         ),
       ),
-      get: vi.fn((key: string) => Promise.resolve(store.get(key) ?? null)),
+      get: vi.fn((key: string) => Promise.resolve(store.get(key))),
+      replaceMany: vi.fn(async (items: ReadonlyArray<readonly [string, string | undefined]>) => {
+        for (const [key, value] of items) {
+          if (value === undefined) store.delete(key)
+          else store.set(key, value)
+        }
+      }),
       set: vi.fn((key: string, value: string) => {
         store.set(key, value)
         return Promise.resolve()
@@ -50,14 +63,12 @@ function createConfigContext(initial: Record<string, string> = {}) {
       }),
     },
     embeddingService: {
-      getConfig: vi.fn(() => ({
-        apiBase: initial['embedding.apiBase'] ?? '',
-        apiKey: initial['embedding.apiKey'] ?? '',
-        model: initial['embedding.model'] ?? '',
-        dimension: Number(initial['embedding.dimension'] ?? 1536),
-      })),
+      getConfig: vi.fn(() => active),
     },
-    reloadEmbeddingConfig: vi.fn().mockResolvedValue(undefined),
+    storeRegistry: { getDimension: () => active.dimension },
+    reloadEmbeddingConfig: vi.fn(async () => {
+      active = readEmbedding()
+    }),
     reloadMemoryBackgroundConfig: vi.fn().mockResolvedValue(undefined),
     reloadTtsConfig: vi.fn().mockResolvedValue(undefined),
     reloadAsrConfig: vi.fn().mockResolvedValue(undefined),
@@ -163,8 +174,12 @@ describe('createConfigRouter', () => {
         }),
       }),
     )
-    expect(ctx.configRepo.set).toHaveBeenCalledWith('embedding.model', 'embedding-test')
-    expect(ctx.configRepo.set).toHaveBeenCalledWith('embedding.dimension', '4')
+    expect(await ctx.configRepo.get('embedding.model')).toBe('embedding-test')
+    expect(await ctx.configRepo.get('embedding.dimension')).toBe('4')
+    expect(ctx.embeddingService.getConfig()).toMatchObject({
+      model: 'embedding-test',
+      dimension: 4,
+    })
     expect(ctx.reloadEmbeddingConfig).toHaveBeenCalledTimes(1)
   })
 

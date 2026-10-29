@@ -1,4 +1,7 @@
 {
+  "委派任务不能修改群聊参与模式": "委派任務不能修改群聊參與模式",
+  "low_activity 必须为布尔值": "low_activity 必須為布林值",
+  "低活跃仅适用于群聊": "低活躍僅適用於群聊",
   "end_participation 必须为布尔值": "end_participation 必須為布林值",
   "退出活跃状态不能同时等待、延后、yield 或 next:continue": "退出活躍狀態不能同時等待、延後、yield 或 next:continue",
   "QQ 表情占位不能直接发送；请用 emoji_list 返回的 native_emoji 引用，或改写正文": "QQ 表情佔位不能直接傳送；請用 emoji_list 傳回的 native_emoji 引用，或改寫正文",

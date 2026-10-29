@@ -83,12 +83,15 @@ describe('SocialSessionManager 单 Agent 状态机', () => {
     try {
       await manager.handleInbound(message({ messageId: 'first', isMentioned: true }))
       await vi.advanceTimersByTimeAsync(1000)
+      for (let index = 0; index < 10; index++)
+        await manager.handleInbound(message({ messageId: `ordinary-${index}` }))
       await manager.handleInbound(message({ messageId: 'new-mention', isMentioned: true }))
-      finish({ type: 'pass', endParticipation: true })
+      finish({ type: 'pass' })
       await vi.advanceTimersByTimeAsync(3000)
       expect(flush.mock.calls[1]?.[1]).toEqual([
         expect.objectContaining({ messageId: 'new-mention' }),
       ])
+      expect(manager.listSessions()[0]!.pendingMessages).toHaveLength(10)
     } finally {
       manager.stop()
     }
@@ -109,6 +112,111 @@ describe('SocialSessionManager 单 Agent 状态机', () => {
     await vi.advanceTimersByTimeAsync(1000)
     expect(flush).toHaveBeenCalledTimes(1)
     expect(session).toMatchObject({ participation: 'engaged', phase: 'cooldown' })
+  })
+
+  it('普通 PASS 退出活跃续聊，执行期间积压的普通消息不会在三秒后重新请求', async () => {
+    vi.useFakeTimers()
+    let finish!: (outcome: SocialTurnOutcome) => void
+    const flush = vi
+      .fn<FlushCallback>()
+      .mockResolvedValueOnce({ type: 'reply', content: '你好' })
+      .mockImplementationOnce(
+        () =>
+          new Promise((resolve) => {
+            finish = resolve
+          }),
+      )
+    const manager = new SocialSessionManager(flush, { groupCollectTimeout: 1, bufferTimeout: 1 })
+    try {
+      await manager.handleInbound(message({ messageId: 'mention', isMentioned: true }))
+      await vi.advanceTimersByTimeAsync(1000)
+      await manager.handleInbound(message({ messageId: 'continuation' }))
+      await vi.advanceTimersByTimeAsync(1000)
+      await manager.handleInbound(message({ messageId: 'queued' }))
+      finish({ type: 'pass' })
+      await vi.advanceTimersByTimeAsync(4000)
+      const session = manager.listSessions()[0]!
+      expect(session.participation).toBe('idle')
+      expect(session.pendingMessages.map((item) => item.messageId)).toEqual(['queued'])
+      expect(manager.getActivity(session)).toMatchObject({ passCount: 1, mode: 'normal' })
+      expect(flush).toHaveBeenCalledTimes(2)
+    } finally {
+      manager.stop()
+    }
+  })
+
+  it('新的明确提及重置连续 PASS，随后仍不参与时从十分钟重新开始', async () => {
+    vi.useFakeTimers()
+    const flush = vi.fn<FlushCallback>().mockResolvedValue({ type: 'pass' })
+    const manager = new SocialSessionManager(flush, { groupCollectTimeout: 1 })
+    const session = manager.getOrCreate(message())
+    try {
+      for (const id of ['old-1', 'old-2', 'old-3'])
+        await manager.activityStore.complete(session, { type: 'pass' }, id)
+      await manager.handleInbound(message({ isMentioned: true, messageId: 'new-mention' }))
+      await vi.advanceTimersByTimeAsync(1000)
+      expect(flush).toHaveBeenCalledTimes(1)
+      expect(manager.getActivity(session)).toMatchObject({
+        mode: 'normal',
+        passCount: 1,
+        reviewNotBefore: Date.now() + 600_000,
+      })
+    } finally {
+      manager.stop()
+    }
+  })
+
+  it('连续 PASS 实际等待十、二十、六十分钟，第四次后仅新提及可以唤醒', async () => {
+    vi.useFakeTimers()
+    vi.setSystemTime(new Date('2026-10-29T04:00:00Z'))
+    const flush = vi.fn<FlushCallback>().mockResolvedValue({ type: 'pass' })
+    const manager = new SocialSessionManager(flush, { groupCollectTimeout: 1 })
+    const session = manager.getOrCreate(message())
+    try {
+      // 固定样例使用需求中的分钟数，不从被测实现读取退避表。
+      for (const [index, delay] of [600_000, 1_200_000, 3_600_000].entries()) {
+        await manager.handleInbound(message({ messageId: `review-${index}` }))
+        const started = Date.now()
+        await manager.review(session)
+        expect(flush).toHaveBeenCalledTimes(index + 1)
+        expect(manager.getActivity(session)).toMatchObject({
+          mode: 'normal',
+          passCount: index + 1,
+          reviewNotBefore: started + delay,
+        })
+        await manager.handleInbound(message({ messageId: `during-${index}` }))
+        vi.setSystemTime(started + delay - 1)
+        await manager.review(session)
+        expect(flush).toHaveBeenCalledTimes(index + 1)
+        vi.setSystemTime(started + delay)
+      }
+      await manager.review(session)
+      expect(flush).toHaveBeenCalledTimes(4)
+      expect(manager.getActivity(session)).toMatchObject({ mode: 'mention_only', passCount: 4 })
+      await manager.handleInbound(message({ messageId: 'ordinary-after-sleep' }))
+      await vi.advanceTimersByTimeAsync(24 * 60 * 60_000)
+      await manager.review(session)
+      expect(flush).toHaveBeenCalledTimes(4)
+      flush.mockResolvedValue({ type: 'reply', content: '我在' })
+      await manager.handleInbound(message({ messageId: 'new-mention', isMentioned: true }))
+      await vi.advanceTimersByTimeAsync(1000)
+      expect(flush).toHaveBeenCalledTimes(5)
+      expect(session.participation).toBe('engaged')
+      expect(manager.getActivity(session)).toMatchObject({ mode: 'mention_only', passCount: 0 })
+      await vi.advanceTimersByTimeAsync(121_000)
+      await manager.handleInbound(message({ messageId: 'ordinary-after-expiry' }))
+      await manager.review(session)
+      expect(session.participation).toBe('idle')
+      expect(flush).toHaveBeenCalledTimes(5)
+      await manager.setActivityMode(session, 'normal')
+      expect(manager.getActivity(session)).toMatchObject({
+        mode: 'normal',
+        passCount: 0,
+        reviewNotBefore: 0,
+      })
+    } finally {
+      manager.stop()
+    }
   })
 
   it('running 期间的新消息进入下一批而不污染 inFlight', async () => {

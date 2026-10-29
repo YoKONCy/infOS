@@ -306,6 +306,13 @@ export function socialActDefinition(
               '默认 false；true 在本轮结束后退出活跃续聊，可单独使用或与回复合用，不影响之后的新提及和群聊观察。不能与等待、yield 或 next:continue 合用。',
             ),
           },
+          low_activity: {
+            type: 'boolean',
+            description: __t(
+              'apps.social.ui',
+              '仅普通群聊回合可用；true 在本轮结束后进入低活跃，仅新提及或手动恢复可唤醒。可单独使用或与回复合用，不能同时等待、延后或继续判断。',
+            ),
+          },
           messages: {
             type: 'array',
             items: message,

@@ -2,9 +2,14 @@ import { existsSync, mkdirSync, readdirSync, readFileSync, rmSync, writeFileSync
 import { join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { randomUUID } from 'node:crypto'
+import { gunzipSync } from 'node:zlib'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { MemoryStoreRegistry } from '@infos/backend/repositories/storeRegistry'
-import { triviumFiles, upgradeBackupPath } from '@infos/backend/repositories/triviumFiles'
+import {
+  databaseFormat,
+  triviumFiles,
+  upgradeBackupPath,
+} from '@infos/backend/repositories/triviumFiles'
 
 const roots: string[] = []
 const temporaryRoot = fileURLToPath(new URL('../../../../../TEMP/', import.meta.url))
@@ -25,6 +30,46 @@ describe('MemoryStoreRegistry维度联动', () => {
     }
     return new MemoryStoreRegistry(resolver as never, dimension)
   }
+
+  it('首次写入真实 v9 文件组前保留完整备份，迁移 v10 后保留向量、正文与关系', () => {
+    const registry = fixture(4)
+    const target = registry.resolveAgentStorePath('pero', 'main')
+    const root = join(target, '../..')
+    const saved = JSON.parse(
+      readFileSync(new URL('../../fixtures/trivium/v9-f32.json', import.meta.url), 'utf8'),
+    ) as { files: Record<string, string> }
+    const originals = new Map(
+      Object.entries(saved.files).map(([name, value]) => [
+        name,
+        gunzipSync(Buffer.from(value, 'base64')),
+      ]),
+    )
+    mkdirSync(join(root, 'agent_pero'), { recursive: true })
+    for (const [name, bytes] of originals) writeFileSync(join(root, 'agent_pero', name), bytes)
+    expect(databaseFormat(target)).toBe(9)
+    try {
+      const store = registry.getAgentStore('pero', 'main')
+      expect(store.nodeCount()).toBe(2)
+      expect(Array.from(store.get(1)!.vector)).toEqual([1, 0, 0, 0])
+      expect(store.get(1)?.payload).toMatchObject({ content: '升级前记忆' })
+      expect(store.getEdge(2, 1, 'involves')).toMatchObject({
+        weight: 0.75,
+        metadata: { source: '旧版关系' },
+      })
+      registry.closeAll()
+      expect(databaseFormat(target)).toBe(10)
+      const backupRoot = upgradeBackupPath(root, target)
+      const backups = readdirSync(backupRoot)
+      expect(backups).toHaveLength(1)
+      for (const [name, bytes] of originals)
+        expect(readFileSync(join(backupRoot, backups[0]!, name))).toEqual(bytes)
+      expect(
+        JSON.parse(readFileSync(join(backupRoot, backups[0]!, 'backup.json'), 'utf8')),
+      ).toMatchObject({ targetVersion: '0.9.0-beta.4', format: 9 })
+    } finally {
+      registry.closeAll()
+    }
+  })
 
   it('切换维度保留社交摘要、关键词和关系，并重建零向量', () => {
     const registry = fixture(768)
@@ -50,6 +95,28 @@ describe('MemoryStoreRegistry维度联动', () => {
       expect(
         rebuilt.searchHybrid(Array(1536).fill(0), '蓝莓', 5, 1, 0, 0).map((hit) => hit.id),
       ).toContain(1)
+    } finally {
+      registry.closeAll()
+    }
+  })
+
+  it('激活3072维保留1536维文件，显式重建后才替换实际维度', () => {
+    const registry = fixture(1536)
+    const source = registry.resolveAgentStorePath('pero', 'social')
+    try {
+      registry
+        .getAgentStore('pero', 'social')
+        .insertWithId(1, Array(1536).fill(0), { type: 'event', content: '需要保留的社交摘要' })
+      registry.setDimension(3072)
+      expect(registry.getDimension()).toBe(3072)
+      expect(registry.describeStore(source)).toMatchObject({ dimension: 1536, nodeCount: 1 })
+      expect(readFileSync(`${source}.dimension`, 'utf8')).toBe('1536')
+      registry.rebuildSocialStore('pero')
+      const rebuilt = registry.getAgentStore('pero', 'social')
+      expect(rebuilt.dim()).toBe(3072)
+      expect(rebuilt.get(1)?.vector).toHaveLength(3072)
+      expect(rebuilt.get(1)?.payload).toMatchObject({ content: '需要保留的社交摘要' })
+      expect(registry.describeStore(source)).toMatchObject({ dimension: 3072, nodeCount: 1 })
     } finally {
       registry.closeAll()
     }

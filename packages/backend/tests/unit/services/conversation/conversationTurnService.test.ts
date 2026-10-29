@@ -2,6 +2,95 @@ import { describe, expect, it, vi } from 'vitest'
 import { ConversationTurnService } from '@infos/backend/services/conversation/conversationTurnService'
 import type { CompiledRunParams } from '@infos/backend/services/agent/agentService'
 import path from 'node:path'
+import { AppError } from '@infos/backend/lib/appError'
+
+describe('ConversationTurnService 准备失败保留消息', () => {
+  it.each(['模型未配置', '模型解析异常', '上下文编译异常'])(
+    '%s 保存用户原文和同一消息对的失败回复',
+    async (failure) => {
+      const appendUserMessage = vi.fn().mockResolvedValue({ id: 1 })
+      const appendAssistantMessage = vi.fn().mockResolvedValue({ id: 2 })
+      const getThreadModelConfig = vi.fn(async () => {
+        if (failure === '模型解析异常')
+          throw new AppError('CONFIG_ERROR', { message: '连接已被删除' })
+        return failure === '模型未配置'
+          ? null
+          : { provider: 'openai', modelId: 'local-model', apiKey: '' }
+      })
+      const service = new ConversationTurnService({
+        threadService: {
+          getThread: vi.fn().mockResolvedValue({
+            id: 'thread',
+            agentId: 'pero',
+            channel: 'desktop',
+            disabledTools: [],
+          }),
+          appendUserMessage,
+          appendAssistantMessage,
+        },
+        getThreadModelConfig,
+        contextCompiler: { compile: vi.fn().mockRejectedValue(new Error('上下文读取失败')) },
+        attachmentService: {
+          validateForBinding: vi.fn().mockResolvedValue([]),
+          bindOutgoing: vi.fn(),
+        },
+      } as never)
+      const expectedError =
+        failure === '模型未配置'
+          ? '请配置可用的主模型或选择其他模型'
+          : failure === '模型解析异常'
+            ? '连接已被删除'
+            : '上下文读取失败'
+      const stream = service.streamTurn({
+        threadId: 'thread',
+        content: '请保留这条消息',
+        queueMessageId: 'submission',
+      })
+      await expect(stream.next()).rejects.toThrow(expectedError)
+      expect(appendUserMessage).toHaveBeenCalledWith(
+        'thread',
+        '请保留这条消息',
+        'queue_submission',
+        undefined,
+      )
+      expect(appendAssistantMessage).toHaveBeenCalledTimes(1)
+      expect(appendAssistantMessage).toHaveBeenCalledWith(
+        expect.objectContaining({
+          threadId: 'thread',
+          pairId: 'queue_submission',
+          status: 'failed',
+          content: `⚠️ ${expectedError}`,
+        }),
+      )
+      const metadata = JSON.parse(appendAssistantMessage.mock.calls[0]![0].metadataJson)
+      expect(metadata.failure.message).toBe(expectedError)
+      expect(appendUserMessage.mock.invocationCallOrder[0]).toBeLessThan(
+        getThreadModelConfig.mock.invocationCallOrder[0]!,
+      )
+    },
+  )
+
+  it('会话归属不匹配时不写入原文或失败消息', async () => {
+    const appendUserMessage = vi.fn()
+    const appendAssistantMessage = vi.fn()
+    const service = new ConversationTurnService({
+      threadService: {
+        getThread: vi.fn().mockResolvedValue({ agentId: 'pero', channel: 'desktop' }),
+        appendUserMessage,
+        appendAssistantMessage,
+      },
+    } as never)
+    await expect(
+      service.prepareTurn({
+        threadId: 'thread',
+        agentId: 'penora',
+        content: '不属于此会话',
+      }),
+    ).rejects.toMatchObject({ code: 'FORBIDDEN' })
+    expect(appendUserMessage).not.toHaveBeenCalled()
+    expect(appendAssistantMessage).not.toHaveBeenCalled()
+  })
+})
 
 describe('ConversationTurnService 初始提示词快照', () => {
   it.each([

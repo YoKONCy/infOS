@@ -987,6 +987,20 @@ describe('EventMemoryService真实双库存储', () => {
     closeDrizzleConnection(db)
   })
 
+  it('切换维度后的离线重建保留正文，不复用旧维度向量', async () => {
+    const { stores, repo, service, embeddings } = createFixture()
+    const note = await service.create(draft, 'offline-dimension-switch')
+    const row = await repo.findById(note.id)
+    embeddings.isAvailable = false
+    embeddings.getConfig().dimension = 8
+    stores.setDimension(8)
+    await service.rebuildAgentStore('pero', true)
+    const rebuilt = stores.getAgentStore('pero')
+    expect(rebuilt.dim()).toBe(8)
+    expect(rebuilt.get(row!.tdbId)?.vector).toHaveLength(8)
+    expect(rebuilt.get(row!.tdbId)?.payload).toMatchObject({ narrative: draft.narrative })
+  })
+
   it('重建时 Embedding 失败不能清空原有索引，取消后不能发布迟到结果', async () => {
     const { service, stores, embeddings, repo } = createFixture()
     const note = await service.create(draft, 'operation-rebuild-failure')

@@ -38,7 +38,12 @@ export class IndexMaintenanceService {
       { scope: 'knowledge' },
     ]
     return {
-      dimension: this.ctx.storeRegistry.getDimension(),
+      dimension: this.ctx.embeddingService.getConfig().dimension,
+      registryDimension: this.ctx.storeRegistry.getDimension(),
+      configurationError:
+        this.ctx.storeRegistry.getDimension() !== this.ctx.embeddingService.getConfig().dimension
+          ? __t('server.index-maintenance', '向量配置未完整生效，请重新保存并激活配置')
+          : undefined,
       model: this.ctx.embeddingService.getConfig().model,
       embeddingAvailable: this.ctx.embeddingService.isAvailable,
       busy: this.pending,
@@ -77,6 +82,20 @@ export class IndexMaintenanceService {
 
   async rebuild(scope: IndexScope | 'all', agentId?: string) {
     if (this.pending) throw new AppError('RESOURCE_BUSY', { message: '已有索引重建任务正在进行' })
+    const embeddingConfig = this.ctx.embeddingService.getConfig()
+    const dimension = embeddingConfig.dimension
+    const savedDimension = await this.ctx.configRepo.get('embedding.dimension')
+    const savedModel = await this.ctx.configRepo.get('embedding.model')
+    if (
+      this.ctx.storeRegistry.getDimension() !== dimension ||
+      (savedDimension !== undefined && Number(savedDimension) !== dimension) ||
+      (savedModel !== undefined && savedModel !== embeddingConfig.model)
+    )
+      throw new AppError('CONFIG_ERROR', {
+        message: __t('server.index-maintenance', '向量配置未完整生效，请重新保存并激活配置'),
+      })
+    // 配置读取会让出执行权；重新检查，避免两次请求同时排入维护任务。
+    if (this.pending) throw new AppError('RESOURCE_BUSY', { message: '已有索引重建任务正在进行' })
     const known = this.ctx.agentManager.listAgents().map((agent) => agent.id)
     if (agentId && !known.includes(agentId))
       throw new AppError('NOT_FOUND', { message: '角色不存在' })
@@ -100,8 +119,6 @@ export class IndexMaintenanceService {
     }
     this.pending = true
     this.jobs = [...this.jobs.slice(-9), job]
-    const dimension = this.ctx.storeRegistry.getDimension()
-    const embeddingConfig = this.ctx.embeddingService.getConfig()
     let unsubscribe = () => {}
     try {
       const snapshot = await this.ctx.kernelScheduler.submit({
@@ -119,7 +136,7 @@ export class IndexMaintenanceService {
                 dimension !== this.ctx.storeRegistry.getDimension() ||
                 embeddingConfig !== this.ctx.embeddingService.getConfig()
               )
-                throw new Error('向量配置已变化，请重新重建索引')
+                throw new Error(__t('server.index-maintenance', '向量配置已变化，请重新重建索引'))
               const result = job.results.find(
                 (item) => item.scope === target.scope && item.agentId === target.agentId,
               )!
@@ -159,6 +176,26 @@ export class IndexMaintenanceService {
                     throw new Error('部分文档向量重建失败，请查看文档知识库')
                 }
                 signal.throwIfAborted()
+                const rebuilt = this.ctx.storeRegistry.describeStore(storePath)
+                if (!rebuilt.exists && target.scope !== 'social')
+                  throw new AppError('CONFIG_ERROR', {
+                    message: __t('server.index-maintenance', '索引重建后未找到有效索引文件'),
+                  })
+                if (rebuilt.exists && rebuilt.dimension !== dimension)
+                  throw new AppError('CONFIG_ERROR', {
+                    message: __t(
+                      'server.index-maintenance',
+                      '索引重建维度不匹配：目标 {0} 维，实际 {1} 维',
+                      [dimension, rebuilt.dimension],
+                    ),
+                  })
+                if (
+                  dimension !== this.ctx.storeRegistry.getDimension() ||
+                  embeddingConfig !== this.ctx.embeddingService.getConfig()
+                )
+                  throw new AppError('CONFIG_ERROR', {
+                    message: __t('server.index-maintenance', '向量配置已变化，请重新重建索引'),
+                  })
                 job.completed++
                 result.state = 'completed'
               } catch (error) {

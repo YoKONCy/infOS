@@ -16,8 +16,8 @@ import {
   writeFileSync,
 } from 'node:fs'
 
-export const TRIVIUM_VERSION = '0.9.0-beta.3'
-export const TRIVIUM_FORMAT = 9
+export const TRIVIUM_VERSION = '0.9.0-beta.4'
+export const TRIVIUM_FORMAT = 10
 export const TRIVIUM_BACKUP_DIRECTORY = '.store-upgrades'
 
 const suffixes = new Set([

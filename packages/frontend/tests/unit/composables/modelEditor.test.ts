@@ -6,6 +6,7 @@ import { createModelRouter } from '@infos/backend/routers/model.router'
 import { ApiError } from '../../../src/api/errors'
 import { useModelConfig } from '../../../src/composables/dashboard/useModelConfig'
 import { prepareModelPayload } from '../../../src/lib/modelEditor'
+import { configApi } from '../../../src/api/modules/configApi'
 
 const mocks = vi.hoisted(() => ({
   list: vi.fn(),
@@ -101,7 +102,13 @@ describe('模型编辑器保存边界', () => {
       apiKey: ' key ',
       enableVision: true,
     })
+    vi.mocked(configApi.get).mockResolvedValueOnce({
+      code: 'OK',
+      message: '',
+      data: { value: '1' },
+    })
     await editor.saveModel()
+    expect(editor.mainModelId.value).toBe('1')
     expect(saved).toHaveBeenCalledWith(
       expect.objectContaining({
         name: 'proxy/model-test',

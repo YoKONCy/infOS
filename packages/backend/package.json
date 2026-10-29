@@ -1,6 +1,6 @@
 {
   "name": "@infos/backend",
-  "version": "0.9.8",
+  "version": "0.9.9",
   "private": true,
   "type": "module",
   "main": "./src/app.ts",
@@ -47,7 +47,7 @@
     "pnpm": "10.34.5",
     "prom-client": "^15.1.3",
     "tiktoken": "1.0.22",
-    "triviumdb": "0.9.0-beta.3",
+    "triviumdb": "0.9.0-beta.4",
     "typescript": "^5.9.3",
     "uuid": "^14.0.0",
     "ws": "^8.20.0",

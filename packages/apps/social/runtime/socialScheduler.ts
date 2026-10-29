@@ -77,13 +77,15 @@ export class SocialScheduler {
       if (session.channelType !== 'group') continue
       const policy = this.policy(session)
       // 只重算主动观察时间，不改写重试、延后意图或托管编排的唤醒时间。
-      session.nextReviewTime =
+      session.nextReviewTime = Math.max(
+        this.deps.sessionManager.getActivity?.(session).reviewNotBefore ?? 0,
         session.lastReviewTime !== undefined
           ? Math.max(now, session.lastReviewTime + policy.reviewIntervalSeconds * 1000)
           : Math.min(
               session.nextReviewTime ?? now + SOCIAL_INITIAL_REVIEW_DELAY_MS,
               now + SOCIAL_INITIAL_REVIEW_DELAY_MS,
-            )
+            ),
+      )
     }
   }
 
@@ -128,6 +130,9 @@ export class SocialScheduler {
 
   reviewGate(session: SocialSession, now = Date.now()): string {
     if (this.deps.allowSession && !this.deps.allowSession(session)) return 'activation_policy'
+    const activity = this.deps.sessionManager.getActivity?.(session)
+    if (activity?.mode === 'mention_only') return 'mention_only'
+    if (now < (activity?.reviewNotBefore ?? 0)) return 'pass_cooldown'
     if (this.deps.allowObservation?.(session) === false) return 'platform_visibility'
     const gate = this.policyGate(
       session.agentId,

@@ -57,6 +57,7 @@ const messages: Record<string, string> = {
   BACKUP_EMPTY: '所选范围没有可导出的数据',
   BACKUP_BUSY: '另一项备份操作正在进行，请稍后重试',
   BACKUP_SIZE_INVALID: '备份大小超出限制或文件不完整',
+  BACKUP_STORAGE_FULL: '服务器磁盘空间不足，请清理空间后重新导入',
   BACKUP_RECORD_LIMIT: '所选逻辑记录过多，请缩小导出范围',
   BACKUP_AGENT_INVALID: '角色映射无效，请使用不重复的字母、数字、下划线或连字符标识',
   BACKUP_APPLICATION_DUPLICATE_UNSUPPORTED: '子应用数据不支持复制导入，请选择跳过或覆盖',
@@ -86,7 +87,10 @@ export function createBackupRouter(service: BackupService) {
   router.onError((error, c) => {
     const code = error.message
     if (error instanceof AppError)
-      return c.json({ code: error.code, message: error.message }, error.httpStatus as 400)
+      return c.json(
+        { code: error.code, message: error.message, data: error.data },
+        error.httpStatus as 400,
+      )
     return c.json(
       {
         code: 'BAD_REQUEST',
@@ -134,7 +138,17 @@ export function createBackupRouter(service: BackupService) {
   })
   router.put('/imports/:id/content', async (c) => {
     if (!c.req.raw.body) throw new Error('BACKUP_FORMAT_INVALID')
-    const state = await service.imports.receive(c.req.param('id'), c.req.raw.body)
+    const contentRange = c.req.header('Content-Range')
+    const match = contentRange?.match(/^bytes (\d+)-(\d+)\/(\d+)$/)
+    if (contentRange && !match) throw new Error('BACKUP_SIZE_INVALID')
+    const range = match
+      ? {
+          offset: Number(match[1]),
+          length: Number(match[2]) - Number(match[1]) + 1,
+          total: Number(match[3]),
+        }
+      : undefined
+    const state = await service.imports.receive(c.req.param('id'), c.req.raw.body, range)
     return c.json(ok(progress(state)), 202)
   })
   router.delete('/imports/:id', (c) =>

@@ -46,6 +46,15 @@ export class KnowledgeIndex {
     private readonly sourceRoot: string,
   ) {}
 
+  /** 配置切换不覆盖旧维度文件；旧索引等待显式重建，启动时也遵循此规则。 */
+  configurationChanged(): void {
+    this.available = false
+    this.entries.clear()
+    const current = this.stores.describeStore(this.stores.resolveSharedStorePath('knowledge'))
+    if (current.exists && current.dimension !== this.stores.getDimension()) return
+    this.rebuild()
+  }
+
   rebuild(): void {
     this.available = false
     this.key = knowledgeEmbeddingKey(this.embedding)

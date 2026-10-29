@@ -89,6 +89,7 @@ const {
   setEmbeddingEnabled,
   embeddingModelId,
   embeddingDimension,
+  embeddingActivationRevision,
   embeddingApiBase,
   embeddingApiKey,
   rerankerEnabled,
@@ -481,7 +482,11 @@ function connectionName(model: LlmModel) {
             "
             @click="saveVectorConfig"
           >
-            {{ isSavingVector ? __t('ui.settings', '激活中') : __t('ui.settings', '保存配置') }}
+            {{
+              isSavingVector
+                ? __t('ui.settings', '激活中')
+                : __t('ui.index-maintenance', '保存并激活')
+            }}
           </PButton>
         </template>
       </div>
@@ -692,7 +697,11 @@ function connectionName(model: LlmModel) {
           />
         </div>
       </PCard>
-      <IndexMaintenancePanel />
+      <IndexMaintenancePanel
+        :candidate-model="embeddingModelId"
+        :candidate-dimension="embeddingDimension"
+        :activation-revision="embeddingActivationRevision"
+      />
       <!-- Embedding -->
       <PCard pixel padding="lg" overflow-visible>
         <div class="flex items-center gap-4 mb-5">

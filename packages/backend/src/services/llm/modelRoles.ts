@@ -238,13 +238,7 @@ export class ModelRoleResolver {
         if (resolved) fallbackModels.push(resolved)
       }
     }
-    const noAuth = connection ? connection.authMode === 'none' : provider === 'ollama'
-    if (!(connection?.apiKey ?? apiKey) && !noAuth && withFallbacks && !fallbackModels.length) {
-      logger.warn(
-        __t('logs.llm', '模型「{0}」的连接尚未配置 API Key，请配置密钥或选择无需认证', [row.name]),
-      )
-      return null
-    }
+    // 空密钥也是有效连接配置；Provider 省略认证，由实际接口决定是否接受请求。
     return {
       configId: row.id,
       fallbackModels,
@@ -272,12 +266,12 @@ export class ModelRoleResolver {
   private loadFromEnv(): ModelConfig | null {
     const apiKey = process.env.PERO_LLM_API_KEY
     const modelId = process.env.PERO_LLM_MODEL
-    if (!apiKey || !modelId) return null
+    if (!modelId) return null
 
     return {
       provider: process.env.PERO_LLM_PROVIDER ?? 'openai',
       modelId,
-      apiKey,
+      apiKey: apiKey ?? '',
       apiBase: process.env.PERO_LLM_API_BASE,
       enableVision: false,
       enableAudioInput: false,

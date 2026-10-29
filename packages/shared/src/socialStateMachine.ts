@@ -1,6 +1,24 @@
 /** 设置页、Agent 工具与社交运行时共用同一份策略和边界。 */
 export const SOCIAL_INITIAL_REVIEW_DELAY_MS = 30_000
 
+/** 三档旁观退避均执行后，再次 PASS 才进入仅提及唤醒。 */
+export const SOCIAL_PASS_BACKOFF_MINUTES = [10, 20, 60] as const
+export type SocialActivityMode = 'normal' | 'mention_only'
+export interface SocialGroupActivity {
+  mode: SocialActivityMode
+  passCount: number
+  reviewNotBefore: number
+  lastTurnId?: string
+}
+export interface SocialGroupActivityItem extends SocialGroupActivity {
+  platform: string
+  agentId: string
+  accountId: string
+  groupId: string
+  participation: 'idle' | 'listening' | 'engaged'
+  nextReviewAt: number | null
+}
+
 export const SOCIAL_GROUP_POLICY_LIMITS = {
   minMessagesForReview: [1, 20],
   reviewIntervalSeconds: [30, 3600],

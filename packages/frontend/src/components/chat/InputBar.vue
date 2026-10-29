@@ -202,7 +202,7 @@ const interactionModeOptions: Array<{
     },
     icon: 'leaf',
     get title() {
-      return __t('ui.chat', '极简模式：仅保留日常工具')
+      return __t('ui.chat', '极简模式：仅截图、完成任务、心流和查询事件')
     },
   },
   {

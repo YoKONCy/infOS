@@ -373,6 +373,7 @@ export class SocialAppRuntime implements AgentAppRuntime {
         () => this.adapters.find((adapter) => adapter.legacyConfiguration)?.platform,
       )
       this.socialBridge = new SocialBridge({
+        activityConfig: ctx.configRepo,
         loopGuard: this.loopGuard,
         getAgentId: () => this.socialAgentId,
         getOwnerId: (platform) => this.ownerFor(platform),
@@ -1441,6 +1442,7 @@ export class SocialAppRuntime implements AgentAppRuntime {
     combinedMessage: string
     trigger: FlushReason
     participation: ParticipationState
+    activity?: import('@infos/shared').SocialGroupActivity
     deferredIntent?: DeferredSocialIntent
     routeChannel?: string
     routeThreadId?: string
@@ -1704,6 +1706,9 @@ export class SocialAppRuntime implements AgentAppRuntime {
     let resourceUnconfirmed = false
     const sentResources = new Map<string, Promise<string>>()
     const situation = [
+      params.activity
+        ? `当前群参与模式：${params.activity.mode}；连续 PASS：${params.activity.passCount} 次。低活跃中的提及只开启短暂交流，不恢复自主观察。`
+        : '',
       activeWork.length ? `当前正在处理的工作：${JSON.stringify(activeWork)}` : '',
       params.trigger === 'proactive_review' ? '当前是在主动查看群聊，可以按话题决定是否参与。' : '',
       params.deferredIntent
@@ -2283,8 +2288,13 @@ export class SocialAppRuntime implements AgentAppRuntime {
             content: deliveredReply,
             delivered: true,
             ...(actResult.end_participation ? { endParticipation: true } : {}),
+            ...(actResult.low_activity ? { lowActivity: true } : {}),
           }
-        : { type: 'pass', ...(actResult.end_participation ? { endParticipation: true } : {}) }
+        : {
+            type: 'pass',
+            ...(actResult.end_participation ? { endParticipation: true } : {}),
+            ...(actResult.low_activity ? { lowActivity: true } : {}),
+          }
     } else {
       throw new Error('社交回合尚未通过 social_act 提交参与行为，未发送普通文字')
     }

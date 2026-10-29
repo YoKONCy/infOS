@@ -265,6 +265,70 @@ describe('数据备份与恢复的关键路径', () => {
     })
   })
 
+  it('分片中断回退到已确认位置，重试和丢失响应不重复写入备份', async () => {
+    await withImportFixture(async ({ service, router, archive, backupId, live }) => {
+      const bytes = readFileSync(archive)
+      const state = service.imports.begin(bytes.length, '')
+      expect(state.uploadChunkBytes).toBe(1024 ** 2)
+      const split = 128
+      const send = (start: number, end: number) =>
+        router.request(`/imports/${state.id}/content`, {
+          method: 'PUT',
+          headers: { 'Content-Range': `bytes ${start}-${end - 1}/${bytes.length}` },
+          body: new Blob([new Uint8Array(bytes.subarray(start, end))]),
+        })
+      expect((await send(0, split)).status).toBe(202)
+      // 丢失首片响应后重发同一片，不能追加第二份内容。
+      expect((await send(0, split)).status).toBe(202)
+      const upload = path.join(service.root, 'work', `${state.id}.upload`)
+      expect(readFileSync(upload)).toEqual(bytes.subarray(0, split))
+      let reads = 0
+      const interrupted = new ReadableStream<Uint8Array>({
+        pull(controller) {
+          if (reads++ === 0) controller.enqueue(new Uint8Array(bytes.subarray(split, split + 16)))
+          else controller.error(new Error('模拟代理中断上传'))
+        },
+      })
+      await expect(
+        service.imports.receive(state.id, interrupted, {
+          offset: split,
+          length: bytes.length - split,
+          total: bytes.length,
+        }),
+      ).rejects.toMatchObject({ code: 'CONFLICT' })
+      expect(service.imports.get(state.id)).toMatchObject({
+        phase: 'uploading',
+        receivedBytes: split,
+      })
+      expect(readFileSync(upload)).toEqual(bytes.subarray(0, split))
+      expect((await send(split, bytes.length)).status).toBe(202)
+      // 最终片的确认响应同样允许丢失；预览和原始业务数据不受重复请求影响。
+      expect((await send(split, bytes.length)).status).toBe(202)
+      await vi.waitFor(() => expect(service.imports.get(state.id).phase).toBe('ready'), {
+        timeout: 10_000,
+      })
+      expect(service.imports.get(state.id).preview?.manifest.id).toBe(backupId)
+      expect(live.prepare('SELECT value FROM example').get()).toEqual({ value: '原有内容' })
+    })
+  })
+
+  it('分片间取消会清理已上传的暂存文件并释放导入名额', async () => {
+    await withImportFixture(async ({ service, router, archive }) => {
+      const bytes = readFileSync(archive)
+      const state = service.imports.begin(bytes.length, '')
+      const response = await router.request(`/imports/${state.id}/content`, {
+        method: 'PUT',
+        headers: { 'Content-Range': `bytes 0-15/${bytes.length}` },
+        body: new Blob([new Uint8Array(bytes.subarray(0, 16))]),
+      })
+      expect(response.status).toBe(202)
+      service.imports.cancel(state.id)
+      await vi.waitFor(() => expect(service.imports.get(state.id).phase).toBe('cancelled'))
+      expect(service.imports.active).toBe(false)
+      expect(existsSync(path.join(service.root, 'work', `${state.id}.upload`))).toBe(false)
+    })
+  })
+
   it('不完整上传清理临时文件并保留原数据库', async () => {
     await withImportFixture(async ({ service, router, live }) => {
       const incomplete = service.imports.begin(100, '')

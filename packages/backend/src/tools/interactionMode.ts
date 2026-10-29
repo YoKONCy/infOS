@@ -3,26 +3,12 @@ import type { ToolRegistry } from '../services/agent/toolRegistry'
 import { isAdvancedTool } from './advancedTools'
 import { WORK_CONTROL_TOOLS } from './systemProtocolTools'
 
-/** 极简模式保留陪伴工具与当前会话的私有心流；主动行为开关不参与工具权限判断。 */
+/** 极简模式仅开放截图、结束任务、私有心流和事件查询；主动行为开关不参与工具权限判断。 */
 export const MINIMAL_TOOLS = new Set([
   'finish_task',
   'update_flow_state',
   'take_screenshot',
-  'set_reminder',
-  'list_reminders',
-  'cancel_reminder',
-  'schedule_follow_up',
-  'suggest_next_step',
-  'write_event_note',
-  'revise_event_note',
   'query_event_notes',
-  'query_facts',
-  'search_knowledge',
-  'write_fact',
-  'supersede_fact',
-  'delete_fact',
-  'add_fact_object_alias',
-  'remove_fact_object_alias',
 ])
 
 /** 聊天保留日常助理和文本处理能力；扩展通过注册元数据声明准入。 */

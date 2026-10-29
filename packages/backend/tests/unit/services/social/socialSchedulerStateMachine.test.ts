@@ -32,6 +32,43 @@ beforeEach(() => {
 afterEach(() => vi.useRealTimers())
 
 describe('SocialScheduler 确定性门控', () => {
+  it('修改观察间隔不缩短 PASS 退避，低活跃也不会因时钟到期恢复观察', async () => {
+    const flush = vi.fn().mockResolvedValue({ type: 'pass' })
+    const manager = new SocialSessionManager(flush)
+    const scheduler = new SocialScheduler(
+      { sessionManager: manager },
+      { nightSilenceEnabled: false },
+    )
+    const inbound = {
+      platform: 'qq',
+      agentId: 'pero',
+      accountId: '123456789',
+      channelType: 'group' as const,
+      channelId: 'group-1',
+      senderId: 'user',
+      senderName: '群友',
+      content: '消息',
+    }
+    await manager.handleInbound(inbound)
+    const target = manager.listSessions()[0]!
+    await manager.review(target)
+    for (let index = 0; index < 3; index++)
+      await manager.handleInbound({ ...inbound, messageId: `next-${index}` })
+    scheduler.updateConfig({ reviewIntervalSeconds: 30 })
+    expect(target.nextReviewTime).toBe(Date.now() + 600_000)
+    expect(scheduler.reviewGate(target)).toBe('pass_cooldown')
+    await manager.setActivityMode(target, 'mention_only')
+    await vi.advanceTimersByTimeAsync(24 * 60 * 60_000)
+    await (scheduler as unknown as { scan(): Promise<void> }).scan()
+    expect(scheduler.reviewGate(target)).toBe('mention_only')
+    expect(flush).toHaveBeenCalledTimes(1)
+    await manager.setActivityMode(target, 'normal')
+    await vi.advanceTimersByTimeAsync(180_000)
+    await (scheduler as unknown as { scan(): Promise<void> }).scan()
+    expect(flush).toHaveBeenCalledTimes(2)
+    manager.stop()
+  })
+
   it('同一扫描唤醒各个到期群，某群的慢请求不占用其他群观察机会', async () => {
     const low = session({ channelId: 'low', lastMessageTime: Date.now() - 100_000 })
     const high = session({ channelId: 'high', isMentioned: true })
@@ -134,7 +171,7 @@ describe('SocialScheduler 确定性门控', () => {
     expect(flush).toHaveBeenCalledTimes(1)
     expect(flush.mock.calls[0]![1]).toHaveLength(20)
     expect(manager.listSessions()[0]!.pendingMessages).toHaveLength(0)
-    expect(manager.listSessions()[0]!.nextReviewTime).toBe(Date.now() + 180_000)
+    expect(manager.listSessions()[0]!.nextReviewTime).toBe(Date.now() + 600_000)
     manager.stop()
   })
 

@@ -419,6 +419,38 @@ export function createSocialRouter(
     })
   })
 
+  router.get('/group-activity/:agentId', (c) =>
+    c.json({ code: 'OK', data: socialBridge.getGroupActivities(c.req.param('agentId')) }),
+  )
+  router.post('/group-activity/:agentId/resume', async (c) => {
+    const body = (await c.req.json().catch(() => null)) as Record<string, unknown> | null
+    if (
+      !body ||
+      ['platform', 'accountId', 'groupId'].some(
+        (key) =>
+          typeof body[key] !== 'string' ||
+          !String(body[key]).trim() ||
+          String(body[key]).length > 200,
+      )
+    )
+      throw new AppError('INVALID_PARAMETER', {
+        message: __t('apps.social.ui', '请提供平台、已连接账号和群聊标识'),
+      })
+    try {
+      await socialBridge.resumeGroupObservation(
+        c.req.param('agentId'),
+        String(body.platform),
+        String(body.accountId),
+        String(body.groupId),
+      )
+    } catch (error) {
+      if (error instanceof Error && error.message === 'SOCIAL_ACCOUNT_FORBIDDEN')
+        throw new AppError('INVALID_PARAMETER', { message: __t('errors.social', error.message) })
+      throw error
+    }
+    return c.json({ code: 'OK' })
+  })
+
   router.post('/loop-guard/allow', async (c) => {
     const body = (await c.req.json().catch(() => null)) as Record<string, unknown> | null
     if (

@@ -12,6 +12,7 @@ import { t as __t } from '../../i18n'
 import { logger } from '../../lib/logger'
 import SocialTurnPanel from './SocialTurnPanel.vue'
 import SocialDataSettings from './SocialDataSettings.vue'
+import SocialActivityPanel from './SocialActivityPanel.vue'
 const props = defineProps<{ agentId: string; connections: SocialConnection[] }>()
 const emit = defineEmits<{ changed: [agentId: string] }>()
 const agentStore = useAgentStore()
@@ -334,6 +335,7 @@ onMounted(loadModeConfig)
           </div>
         </div>
       </section>
+      <SocialActivityPanel :agent-id="agentId" />
       <section class="sp-config-block sp-mode-wide">
         <div class="sp-block-header">
           <PixelIcon name="alert" size="xs" />

@@ -334,8 +334,8 @@ export class FactsRepository {
       status: 'active',
       observedAt: input.observedAt,
       createdAt: new Date().toISOString(),
-      source: input.source,
-      confidence: input.confidence,
+      ...(input.source !== undefined ? { source: input.source } : {}),
+      ...(input.confidence !== undefined ? { confidence: input.confidence } : {}),
       createdByAgentId: input.createdByAgentId,
     }
     if (!record.statement) throw new Error('事实内容不能为空')
@@ -430,8 +430,8 @@ export class FactsRepository {
       status: 'active',
       observedAt: input.observedAt,
       createdAt: new Date().toISOString(),
-      source: input.source,
-      confidence: input.confidence,
+      ...(input.source !== undefined ? { source: input.source } : {}),
+      ...(input.confidence !== undefined ? { confidence: input.confidence } : {}),
       createdByAgentId: input.createdByAgentId,
     }
     if (!replacement.statement) throw new Error('事实内容不能为空')
@@ -1054,8 +1054,8 @@ export class FactsRepository {
       status: row.status as FactRecord['status'],
       observedAt: row.observedAt,
       createdAt: row.createdAt,
-      source: row.source ?? undefined,
-      confidence: row.confidence ?? undefined,
+      ...(row.source !== null ? { source: row.source } : {}),
+      ...(row.confidence !== null ? { confidence: row.confidence } : {}),
       createdByAgentId: row.createdByAgentId,
     }
   }
