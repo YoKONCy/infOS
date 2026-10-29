@@ -35,7 +35,7 @@ jobs:
       - name: Commit compressed images
         # Fork 的 GITHUB_TOKEN 无权推送贡献者分支；仍执行压缩检查，只禁止自动写回。
         if: steps.calibre.outputs.markdown != '' && github.event.pull_request.head.repo.full_name == github.repository
-        uses: stefanzweifel/git-auto-commit-action@v5
+        uses: stefanzweifel/git-auto-commit-action@v7
         with:
           branch: ${{ github.head_ref }}
           commit_message: 'chore: ✨ Compress Images'
