@@ -1133,6 +1133,10 @@ export async function* runReActLoop(params: {
                 data: { blockId: narrationBlockId, turn: turn + 1, delta: text },
               }
             }
+          } else if (event.type === 'start') {
+            const blockId = `thinking-${reasoningRunId}-${turn + 1}-${++thinkingSequence}`
+            activeThinking = { blockId, content: '', startedAt: Date.now(), ended: false }
+            yield { event: 'thinking_start', data: { blockId, turn: turn + 1 } }
           } else if (event.type === 'delta' && activeThinking) {
             activeThinking.content += event.delta
             yield {
@@ -1165,6 +1169,34 @@ export async function* runReActLoop(params: {
           yield {
             event: 'narration_delta',
             data: { blockId: narrationBlockId, turn: turn + 1, delta: spokenTail },
+          }
+        }
+      }
+      // 请求直接失败或取消时也要冻结缓冲正文；终态投影不能依赖是否出现过重试事件。
+      const freezeResponse = function* (): Generator<ReActYield, void, unknown> {
+        yield* completeReasoning()
+        yield* flushResponseFilters()
+        for (const thinking of completedThinking)
+          contentBlocks.push({
+            blockId: thinking.blockId,
+            sequence: ++blockSequence,
+            kind: 'thinking',
+            turn: turn + 1,
+            content: thinking.content,
+            durationMs: thinking.durationMs,
+          })
+        if (narrationStarted) {
+          contentBlocks.push({
+            blockId: narrationBlockId,
+            sequence: ++blockSequence,
+            kind: 'narration',
+            turn: turn + 1,
+            phase: 'progress',
+            content: visibleTurnText,
+          })
+          yield {
+            event: 'narration_end',
+            data: { blockId: narrationBlockId, turn: turn + 1, phase: 'progress' },
           }
         }
       }
@@ -1583,6 +1615,9 @@ export async function* runReActLoop(params: {
           }
           if (localOutputLimit) break
         }
+        // 钩子读取的是本次完整接收内容，不能漏掉尚在预填充判定器内的正文。
+        yield* completeReasoning()
+        yield* flushResponseFilters()
         await params.packageHooks?.emitHook('agent:afterRequest', {
           agentId: params.agentId,
           threadId: params.sessionId,
@@ -1595,31 +1630,7 @@ export async function* runReActLoop(params: {
       } catch (error) {
         if (error instanceof GenerationLoopError) {
           // 冻结已经显示的片段并收口参数草稿；不把截断参数补成合法调用或自动重放。
-          yield* completeReasoning()
-          yield* flushResponseFilters()
-          for (const thinking of completedThinking)
-            contentBlocks.push({
-              blockId: thinking.blockId,
-              sequence: ++blockSequence,
-              kind: 'thinking',
-              turn: turn + 1,
-              content: thinking.content,
-              durationMs: thinking.durationMs,
-            })
-          if (narrationStarted) {
-            contentBlocks.push({
-              blockId: narrationBlockId,
-              sequence: ++blockSequence,
-              kind: 'narration',
-              turn: turn + 1,
-              phase: 'progress',
-              content: visibleTurnText,
-            })
-            yield {
-              event: 'narration_end',
-              data: { blockId: narrationBlockId, turn: turn + 1, phase: 'progress' },
-            }
-          }
+          yield* freezeResponse()
           for (const call of collectedCalls) {
             if (!call) continue
             const result = '检测到模型重复生成，此工具未执行，未完成参数已丢弃。'
@@ -1686,8 +1697,15 @@ export async function* runReActLoop(params: {
           turn--
           continue
         }
-        if (!params.cancelChecker?.isHandoffRequested?.(controlSessionId) || params.signal?.aborted)
+        if (
+          !params.cancelChecker?.isHandoffRequested?.(controlSessionId) ||
+          params.signal?.aborted
+        ) {
+          yield* freezeResponse()
+          if (generatedTurnText)
+            rawTranscript += `\n⟦中断响应，第 ${turn + 1} 轮⟧\n${generatedTurnText}\n⟦/中断响应⟧\n`
           throw error
+        }
       }
       contextRetryAttempts = 0
 
