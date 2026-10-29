@@ -479,6 +479,20 @@ deduplicationKey
 
 Region Provider 只能读取其领域 Authority 并返回 Region；不能修改 Thread、Memory、Agent State 或 Prompt 模板。ContextCompiler 负责统一选择、预算和渲染。
 
+`delivery` 在选择后决定正文出口：内置 `manifest-only` 只用于清单与计费，内置 Thread 的 `conversation` 由历史/当前输入独立装配，工具 `infos.context.tools` 保留既有投递。插件只放行 `delivery=conversation` 且 `providerId` 以 `package:` 开头的区块，作为 `role=user`、`trust=external` 的本轮资料；不能简单放开全部 conversation 或改成 system。选择阶段继续排除空、过期、重复和超预算区块；工作模式的详细上下文沿用最终统一请求窗口计费，不在 Region 阶段提前拒绝。
+
+插件动态资料在原有系统提示词和完整历史之后投递：
+
+| 框架 | 选中插件正文的位置 |
+| --- | --- |
+| 原生 managed assembly | 注入 user `turn_context` 的 `<package_context>`；只复用处于历史之后、当前输入之前且保留结束标签的槽位，否则在当前输入前补独立的 user `<turn_context>` |
+| SillyTavern | 在框架标记的当前输入前插入 user 快照，位于旧历史之后；保留深度 0 尾注等后续布局 |
+| 无 managed assembly | 先独立追加原生历史，再在当前输入前插入 user 快照；无当前输入时追加到尾部 |
+
+ContextCompiler 在 Selector 选中后处理已经渲染的消息，不重新执行模板或酒馆宏；插入后更新 `currentMessageIndex`，工作历史展开后再按消息对象重新定位。插件正文变化只改变本轮动态尾部，原有 system 与旧历史字节保持不变，也不在历史前新增 user 消息，因此不会因插件注入打断 `preparePromptReplay` 的历史连续性与热轨迹续接。热轨迹保留之前实际发送的旧快照，本轮追加新快照；这不等于供应商缓存命中率保证。
+
+源码入口：`services/context/contextCompiler.ts` 的 `packageMessages`、`services/context/contextRegionRuntime.ts`、`packages/packageExtensionActivators.ts`。
+
 ### 8.2 Region 信任与预算
 
 信任级别至少区分：
