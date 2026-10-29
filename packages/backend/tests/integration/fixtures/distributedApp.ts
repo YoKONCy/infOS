@@ -12,6 +12,18 @@ import { CapabilityDirectory } from '../../../src/kernel/capabilityDirectory'
 import { CapabilityHandleRegistry } from '../../../src/kernel/capabilityHandleRegistry'
 import { NodeRegistry } from '../../../src/kernel/nodeRegistry'
 
+/** 夹具只用到的 SQLite 连接能力；显式声明，避免导出类型引用 better-sqlite3 的内部命名空间。 */
+export interface FixtureDatabase {
+  readonly open: boolean
+  close(): unknown
+  exec(sql: string): unknown
+  prepare(sql: string): {
+    get(...params: unknown[]): unknown
+    all(...params: unknown[]): unknown[]
+    run(...params: unknown[]): unknown
+  }
+}
+
 export const transferKey = randomBytes(32).toString('base64')
 export const tempRoot = path.resolve('TEMP')
 
@@ -25,7 +37,7 @@ export async function distributedApp(serverId: string) {
   const localToken = repository.load(false).localToken
   const device = access.pair(access.createPairing().code, '普通手机', true, 'device')
   const admin = access.pair(access.createPairing(true).code, '管理设备', true, 'admin')
-  const db = new Database(path.join(dataDir, 'infos.db'))
+  const db: FixtureDatabase = new Database(path.join(dataDir, 'infos.db'))
   db.exec('CREATE TABLE private_records(kind TEXT, value TEXT)')
   const insert = db.prepare('INSERT INTO private_records VALUES (?, ?)')
   insert.run('request', `${serverId}:完整请求副本`)
