@@ -1,5 +1,5 @@
 import { providerApiUrl } from './providerUrl'
-import { normalizeTokenUsage } from '../usage'
+import { normalizeTokenUsage, reportedCacheUsage, reportedCacheInput, tokenCount } from '../usage'
 import { combinedOutputLimit, fetchLlmResponse } from '../requestPolicy'
 import { geminiReasoningEffort } from '../geminiThinking'
 import type {
@@ -288,13 +288,13 @@ export class OpenAiResponsesProvider implements LlmProvider {
 
   private normalizeUsage(raw?: Record<string, unknown>): UsageInfo | undefined {
     if (!raw) return undefined
-    const input = raw.input_tokens_details as Record<string, unknown> | undefined
     const output = raw.output_tokens_details as Record<string, unknown> | undefined
     return normalizeTokenUsage({
-      input: raw.input_tokens,
-      output: raw.output_tokens,
+      input:
+        tokenCount(raw.input_tokens) ?? tokenCount(raw.prompt_tokens) ?? reportedCacheInput(raw),
+      output: tokenCount(raw.output_tokens) ?? raw.completion_tokens,
       total: raw.total_tokens,
-      cachedRead: input?.cached_tokens,
+      ...reportedCacheUsage(raw, 'input_tokens_details'),
       reasoning: output?.reasoning_tokens,
     })
   }
