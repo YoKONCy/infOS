@@ -1945,11 +1945,34 @@ export async function* runReActLoop(params: {
 
         const fnName = tc.function.name
         if (fnName === 'finish_task' && !finishTaskAvailable) {
+          let args: Record<string, unknown> = {}
+          try {
+            args = JSON.parse(tc.function.arguments || '{}')
+          } catch {
+            // 门控拒绝优先；保留原始参数供审计，不执行调用。
+          }
           const errorMsg =
             'finish_task当前尚未开放。请直接流式输出自然语言回复；只有执行真实业务工具后才可使用该工具。'
+          // 先确认参数草稿并保留失败内容块，界面卡片才能正常收尾，最终投影也保留这次调用。
+          yield {
+            event: 'tool_call_ready',
+            data: { draftId: tc.draftId, callId: tc.id, turn: turn + 1, name: fnName, args },
+          }
+          contentBlocks.push({
+            blockId: `tool-${tc.id}`,
+            sequence: ++blockSequence,
+            kind: 'tool',
+            turn: turn + 1,
+            callId: tc.id,
+            name: fnName,
+            args: tc.function.arguments || '{}',
+            result: errorMsg,
+            isError: true,
+            durationMs: 0,
+          })
           await params.onToolObserved?.({
             name: fnName,
-            args: {},
+            args,
             output: errorMsg,
             isError: true,
             callId: tc.id,
@@ -1958,10 +1981,15 @@ export async function* runReActLoop(params: {
             event: 'tool_result',
             data: { name: fnName, callId: tc.id, result: errorMsg, isError: true, durationMs: 0 },
           }
-          appendMessage({ role: 'tool', content: errorMsg, toolCallId: tc.id })
+          appendMessage({
+            role: 'tool',
+            content: errorMsg,
+            toolCallId: tc.id,
+            toolExecutionFailed: true,
+          })
           allToolCalls.push({
             name: fnName,
-            args: {},
+            args,
             result: errorMsg,
             durationMs: 0,
             isError: true,
