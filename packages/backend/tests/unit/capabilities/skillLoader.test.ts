@@ -114,7 +114,7 @@ tags: report, brief
         name: 'crlf',
         description: 'Windows 保存的技能',
       })
-      expect(loader.loadSkillContent('crlf').trim()).toBe('正文')
+      expect(loader.loadSkillContent('crlf')?.trim()).toBe('正文')
     })
 
     it('应解析标准多行YAML、元数据并安全读取资源', () => {
