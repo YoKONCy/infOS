@@ -2,6 +2,7 @@ import { t as __t } from './i18n'
 import {
   appendNativeReasoning,
   compileModelRequest,
+  completePrefilledContent,
   createLogger,
   safeModelDiagnostic,
   modelNetworkDetails,
@@ -149,10 +150,15 @@ export async function requestSocialModel(
       }
       completion = { choices: [{ message, finishReason }], usage }
     }
+    // 按续写判定拼回预填充；以思考开标签结尾的预填充只在上游确实续写时拼回。
     if (request.prefill)
       for (const choice of completion.choices)
         if (choice.message.content || choice.message.toolCalls?.length)
-          choice.message.content = request.prefill + (choice.message.content ?? '')
+          choice.message.content = completePrefilledContent(
+            request.prefill,
+            choice.message.content ?? '',
+            !!choice.message.toolCalls?.length,
+          )
     const usage = completion.usage
     const cacheReported =
       usage?.inputReported !== false &&

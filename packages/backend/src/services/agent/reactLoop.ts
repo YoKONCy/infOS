@@ -66,6 +66,7 @@ import { executionOwnerState } from '../../tools/productivityRuntimeHolder'
 import { desktopPauseFromObservation } from '../execution/desktopPause'
 import { appendPromptSnapshot, canonicalTools } from '../llm/promptCache'
 import { compileModelRequest, promptPlanOf } from '../prompt/requestCompiler'
+import { PrefillContinuationGate } from '../prompt/prefillContinuation'
 
 const logger = createLogger('ReActLoop')
 
@@ -836,7 +837,7 @@ export async function* runReActLoop(params: {
 
       const promptPlan = params.promptPlan ?? promptPlanOf(messages)
       const assistantPrefill = compileModelRequest([], turn, promptPlan).prefill
-      let prefillPending = !!assistantPrefill
+      let prefillGate = new PrefillContinuationGate(assistantPrefill)
       const compileRequestMessages = (input: ChatMessage[]): ChatMessage[] =>
         compileModelRequest(input, turn, promptPlan).messages
       let turnText = ''
@@ -1103,6 +1104,12 @@ export async function* runReActLoop(params: {
       }
       // 正常结束与重试断点共用刷新逻辑，保留过滤器尚未发布的正文和思考尾部。
       const flushResponseFilters = function* (): Generator<ReActYield, void, unknown> {
+        // 先结束预填充判定：未见关闭标签的暂存正文按普通正文发布，不拼回开标签。
+        const pendingText = prefillGate.finish()
+        if (pendingText) {
+          turnText += pendingText
+          thinkingFilter.filter(pendingText)
+        }
         thinkingFilter.flush()
         for (const event of thinkingFilter.drainEvents()) {
           if (event.type === 'text') {
@@ -1299,7 +1306,7 @@ export async function* runReActLoop(params: {
                 rawTranscript += `\n⟦中断响应，第 ${turn + 1} 轮⟧\n${generatedTurnText}\n⟦/中断响应⟧\n`
               turnText = ''
               generatedTurnText = ''
-              prefillPending = !!assistantPrefill
+              prefillGate = new PrefillContinuationGate(assistantPrefill)
               visibleTurnText = ''
               turnReasoningContent = ''
               turnNativeReasoning.length = 0
@@ -1409,11 +1416,11 @@ export async function* runReActLoop(params: {
 
           // 收集文本
           generatedTurnText += choice.delta.content ?? ''
-          // 等待真实正文或工具参数后才拼回预填充，失败或空响应不能伪装成成功回答。
-          const prependPrefill =
-            prefillPending && (!!choice.delta.content || !!choice.delta.toolCalls?.length)
-          const content = (prependPrefill ? assistantPrefill : '') + (choice.delta.content ?? '')
-          if (prependPrefill) prefillPending = false
+          // 等待真实正文或工具参数后才拼回预填充，失败或空响应不能伪装成成功回答；
+          // 以思考开标签结尾的预填充还要等上游确实续写，避免整轮回答被吞进思考区。
+          const content =
+            prefillGate.push(choice.delta.content ?? '') +
+            (choice.delta.toolCalls?.length ? prefillGate.startToolCall() : '')
           if (content) {
             turnText += content
 
@@ -1650,6 +1657,7 @@ export async function* runReActLoop(params: {
           contextRetryAttempts < 3 &&
           currentInputTokens &&
           !turnText &&
+          !prefillGate.hasBuffered &&
           !turnReasoningContent &&
           !turnNativeReasoning.length &&
           !collectedCalls.some(Boolean)
