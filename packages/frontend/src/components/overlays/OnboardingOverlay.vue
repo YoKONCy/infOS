@@ -6,7 +6,7 @@ import '@infos/shared/i18n/catalogs/onboarding'
  * OnboardingOverlay — 新手引导遮罩
  *
  * 还原 v1 完整实现：打字机对话框 + 聚光灯高亮 + 表情-立绘映射。
- * 立绘资源位于 /assets/onboarding/ 目录。
+ * 立绘资源位于 public/assets/onboarding/，使用相对路径，兼容打包版 file:// 加载。
  *
  * @props visible - 是否显示
  * @props steps - 引导步骤
@@ -110,14 +110,14 @@ const expressions: Record<string, ExpressionInfo> = {
     get label() {
       return __t('ui.overlays', '乖巧的 Pero')
     },
-    image: '/assets/onboarding/pero_normal.png',
+    image: 'assets/onboarding/pero_normal.png',
   },
   proud: {
     icon: 'sparkle',
     get label() {
       return __t('ui.overlays', '得意的 Pero')
     },
-    image: '/assets/onboarding/pero_proud.png',
+    image: 'assets/onboarding/pero_proud.png',
   },
 }
 
