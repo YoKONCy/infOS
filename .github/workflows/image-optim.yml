@@ -20,6 +20,8 @@ jobs:
     steps:
       - name: Checkout Repo
         uses: actions/checkout@v6
+        with:
+          ref: ${{ github.event.pull_request.head.repo.full_name == github.repository && github.head_ref || github.ref }}
 
       - name: Compress Images
         id: calibre
@@ -31,8 +33,10 @@ jobs:
           ignorePaths: 'node_modules/**'
 
       - name: Commit compressed images
-        if: steps.calibre.outputs.markdown != ''
+        # Fork 的 GITHUB_TOKEN 无权推送贡献者分支；仍执行压缩检查，只禁止自动写回。
+        if: steps.calibre.outputs.markdown != '' && github.event.pull_request.head.repo.full_name == github.repository
         uses: stefanzweifel/git-auto-commit-action@v5
         with:
+          branch: ${{ github.head_ref }}
           commit_message: 'chore: ✨ Compress Images'
           file_pattern: '*.jpg *.jpeg *.png *.webp'
