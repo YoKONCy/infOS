@@ -101,6 +101,22 @@ tags: report, brief
       })
     })
 
+    it('带 BOM 与 CRLF 换行的 SKILL.md 也能识别 frontmatter', () => {
+      mkdirSync(join(builtinDir, 'crlf'), { recursive: true })
+      writeFileSync(
+        join(builtinDir, 'crlf', 'SKILL.md'),
+        '\uFEFF---\r\nname: crlf\r\ndescription: Windows 保存的技能\r\n---\r\n正文\r\n',
+        'utf-8',
+      )
+      const loader = new SkillLoader([builtinDir], userDir)
+
+      expect(loader.getManifest('crlf')).toMatchObject({
+        name: 'crlf',
+        description: 'Windows 保存的技能',
+      })
+      expect(loader.loadSkillContent('crlf').trim()).toBe('正文')
+    })
+
     it('应解析标准多行YAML、元数据并安全读取资源', () => {
       const loader = new SkillLoader([builtinDir], userDir)
       const manifest = loader.getManifest('diary')

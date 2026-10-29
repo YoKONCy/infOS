@@ -34,6 +34,13 @@ const logger = createLogger('SkillLoader')
 /** YAML frontmatter 分隔符正则 */
 const RE_FRONTMATTER = /^---\s*\n([\s\S]*?)\n---\s*\n([\s\S]*)$/
 
+/** 读取 SKILL.md：去掉 Windows 编辑器写入的 BOM，并统一换行，避免 frontmatter 识别失败。 */
+function readSkillText(filePath: string): string {
+  return readFileSync(filePath, 'utf-8')
+    .replace(/^\uFEFF/, '')
+    .replace(/\r\n?/g, '\n')
+}
+
 export class SkillLoader {
   /** 所有已加载的 Skill 清单 (id → Manifest) */
   private manifests = new Map<string, SkillManifest>()
@@ -193,7 +200,7 @@ export class SkillLoader {
       if (!existsSync(skillPath)) continue
 
       try {
-        const raw = readFileSync(skillPath, 'utf-8')
+        const raw = readSkillText(skillPath)
         const match = RE_FRONTMATTER.exec(raw)
         const body = match?.[2]?.trim() ?? raw.trim()
         this.contentCache.set(skillId, body)
@@ -321,7 +328,7 @@ export class SkillLoader {
 
   /** 解析 SKILL.md 的 YAML frontmatter */
   private parseManifest(skillId: string, filePath: string): SkillManifest | null {
-    const raw = readFileSync(filePath, 'utf-8')
+    const raw = readSkillText(filePath)
     const match = RE_FRONTMATTER.exec(raw)
     if (!match) {
       logger.warn(__t('logs.capabilities', 'Skill {0} 缺少 frontmatter', [skillId]))
