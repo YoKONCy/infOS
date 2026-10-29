@@ -1,6 +1,7 @@
-import { existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from 'node:fs'
+import { existsSync, readFileSync } from 'node:fs'
 import path from 'node:path'
 import { randomBytes } from 'node:crypto'
+import { writeAtomicJsonSync } from '../lib/atomicJson'
 
 export interface ClientDevice {
   id: string
@@ -63,9 +64,6 @@ export class ClientAccessRepository {
     return value
   }
   save(value: ClientAccessState): void {
-    mkdirSync(path.dirname(this.file), { recursive: true })
-    const temporary = `${this.file}.tmp`
-    writeFileSync(temporary, JSON.stringify(value), { mode: 0o600 })
-    renameSync(temporary, this.file)
+    writeAtomicJsonSync(this.file, value)
   }
 }
