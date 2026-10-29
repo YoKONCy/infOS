@@ -22,6 +22,45 @@ export function createDistributedRouter(ctx: AppContext) {
     }),
   )
 
+  // 远程客户端使用设备身份校验连接、申请能力通道邀请；它们不授予全库同步权限。
+  router.post('/capability-invites', (c) => {
+    const configuredHost = process.env.PERO_CAPABILITY_PUBLIC_HOST?.trim()
+    const host = configuredHost || c.req.header('host')?.split(':')[0] || '127.0.0.1'
+    const protocol = configuredHost ? 'wss' : 'ws'
+    const port = Number(process.env.PERO_CAPABILITY_PORT ?? 9121)
+    return c.json(
+      {
+        code: 'CREATED',
+        message: __t('server.routers', '一次性能力节点配对邀请已生成'),
+        data: ctx.capabilityBridge.createPairingInvite(`${protocol}://${host}:${port}`),
+      },
+      201,
+    )
+  })
+
+  router.get('/capability-nodes', (c) =>
+    c.json({
+      code: 'OK',
+      message: __t('server.routers', '获取成功'),
+      data: {
+        nodes: ctx.nodeRegistry.listNodes().filter((node) => node.facets.includes('capability')),
+        sessions: ctx.nodeRegistry.listSessions(),
+        offers: ctx.capabilityBridge.diagnostics().offers,
+      },
+    }),
+  )
+
+  // 节点全量同步沿用目标端管理员凭据；必须先授权，再校验请求体或读取业务数据。
+  router.use('*', async (c, next) => {
+    c.header('Cache-Control', 'no-store')
+    if (!ctx.clientAccess?.authenticate(c.req.raw)?.admin)
+      return c.json(
+        { code: 'FORBIDDEN', message: __t('server.routers', '请使用管理员凭据管理分布式同步') },
+        403,
+      )
+    await next()
+  })
+
   router.get('/servers', async (c) =>
     c.json({
       code: 'OK',
@@ -126,33 +165,6 @@ export function createDistributedRouter(ctx: AppContext) {
       staged ? 202 : 404,
     )
   })
-
-  router.post('/capability-invites', (c) => {
-    const configuredHost = process.env.PERO_CAPABILITY_PUBLIC_HOST?.trim()
-    const host = configuredHost || c.req.header('host')?.split(':')[0] || '127.0.0.1'
-    const protocol = configuredHost ? 'wss' : 'ws'
-    const port = Number(process.env.PERO_CAPABILITY_PORT ?? 9121)
-    return c.json(
-      {
-        code: 'CREATED',
-        message: __t('server.routers', '一次性能力节点配对邀请已生成'),
-        data: ctx.capabilityBridge.createPairingInvite(`${protocol}://${host}:${port}`),
-      },
-      201,
-    )
-  })
-
-  router.get('/capability-nodes', (c) =>
-    c.json({
-      code: 'OK',
-      message: __t('server.routers', '获取成功'),
-      data: {
-        nodes: ctx.nodeRegistry.listNodes().filter((node) => node.facets.includes('capability')),
-        sessions: ctx.nodeRegistry.listSessions(),
-        offers: ctx.capabilityBridge.diagnostics().offers,
-      },
-    }),
-  )
 
   return router
 }

@@ -1456,5 +1456,6 @@
   "预填充": "Prefill",
   "切换即时保存，每次提交整页修改。": "Switches save immediately. Every save includes all changes on this page.",
   "设置尚未读取完成，请重试": "Settings have not finished loading. Please retry.",
-  "子应用": "Sub-applications"
+  "子应用": "Sub-applications",
+  "服务器管理与完整同步需要管理员凭据": "Managing servers and full sync requires administrator credentials"
 }

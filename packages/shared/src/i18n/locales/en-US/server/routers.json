@@ -156,5 +156,6 @@
   "数据库快照已生成": "database snapshot has been generated",
   "已请求打开": "has requested to open",
   "语音识别成功": "voice recognition successful",
-  "仅支持简体中文、繁體中文和 English": "Choose Simplified Chinese, Traditional Chinese or English"
+  "仅支持简体中文、繁體中文和 English": "Choose Simplified Chinese, Traditional Chinese or English",
+  "请使用管理员凭据管理分布式同步": "Use administrator credentials to manage distributed sync"
 }

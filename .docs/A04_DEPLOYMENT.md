@@ -492,6 +492,18 @@ Idempotency Key / Deadline
 
 多 Server 之间不建立实时副本或自动路由。用户在“分布式”Tab执行“从此服务器上同步最新数据”时，所选 Server 的完整用户数据快照是唯一来源，整体覆写当前 Server 并保留当前机器身份；此后各 Server 继续独立运行，不做自动追平。
 
+完整快照包含聊天记录、请求副本、记忆、配置与其他业务文件；传输密钥只负责加密，不代表访问授权。`createApp` 先用 `ClientAccessService.authenticate` 验证身份，`distributed.router.ts` 再在请求体校验、快照读取和同步服务调用之前检查 `admin`，普通设备返回 HTTP 403 / `FORBIDDEN`，未认证请求返回 HTTP 401 / `UNAUTHORIZED`。未提供认证服务的嵌入式应用也不能绕过管理权限。
+
+| `/api/distributed` 接口                                                             | 权限与调用方                                                                         |
+| ----------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------ |
+| `GET /identity`                                                                     | 已认证设备；远程客户端启动校验和 Server 探测使用                                     |
+| `GET /servers`、`POST /servers/probe`、`POST /servers`、`DELETE /servers/:serverId` | 管理员；管理远程来源与探测目标                                                       |
+| `POST /snapshot`、`POST /snapshot/import`                                           | 管理员；Server 全量传输与本机 Steam Cloud 快照使用                                   |
+| `POST /sync/:serverId`、`GET /pending`、`POST /rollback`                            | 管理员；发起覆盖、读取同步状态与暂存撤销                                             |
+| `POST /capability-invites`、`GET /capability-nodes`                                 | 沿用已认证设备权限；远程 Electron 申请能力通道邀请和查看连接状态使用，不授予全库权限 |
+
+`DistributedSyncService.stageFromServer` 将保存的目标端凭据作为 Bearer 请求远端 `/snapshot`。当前没有专用的 HTTP 同步节点令牌；合法同步节点使用目标端 `INFOS_API_TOKEN`、安装实例管理员凭据或有效的管理员设备会话。能力通道的配对码和 `kernel/capability-device-tokens.json` 中的设备令牌只由 `CapabilityBridge` 验证，不能用于 HTTP 快照接口，也不能凭 Node ID 或注册信息获得管理员权限。使用普通设备令牌保存的旧同步来源须由管理员更新为目标端管理员凭据；管理员凭据的同步协议、快照格式和机器身份保留规则不变。手机和普通远程客户端继续复用服务端业务数据，无需取得全库导入导出权限。前端 `DistributedTab.vue` 在服务器列表或同步状态返回 `FORBIDDEN` 时只隐藏服务器管理与同步卡片并提示需要管理员凭据，当前服务器身份与能力节点仍照常显示。
+
 ### 9.6 跨节点文件与资产
 
 ```text
