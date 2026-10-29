@@ -15,6 +15,7 @@ import {
 import { isElectron, invoke } from '../../../utils/ipcAdapter'
 import { setWebServerOrigin } from '../../../api/transport'
 import { useNotificationStore } from '../../../stores'
+import { ApiError } from '../../../api/errors'
 
 const notify = useNotificationStore()
 const identity = ref<DistributedIdentity | null>(null)
@@ -29,6 +30,7 @@ const confirmServer = ref<SavedServer | null>(null)
 const invite = ref<{ endpoint: string; pairingCode: string; expiresAt: string } | null>(null)
 const pendingSync = ref<{ snapshotId: string; sourceServerId: string } | null>(null)
 const lastSync = ref<(FullSyncManifest & { backupPath: string }) | null>(null)
+const syncDenied = ref(false)
 
 const isElectronBound = computed(() => isElectron())
 const isElectronRemote = computed(() => window.electron?.connectionMode?.() === 'remote')
@@ -57,18 +59,34 @@ function browserServerToken(serverId: string): string {
   return current[serverId] ?? ''
 }
 
+/** 服务器管理与完整同步仅限管理员；普通设备被拒绝时只隐藏这部分，不影响身份与能力节点。 */
+async function loadSyncManagement() {
+  try {
+    const [serverResult, syncStateResult] = await Promise.all([
+      distributedApi.servers(),
+      distributedApi.pending(),
+    ])
+    syncDenied.value = false
+    servers.value = serverResult.data ?? []
+    pendingSync.value = syncStateResult.data?.pending ?? null
+    lastSync.value = syncStateResult.data?.lastSync ?? null
+  } catch (error) {
+    if (!(error instanceof ApiError) || error.code !== 'FORBIDDEN') throw error
+    syncDenied.value = true
+    servers.value = []
+    pendingSync.value = null
+    lastSync.value = null
+  }
+}
+
 async function refresh() {
-  const [identityResult, serverResult, capabilityResult, syncStateResult] = await Promise.all([
+  const [identityResult, capabilityResult] = await Promise.all([
     distributedApi.identity(),
-    distributedApi.servers(),
     distributedApi.capabilityNodes(),
-    distributedApi.pending(),
+    loadSyncManagement(),
   ])
   identity.value = identityResult.data ?? null
-  servers.value = serverResult.data ?? []
   capabilities.value = capabilityResult.data ?? { nodes: [], sessions: [], offers: [] }
-  pendingSync.value = syncStateResult.data?.pending ?? null
-  lastSync.value = syncStateResult.data?.lastSync ?? null
 }
 
 async function probe() {
@@ -305,7 +323,13 @@ onMounted(() => void refresh())
       </div>
     </section>
 
-    <section class="pixel-card">
+    <section v-if="syncDenied" class="pixel-card">
+      <div class="soft-note">
+        {{ __t('ui.settings', '服务器管理与完整同步需要管理员凭据') }}
+      </div>
+    </section>
+
+    <section v-if="!syncDenied" class="pixel-card">
       <div class="card-heading">
         <PixelIcon name="plus" size="md" />
         <div>
@@ -339,7 +363,7 @@ onMounted(() => void refresh())
       </div>
     </section>
 
-    <section class="pixel-card">
+    <section v-if="!syncDenied" class="pixel-card">
       <div class="card-heading">
         <PixelIcon name="database" size="md" />
         <div>
