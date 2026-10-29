@@ -66,6 +66,7 @@ import { executionOwnerState } from '../../tools/productivityRuntimeHolder'
 import { desktopPauseFromObservation } from '../execution/desktopPause'
 import { appendPromptSnapshot, canonicalTools } from '../llm/promptCache'
 import { compileModelRequest, promptPlanOf } from '../prompt/requestCompiler'
+import { PrefillContinuationGate } from '../prompt/prefillContinuation'
 
 const logger = createLogger('ReActLoop')
 
@@ -836,7 +837,7 @@ export async function* runReActLoop(params: {
 
       const promptPlan = params.promptPlan ?? promptPlanOf(messages)
       const assistantPrefill = compileModelRequest([], turn, promptPlan).prefill
-      let prefillPending = !!assistantPrefill
+      let prefillGate = new PrefillContinuationGate(assistantPrefill)
       const compileRequestMessages = (input: ChatMessage[]): ChatMessage[] =>
         compileModelRequest(input, turn, promptPlan).messages
       let turnText = ''
@@ -1103,6 +1104,12 @@ export async function* runReActLoop(params: {
       }
       // 正常结束与重试断点共用刷新逻辑，保留过滤器尚未发布的正文和思考尾部。
       const flushResponseFilters = function* (): Generator<ReActYield, void, unknown> {
+        // 先结束预填充判定：未见关闭标签的暂存正文按普通正文发布，不拼回开标签。
+        const pendingText = prefillGate.finish()
+        if (pendingText) {
+          turnText += pendingText
+          thinkingFilter.filter(pendingText)
+        }
         thinkingFilter.flush()
         for (const event of thinkingFilter.drainEvents()) {
           if (event.type === 'text') {
@@ -1126,6 +1133,10 @@ export async function* runReActLoop(params: {
                 data: { blockId: narrationBlockId, turn: turn + 1, delta: text },
               }
             }
+          } else if (event.type === 'start') {
+            const blockId = `thinking-${reasoningRunId}-${turn + 1}-${++thinkingSequence}`
+            activeThinking = { blockId, content: '', startedAt: Date.now(), ended: false }
+            yield { event: 'thinking_start', data: { blockId, turn: turn + 1 } }
           } else if (event.type === 'delta' && activeThinking) {
             activeThinking.content += event.delta
             yield {
@@ -1158,6 +1169,34 @@ export async function* runReActLoop(params: {
           yield {
             event: 'narration_delta',
             data: { blockId: narrationBlockId, turn: turn + 1, delta: spokenTail },
+          }
+        }
+      }
+      // 请求直接失败或取消时也要冻结缓冲正文；终态投影不能依赖是否出现过重试事件。
+      const freezeResponse = function* (): Generator<ReActYield, void, unknown> {
+        yield* completeReasoning()
+        yield* flushResponseFilters()
+        for (const thinking of completedThinking)
+          contentBlocks.push({
+            blockId: thinking.blockId,
+            sequence: ++blockSequence,
+            kind: 'thinking',
+            turn: turn + 1,
+            content: thinking.content,
+            durationMs: thinking.durationMs,
+          })
+        if (narrationStarted) {
+          contentBlocks.push({
+            blockId: narrationBlockId,
+            sequence: ++blockSequence,
+            kind: 'narration',
+            turn: turn + 1,
+            phase: 'progress',
+            content: visibleTurnText,
+          })
+          yield {
+            event: 'narration_end',
+            data: { blockId: narrationBlockId, turn: turn + 1, phase: 'progress' },
           }
         }
       }
@@ -1299,7 +1338,7 @@ export async function* runReActLoop(params: {
                 rawTranscript += `\n⟦中断响应，第 ${turn + 1} 轮⟧\n${generatedTurnText}\n⟦/中断响应⟧\n`
               turnText = ''
               generatedTurnText = ''
-              prefillPending = !!assistantPrefill
+              prefillGate = new PrefillContinuationGate(assistantPrefill)
               visibleTurnText = ''
               turnReasoningContent = ''
               turnNativeReasoning.length = 0
@@ -1409,11 +1448,11 @@ export async function* runReActLoop(params: {
 
           // 收集文本
           generatedTurnText += choice.delta.content ?? ''
-          // 等待真实正文或工具参数后才拼回预填充，失败或空响应不能伪装成成功回答。
-          const prependPrefill =
-            prefillPending && (!!choice.delta.content || !!choice.delta.toolCalls?.length)
-          const content = (prependPrefill ? assistantPrefill : '') + (choice.delta.content ?? '')
-          if (prependPrefill) prefillPending = false
+          // 等待真实正文或工具参数后才拼回预填充，失败或空响应不能伪装成成功回答；
+          // 以思考开标签结尾的预填充还要等上游确实续写，避免整轮回答被吞进思考区。
+          const content =
+            prefillGate.push(choice.delta.content ?? '') +
+            (choice.delta.toolCalls?.length ? prefillGate.startToolCall() : '')
           if (content) {
             turnText += content
 
@@ -1576,6 +1615,9 @@ export async function* runReActLoop(params: {
           }
           if (localOutputLimit) break
         }
+        // 钩子读取的是本次完整接收内容，不能漏掉尚在预填充判定器内的正文。
+        yield* completeReasoning()
+        yield* flushResponseFilters()
         await params.packageHooks?.emitHook('agent:afterRequest', {
           agentId: params.agentId,
           threadId: params.sessionId,
@@ -1588,31 +1630,7 @@ export async function* runReActLoop(params: {
       } catch (error) {
         if (error instanceof GenerationLoopError) {
           // 冻结已经显示的片段并收口参数草稿；不把截断参数补成合法调用或自动重放。
-          yield* completeReasoning()
-          yield* flushResponseFilters()
-          for (const thinking of completedThinking)
-            contentBlocks.push({
-              blockId: thinking.blockId,
-              sequence: ++blockSequence,
-              kind: 'thinking',
-              turn: turn + 1,
-              content: thinking.content,
-              durationMs: thinking.durationMs,
-            })
-          if (narrationStarted) {
-            contentBlocks.push({
-              blockId: narrationBlockId,
-              sequence: ++blockSequence,
-              kind: 'narration',
-              turn: turn + 1,
-              phase: 'progress',
-              content: visibleTurnText,
-            })
-            yield {
-              event: 'narration_end',
-              data: { blockId: narrationBlockId, turn: turn + 1, phase: 'progress' },
-            }
-          }
+          yield* freezeResponse()
           for (const call of collectedCalls) {
             if (!call) continue
             const result = '检测到模型重复生成，此工具未执行，未完成参数已丢弃。'
@@ -1650,6 +1668,7 @@ export async function* runReActLoop(params: {
           contextRetryAttempts < 3 &&
           currentInputTokens &&
           !turnText &&
+          !prefillGate.hasBuffered &&
           !turnReasoningContent &&
           !turnNativeReasoning.length &&
           !collectedCalls.some(Boolean)
@@ -1678,8 +1697,15 @@ export async function* runReActLoop(params: {
           turn--
           continue
         }
-        if (!params.cancelChecker?.isHandoffRequested?.(controlSessionId) || params.signal?.aborted)
+        if (
+          !params.cancelChecker?.isHandoffRequested?.(controlSessionId) ||
+          params.signal?.aborted
+        ) {
+          yield* freezeResponse()
+          if (generatedTurnText)
+            rawTranscript += `\n⟦中断响应，第 ${turn + 1} 轮⟧\n${generatedTurnText}\n⟦/中断响应⟧\n`
           throw error
+        }
       }
       contextRetryAttempts = 0
 

@@ -28,6 +28,7 @@ export { retryableLlmError } from './services/llm/retryPolicy'
 export { ToolLoopGuard, ToolLoopError } from './services/agent/toolLoopGuard'
 export { desktopCheckpointMessages as promptMessagesForPersistence } from './services/agent/reactLoop'
 export { compileModelRequest } from './services/prompt/requestCompiler'
+export { completePrefilledContent } from './services/prompt/prefillContinuation'
 export {
   canonicalTools,
   preparePromptReplay,
