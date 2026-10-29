@@ -15,7 +15,7 @@ import { t as __t } from '../../../lib/i18n'
  */
 
 import { providerApiUrl } from './providerUrl'
-import { normalizeTokenUsage } from '../usage'
+import { normalizeTokenUsage, reportedCacheUsage, reportedCacheInput, tokenCount } from '../usage'
 import { combinedOutputLimit, fetchLlmResponse } from '../requestPolicy'
 import { compactNativeReasoning } from '../reasoning'
 import {
@@ -570,13 +570,13 @@ export class OpenAiProvider implements LlmProvider {
 
   /** 规范化 Usage 信息 (snake_case → camelCase) */
   private normalizeUsage(raw: Record<string, unknown>): UsageInfo | undefined {
-    const input = raw.prompt_tokens_details as Record<string, unknown> | undefined
     const output = raw.completion_tokens_details as Record<string, unknown> | undefined
     return normalizeTokenUsage({
-      input: raw.prompt_tokens,
-      output: raw.completion_tokens,
+      input:
+        tokenCount(raw.prompt_tokens) ?? tokenCount(raw.input_tokens) ?? reportedCacheInput(raw),
+      output: tokenCount(raw.completion_tokens) ?? raw.output_tokens,
       total: raw.total_tokens,
-      cachedRead: input?.cached_tokens ?? raw.prompt_cache_hit_tokens,
+      ...reportedCacheUsage(raw),
       reasoning: output?.reasoning_tokens,
     })
   }

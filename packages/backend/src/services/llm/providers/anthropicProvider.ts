@@ -16,7 +16,7 @@ import { t as __t } from '../../../lib/i18n'
  */
 
 import { providerApiUrl } from './providerUrl'
-import { normalizeTokenUsage, tokenCount } from '../usage'
+import { normalizeTokenUsage, tokenCount, reportedCacheUsage } from '../usage'
 import { fetchLlmResponse } from '../requestPolicy'
 import type {
   LlmProvider,
@@ -518,8 +518,9 @@ export class AnthropicProvider implements LlmProvider {
   /** 规范化 Anthropic Usage → UsageInfo */
   private normalizeUsage(raw: Record<string, unknown>): UsageInfo | undefined {
     const fresh = tokenCount(raw.input_tokens)
-    const cachedRead = tokenCount(raw.cache_read_input_tokens)
-    const cachedWrite = tokenCount(raw.cache_creation_input_tokens)
+    const cached = reportedCacheUsage(raw)
+    const cachedRead = tokenCount(raw.cache_read_input_tokens) ?? cached.cachedRead
+    const cachedWrite = tokenCount(raw.cache_creation_input_tokens) ?? cached.cachedWrite
     // Anthropic 的 input_tokens 不含缓存读取和创建，先合并成统一输入口径。
     return normalizeTokenUsage({
       input: fresh === undefined ? undefined : fresh + (cachedRead ?? 0) + (cachedWrite ?? 0),

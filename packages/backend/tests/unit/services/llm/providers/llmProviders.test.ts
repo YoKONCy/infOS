@@ -72,6 +72,59 @@ async function collect<T>(iterable: AsyncIterable<T>) {
   return result
 }
 
+describe('缓存写入用量回归', () => {
+  afterEach(() => vi.unstubAllGlobals())
+  it.each(['chat', 'responses'] as const)(
+    '%s 流式与非流式保留缓存写入且不重复计输入',
+    async (protocol) => {
+      const usage =
+        protocol === 'chat'
+          ? {
+              prompt_tokens: 1000,
+              completion_tokens: 10,
+              total_tokens: 1010,
+              prompt_tokens_details: { cached_tokens: 600, cache_write_tokens: 300 },
+            }
+          : {
+              input_tokens: 1000,
+              output_tokens: 10,
+              total_tokens: 1010,
+              input_tokens_details: { cached_tokens: 600, cache_write_tokens: 300 },
+            }
+      const provider =
+        protocol === 'chat'
+          ? new OpenAiProvider(baseConfig)
+          : new OpenAiResponsesProvider(baseConfig)
+      const data =
+        protocol === 'chat'
+          ? { choices: [{ message: { content: '好' }, finish_reason: 'stop' }], usage }
+          : { output: [], usage }
+      const streamed =
+        protocol === 'chat'
+          ? `data: ${JSON.stringify({ choices: [], usage })}\n\ndata: [DONE]\n\n`
+          : `event: response.completed\ndata: ${JSON.stringify({ type: 'response.completed', response: data })}\n\n`
+      vi.stubGlobal(
+        'fetch',
+        vi
+          .fn()
+          .mockResolvedValueOnce(jsonResponse(data))
+          .mockResolvedValueOnce(streamResponse(streamed)),
+      )
+      const completion = await provider.chat([{ role: 'user', content: '好' }], {})
+      const deltas = await collect(provider.chatStream([{ role: 'user', content: '好' }], {}))
+      const expected = {
+        promptTokens: 1000,
+        completionTokens: 10,
+        totalTokens: 1010,
+        cachedReadTokens: 600,
+        cachedWriteTokens: 300,
+      }
+      expect(completion.usage).toMatchObject(expected)
+      expect(deltas.filter((delta) => delta.usage).at(-1)?.usage).toMatchObject(expected)
+    },
+  )
+})
+
 describe('OpenAiProvider', () => {
   beforeEach(() => {
     vi.stubGlobal('fetch', vi.fn())
