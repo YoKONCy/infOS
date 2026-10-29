@@ -9,6 +9,7 @@ import type { ChatDelta, ChatMessage } from '@infos/backend/services/llm/types'
 import type { ModelConfig } from '@infos/backend/services/llm/llmService'
 import { LlmService } from '@infos/backend/services/llm/llmService'
 import { readToolObservation } from '@infos/backend/services/execution/toolObservation'
+import { ConversationSurfaceProjector } from '@infos/backend/projections/conversationSurfaceProjector'
 
 const modelConfig: ModelConfig = {
   provider: 'openai',
@@ -57,6 +58,107 @@ async function collectLoop(params: Parameters<typeof runReActLoop>[0]) {
 }
 
 describe('runReActLoop', () => {
+  it('提前拒绝 finish_task 时先确认草稿再回传失败，最终投影保留调用记录', async () => {
+    const args = { reply: '完成', summary: '尚未执行' }
+    const execute = vi.fn()
+    const chatStream = vi
+      .fn()
+      .mockReturnValueOnce(
+        streamFrom([
+          {
+            choices: [
+              {
+                delta: {
+                  toolCalls: [
+                    {
+                      index: 0,
+                      id: 'early-finish',
+                      type: 'function',
+                      function: { name: 'finish_task', arguments: JSON.stringify(args) },
+                    },
+                  ],
+                },
+                finishReason: 'tool_calls',
+              },
+            ],
+          },
+        ]),
+      )
+      .mockReturnValueOnce(
+        streamFrom([{ choices: [{ delta: { content: '自然回复' }, finishReason: 'stop' }] }]),
+      )
+    const { yields, result } = await collectLoop({
+      llmService: { chatStream } as never,
+      modelConfig,
+      messages: [{ role: 'user', content: '你好' }],
+      tools: [{ name: 'finish_task', description: '完成', parameters: {} }],
+      toolExecutor: { execute },
+      source: 'desktop',
+      agentId: 'pero',
+      threadContext: { threadId: 'early', interactionMode: 'work' },
+    })
+    const events = yields.filter((item) => typeof item !== 'string')
+    const ready = events.findIndex((item) => item.event === 'tool_call_ready')
+    const returned = events.findIndex((item) => item.event === 'tool_result')
+    expect(ready).toBeGreaterThan(-1)
+    expect(ready).toBeLessThan(returned)
+    expect(events[ready]).toMatchObject({
+      data: {
+        draftId: 'tool-draft-1-0',
+        callId: 'early-finish',
+        name: 'finish_task',
+        args,
+      },
+    })
+    expect(events[returned]).toMatchObject({
+      data: { callId: 'early-finish', isError: true, durationMs: 0 },
+    })
+    expect(execute).not.toHaveBeenCalled()
+    expect(chatStream).toHaveBeenCalledTimes(2)
+    expect(result.contentBlocks[0]).toMatchObject({
+      kind: 'tool',
+      callId: 'early-finish',
+      name: 'finish_task',
+      args: JSON.stringify(args),
+      isError: true,
+      durationMs: 0,
+      sequence: 1,
+      turn: 1,
+    })
+    expect(result.messages).toContainEqual(
+      expect.objectContaining({
+        role: 'tool',
+        toolCallId: 'early-finish',
+        content: expect.stringContaining('尚未开放'),
+      }),
+    )
+    const surface = new ConversationSurfaceProjector().projectMessage(
+      {
+        messageId: '1',
+        threadId: 'early',
+        role: 'assistant',
+        content: '自然回复',
+        revision: 1,
+        status: 'completed',
+        attachments: [],
+        contentBlocks: result.contentBlocks,
+        toolCalls: result.toolCalls,
+      } as never,
+      'pero',
+    )
+    expect(surface.nodes).toContainEqual(
+      expect.objectContaining({
+        kind: 'tool-call',
+        props: expect.objectContaining({ callId: 'early-finish', state: 'failed' }),
+      }),
+    )
+    expect(surface.nodes).toContainEqual(
+      expect.objectContaining({
+        kind: 'tool-result',
+        props: expect.objectContaining({ callId: 'early-finish', isError: true }),
+      }),
+    )
+  })
   it.each(['code_search', 'run_script'])(
     '%s 搜索列表在实时和最终视图保留，模型审计不复制正文',
     async (name) => {
@@ -3129,7 +3231,7 @@ describe('runReActLoop', () => {
     expect(result.toolCalls).toEqual([
       expect.objectContaining({
         name: 'finish_task',
-        args: {},
+        args: { summary: '完成' },
         isError: true,
       }),
     ])
