@@ -33,6 +33,7 @@ const actors = ['匿名', '普通设备', '管理员', '合法同步节点'] as 
 let source: DistributedApp
 let target: DistributedApp
 let remote: Awaited<ReturnType<typeof listen>>
+const resources: Array<{ close(): Promise<void> }> = []
 
 beforeEach(async () => {
   vi.stubEnv('INFOS_API_TOKEN', '')
@@ -40,17 +41,26 @@ beforeEach(async () => {
   vi.stubEnv('PERO_CAPABILITY_PORT', '9399')
   vi.stubEnv('OTEL_SDK_DISABLED', 'true')
   source = await distributedApp('source')
+  resources.push(source)
   target = await distributedApp('target')
+  resources.push(target)
   remote = await listen(source.app)
+  resources.push(remote)
 })
 
 afterEach(async () => {
   vi.restoreAllMocks()
-  await remote?.close()
-  await target?.close()
-  await source?.close()
+  const failures: unknown[] = []
+  for (const resource of resources.splice(0).reverse()) {
+    try {
+      await resource.close()
+    } catch (error) {
+      failures.push(error)
+    }
+  }
   vi.unstubAllEnvs()
   setLocale('zh-CN')
+  if (failures.length) throw new AggregateError(failures, '分布式测试资源清理失败')
 })
 
 const bearer = (token: string) => ({ Authorization: `Bearer ${token}` })
