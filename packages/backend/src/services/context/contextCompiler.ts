@@ -725,6 +725,17 @@ export class ContextCompiler {
       // 工作请求最终由包含工具定义及推理协议的统一窗口计费，不能在 Region 阶段提前拒绝。
       detailedWorkContext ? 0 : contextBudget,
     )
+    // 插件 conversation 是本轮外部资料；内置 Thread 仍由原生历史独立装配。
+    // 单独保留到历史装配完成后再插入，避免动态正文截断系统与旧历史的缓存前缀。
+    const packageMessages: LlmMessage[] = regionCompilation.selected
+      .filter(
+        (region) => region.delivery === 'conversation' && region.providerId.startsWith('package:'),
+      )
+      .map((region) => ({
+        role: 'user',
+        content: region.content,
+        cacheControl: { kind: 'snapshot', key: `context-region:${region.regionId}` },
+      }))
     const regionMessages: LlmMessage[] = regionCompilation.selected
       .filter(
         (region) => region.delivery === 'system' || region.providerId === 'infos.context.tools',
@@ -844,6 +855,43 @@ export class ContextCompiler {
         : options.currentInput || (options.appendThreadMessages !== false && currentMessage)
           ? llmMessages.length - 1
           : undefined
+    if (packageMessages.length) {
+      const insertionIndex = currentMessageIndex ?? llmMessages.length
+      const packageContent = `<package_context>\n${packageMessages.map((message) => message.content).join('\n\n')}\n</package_context>`
+      // 原生框架复用末尾的 turn_context；用户自定义框架没有该槽位时退回独立动态快照。
+      // 只改已渲染的 user 正文，不重新运行模板或酒馆宏，也不改系统与历史消息。
+      const turnIndex =
+        assembly && assembly.format !== 'sillytavern'
+          ? llmMessages.findIndex(
+              (message, index) =>
+                index < insertionIndex &&
+                message.role === 'user' &&
+                message.cacheControl?.key === 'prompt-slot:turn_context' &&
+                typeof message.content === 'string' &&
+                message.content.trimEnd().endsWith('</turn_context>') &&
+                !llmMessages.slice(index + 1).some((item) => item.cacheControl?.kind === 'history'),
+            )
+          : -1
+      if (turnIndex >= 0) {
+        const turn = llmMessages[turnIndex]!
+        const content = turn.content as string
+        const close = content.lastIndexOf('</turn_context>')
+        turn.content = `${content.slice(0, close)}${packageContent}\n${content.slice(close)}`
+      } else {
+        const dynamicMessages =
+          assembly && assembly.format !== 'sillytavern'
+            ? [
+                {
+                  role: 'user' as const,
+                  content: `<turn_context>\n${packageContent}\n</turn_context>`,
+                  cacheControl: { kind: 'snapshot' as const, key: 'package-context' },
+                },
+              ]
+            : packageMessages
+        llmMessages.splice(insertionIndex, 0, ...dynamicMessages)
+        if (currentMessageIndex !== undefined) currentMessageIndex += dynamicMessages.length
+      }
+    }
     const currentInputMessage =
       currentMessageIndex === undefined ? undefined : llmMessages[currentMessageIndex]
     if (detailedWorkContext) {

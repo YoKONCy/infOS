@@ -366,7 +366,7 @@ export function createContribution(host) {
 | `skill` | `entry` 指向技能目录；资源装卸不授予工具权限 |
 | `event-subscriber` | `hooks` 或 `onEvent`，接入现有 PackageHookBus / KernelEventBus |
 | `agent-flow` | `hooks`；Agent 开始、结束、模型请求前后及工具执行前后 |
-| `context-provider` | `provide(request)` 返回 ContextRegion 数组；宿主强制外部信任、可选、命名空间 ID，统一 Token 预算与过期处理 |
+| `context-provider` | `provide(request)` 返回资料区块；宿主归一化为 `package:<packageId>/<contributionId>`、`conversation`、`external`、可选；选中正文以 user 本轮动态资料进入主 Agent 请求，统一预算、过期和去重 |
 | `presenter` | `panel`、可选 `onAction(actionId)`；声明式卡片、字段与按钮 |
 | `web-ui` | `webUi` 声明静态页面；可选 `entry` 导出本贡献的 `actions`，通过隔离页面桥交互 |
 | `asset` | `entry` 指向资源目录；只在激活期间开放白名单 MIME 与受限读取 |
@@ -374,6 +374,8 @@ export function createContribution(host) {
 | `service` | `entry` 由既有进程 Supervisor 启动、停用和回收 |
 
 当前真正触发的流程事件：`agent:beforeRun`、`agent:afterRun`、`agent:beforeRequest`、`agent:afterRequest`、`chat:beforeSend`、`chat:afterReply`、`chat:beforeToolCall`、`chat:afterToolCall`。请求前钩子只能调整普通消息正文，不能修改系统消息、工具协议、主体身份或工具白名单；超出输入预算的变更回退原请求。工具参数变更发生在后续权限校验与审批之前。
+
+`context-provider` 每次最多返回 20 项，每项 `content` 最多 32000 个 JS 字符，`priority` 上限为 50，可提供 `validUntil`；调用限时 3 秒，非法返回、异常或超时整体视为空。插件声明的 trust、delivery、required 和 ID 不覆盖宿主边界。Registry 收集后仍由 Selector 重新计费、检查过期、去重和预算；只有入选的 `package:` conversation 正文进入请求，不会放开其他自定义 conversation，也不重复发送内置 Thread 汇总或 manifest-only。普通原生框架将选中资料放入历史之后的 user `turn_context`，具体编排与缓存边界见 [A09 §8.1](./A09_AIOS_ARCHITECTURE.md#81-contextregion)。社交/QQ 使用独立的 SocialAppCompiler，不消费主 compiler 的 Region Registry。
 
 记忆提供 `memory:beforeCreate`、`memory:afterCreate`、`memory:beforeDelete` 与 `memory:afterRetrieve` 观察点；不接受借钩子绕过事件时间、Agent 归属或持久化事务的修改。旧的 `agent:onSwitch` / `agent:onMoodChange` 事件名仅保留兼容类型，不表示新增了触发位置。
 
