@@ -29,7 +29,15 @@ interface UpdateRelease {
 }
 
 interface UpdateState {
-  phase: 'idle' | 'checking' | 'available' | 'downloading' | 'downloaded' | 'up-to-date' | 'error'
+  phase:
+    | 'idle'
+    | 'checking'
+    | 'available'
+    | 'downloading'
+    | 'downloaded'
+    | 'installing'
+    | 'up-to-date'
+    | 'error'
   deployment: 'installed' | 'portable' | 'unsupported'
   currentVersion: string
   selectedVersion?: string
@@ -39,6 +47,9 @@ interface UpdateState {
   totalBytes?: number
   message: string
   checkedAt?: string
+  canInstall?: boolean
+  logPath?: string
+  lastInstallError?: string
 }
 
 const props = defineProps<{
@@ -54,6 +65,7 @@ const state = ref<UpdateState | null>(null)
 const releases = ref<UpdateRelease[]>([])
 const selectedTag = ref('')
 const actionBusy = ref(false)
+const actionError = ref('')
 let stopUpdateListener: (() => void) | null = null
 
 const selectedRelease = computed(
@@ -97,17 +109,21 @@ const canUpdate = computed(
   () => state.value?.deployment !== 'unsupported' && Boolean(selectedRelease.value),
 )
 const isDownloading = computed(() => state.value?.phase === 'downloading')
+const isInstalling = computed(() => state.value?.phase === 'installing')
 const isDownloaded = computed(
-  () => state.value?.phase === 'downloaded' && state.value.selectedTag === selectedTag.value,
+  () =>
+    Boolean(state.value?.canInstall ?? (state.value?.phase === 'downloaded')) &&
+    state.value?.selectedTag === selectedTag.value,
 )
 const actionLabel = computed(() => {
   if (isDownloading.value) return __t('ui.navigation', '下载中')
+  if (isInstalling.value) return __t('ui.navigation', '正在准备安装')
   if (isDownloaded.value) return __t('ui.navigation', '安装')
   return __t('ui.navigation', '下载')
 })
 
 function close(): void {
-  if (isDownloading.value) return
+  if (isDownloading.value || isInstalling.value || actionBusy.value) return
   emit('update:modelValue', false)
 }
 
@@ -141,10 +157,14 @@ async function loadCachedReleases(): Promise<void> {
 }
 
 async function checkUpdates(): Promise<void> {
+  if (actionBusy.value || isDownloading.value || isInstalling.value) return
   actionBusy.value = true
+  actionError.value = ''
   try {
     state.value = (await invoke('check-client-update')) as UpdateState
     await loadCachedReleases()
+  } catch (error) {
+    await showActionFailure(error)
   } finally {
     actionBusy.value = false
   }
@@ -153,16 +173,40 @@ async function checkUpdates(): Promise<void> {
 async function runAction(): Promise<void> {
   if (!selectedRelease.value || actionBusy.value) return
   actionBusy.value = true
+  actionError.value = ''
   try {
     if (isDownloaded.value) {
       await invoke('install-client-update')
+      state.value = (await invoke('get-update-state')) as UpdateState
       return
     }
     state.value = (await invoke('download-client-update', {
       tagName: selectedRelease.value.tagName,
     })) as UpdateState
+  } catch (error) {
+    await showActionFailure(error)
   } finally {
     actionBusy.value = false
+  }
+}
+
+async function showActionFailure(error: unknown): Promise<void> {
+  try {
+    state.value = (await invoke('get-update-state')) as UpdateState
+  } catch {
+    // 主进程不可达时仍在当前窗口显示错误，不让点击操作变成未处理的拒绝。
+  }
+  actionError.value = __t('ui.navigation', '更新操作失败：{0}', [
+    error instanceof Error ? error.message : String(error),
+  ])
+}
+
+async function openUpdateLocation(target: 'logs' | 'release'): Promise<void> {
+  try {
+    if (target === 'logs') await invoke('open-client-path', 'logs')
+    else await invoke('open-external-url', 'https://github.com/YoKONCy/infOS/releases')
+  } catch (error) {
+    await showActionFailure(error)
   }
 }
 
@@ -207,6 +251,7 @@ onMounted(async () => {
   if (!isElectron()) return
   stopUpdateListener = await listen('client-update-state', (payload) => {
     state.value = payload as UpdateState
+    actionError.value = ''
   })
   if (props.modelValue) await initialize()
 })
@@ -235,7 +280,7 @@ onUnmounted(() => stopUpdateListener?.())
             </div>
             <button
               class="update-close"
-              :disabled="isDownloading"
+              :disabled="isDownloading || isInstalling || actionBusy"
               :title="__t('ui.navigation', '关闭')"
               @click="close"
             >
@@ -274,6 +319,7 @@ onUnmounted(() => stopUpdateListener?.())
               variant="ghost"
               size="sm"
               :loading="state?.phase === 'checking'"
+              :disabled="isDownloading || isInstalling || actionBusy"
               @click="checkUpdates"
             >
               <PixelIcon name="refresh" size="xs" />
@@ -302,7 +348,7 @@ onUnmounted(() => stopUpdateListener?.())
                   'release-card',
                   { 'release-card-selected': release.tagName === selectedTag },
                 ]"
-                :disabled="isDownloading"
+                :disabled="isDownloading || isInstalling || actionBusy"
                 @click="selectedTag = release.tagName"
               >
                 <span class="release-select-box">
@@ -365,10 +411,34 @@ onUnmounted(() => stopUpdateListener?.())
             </div>
           </div>
 
+          <div
+            v-if="state?.lastInstallError && state.phase !== 'error'"
+            class="update-install-warning"
+            role="alert"
+          >
+            <span>{{ state.lastInstallError }}</span>
+            <PButton size="sm" variant="ghost" @click="openUpdateLocation('logs')">
+              {{ __t('ui.navigation', '打开更新日志目录') }}
+            </PButton>
+          </div>
           <footer class="update-footer">
             <div class="update-status">
               <span class="status-light" :class="`status-${state?.phase ?? 'idle'}`" />
-              <span>{{ state?.message ?? __t('ui.navigation', '更新服务初始化中') }}</span>
+              <span :role="actionError || state?.phase === 'error' ? 'alert' : 'status'">
+                {{ actionError || state?.message || __t('ui.navigation', '更新服务初始化中') }}
+              </span>
+              <button
+                v-if="state?.phase === 'error' || actionError"
+                @click="openUpdateLocation('logs')"
+              >
+                {{ __t('ui.navigation', '打开更新日志目录') }}
+              </button>
+              <button
+                v-if="state?.phase === 'error' || actionError"
+                @click="openUpdateLocation('release')"
+              >
+                {{ __t('ui.navigation', '前往发布页手动下载') }}
+              </button>
             </div>
 
             <div v-if="isDownloading || isDownloaded" class="download-progress">
@@ -383,8 +453,8 @@ onUnmounted(() => stopUpdateListener?.())
 
             <PButton
               variant="primary"
-              :disabled="!canUpdate || isDownloading || actionBusy"
-              :loading="isDownloading || actionBusy"
+              :disabled="!canUpdate || isDownloading || isInstalling || actionBusy"
+              :loading="isDownloading || isInstalling || actionBusy"
               class="update-action"
               @click="runAction"
             >
@@ -708,6 +778,7 @@ onUnmounted(() => stopUpdateListener?.())
 .update-status {
   display: flex;
   align-items: center;
+  flex-wrap: wrap;
   gap: 8px;
   min-width: 190px;
   font-size: 10px;
@@ -724,12 +795,24 @@ onUnmounted(() => stopUpdateListener?.())
   box-shadow: 0 0 8px rgba(16, 185, 129, 0.7);
 }
 .status-checking,
-.status-downloading {
+.status-downloading,
+.status-installing {
   background: #0ea5e9;
   box-shadow: 0 0 8px rgba(14, 165, 233, 0.7);
 }
 .status-error {
   background: #f43f5e;
+}
+.update-install-warning {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 8px;
+  padding: 12px 20px;
+  color: var(--ui-danger);
+  background: var(--ui-bg-surface);
+  border-top: 1px solid var(--ui-border-default);
+  font-size: 12px;
 }
 
 .download-progress {

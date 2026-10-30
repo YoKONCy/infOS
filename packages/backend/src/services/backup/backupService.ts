@@ -17,6 +17,7 @@ import {
   readBackupArchive,
   readBackupRows,
   safeBackupPath,
+  validateSavedBackupPassword,
   writeBackupArchive,
 } from './backupArchive'
 import {
@@ -516,6 +517,7 @@ export class BackupService {
   async beginSavedImport(id: string, password = '') {
     const record = await this.record(id)
     const secret = record.protection === 'local' ? await this.localKey() : password
+    await validateSavedBackupPassword(this.archivePath(id), secret)
     return this.imports.beginFile(this.archivePath(id), record.size, secret)
   }
   async download(

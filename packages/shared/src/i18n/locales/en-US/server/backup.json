@@ -1,4 +1,5 @@
 {
+  "备份口令不正确或文件头已损坏，请检查后重试": "The backup password is incorrect or the header is damaged. Check it and try again.",
   "上传位置已变化，请查询已确认进度后继续": "The upload position changed. Check the confirmed progress before continuing.",
   "上传分片未完成，可从已确认位置重试": "The upload chunk was incomplete. Retry from the confirmed position.",
   "服务器磁盘空间不足，请清理空间后重新导入": "The server has insufficient disk space. Free up space and import again.",

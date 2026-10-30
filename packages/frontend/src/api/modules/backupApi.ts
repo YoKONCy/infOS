@@ -10,6 +10,7 @@ import type {
 } from '@infos/shared'
 import { t } from '../../i18n'
 import { getLocale } from '@infos/shared/i18n'
+import { inspectBackupFile } from './backupFile'
 
 export interface BackupChoice {
   id: string
@@ -95,17 +96,26 @@ export const backupApi = {
       pending: { ticket: string; backupId: string } | null
       lastImport: { status: 'completed' | 'failed'; id: string; error?: string } | null
       activeImport: BackupImportProgress | null
+      runtime?: 'docker' | 'server'
     }>('/backups'),
   create: (selection: BackupSelection, password: string) =>
     apiClient.post<BackupRecord>('/backups', { selection, password }),
   previewSaved: (id: string, password: string) =>
     apiClient.post<BackupPreview>(`/backups/${id}/preview`, { password }),
   commit: (ticket: string, policy: ImportPolicy) =>
-    apiClient.post(`/backups/previews/${ticket}/commit`, policy),
+    apiClient.post<{ restartRequired: boolean }>(`/backups/previews/${ticket}/commit`, policy),
   remove: (id: string) => apiClient.delete(`/backups/${id}`),
   cancel: () => apiClient.delete('/backups/pending'),
-  beginImport: (file: File, password: string) =>
-    apiClient.post<BackupImportProgress>('/backups/imports', { size: file.size, password }),
+  async beginImport(file: File, password: string) {
+    const { encrypted, prefix } = await inspectBackupFile(file)
+    if (encrypted && !password)
+      throw new Error(t('ui.backup', '这份备份已加密，请先输入导出时设置的口令'))
+    return apiClient.post<BackupImportProgress>('/backups/imports', {
+      size: file.size,
+      password: encrypted ? password : '',
+      prefix,
+    })
+  },
   beginSavedImport: (id: string, password: string) =>
     apiClient.post<BackupImportProgress>(`/backups/${id}/import`, { password }),
   importProgress: (id: string) => apiClient.get<BackupImportProgress>(`/backups/imports/${id}`),

@@ -6,6 +6,7 @@ import { AppError } from '../lib/appError'
 import { t } from '../lib/i18n'
 import { prepareBackupDownload, type BackupService } from '../services/backup/backupService'
 import type { BackupImportProgress } from '@infos/shared'
+import { validateBackupUpload } from '../services/backup/backupArchive'
 
 const ids = z.array(z.string().min(1).max(200)).max(1000).default([])
 const selection = z
@@ -49,6 +50,7 @@ const messages: Record<string, string> = {
   BACKUP_SOCIAL_FEATURE_CONFLICT: '社交记忆特征存在冲突，请导入为新角色或选择覆盖',
   BACKUP_ACTIVE_APPLICATIONS: '请先停止 Arca 和 Pictoria 子应用，再备份它们的数据',
   BACKUP_PASSWORD_REQUIRED: '请输入备份口令',
+  BACKUP_PASSWORD_INVALID: '备份口令不正确或文件头已损坏，请检查后重试',
   BACKUP_PASSWORD_TOO_SHORT: '携带凭据的备份需要至少八位口令',
   BACKUP_ALREADY_IMPORTED: '这份备份已导入，请勿重复导入',
   BACKUP_PREVIEW_EXPIRED: '导入预览已过期，请重新上传或选择备份',
@@ -117,11 +119,18 @@ export function createBackupRouter(service: BackupService) {
           .positive()
           .max(20 * 1024 ** 3),
         password,
+        prefix: z
+          .string()
+          .max(5492)
+          .regex(/^[A-Za-z0-9+/]+={0,2}$/)
+          .optional(),
       }),
     ),
     async (c) => {
       if (await service.pending()) throw new Error('BACKUP_PENDING_IMPORT')
       const input = c.req.valid('json')
+      if (input.prefix)
+        await validateBackupUpload(Buffer.from(input.prefix, 'base64'), input.size, input.password)
       return c.json(ok(progress(service.imports.begin(input.size, input.password))))
     },
   )
@@ -182,6 +191,7 @@ export function createBackupRouter(service: BackupService) {
         pending: await service.pending(),
         lastImport: await service.lastResult(),
         activeImport: service.imports.current() ? progress(service.imports.current()!) : null,
+        runtime: process.env.INFOS_DOCKER === '1' ? 'docker' : 'server',
       }),
     ),
   )

@@ -14,6 +14,55 @@ const MAX_LINE = 32 * 1024 ** 2
 const MAX_FILES = 100_000
 const derive = promisify(scrypt)
 
+/** 上传前只检查有界文件头；完整 GCM 认证、解压和文件摘要仍在整包接收后执行。 */
+export async function validateBackupUpload(
+  prefix: Buffer,
+  bytes: number,
+  password: string,
+): Promise<void> {
+  if (!Number.isSafeInteger(bytes) || bytes > MAX_BYTES || bytes < 12 || prefix.length > bytes)
+    throw new Error('BACKUP_SIZE_INVALID')
+  if (prefix.length < 12 || prefix.length > 4118 || !prefix.subarray(0, 8).equals(MAGIC))
+    throw new Error('BACKUP_FORMAT_INVALID')
+  const length = prefix.readUInt32BE(8)
+  const start = 12 + length
+  if (length < 2 || length > 4096 || prefix.length < start + 10)
+    throw new Error('BACKUP_FORMAT_INVALID')
+  let header: { encrypted: boolean; salt?: string; iv?: string }
+  try {
+    header = JSON.parse(prefix.subarray(12, start).toString('utf8'))
+  } catch {
+    throw new Error('BACKUP_FORMAT_INVALID')
+  }
+  if (!header || typeof header.encrypted !== 'boolean') throw new Error('BACKUP_FORMAT_INVALID')
+  let gzip = prefix.subarray(start, start + 10)
+  if (header.encrypted) {
+    if (!password) throw new Error('BACKUP_PASSWORD_REQUIRED')
+    if (typeof header.salt !== 'string' || typeof header.iv !== 'string' || bytes < start + 26)
+      throw new Error('BACKUP_FORMAT_INVALID')
+    const salt = Buffer.from(header.salt, 'base64')
+    const iv = Buffer.from(header.iv, 'base64')
+    if (salt.length !== 16 || iv.length !== 12) throw new Error('BACKUP_FORMAT_INVALID')
+    const key = (await derive(password, salt, 32)) as Buffer
+    const decipher = createDecipheriv('aes-256-gcm', key, iv)
+    // 这里只用压缩流固定前缀排除明显错误的口令，不消费或信任未认证的包内数据。
+    gzip = decipher.update(gzip)
+  }
+  if (gzip[0] !== 0x1f || gzip[1] !== 0x8b || gzip[2] !== 8 || gzip[3] !== 0)
+    throw new Error(header.encrypted ? 'BACKUP_PASSWORD_INVALID' : 'BACKUP_FORMAT_INVALID')
+}
+
+export async function validateSavedBackupPassword(file: string, password: string): Promise<void> {
+  const handle = await open(file, 'r')
+  try {
+    const prefix = Buffer.alloc(12 + 4096 + 10)
+    const { bytesRead } = await handle.read(prefix, 0, prefix.length, 0)
+    await validateBackupUpload(prefix.subarray(0, bytesRead), (await handle.stat()).size, password)
+  } finally {
+    await handle.close()
+  }
+}
+
 export interface BackupReadOptions {
   signal?: AbortSignal
   validating?: () => void

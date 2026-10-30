@@ -31,6 +31,40 @@ describe('MemoryStoreRegistry维度联动', () => {
     return new MemoryStoreRegistry(resolver as never, dimension)
   }
 
+  it('恢复包缺少运行期锁时可只读描述已有库，并保留原维度与正文', () => {
+    const registry = fixture(4)
+    const target = registry.resolveSharedStorePath('knowledge')
+    try {
+      registry.getSharedStore('knowledge').insertWithId(7, [1, 0, 0, 0], {
+        documentId: 'restored-document',
+        content: '恢复后的知识正文',
+      })
+      registry.closeAll()
+      // 模拟备份排除锁文件，且目标机已激活不同维度的真实恢复边界。
+      rmSync(`${target}.lock`)
+      const original = new Map(triviumFiles(target).map((file) => [file, readFileSync(file)]))
+      registry.setDimension(8)
+      expect(registry.describeStore(target)).toEqual({ exists: true, dimension: 4, nodeCount: 1 })
+      expect(existsSync(`${target}.lock`)).toBe(true)
+      for (const [file, bytes] of original) expect(readFileSync(file)).toEqual(bytes)
+      registry.setDimension(4)
+      expect(registry.getSharedStore('knowledge').get(7)?.payload).toEqual({
+        documentId: 'restored-document',
+        content: '恢复后的知识正文',
+      })
+    } finally {
+      registry.closeAll()
+    }
+  })
+
+  it('描述不存在的库不创建主库或锁文件', () => {
+    const registry = fixture(4)
+    const target = registry.resolveSharedStorePath('knowledge')
+    expect(registry.describeStore(target)).toEqual({ exists: false, dimension: null, nodeCount: 0 })
+    expect(existsSync(target)).toBe(false)
+    expect(existsSync(`${target}.lock`)).toBe(false)
+  })
+
   it('首次写入真实 v9 文件组前保留完整备份，迁移 v10 后保留向量、正文与关系', () => {
     const registry = fixture(4)
     const target = registry.resolveAgentStorePath('pero', 'main')

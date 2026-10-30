@@ -174,6 +174,25 @@ function jsonRequest(app: Hono, endpoint: string, body: unknown) {
 }
 
 describe('文档知识库持久化与 API', () => {
+  it('备份恢复省略锁文件后可重新初始化，并检索已恢复的 SQLite 正文', async () => {
+    const { app, run, close, reopen, stores } = await fixture()
+    const response = await jsonRequest(app, '/documents', {
+      kind: 'text',
+      title: '恢复验收资料',
+      content: '蓝莓项目的唯一操作规范是先保存资料再进行检索。',
+    })
+    const payload = (await response.json()) as ApiResponse<KnowledgeDocumentInfo>
+    expect(response.status).toBe(202)
+    await run()
+    const target = stores.resolveSharedStorePath('knowledge')
+    await close()
+    await rm(`${target}.lock`)
+    const restored = await reopen()
+    const result = await restored.index.search({ keywords: ['蓝莓'] })
+    expect(result.items.map((item) => item.documentId)).toContain(payload.data!.id)
+    expect(restored.service.detail(payload.data!.id)).toMatchObject({ status: 'ready', partCount: 1 })
+  })
+
   it('激活新维度后保留旧索引，重启可初始化，显式重建才切换文件维度', async () => {
     const resources = await fixture()
     const { stores, service, index, embeddingConfig } = resources

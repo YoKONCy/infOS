@@ -3,24 +3,32 @@ import { t as __t } from '../utils/i18n'
  * Electron Release 更新服务。
  *
  * 安装版：下载所选 Release 的 NSIS 安装包，应用完整退出后静默安装。
- * 便携版：下载所选 Release 的 ZIP，预先解压到缓存；应用退出后由 cmd 助手覆盖本体并重启。
+ * 便携版：下载所选 Release 的 ZIP，预先解压到缓存；应用退出后由 Unicode 助手覆盖本体并重启。
  * 数据目录独立于程序本体：安装版位于 userData/data，便携版位于 exe 同级 data，更新器绝不覆盖它。
  */
-import { app, BrowserWindow } from 'electron'
+import { app, BrowserWindow, net } from 'electron'
 import AdmZip from 'adm-zip'
 import { createHash } from 'node:crypto'
-import { createWriteStream, existsSync } from 'node:fs'
-import { mkdir, readFile, readdir, rm, stat, writeFile } from 'node:fs/promises'
-import { basename, dirname, join } from 'node:path'
-import { spawn } from 'node:child_process'
+import { createReadStream, createWriteStream, existsSync, readFileSync, statSync } from 'node:fs'
+import { mkdir, mkdtemp, readFile, readdir, stat, writeFile } from 'node:fs/promises'
+import { basename, dirname, join, resolve, relative, isAbsolute } from 'node:path'
 import { Readable } from 'node:stream'
 import { pipeline } from 'node:stream/promises'
+import { execFile } from 'node:child_process'
 import { isDev, isPackaged, isPortable, paths } from '../utils/env'
 import { logger } from '../utils/logger'
+import {
+  prepareUpdateInstall,
+  type PreparedUpdateInstall,
+  type UpdateInstallReceipt,
+} from './updateInstaller'
 
 const RELEASES_URL = 'https://api.github.com/repos/YoKONCy/infOS/releases?per_page=20'
 const RELEASES_PAGE = 'https://github.com/YoKONCy/infOS/releases'
 const CACHE_FILE = 'client-release-list.json'
+const INSTALL_RECEIPT = 'client-update-install.json'
+const VALID_VERSION =
+  /^\d+\.\d+\.\d+(?:-[a-zA-Z0-9][a-zA-Z0-9.-]*)?(?:\+[a-zA-Z0-9][a-zA-Z0-9.-]*)?$/
 
 export type UpdatePhase =
   | 'idle'
@@ -28,6 +36,7 @@ export type UpdatePhase =
   | 'available'
   | 'downloading'
   | 'downloaded'
+  | 'installing'
   | 'up-to-date'
   | 'error'
 
@@ -61,6 +70,9 @@ export interface UpdateState {
   message: string
   checkedAt?: string
   downloadedPath?: string
+  canInstall?: boolean
+  logPath?: string
+  lastInstallError?: string
 }
 
 interface GithubAsset {
@@ -85,6 +97,12 @@ let releases: UpdateRelease[] = []
 let selectedRelease: UpdateRelease | null = null
 let portableStagingPath: string | null = null
 let state: UpdateState = createInitialState()
+let checking: Promise<UpdateState> | null = null
+let downloading = false
+let installing: Promise<boolean> | null = null
+let activeInstall: PreparedUpdateInstall | null = null
+let receiptLoaded = false
+let downloadedRelease: UpdateRelease | null = null
 
 function deployment(): UpdateDeployment {
   // Steam 版通过安装目录内的 steam_appid.txt 固化识别，不能依赖构建时环境变量继续存在。
@@ -201,7 +219,7 @@ function findAsset(rawAssets: unknown, mode: UpdateDeployment): GithubAsset | un
 }
 
 function parseReleases(raw: unknown): UpdateRelease[] {
-  if (!Array.isArray(raw)) return []
+  if (!Array.isArray(raw)) throw new Error(__t('electron.ui.updater', 'Release 列表格式无效'))
   const mode = deployment()
   const current = app.getVersion()
   return raw
@@ -212,7 +230,16 @@ function parseReleases(raw: unknown): UpdateRelease[] {
       const version = normalizeVersion(tagName)
       const asset = findAsset(item.assets, mode)
       const downloadUrl = String(asset?.browser_download_url ?? '')
-      if (!tagName || !version || !asset || !downloadUrl || compareVersions(version, current) <= 0)
+      if (
+        !tagName ||
+        !VALID_VERSION.test(version) ||
+        !asset ||
+        !downloadUrl ||
+        typeof asset.size !== 'number' ||
+        !Number.isSafeInteger(asset.size) ||
+        Number(asset.size) <= 0 ||
+        compareVersions(version, current) <= 0
+      )
         return []
       return [
         {
@@ -234,25 +261,42 @@ function parseReleases(raw: unknown): UpdateRelease[] {
     .sort((a, b) => compareVersions(b.version, a.version))
 }
 
-async function fetchReleaseList(): Promise<UpdateRelease[]> {
+async function fetchReleaseList(): Promise<{
+  list: UpdateRelease[]
+  cached: boolean
+  checkedAt: string
+}> {
   const cachePath = join(paths.cache, CACHE_FILE)
   try {
-    const response = await fetch(RELEASES_URL, {
+    const response = await net.fetch(RELEASES_URL, {
       headers: { Accept: 'application/vnd.github+json', 'User-Agent': 'infOS-Updater' },
       signal: AbortSignal.timeout(15_000),
     })
-    if (!response.ok) throw new Error(`GitHub 返回 ${response.status}`)
-    const list = parseReleases(await response.json())
-    await mkdir(paths.cache, { recursive: true })
-    await writeFile(cachePath, JSON.stringify(list), 'utf8')
-    return list
+    if (!response.ok)
+      throw new Error(__t('electron.ui.updater', 'GitHub 返回 HTTP {0}', [response.status]))
+    const raw = await response.json()
+    const list = parseReleases(raw)
+    const checkedAt = new Date().toISOString()
+    try {
+      await mkdir(paths.cache, { recursive: true })
+      await writeFile(cachePath, JSON.stringify({ format: 1, checkedAt, releases: raw }), 'utf8')
+    } catch (error) {
+      // 缓存写入失败不能把已成功取得的在线结果退回旧缓存。
+      logger.warn('Updater', __t('electron.logs.updater', '保存更新列表缓存失败：{0}', [String(error)]))
+    }
+    return { list, cached: false, checkedAt }
   } catch (error) {
     logger.warn(
       'Updater',
       __t('electron.logs.updater', '获取 Release 列表失败，尝试读取缓存: {0}', [String(error)]),
     )
     try {
-      return JSON.parse(await readFile(cachePath, 'utf8')) as UpdateRelease[]
+      const cached = JSON.parse(await readFile(cachePath, 'utf8'))
+      if (cached?.format !== 1 || typeof cached.checkedAt !== 'string') throw error
+      const list = parseReleases(cached.releases)
+      // 缓存为空只能说明上次没发现更新，不能证明本次已是最新。
+      if (!list.length) throw error
+      return { list, cached: true, checkedAt: cached.checkedAt }
     } catch {
       throw error
     }
@@ -261,11 +305,50 @@ async function fetchReleaseList(): Promise<UpdateRelease[]> {
 
 export function setupUpdater(): void {
   if (deployment() === 'unsupported') return
+  getUpdateState()
   setTimeout(() => void checkForUpdates().catch(() => undefined), 10_000)
 }
 
 export function getUpdateState(): UpdateState {
+  if (!receiptLoaded) {
+    receiptLoaded = true
+    restoreInstallResult()
+  }
   return { ...state }
+}
+
+function restoreInstallResult(): void {
+  if (deployment() === 'unsupported' || activeInstall) return
+  try {
+    const file = join(paths.cache, INSTALL_RECEIPT)
+    if (statSync(file).size > 16 * 1024) return
+    const receipt = JSON.parse(readFileSync(file, 'utf8')) as UpdateInstallReceipt
+    if (
+      receipt.format !== 1 ||
+      typeof receipt.version !== 'string' ||
+      !VALID_VERSION.test(receipt.version) ||
+      !['waiting', 'installing', 'installed', 'failed', 'cancelled'].includes(receipt.status)
+    )
+      return
+    if (receipt.status === 'cancelled') return
+    const completed = compareVersions(app.getVersion(), receipt.version) >= 0
+    const message = completed
+      ? __t('electron.ui.updater', '已完成更新，当前版本为 {0}', [app.getVersion()])
+      : __t(
+          'electron.ui.updater',
+          '上次更新未完成，当前仍为 {0}；可重试或手动运行安装包，详情见更新日志',
+          [app.getVersion()],
+        )
+    updateState({
+      phase: completed ? 'up-to-date' : 'error',
+      logPath: typeof receipt.logPath === 'string' ? receipt.logPath : undefined,
+      message,
+      lastInstallError: completed ? undefined : message,
+    })
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code !== 'ENOENT')
+      logger.warn('Updater', __t('electron.logs.updater', '读取更新安装结果失败：{0}', [String(error)]))
+  }
 }
 
 export function getCachedReleases(): UpdateRelease[] {
@@ -274,24 +357,42 @@ export function getCachedReleases(): UpdateRelease[] {
 
 export async function checkForUpdates(): Promise<UpdateState> {
   if (deployment() === 'unsupported') return getUpdateState()
+  if (downloading || installing || activeInstall) return getUpdateState()
+  if (checking) return checking
+  checking = performUpdateCheck()
+  try {
+    return await checking
+  } finally {
+    checking = null
+  }
+}
+
+async function performUpdateCheck(): Promise<UpdateState> {
+  getUpdateState()
   updateState({
     phase: 'checking',
     progress: 0,
     message: __t('electron.ui.updater', '正在检查 GitHub Release…'),
   })
   try {
-    releases = await fetchReleaseList()
+    const result = await fetchReleaseList()
+    releases = result.list
     selectedRelease = releases[0] ?? null
+    const ready = downloadedRelease && state.downloadedPath
     updateState({
-      phase: releases.length ? 'available' : 'up-to-date',
-      selectedVersion: selectedRelease?.version,
-      selectedTag: selectedRelease?.tagName,
-      progress: releases.length ? 0 : 100,
-      message: releases.length
-        ? __t('electron.ui.updater', '发现 {0} 个可用版本', [releases.length])
-        : __t('electron.ui.updater', '当前已是最新版本'),
-      checkedAt: new Date().toISOString(),
-      downloadedPath: undefined,
+      phase: ready ? 'downloaded' : releases.length ? 'available' : 'up-to-date',
+      selectedVersion: ready ? downloadedRelease!.version : selectedRelease?.version,
+      selectedTag: ready ? downloadedRelease!.tagName : selectedRelease?.tagName,
+      progress: ready || !releases.length ? 100 : 0,
+      canInstall: Boolean(ready),
+      message: result.cached
+        ? __t('electron.ui.updater', '无法在线检查，当前显示缓存的 {0} 个更新版本', [releases.length])
+        : ready
+          ? __t('electron.ui.updater', '更新已下载，点击安装后应用将完整退出')
+          : releases.length
+            ? __t('electron.ui.updater', '发现 {0} 个可用版本', [releases.length])
+            : __t('electron.ui.updater', '当前已是最新版本'),
+      checkedAt: result.checkedAt,
     })
     return getUpdateState()
   } catch (error) {
@@ -307,20 +408,22 @@ export async function checkForUpdates(): Promise<UpdateState> {
 
 function selectRelease(tagName?: string): UpdateRelease {
   const target = tagName ? releases.find((release) => release.tagName === tagName) : releases[0]
-  if (!target) throw new Error('未找到可下载的 Release 版本')
+  if (!target) throw new Error(__t('electron.ui.updater', '未找到可下载的 Release 版本'))
   selectedRelease = target
   return target
 }
 
 async function verifyDigest(filePath: string, digest?: string): Promise<void> {
   if (!digest) return
-  const [algorithm, expected] = digest.split(':', 2)
-  if (algorithm?.toLocaleLowerCase() !== 'sha256' || !expected) return
+  const match = /^sha256:([a-f0-9]{64})$/i.exec(digest)
+  if (!match)
+    throw new Error(__t('electron.ui.updater', '更新包摘要格式无效'))
+  const expected = match[1]!
   const hash = createHash('sha256')
-  hash.update(await readFile(filePath))
+  for await (const chunk of createReadStream(filePath)) hash.update(chunk)
   const actual = hash.digest('hex')
   if (actual.toLocaleLowerCase() !== expected.toLocaleLowerCase()) {
-    throw new Error('更新包 SHA-256 校验失败')
+    throw new Error(__t('electron.ui.updater', '更新包 SHA-256 校验失败'))
   }
 }
 
@@ -331,22 +434,45 @@ function assertTrustedDownloadUrl(rawUrl: string): void {
     (url.hostname === 'github.com' ||
       url.hostname.endsWith('.github.com') ||
       url.hostname.endsWith('.githubusercontent.com'))
-  if (!trusted) throw new Error('Release 资产下载地址不受信任')
+  if (!trusted) throw new Error(__t('electron.ui.updater', 'Release 资产下载地址不受信任'))
 }
 
 async function downloadFile(release: UpdateRelease, destination: string): Promise<void> {
   assertTrustedDownloadUrl(release.downloadUrl)
-  const response = await fetch(release.downloadUrl, {
-    headers: { Accept: 'application/octet-stream', 'User-Agent': 'infOS-Updater' },
-    redirect: 'follow',
-    signal: AbortSignal.timeout(30 * 60_000),
-  })
-  if (!response.ok || !response.body) throw new Error(`下载服务器返回 ${response.status}`)
-  const total = Number(response.headers.get('content-length') ?? release.assetSize ?? 0)
+  const signal = AbortSignal.timeout(30 * 60_000)
+  let url = release.downloadUrl
+  let response: Response
+  for (let hop = 0; ; hop++) {
+    assertTrustedDownloadUrl(url)
+    response = await net.fetch(url, {
+      headers: { Accept: 'application/octet-stream', 'User-Agent': 'infOS-Updater' },
+      redirect: 'manual',
+      signal,
+    })
+    if (![301, 302, 303, 307, 308].includes(response.status)) break
+    await response.body?.cancel()
+    const next = response.headers.get('location')
+    if (!next || hop >= 5) throw new Error(__t('electron.ui.updater', '更新下载重定向无效'))
+    url = new URL(next, url).href
+  }
+  if (!response.ok || !response.body)
+    throw new Error(__t('electron.ui.updater', '下载服务器返回 HTTP {0}', [response.status]))
+  const total = release.assetSize
+  const announced = response.headers.get('content-length')
+  if (announced !== null && Number(announced) !== total) {
+    await response.body.cancel()
+    throw new Error(__t('electron.ui.updater', '更新包大小与 Release 声明不一致，请重新检查更新'))
+  }
   let transferred = 0
   const source = Readable.fromWeb(response.body as never)
   source.on('data', (chunk: Buffer) => {
     transferred += chunk.length
+    if (transferred > total) {
+      source.destroy(
+        new Error(__t('electron.ui.updater', '更新包大小与 Release 声明不一致，请重新检查更新')),
+      )
+      return
+    }
     const progress = total > 0 ? Math.min(99, Math.round((transferred / total) * 100)) : 0
     updateState({
       phase: 'downloading',
@@ -360,6 +486,8 @@ async function downloadFile(release: UpdateRelease, destination: string): Promis
     })
   })
   await pipeline(source, createWriteStream(destination))
+  if (transferred !== total)
+    throw new Error(__t('electron.ui.updater', '更新包大小与 Release 声明不一致，请重新检查更新'))
 }
 
 async function findPortableRoot(root: string): Promise<string> {
@@ -378,11 +506,31 @@ async function findPortableRoot(root: string): Promise<string> {
       // 不是便携根目录
     }
   }
-  throw new Error('便携更新包缺少 .portable 标记')
+  throw new Error(__t('electron.ui.updater', '便携更新包缺少 .portable 标记'))
 }
 
 export async function downloadUpdate(tagName?: string): Promise<UpdateState> {
   if (deployment() === 'unsupported') return getUpdateState()
+  if (downloading || activeInstall || installing) return getUpdateState()
+  if (checking) await checking
+  if (downloading || activeInstall || installing) return getUpdateState()
+  getUpdateState()
+  downloading = true
+  try {
+    return await performDownload(tagName)
+  } catch (error) {
+    if (state.phase !== 'error')
+      updateState({
+        phase: 'error',
+        message: __t('electron.ui.updater', '下载更新失败：{0}', [String(error)]),
+      })
+    throw error
+  } finally {
+    downloading = false
+  }
+}
+
+async function performDownload(tagName?: string): Promise<UpdateState> {
   const release = selectRelease(tagName)
   // 便携版暂存必须位于程序目录之外：便携 data/cache 位于目标目录内部，
   // 若在其中执行 /MIR 覆盖，会形成“源目录嵌套于目标目录”的危险更新拓扑。
@@ -390,10 +538,11 @@ export async function downloadUpdate(tagName?: string): Promise<UpdateState> {
     deployment() === 'portable'
       ? join(app.getPath('temp'), 'infos-client-updates')
       : join(paths.cache, 'client-updates')
-  const updateRoot = join(updatesBase, release.version)
-  await rm(updateRoot, { recursive: true, force: true })
-  await mkdir(updateRoot, { recursive: true })
-  const downloadPath = join(updateRoot, basename(release.assetName))
+  await mkdir(updatesBase, { recursive: true })
+  const updateRoot = await mkdtemp(join(updatesBase, 'download-'))
+  const downloadPath = join(updateRoot, deployment() === 'portable' ? 'portable.zip' : 'installer.exe')
+  downloadedRelease = null
+  portableStagingPath = null
   updateState({
     phase: 'downloading',
     selectedVersion: release.version,
@@ -402,6 +551,8 @@ export async function downloadUpdate(tagName?: string): Promise<UpdateState> {
     transferredBytes: 0,
     totalBytes: release.assetSize,
     downloadedPath: undefined,
+    canInstall: false,
+    lastInstallError: undefined,
     message: __t('electron.ui.updater', '准备下载 {0}', [release.version]),
   })
   try {
@@ -411,9 +562,26 @@ export async function downloadUpdate(tagName?: string): Promise<UpdateState> {
     if (deployment() === 'portable') {
       const extractPath = join(updateRoot, 'staging')
       await mkdir(extractPath, { recursive: true })
-      new AdmZip(downloadPath).extractAllTo(extractPath, true)
+      const archive = new AdmZip(downloadPath)
+      for (const entry of archive.getEntries()) {
+        const target = resolve(extractPath, entry.entryName)
+        const child = relative(resolve(extractPath), target)
+        if (
+          !child ||
+          child === '..' ||
+          child.startsWith('../') ||
+          child.startsWith('..\\') ||
+          isAbsolute(child) ||
+          ((entry.attr >>> 16) & 0o170000) === 0o120000
+        )
+          throw new Error(__t('electron.ui.updater', '便携更新包包含无效路径'))
+      }
+      archive.extractAllTo(extractPath, true)
       portableStagingPath = await findPortableRoot(extractPath)
+      if (!existsSync(join(portableStagingPath, basename(paths.exe))))
+        throw new Error(__t('electron.ui.updater', '便携更新包缺少应用程序'))
     }
+    downloadedRelease = release
     updateState({
       phase: 'downloaded',
       selectedVersion: release.version,
@@ -422,6 +590,7 @@ export async function downloadUpdate(tagName?: string): Promise<UpdateState> {
       transferredBytes: release.assetSize,
       totalBytes: release.assetSize,
       downloadedPath: downloadPath,
+      canInstall: true,
       message: __t('electron.ui.updater', '更新已下载，点击安装后应用将完整退出'),
     })
     return getUpdateState()
@@ -436,57 +605,132 @@ export async function downloadUpdate(tagName?: string): Promise<UpdateState> {
   }
 }
 
-function escapeBatch(value: string): string {
-  return value.replace(/%/g, '%%').replace(/"/g, '""')
-}
-
-async function createInstallHelper(): Promise<string> {
-  const helperPath = join(paths.cache, `install-update-${Date.now()}.cmd`)
-  const pid = process.pid
-  let commands: string[]
-  if (deployment() === 'portable') {
-    if (!portableStagingPath) throw new Error('便携更新暂存目录不存在')
-    const target = dirname(paths.exe)
-    commands = [
-      '@echo off',
-      ':wait_for_app',
-      `tasklist /FI "PID eq ${pid}" /NH | find "${pid}" >nul`,
-      'if not errorlevel 1 (timeout /t 1 /nobreak >nul & goto wait_for_app)',
-      `robocopy "${escapeBatch(portableStagingPath)}" "${escapeBatch(target)}" /MIR /R:3 /W:1 /XD data >nul`,
-      `start "" "${escapeBatch(paths.exe)}"`,
-      'del "%~f0"',
-    ]
-  } else {
-    if (!state.downloadedPath) throw new Error('安装包不存在')
-    commands = [
-      '@echo off',
-      ':wait_for_app',
-      `tasklist /FI "PID eq ${pid}" /NH | find "${pid}" >nul`,
-      'if not errorlevel 1 (timeout /t 1 /nobreak >nul & goto wait_for_app)',
-      `start "" /wait "${escapeBatch(state.downloadedPath)}" /S --updated`,
-      'del "%~f0"',
-    ]
-  }
-  await mkdir(paths.cache, { recursive: true })
-  await writeFile(helperPath, commands.join('\r\n'), 'utf8')
-  return helperPath
-}
-
 export async function installUpdate(): Promise<boolean> {
-  if (state.phase !== 'downloaded' || !selectedRelease) return false
-  const helperPath = await createInstallHelper()
-  const child = spawn('cmd.exe', ['/d', '/s', '/c', `"${helperPath}"`], {
-    detached: true,
-    stdio: 'ignore',
-    windowsHide: true,
+  if (installing) return installing
+  if (activeInstall || downloading || checking || !downloadedRelease || !state.downloadedPath)
+    return false
+  installing = performInstall(downloadedRelease, state.downloadedPath)
+  try {
+    return await installing
+  } finally {
+    installing = null
+  }
+}
+
+async function performInstall(release: UpdateRelease, downloadPath: string): Promise<boolean> {
+  let packageVerified = false
+  updateState({
+    phase: 'installing',
+    canInstall: false,
+    message: __t('electron.ui.updater', '正在准备安装助手，确认就绪后应用才会退出…'),
   })
-  child.unref()
-  logger.info(
-    'Updater',
-    __t('electron.logs.updater', '已启动退出安装助手: {0}', [selectedRelease.version]),
-  )
-  setImmediate(() => app.quit())
-  return true
+  try {
+    const mode = deployment()
+    if (mode === 'unsupported') throw new Error('UPDATE_UNSUPPORTED')
+    if ((await stat(downloadPath)).size !== release.assetSize)
+      throw new Error(__t('electron.ui.updater', '更新包大小与 Release 声明不一致，请重新检查更新'))
+    await verifyDigest(downloadPath, release.digest)
+    packageVerified = true
+    const prepared = await prepareUpdateInstall({
+      version: release.version,
+      deployment: mode,
+      downloadPath,
+      executable: paths.exe,
+      stagingPath: portableStagingPath ?? undefined,
+      temporaryRoot: join(app.getPath('temp'), 'infos-client-updates'),
+      receiptPath: join(paths.cache, INSTALL_RECEIPT),
+      logDirectory: paths.logs,
+      parentPid: process.pid,
+      messages: {
+        started: __t('electron.logs.updater', '开始安装客户端更新：{0}', [release.version]),
+        finished: __t('electron.logs.updater', '客户端更新文件安装完成：{0}', [release.version]),
+        failed: __t('electron.logs.updater', '客户端更新安装失败：{0}'),
+        failedNotice: __t(
+          'electron.ui.updater',
+          '更新安装未完成，请重新打开应用查看状态；也可手动运行下载的安装包。日志：{0}',
+        ),
+        failedTitle: __t('electron.ui.updater', '客户端更新失败'),
+      },
+    })
+    if (prepared.child.exitCode !== null || prepared.child.signalCode !== null)
+      throw Object.assign(new Error('UPDATE_HELPER_EXITED'), { logPath: prepared.logPath })
+    activeInstall = prepared
+    updateState({
+      logPath: prepared.logPath,
+      message: __t('electron.ui.updater', '安装助手已就绪，正在退出应用；安装完成后将重新打开'),
+    })
+    prepared.child.once('exit', () => {
+      if (activeInstall?.id !== prepared.id) return
+      activeInstall = null
+      updateState({
+        phase: 'error',
+        canInstall: true,
+        message: __t(
+          'electron.ui.updater',
+          '安装助手已结束，但当前应用尚未完成更新；请查看更新日志后重试',
+        ),
+      })
+    })
+    logger.info('Updater', __t('electron.logs.updater', '已启动退出安装助手: {0}', [release.version]))
+    setImmediate(() => {
+      if (
+        activeInstall?.id === prepared.id &&
+        prepared.child.exitCode === null &&
+        prepared.child.signalCode === null
+      )
+        app.quit()
+    })
+    return true
+  } catch (error) {
+    const logPath = (error as { logPath?: string }).logPath
+    if (!packageVerified) downloadedRelease = null
+    const receipt: UpdateInstallReceipt = {
+      format: 1,
+      id: (error as { installId?: string }).installId ?? 'preparation',
+      version: release.version,
+      status: 'failed',
+      logPath: logPath ?? paths.logs,
+      errorCode: 'UPDATE_PREPARATION_FAILED',
+    }
+    await writeFile(join(paths.cache, INSTALL_RECEIPT), JSON.stringify(receipt), 'utf8').catch(() => {})
+    updateState({
+      phase: 'error',
+      canInstall: packageVerified,
+      logPath,
+      message: __t(
+        'electron.ui.updater',
+        '安装准备失败，应用未退出，更新包已保留；请重试或手动安装，详情见更新日志',
+      ),
+    })
+    logger.error('Updater', __t('electron.logs.updater', '客户端更新安装失败：{0}', [String(error)]))
+    return false
+  }
+}
+
+/** 未保存内容阻止退出时同步取消助手，不能让它在稍后一次普通退出时意外安装。 */
+export async function cancelUpdateInstall(): Promise<void> {
+  const prepared = activeInstall
+  if (!prepared) return
+  try {
+    await writeFile(prepared.cancelPath, '')
+  } catch (error) {
+    // 此时宿主仍活着，助手只会等待；取消标记失败时结束整个自有助手树。
+    if (!prepared.child.pid || !process.env.SystemRoot) throw error
+    await new Promise<void>((resolve, reject) =>
+      execFile(
+        join(process.env.SystemRoot!, 'System32', 'taskkill.exe'),
+        ['/PID', String(prepared.child.pid), '/T', '/F'],
+        { windowsHide: true },
+        (failure) => failure ? reject(failure) : resolve(),
+      ),
+    )
+  }
+  activeInstall = null
+  updateState({
+    phase: 'downloaded',
+    canInstall: true,
+    message: __t('electron.ui.updater', '已取消退出与本次安装，更新包已保留，可再次安装'),
+  })
 }
 
 /** 兼容旧 Launcher 的单条公告接口。 */

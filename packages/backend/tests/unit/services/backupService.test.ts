@@ -19,6 +19,7 @@ import {
   readBackupArchive,
   readBackupRows,
   writeBackupArchive,
+  validateBackupUpload,
 } from '@infos/backend/services/backup/backupArchive'
 import {
   BACKUP_STATE,
@@ -50,6 +51,7 @@ async function withImportFixture(
     live: Database.Database
     backupId: string
   }) => Promise<void>,
+  password = '',
 ) {
   const root = directory(),
     source = path.join(root, 'source')
@@ -90,7 +92,7 @@ async function withImportFixture(
     // 完整包保留 SQLite 文件，不重复输出逻辑记录。
     yield* []
   }
-  await writeBackupArchive(archive, manifest, source, records())
+  await writeBackupArchive(archive, manifest, source, records(), password)
   const live = new Database(path.join(root, 'infos.db'))
   live.exec("CREATE TABLE example(value TEXT); INSERT INTO example VALUES('原有内容')")
   const service = new BackupService({
@@ -117,6 +119,47 @@ async function withImportFixture(
 }
 
 describe('数据备份与恢复的关键路径', () => {
+  it('加密备份缺口令或口令错误时在预约前拒绝，修正后仍使用同一原文件', async () => {
+    await withImportFixture(async ({ service, router, archive, live }) => {
+      const bytes = readFileSync(archive)
+      const prefix = bytes.subarray(0, 12 + 4096 + 10).toString('base64')
+      const begin = (password: string) =>
+        router.request('/imports', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ size: bytes.length, prefix, password }),
+        })
+      const missing = await begin('')
+      expect(missing.status).toBe(400)
+      expect((await missing.json()).message).toBe('请输入备份口令')
+      const wrong = await begin('错误口令')
+      expect(wrong.status).toBe(400)
+      expect((await wrong.json()).message).toBe('备份口令不正确或文件头已损坏，请检查后重试')
+      expect(service.imports.current()).toBeNull()
+      const accepted = await begin('正确的备份口令')
+      expect(accepted.status).toBe(200)
+      expect((await accepted.json()).data).toMatchObject({ phase: 'uploading', receivedBytes: 0 })
+      expect(live.prepare('SELECT value FROM example').pluck().get()).toBe('原有内容')
+    }, '正确的备份口令')
+  })
+
+  it('未加密备份无需口令，预检通过仍不能绕过最终的整包完整性校验', async () => {
+    await withImportFixture(async ({ archive }) => {
+      const bytes = readFileSync(archive)
+      await expect(
+        validateBackupUpload(bytes.subarray(0, 4118), bytes.length, ''),
+      ).resolves.toBeUndefined()
+      const corrupted = Buffer.from(bytes)
+      corrupted[corrupted.length - 1] = corrupted[corrupted.length - 1]! ^ 0xff
+      const file = path.join(directory(), 'corrupt.infos-backup')
+      writeFileSync(file, corrupted)
+      await expect(
+        validateBackupUpload(corrupted.subarray(0, 4118), corrupted.length, ''),
+      ).resolves.toBeUndefined()
+      await expect(readBackupArchive(file, path.join(directory(), 'unpack'))).rejects.toThrow()
+    })
+  })
+
   it('下载票据必须经过鉴权签发，文件只允许下载一次', async () => {
     const root = directory(),
       file = path.join(root, 'download.infos-backup')

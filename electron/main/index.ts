@@ -281,10 +281,19 @@ app.on('before-quit', async (event) => {
   try {
     if (!(await desktopTabs.closeAll())) {
       isPreparingQuit = false
+      await import('./services/updater').then(({ cancelUpdateInstall }) => cancelUpdateInstall())
       return
     }
   } catch (error) {
     isPreparingQuit = false
+    await import('./services/updater')
+      .then(({ cancelUpdateInstall }) => cancelUpdateInstall())
+      .catch((cancelError) =>
+        logger.warn(
+          'Updater',
+          __t('electron.logs.updater', '取消更新安装助手失败：{0}', [String(cancelError)]),
+        ),
+      )
     logger.warn(
       'Main',
       __t('electron.logs.index.ts', '关闭应用标签失败，已取消退出：{0}', [String(error)]),

@@ -64,6 +64,8 @@ TriviumDB 由上游 npm 包提供；后端与社交应用的依赖声明必须�
 
 Node.js 既有 CRUD、图查询、检索、事务和 `close()` 签名保持兼容。各 Store 未显式传入 `runtime`，复用上游默认共享资源运行时，仍由各实例的 `memoryLimitMb` 限制内核预算。同步 `close()` 成功意味着 WAL、映射和文件锁已释放；失败则保留资源以便重试，不得继续替换文件。新增关闭诊断、目录快照与 `rebuildTextIndex()` 暂未接入应用流程；备份继续采用注册表现有文件组协议。上游将 QuIVer 自动构建阈值提前到 `ceil(666667 / dim)`（限制在 209–834 节点，1536 维为 435 节点），已有索引不因此自动重建。API 与生命周期依据见[上游 beta.2 变更说明](https://github.com/YoKONCy/TriviumDB/blob/v0.9.0-beta.2/docs/changes/0.9.0-beta.2.md)。
 
+备份排除 `.lock` 运行期锁，而 beta.4 的 `readOnly` 模式要求锁文件已存在且不会补建。注册表 `openExistingReader()` 在确认主库存在后，先检查锁路径位于受管数据根内且没有符号链接；验证独立快照副本时由 `captureSnapshot()` 显式传入快照目标根，不能误用业务数据根。随后以 `wx`、`0600` 补建空锁，仅忽略已经存在的竞争结果，仍由引擎取得共享锁。已有锁不覆盖、移除或替换，不回退到可写打开，也不创建缺失主库。此规则同时覆盖启动索引描述、旧维度读取与快照副本检查；主库、向量、正文、维度旁路文件保持原样，锁竞争、权限、损坏和其他 I/O 错误继续传播。恢复后文档知识库启动仍从 SQLite 恢复派生检索状态，不因缺锁清除原文或旧维度文件。
+
 `JsEdge`、`JsIncomingEdge` 保留 `metadata: unknown`，既有调用继续读取已声明字段。数字 ID 的输入与输出要求 JavaScript 安全整数，数量参数要求有限、整数且在有效范围内；TQL 超出安全整数范围的整数值使用十进制字符串返回，不能无条件转为 `number`。beta.4 的 Node 错误增加按稳定 `code` 区分的 `details`，其中整数可能为 `number | string`，调用方须按实际字段类型读取。WAL 写入、Windows 映射替换或约束发布故障可能隔离 writer 及共享句柄，必须释放后重开并核实实际状态，不能把失败写入当作未发生而直接重试。依据见[上游 beta.4 变更说明](https://github.com/YoKONCy/TriviumDB/blob/v0.9.0-beta.4/docs/changes/0.9.0-beta.4.md)。
 
 `indexText(id, text)` 替换节点的完整 BM25 正文，多字段需合并后一次登记；修改 Payload 不会自动更新独立正文。常驻 Store 保持 `loadTextIndex: true`，`buildTextIndex()` 用于提前预热关键词自动机，加载、损坏和预算错误向请求传播；初始化失败关闭未注册的句柄，后续可重试。文本登记仍需 flush/close 持久化，不属于节点事务的 WAL 原子提交；继续保留 SQLite 完整备份和事务重放路径，不因库升级删除这些恢复来源。

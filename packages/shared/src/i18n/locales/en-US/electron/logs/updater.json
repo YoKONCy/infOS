@@ -1,4 +1,10 @@
 {
+  "保存更新列表缓存失败：{0}": "Failed to save the update list cache: {0}",
+  "读取更新安装结果失败：{0}": "Failed to read the update installation result: {0}",
+  "开始安装客户端更新：{0}": "Starting client update installation: {0}",
+  "客户端更新文件安装完成：{0}": "Client update files installed: {0}",
+  "客户端更新安装失败：{0}": "Client update installation failed: {0}",
+  "取消更新安装助手失败：{0}": "Failed to cancel the update installer helper: {0}",
   "获取 Release 列表失败，尝试读取缓存: {0}": "failed to obtain the Release list, trying to read the cache: {0}",
   "已启动退出安装助手: {0}": "has started and exited the installation assistant: {0}"
 }

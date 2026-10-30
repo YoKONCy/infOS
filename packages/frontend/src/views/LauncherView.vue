@@ -53,7 +53,16 @@ interface ClientInfo {
 }
 
 interface UpdateState {
-  phase: 'idle' | 'checking' | 'available' | 'downloading' | 'downloaded' | 'up-to-date' | 'error'
+  phase:
+    | 'idle'
+    | 'checking'
+    | 'available'
+    | 'downloading'
+    | 'downloaded'
+    | 'installing'
+    | 'up-to-date'
+    | 'error'
+  canInstall?: boolean
   deployment?: 'installed' | 'portable' | 'unsupported'
   currentVersion: string
   latestVersion?: string
@@ -368,15 +377,32 @@ async function primaryLaunch(): Promise<void> {
 }
 
 async function checkUpdate(): Promise<void> {
-  updateState.value = (await invoke('check-client-update')) as UpdateState
+  try {
+    updateState.value = (await invoke('check-client-update')) as UpdateState
+  } catch (error) {
+    showUpdateError(error)
+  }
 }
 
 async function downloadUpdate(): Promise<void> {
-  updateState.value = (await invoke('download-client-update')) as UpdateState
+  try {
+    updateState.value = (await invoke('download-client-update')) as UpdateState
+  } catch (error) {
+    showUpdateError(error)
+  }
 }
 
 async function installUpdate(): Promise<void> {
-  await invoke('install-client-update')
+  try {
+    await invoke('install-client-update')
+    updateState.value = (await invoke('get-update-state')) as UpdateState
+  } catch (error) {
+    showUpdateError(error)
+  }
+}
+
+function showUpdateError(error: unknown): void {
+  notification.toast(__t('ui.navigation', '更新操作失败：{0}', [String(error)]), 'error')
 }
 
 async function copyUpdateCommand(): Promise<void> {
@@ -926,20 +952,28 @@ onUnmounted(() => {
               <template v-else>
                 <button
                   class="ghost-action"
-                  :disabled="updateState?.phase === 'checking'"
+                  :disabled="
+                    ['checking', 'downloading', 'installing'].includes(updateState?.phase ?? '')
+                  "
                   @click="checkUpdate"
                 >
                   {{ __t('ui.navigation', '检查更新') }}
                 </button>
                 <button
-                  v-if="updateState?.phase === 'available'"
+                  v-if="
+                    updateState?.phase === 'available' ||
+                    (updateState?.phase === 'error' && !updateState.canInstall)
+                  "
                   class="primary-small"
                   @click="downloadUpdate"
                 >
                   {{ __t('ui.navigation', '下载更新') }}
                 </button>
                 <button
-                  v-if="updateState?.phase === 'downloaded'"
+                  v-if="
+                    updateState?.phase === 'downloaded' ||
+                    (updateState?.canInstall && updateState.phase !== 'installing')
+                  "
                   class="primary-small"
                   @click="installUpdate"
                 >

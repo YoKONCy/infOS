@@ -1,4 +1,8 @@
 {
+  "正在准备安装": "Preparing installation",
+  "更新操作失败：{0}": "Update failed: {0}",
+  "打开更新日志目录": "Open update logs folder",
+  "前往发布页手动下载": "Open releases for manual download",
   "取消固定": "Unpin",
   "固定展开": "Keep expanded",
   "取消固定侧栏": "Unpin the sidebar",

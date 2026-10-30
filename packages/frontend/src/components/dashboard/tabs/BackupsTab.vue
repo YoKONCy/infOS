@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import {
   computed,
+  nextTick,
   onActivated,
   onBeforeUnmount,
   onDeactivated,
@@ -12,8 +13,10 @@ import {
 import { PButton, PDialog, PInput, PSelect, PSwitch, PixelIcon } from '../../pixel'
 import { t, getDisplayLocale } from '../../../i18n'
 import { backupApi, type BackupCatalogue } from '../../../api/modules/backupApi'
+import { inspectBackupFile } from '../../../api/modules/backupFile'
 import { ApiError } from '../../../api/errors'
-import { getWebServerOrigin } from '../../../api/transport'
+import { getWebServerOrigin, isLocalBackendRuntime } from '../../../api/transport'
+import { copyClientText } from '../../../lib/clientPlatform'
 import type {
   BackupLevel,
   BackupModule,
@@ -93,6 +96,22 @@ const recoveryCount = computed(
   () => records.value.filter((record) => record.reason === 'before-import').length,
 )
 const pending = ref<{ ticket: string; backupId: string } | null>(null)
+const lastImport = ref<{ status: 'completed' | 'failed'; id: string } | null>(null)
+const dockerServer = ref(false)
+const recoveryDisconnected = ref(false)
+const recoveryGuide = ref(false)
+const commandCopied = ref(false)
+const commandCopyError = ref(false)
+const recoveryPanel = ref<HTMLElement | null>(null)
+const importPanel = ref<HTMLElement | null>(null)
+const localServer = isLocalBackendRuntime()
+const importSource = ref<
+  | { file: File; encrypted: boolean; record?: never }
+  | { record: BackupRecord; encrypted: boolean; file?: never }
+  | null
+>(null)
+const importPassword = ref('')
+const importError = ref('')
 const busy = ref(''),
   error = ref(''),
   notice = ref(''),
@@ -135,6 +154,58 @@ let pollTimer: ReturnType<typeof setTimeout> | undefined
 let pollActive = true
 let pollRevision = 0
 let uploadController: AbortController | undefined
+let recoveryTimer: ReturnType<typeof setTimeout> | undefined
+let recoveryRevision = 0
+function stopRecoveryPolling() {
+  recoveryRevision++
+  clearTimeout(recoveryTimer)
+}
+function applyStatus(data: NonNullable<Awaited<ReturnType<typeof backupApi.list>>['data']>) {
+  records.value = data.records
+  pending.value = data.pending
+  lastImport.value = data.lastImport
+  dockerServer.value = data.runtime === 'docker'
+  recoveryDisconnected.value = false
+}
+async function pollRecovery() {
+  stopRecoveryPolling()
+  if (!pollActive || !pending.value || document.hidden) return
+  const revision = recoveryRevision
+  try {
+    const response = await backupApi.list()
+    if (revision !== recoveryRevision) return
+    if (!response.data) throw new Error('BACKUP_STATUS_INVALID')
+    applyStatus(response.data)
+  } catch {
+    if (revision === recoveryRevision) recoveryDisconnected.value = true
+  } finally {
+    if (revision === recoveryRevision && pollActive && pending.value)
+      recoveryTimer = setTimeout(() => void pollRecovery(), 3000)
+  }
+}
+async function copyRestartCommand() {
+  await run('copy', async () => {
+    commandCopied.value = false
+    commandCopyError.value = false
+    try {
+      await copyClientText('docker compose restart backend')
+      commandCopied.value = true
+      notice.value = tr('重启命令已复制，请在 Docker 服务器上执行')
+    } catch {
+      commandCopyError.value = true
+      error.value = tr('复制失败，请手动复制重启命令')
+    }
+  })
+}
+async function cancelPending() {
+  await run('cancel', async () => {
+    stopRecoveryPolling()
+    await backupApi.cancel()
+    recoveryGuide.value = false
+    await refresh()
+  })
+  if (pending.value) void pollRecovery()
+}
 function rememberImport(id: string) {
   operationId = id
   try {
@@ -204,7 +275,11 @@ async function cancelImport() {
 }
 function visibilityChanged() {
   stopImportPolling()
-  if (!document.hidden) void pollImport()
+  stopRecoveryPolling()
+  if (!document.hidden) {
+    void pollImport()
+    void pollRecovery()
+  }
 }
 const conflict = ref<ImportPolicy['conflict']>('skip')
 const targets = reactive<Record<string, string>>({})
@@ -327,16 +402,14 @@ async function run(key: string, action: () => Promise<void>) {
 }
 async function refresh() {
   const [list, options] = await Promise.all([backupApi.list(), backupApi.catalogue()])
-  records.value = list.data!.records
-  pending.value = list.data!.pending
+  applyStatus(list.data!)
   catalogue.value = options.data!
   if (list.data?.activeImport && operationId !== list.data.activeImport.id) {
     rememberImport(list.data.activeImport.id)
     importState.value = list.data.activeImport
     void pollImport()
   }
-  if (list.data?.lastImport?.status === 'failed')
-    error.value = tr('上次导入未完成，原有业务数据已保留，请检查备份后重试')
+  if (pending.value) void pollRecovery()
 }
 function chooseLevel(level: BackupLevel) {
   selection.level = level
@@ -378,57 +451,95 @@ async function upload(event: Event) {
   const input = event.target as HTMLInputElement,
     file = input.files?.[0]
   if (file)
-    await run('preview', async () => {
-      stopImportPolling()
-      const result = await backupApi.beginImport(file, password.value)
-      if (!result.data) throw new Error(tr('备份请求失败，请检查网络和服务器状态'))
-      preview.value = null
-      sentBytes.value = 0
-      rememberImport(result.data.id)
-      importState.value = result.data
-      uploadController = new AbortController()
-      void pollImport()
-      try {
-        await backupApi.uploadImport(
-          file,
-          result.data.id,
-          uploadController.signal,
-          (bytes) => {
-            sentBytes.value = bytes
-          },
-          result.data.uploadChunkBytes,
-        )
-      } catch (cause) {
-        if (!uploadController.signal.aborted) {
-          const message =
-            cause instanceof Error ? cause.message : tr('上传连接中断，正在查询服务端进度')
-          const status = (cause as { httpStatus?: number } | undefined)?.httpStatus
-          const exhausted = (cause as { uploadExhausted?: boolean } | undefined)?.uploadExhausted
-          if ((status && status >= 400) || exhausted) {
-            error.value = message
-            // 服务器明确拒绝的上传不继续占用预约；结果未知的断线仍先查询实际进度。
-            const cancelled = await backupApi.cancelImport(result.data.id).catch(() => null)
-            if (cancelled?.data) importState.value = cancelled.data
-          } else notice.value = message
-        }
-      } finally {
-        uploadController = undefined
-        void pollImport()
-      }
+    await run('select', async () => {
+      const { encrypted } = await inspectBackupFile(file)
+      selectSource({ file, encrypted })
     })
   input.value = ''
 }
-async function savedPreview(record: BackupRecord) {
-  if (importWorking.value) return
-  await run(`preview:${record.id}`, async () => {
-    const result = await backupApi.beginSavedImport(record.id, password.value)
+function selectSource(source: NonNullable<typeof importSource.value>) {
+  stopImportPolling()
+  rememberImport('')
+  preview.value = null
+  importState.value = null
+  importSource.value = source
+  importPassword.value = ''
+  importError.value = ''
+  importPanel.value?.scrollIntoView?.({ block: 'start', behavior: 'smooth' })
+}
+function clearSource() {
+  importSource.value = null
+  importPassword.value = ''
+  importError.value = ''
+}
+function reloadPage() {
+  window.location.reload()
+}
+async function startImport() {
+  const source = importSource.value
+  if (!source || locked.value || pending.value) return
+  importError.value = ''
+  if (source.encrypted && !importPassword.value) {
+    importError.value = tr('这份备份已加密，请先输入导出时设置的口令')
+    return
+  }
+  await run('preview', async () => {
+    stopImportPolling()
+    let result: Awaited<ReturnType<typeof backupApi.beginImport>>
+    try {
+      result = source.file
+        ? await backupApi.beginImport(source.file, importPassword.value)
+        : await backupApi.beginSavedImport(source.record.id, importPassword.value)
+    } catch (cause) {
+      // 预检失败保留所选文件和口令输入，修正后只重试小请求。
+      importError.value = (cause as Error).message
+      return
+    }
     if (!result.data) throw new Error(tr('备份请求失败，请检查网络和服务器状态'))
+    importSource.value = null
+    importPassword.value = ''
     preview.value = null
     sentBytes.value = 0
     rememberImport(result.data.id)
     importState.value = result.data
+    if (!source.file) {
+      void pollImport()
+      return
+    }
+    uploadController = new AbortController()
     void pollImport()
+    try {
+      await backupApi.uploadImport(
+        source.file,
+        result.data.id,
+        uploadController.signal,
+        (bytes) => {
+          sentBytes.value = bytes
+        },
+        result.data.uploadChunkBytes,
+      )
+    } catch (cause) {
+      if (!uploadController.signal.aborted) {
+        const message =
+          cause instanceof Error ? cause.message : tr('上传连接中断，正在查询服务端进度')
+        const status = (cause as { httpStatus?: number } | undefined)?.httpStatus
+        const exhausted = (cause as { uploadExhausted?: boolean } | undefined)?.uploadExhausted
+        if ((status && status >= 400) || exhausted) {
+          error.value = message
+          // 服务器明确拒绝的上传不继续占用预约；结果未知的断线仍先查询实际进度。
+          const cancelled = await backupApi.cancelImport(result.data.id).catch(() => null)
+          if (cancelled?.data) importState.value = cancelled.data
+        } else notice.value = message
+      }
+    } finally {
+      uploadController = undefined
+      void pollImport()
+    }
   })
+}
+function savedPreview(record: BackupRecord) {
+  if (locked.value || pending.value) return
+  selectSource({ record, encrypted: record.protection === 'password' })
 }
 watch(copiedAgents, (value) => {
   for (const id of importedAgents.value) {
@@ -446,16 +557,25 @@ watch(copiedAgents, (value) => {
 async function commit() {
   if (!preview.value) return
   await run('import', async () => {
-    await backupApi.commit(preview.value!.ticket, {
+    const value = preview.value!
+    await backupApi.commit(value.ticket, {
       conflict: conflict.value,
       agentTargets: { ...targets },
     })
     confirmImport.value = false
+    stopImportPolling()
     preview.value = null
     rememberImport('')
     importState.value = null
-    await refresh()
-    notice.value = tr('导入已暂存，请重启当前服务端；浏览器刷新不会应用恢复')
+    // 暂存成功立即展示下一步，不让后续刷新断线掩盖已经成功的操作。
+    pending.value = { ticket: value.ticket, backupId: value.manifest.id }
+    lastImport.value = null
+    recoveryGuide.value = true
+    commandCopied.value = false
+    commandCopyError.value = false
+    await nextTick()
+    recoveryPanel.value?.scrollIntoView?.({ block: 'start', behavior: 'smooth' })
+    void pollRecovery()
   })
 }
 onMounted(() => {
@@ -471,14 +591,17 @@ onMounted(() => {
 onActivated(() => {
   pollActive = true
   void pollImport()
+  void pollRecovery()
 })
 onDeactivated(() => {
   pollActive = false
   stopImportPolling()
+  stopRecoveryPolling()
 })
 onBeforeUnmount(() => {
   pollActive = false
   stopImportPolling()
+  stopRecoveryPolling()
   document.removeEventListener('visibilitychange', visibilityChanged)
   // 切页不取消已提交的服务端操作，返回后按编号恢复；取消按钮才中止上传。
 })
@@ -520,24 +643,76 @@ onBeforeUnmount(() => {
     </header>
     <p v-if="error" role="alert" class="backup-message error">{{ error }}</p>
     <p v-if="notice" role="status" class="backup-message">{{ notice }}</p>
-    <section v-if="pending" class="backup-pending">
+    <section
+      v-if="pending"
+      ref="recoveryPanel"
+      class="backup-pending"
+      role="region"
+      :aria-label="tr('备份已暂存，下一步：重启服务端')"
+    >
       <PixelIcon name="clock" size="md" />
-      <div>
-        <strong>{{ tr('有待应用的导入') }}</strong>
-        <p>{{ tr('重启当前服务端后生效；应用前会自动建立恢复点') }}</p>
+      <div class="backup-recovery-guide">
+        <strong>{{ tr('备份已暂存，下一步：重启服务端') }}</strong>
+        <p>{{ tr('当前数据尚未切换。重启时会先建立恢复点，再应用导入方案。') }}</p>
+        <template v-if="dockerServer">
+          <p>
+            {{ tr('请在 Docker 服务器的部署目录执行以下命令，或在容器管理面板中重启 backend 容器。') }}
+          </p>
+          <div class="backup-restart-command">
+            <code>docker compose restart backend</code>
+            <PButton
+              size="sm"
+              variant="secondary"
+              :disabled="Boolean(busy)"
+              @click="copyRestartCommand"
+            >
+              {{ tr('复制重启命令') }}
+            </PButton>
+          </div>
+          <p>{{ tr('刷新浏览器或重启 frontend 容器不会应用恢复。') }}</p>
+        </template>
+        <p v-else-if="localServer">
+          {{ tr('请完全退出并重新打开桌面应用，以重启本机服务端。') }}
+        </p>
+        <p v-else>{{ tr('请让服务器管理员重启当前连接的 infOS 后端进程。') }}</p>
+        <p role="status">
+          {{
+            tr(
+              recoveryDisconnected
+                ? '服务暂时无法连接，正在等待重启并查询恢复结果，请勿重复上传。'
+                : '本页会自动检查恢复结果；重启期间连接会暂时中断。',
+            )
+          }}
+        </p>
+        <p v-if="dockerServer && recoveryDisconnected">
+          {{ tr('长时间无法连接时，请检查 backend 容器日志：') }}
+          <code>docker compose logs --tail=100 backend</code>
+        </p>
       </div>
-      <PButton
-        variant="ghost"
-        :disabled="locked"
-        @click="
-          run('cancel', async () => {
-            await backupApi.cancel()
-            await refresh()
-          })
-        "
-      >
+      <PButton variant="ghost" :disabled="locked || recoveryDisconnected" @click="cancelPending">
         {{ tr('取消导入') }}
       </PButton>
+    </section>
+    <section
+      v-else-if="lastImport"
+      class="backup-result"
+      :class="{ error: lastImport.status === 'failed' }"
+      role="status"
+    >
+      <strong>
+        {{ tr(lastImport.status === 'completed' ? '上次备份恢复已完成' : '上次备份恢复失败') }}
+      </strong>
+      <template v-if="lastImport.status === 'completed'">
+        <p>
+          {{ tr('服务端已应用恢复。请重新载入界面，再检查角色、模型连接与恢复的数据。') }}
+        </p>
+        <PButton size="sm" variant="secondary" @click="reloadPage">
+          {{ tr('重新载入界面') }}
+        </PButton>
+      </template>
+      <p v-else>
+        {{ tr('恢复失败时已保留原有数据。请检查服务端日志和备份完整性，再重试。') }}
+      </p>
     </section>
     <div class="backup-workbench">
       <section class="backup-panel backup-export">
@@ -644,7 +819,7 @@ onBeforeUnmount(() => {
               v-model="password"
               type="password"
               :disabled="locked"
-              :placeholder="tr('备份口令，也用于解锁导入文件')"
+              :placeholder="tr('留空则不加密；包含凭据时至少八位')"
             />
           </label>
         </div>
@@ -675,7 +850,11 @@ onBeforeUnmount(() => {
           </PButton>
         </div>
       </section>
-      <section class="backup-panel backup-import" :class="{ 'has-preview': preview }">
+      <section
+        ref="importPanel"
+        class="backup-panel backup-import"
+        :class="{ 'has-preview': preview }"
+      >
         <div class="backup-section-title">
           <span class="backup-section-icon"><PixelIcon name="file" size="md" /></span>
           <h2>{{ tr('导入数据') }}</h2>
@@ -720,7 +899,10 @@ onBeforeUnmount(() => {
             {{ tr('取消导入') }}
           </PButton>
         </div>
-        <div class="backup-upload">
+        <div
+          v-if="!importWorking && !preview && !pending && !importSource"
+          class="backup-upload"
+        >
           <div class="backup-file-art" aria-hidden="true">
             <PixelIcon name="file" size="2xl" />
             <span><PixelIcon name="sparkle" size="sm" /></span>
@@ -744,19 +926,54 @@ onBeforeUnmount(() => {
             @change="upload"
           />
         </div>
-        <label class="backup-password backup-import-password">
-          <span>{{ tr('导入文件口令') }}</span>
-          <PInput
-            v-model="password"
-            type="password"
-            :disabled="locked"
-            :placeholder="tr('备份口令，也用于解锁导入文件')"
-          />
-        </label>
-        <ol v-if="!preview" class="backup-import-steps" :aria-label="tr('导入数据')">
+        <form v-if="importSource" class="backup-source" @submit.prevent="startImport">
+          <strong>
+            {{
+              importSource.file?.name ??
+              tr('服务端备份：{0}', [date(importSource.record!.createdAt)])
+            }}
+          </strong>
+          <small>{{ fileBytes(importSource.file?.size ?? importSource.record!.size) }}</small>
+          <p>
+            {{
+              tr(
+                importSource.encrypted
+                  ? '这份备份已加密，请先输入导出时设置的口令'
+                  : '这份备份无需输入口令',
+              )
+            }}
+          </p>
+          <label v-if="importSource.encrypted" class="backup-password backup-import-password">
+            <span>{{ tr('导入文件口令') }}</span>
+            <PInput
+              v-model="importPassword"
+              type="password"
+              autocomplete="off"
+              :disabled="locked"
+              :placeholder="tr('请输入导出这份备份时设置的口令')"
+            />
+          </label>
+          <p v-if="importError" class="backup-message error" role="alert">{{ importError }}</p>
+          <p class="backup-source-hint">
+            {{ tr('开始前先检查文件头与口令；检查未通过不会上传整包。') }}
+          </p>
+          <div class="backup-source-actions">
+            <PButton
+              type="submit"
+              :loading="busy === 'preview'"
+              :disabled="locked || Boolean(pending)"
+            >
+              {{ tr(importSource.file ? '开始上传并预览' : '开始解包并预览') }}
+            </PButton>
+            <PButton type="button" variant="ghost" :disabled="locked" @click="clearSource">
+              {{ tr('取消选择') }}
+            </PButton>
+          </div>
+        </form>
+        <ol v-if="!preview && !pending" class="backup-import-steps" :aria-label="tr('导入数据')">
           <li>
             <span>1</span>
-            {{ tr('选择备份文件') }}
+            {{ tr('选择文件与口令') }}
           </li>
           <li>
             <span>2</span>
@@ -765,6 +982,10 @@ onBeforeUnmount(() => {
           <li>
             <span>3</span>
             {{ tr('确认导入方案') }}
+          </li>
+          <li>
+            <span>4</span>
+            {{ tr('重启服务端并检查结果') }}
           </li>
         </ol>
         <template v-if="preview">
@@ -906,6 +1127,52 @@ onBeforeUnmount(() => {
         </div>
       </article>
     </section>
+    <PDialog
+      v-model="recoveryGuide"
+      :title="tr(pending ? '备份已暂存，下一步：重启服务端' : '备份恢复结果')"
+    >
+      <template v-if="pending">
+        <p>{{ tr('当前数据尚未切换。重启时会先建立恢复点，再应用导入方案。') }}</p>
+        <template v-if="dockerServer">
+          <p>
+            {{ tr('请在 Docker 服务器的部署目录执行以下命令，或在容器管理面板中重启 backend 容器。') }}
+          </p>
+          <pre class="backup-command">docker compose restart backend</pre>
+          <p>{{ tr('刷新浏览器或重启 frontend 容器不会应用恢复。') }}</p>
+        </template>
+        <p v-else-if="localServer">
+          {{ tr('请完全退出并重新打开桌面应用，以重启本机服务端。') }}
+        </p>
+        <p v-else>{{ tr('请让服务器管理员重启当前连接的 infOS 后端进程。') }}</p>
+        <p>{{ tr('本页会自动检查恢复结果；重启期间连接会暂时中断。') }}</p>
+      </template>
+      <p v-else>
+        {{
+          tr(
+            lastImport?.status === 'completed'
+              ? '服务端已应用恢复。请重新载入界面，再检查角色、模型连接与恢复的数据。'
+              : '恢复失败时已保留原有数据。请检查服务端日志和备份完整性，再重试。',
+          )
+        }}
+      </p>
+      <p v-if="commandCopied" role="status">{{ tr('重启命令已复制，请在 Docker 服务器上执行') }}</p>
+      <p v-if="commandCopyError" role="alert">{{ tr('复制失败，请手动复制重启命令') }}</p>
+      <template #footer>
+        <PButton
+          v-if="pending && dockerServer"
+          :disabled="Boolean(busy)"
+          @click="copyRestartCommand"
+        >
+          {{ tr('复制重启命令') }}
+        </PButton>
+        <PButton v-if="!pending && lastImport?.status === 'completed'" @click="reloadPage">
+          {{ tr('重新载入界面') }}
+        </PButton>
+        <PButton variant="secondary" @click="recoveryGuide = false">
+          {{ tr('我知道了，保留页面指引') }}
+        </PButton>
+      </template>
+    </PDialog>
     <PDialog
       v-model="confirmImport"
       :title="tr('应用导入方案')"
@@ -1507,7 +1774,7 @@ onBeforeUnmount(() => {
 }
 .backup-import-steps {
   display: grid;
-  grid-template-columns: repeat(3, minmax(0, 1fr));
+  grid-template-columns: repeat(4, minmax(0, 1fr));
   gap: 12px;
   list-style: none;
   margin: 22px 0 0;
@@ -1642,7 +1909,8 @@ onBeforeUnmount(() => {
   font-size: 12px;
 }
 .backup-message,
-.backup-pending {
+.backup-pending,
+.backup-result {
   padding: 14px 16px;
   border: 1px solid color-mix(in srgb, var(--ui-accent-purple) 25%, var(--ui-border-default));
   border-left: 3px solid var(--ui-accent-purple);
@@ -1651,14 +1919,15 @@ onBeforeUnmount(() => {
   font-size: 12px;
   line-height: 1.8;
 }
-.backup-message.error {
+.backup-message.error,
+.backup-result.error {
   border-left-color: var(--ui-danger);
   color: var(--ui-danger);
   background: color-mix(in srgb, var(--ui-danger) 6%, var(--ui-bg-surface));
 }
 .backup-pending {
   display: flex;
-  align-items: center;
+  align-items: flex-start;
   gap: 12px;
   margin-bottom: 24px;
 }
@@ -1668,6 +1937,55 @@ onBeforeUnmount(() => {
 }
 .backup-pending > :last-child {
   margin-left: auto;
+  flex-shrink: 0;
+}
+.backup-recovery-guide {
+  flex: 1;
+  min-width: 0;
+}
+.backup-restart-command,
+.backup-source-actions {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 12px;
+  margin-top: 12px;
+}
+.backup-command,
+.backup-restart-command code {
+  padding: 10px 12px;
+  overflow-wrap: anywhere;
+  white-space: pre-wrap;
+  background: var(--ui-bg-surface);
+  border: 1px solid var(--ui-border-default);
+  user-select: text;
+}
+.backup-result {
+  display: grid;
+  justify-items: start;
+  gap: 8px;
+  margin-bottom: 24px;
+}
+.backup-result p {
+  margin: 0;
+}
+.backup-source {
+  display: grid;
+  gap: 10px;
+  margin: 18px 0;
+  padding: 16px;
+  background: var(--ui-bg-surface);
+  border: 1px solid var(--ui-border-default);
+  overflow-wrap: anywhere;
+  font-size: 12px;
+}
+.backup-source p {
+  margin: 0;
+  line-height: 1.8;
+}
+.backup-source small,
+.backup-source-hint {
+  color: var(--ui-text-secondary);
 }
 .backup-history-count {
   display: inline-grid;

@@ -347,7 +347,21 @@ export class MemoryStoreRegistry {
   }
 
   /** 用原生结构化诊断识别已有库的维度，不用候选配置重写旧索引。 */
-  private openExistingReader(tdbPath: string): TriviumDBType {
+  private openExistingReader(
+    tdbPath: string,
+    lockRoot = this.pathResolver.resolve('@data'),
+  ): TriviumDBType {
+    // 备份不携带进程锁；只读引擎不会创建锁，恢复后须先补建空锁文件。
+    // 只补运行期锁，不创建缺失主库，不覆盖已有锁，也不回退成可写打开。
+    if (existsSync(tdbPath)) {
+      const lockPath = `${tdbPath}.lock`
+      assertManagedFilePath(lockRoot, lockPath)
+      try {
+        writeFileSync(lockPath, '', { flag: 'wx', mode: 0o600 })
+      } catch (error) {
+        if ((error as NodeJS.ErrnoException).code !== 'EEXIST') throw error
+      }
+    }
     const options = {
       dim: this.dim,
       accessMode: 'readOnly' as const,
@@ -520,7 +534,7 @@ export class MemoryStoreRegistry {
           if (file.endsWith('.tmp') || file.endsWith('.manifest.json')) continue
           copyFileSync(file, path.join(path.dirname(target), path.basename(file)))
         }
-        const check = this.openExistingReader(target)
+        const check = this.openExistingReader(target, destination)
         check.close()
       }
     } finally {

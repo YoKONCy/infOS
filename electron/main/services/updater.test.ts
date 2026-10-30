@@ -8,6 +8,7 @@ vi.mock('electron', () => ({
     quit: vi.fn(),
   },
   BrowserWindow: { getAllWindows: () => [] },
+  net: { fetch: vi.fn() },
 }))
 
 vi.mock('../utils/env', () => ({
