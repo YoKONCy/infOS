@@ -12,11 +12,11 @@
     "discord.js": "14.27.0",
     "drizzle-orm": "^0.44.0",
     "grammy": "1.46.0",
-    "hono": "^4.7.0",
+    "hono": "^4.13.14",
     "omggif": "1.0.10",
     "pngjs": "7.0.0",
     "triviumdb": "0.9.0-beta.4",
-    "uuid": "^14.0.0"
+    "uuid": "^14.0.3"
   },
   "devDependencies": {
     "@types/omggif": "^1.0.5",
