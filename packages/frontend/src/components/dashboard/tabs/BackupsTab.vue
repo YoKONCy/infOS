@@ -656,7 +656,9 @@ onBeforeUnmount(() => {
         <p>{{ tr('当前数据尚未切换。重启时会先建立恢复点，再应用导入方案。') }}</p>
         <template v-if="dockerServer">
           <p>
-            {{ tr('请在 Docker 服务器的部署目录执行以下命令，或在容器管理面板中重启 backend 容器。') }}
+            {{
+              tr('请在 Docker 服务器的部署目录执行以下命令，或在容器管理面板中重启 backend 容器。')
+            }}
           </p>
           <div class="backup-restart-command">
             <code>docker compose restart backend</code>
@@ -899,10 +901,7 @@ onBeforeUnmount(() => {
             {{ tr('取消导入') }}
           </PButton>
         </div>
-        <div
-          v-if="!importWorking && !preview && !pending && !importSource"
-          class="backup-upload"
-        >
+        <div v-if="!importWorking && !preview && !pending && !importSource" class="backup-upload">
           <div class="backup-file-art" aria-hidden="true">
             <PixelIcon name="file" size="2xl" />
             <span><PixelIcon name="sparkle" size="sm" /></span>
@@ -1135,7 +1134,9 @@ onBeforeUnmount(() => {
         <p>{{ tr('当前数据尚未切换。重启时会先建立恢复点，再应用导入方案。') }}</p>
         <template v-if="dockerServer">
           <p>
-            {{ tr('请在 Docker 服务器的部署目录执行以下命令，或在容器管理面板中重启 backend 容器。') }}
+            {{
+              tr('请在 Docker 服务器的部署目录执行以下命令，或在容器管理面板中重启 backend 容器。')
+            }}
           </p>
           <pre class="backup-command">docker compose restart backend</pre>
           <p>{{ tr('刷新浏览器或重启 frontend 容器不会应用恢复。') }}</p>

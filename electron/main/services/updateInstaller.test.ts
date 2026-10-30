@@ -47,7 +47,9 @@ function processBoundary() {
   mocks.spawn.mockImplementation((_command: string, args: string[]) => {
     queueMicrotask(() => {
       child.emit('spawn')
-      const encodedBootstrap = args[args.length - 1]!.match(/-EncodedCommand ([A-Za-z0-9+/=]+)/)![1]!
+      const encodedBootstrap = args[args.length - 1]!.match(
+        /-EncodedCommand ([A-Za-z0-9+/=]+)/,
+      )![1]!
       const bootstrap = Buffer.from(encodedBootstrap, 'base64').toString('utf16le')
       const helperPath = bootstrap.slice(3, -1).replace(/''/g, "'")
       void readFile(helperPath)

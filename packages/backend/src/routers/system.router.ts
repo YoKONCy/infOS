@@ -19,7 +19,7 @@ import { AppError } from '../lib/appError'
 import { BACKGROUND_PRESET_IDS } from '../services/system/chatBackgroundService'
 
 /** 应用版本号 (由 scripts/sync-version.ts 自动同步) */
-const APP_VERSION = '0.9.9'
+const APP_VERSION = '0.9.10'
 const backgroundPresetQuery = z.object({
   preset: z.enum(BACKGROUND_PRESET_IDS).default('preset-1'),
 })

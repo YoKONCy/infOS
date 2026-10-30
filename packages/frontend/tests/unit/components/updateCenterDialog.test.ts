@@ -138,7 +138,12 @@ describe('UpdateCenterDialog', () => {
   it('安装失败显示错误与日志入口，保留有效下载的安装按钮用于重试', async () => {
     const wrapper = mountDialog()
     await vi.waitFor(() => expect(document.body.querySelectorAll('.release-card')).toHaveLength(5))
-    ipc.listener?.({ ...baseState, phase: 'error', canInstall: true, message: '安装准备失败，更新包已保留' })
+    ipc.listener?.({
+      ...baseState,
+      phase: 'error',
+      canInstall: true,
+      message: '安装准备失败，更新包已保留',
+    })
     await wrapper.vm.$nextTick()
     expect(document.body.textContent).toContain('安装准备失败，更新包已保留')
     expect(document.body.textContent).toContain('打开更新日志目录')
@@ -150,7 +155,12 @@ describe('UpdateCenterDialog', () => {
   it('准备安装期间禁用版本切换与重复安装', async () => {
     const wrapper = mountDialog()
     await vi.waitFor(() => expect(document.body.querySelectorAll('.release-card')).toHaveLength(5))
-    ipc.listener?.({ ...baseState, phase: 'installing', canInstall: false, message: '正在准备安装助手' })
+    ipc.listener?.({
+      ...baseState,
+      phase: 'installing',
+      canInstall: false,
+      message: '正在准备安装助手',
+    })
     await wrapper.vm.$nextTick()
     expect(document.body.querySelector<HTMLButtonElement>('.update-action')!.disabled).toBe(true)
     expect(document.body.querySelector<HTMLButtonElement>('.release-card')!.disabled).toBe(true)

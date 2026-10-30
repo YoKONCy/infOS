@@ -15,7 +15,8 @@ const mocks = vi.hoisted(() => ({
 vi.mock('electron', () => ({
   app: {
     getVersion: () => mocks.version,
-    getPath: (key: string) => key === 'temp' ? path.join(mocks.root, '临时目录') : mocks.paths.exe,
+    getPath: (key: string) =>
+      key === 'temp' ? path.join(mocks.root, '临时目录') : mocks.paths.exe,
     quit: mocks.quit,
   },
   net: { fetch: mocks.fetch },
@@ -34,12 +35,14 @@ const payload = Buffer.from('INFOS-UPDATE-FIXTURE')
 const rawRelease = {
   tag_name: 'v0.9.9',
   draft: false,
-  assets: [{
-    name: 'PeroperoChat.-Setup-0.9.9.exe',
-    size: payload.length,
-    digest: `sha256:${createHash('sha256').update(payload).digest('hex')}`,
-    browser_download_url: 'https://github.com/YoKONCy/infOS/releases/download/v0.9.9/setup.exe',
-  }],
+  assets: [
+    {
+      name: 'PeroperoChat.-Setup-0.9.9.exe',
+      size: payload.length,
+      digest: `sha256:${createHash('sha256').update(payload).digest('hex')}`,
+      browser_download_url: 'https://github.com/YoKONCy/infOS/releases/download/v0.9.9/setup.exe',
+    },
+  ],
 }
 const temporaryRoot = process.env.INFOS_TEST_TEMP_ROOT ?? path.resolve('TEMP')
 beforeEach(() => {
@@ -55,9 +58,13 @@ beforeEach(() => {
   mocks.paths.exe = path.join(mocks.root, '程序目录', '萌动链接.exe')
   mocks.paths.logs = path.join(mocks.root, '日志')
   mkdirSync(mocks.paths.cache, { recursive: true })
-  mocks.fetch.mockImplementation(async (url: string) => url.includes('api.github.com')
-    ? new Response(JSON.stringify([rawRelease]))
-    : new Response(new Uint8Array(payload), { headers: { 'content-length': String(payload.length) } }))
+  mocks.fetch.mockImplementation(async (url: string) =>
+    url.includes('api.github.com')
+      ? new Response(JSON.stringify([rawRelease]))
+      : new Response(new Uint8Array(payload), {
+          headers: { 'content-length': String(payload.length) },
+        }),
+  )
 })
 afterEach(() => {
   vi.useRealTimers()
@@ -78,8 +85,9 @@ describe('Windows 更新的下载与安装交接', () => {
     expect(service.getUpdateState()).toMatchObject({ phase: 'error', canInstall: true })
     expect(service.getUpdateState().message).toContain('应用未退出')
     expect(readFileSync(downloaded.downloadedPath!)).toEqual(payload)
-    expect(JSON.parse(readFileSync(path.join(mocks.paths.cache, 'client-update-install.json'), 'utf8')))
-      .toMatchObject({ status: 'failed', version: '0.9.9' })
+    expect(
+      JSON.parse(readFileSync(path.join(mocks.paths.cache, 'client-update-install.json'), 'utf8')),
+    ).toMatchObject({ status: 'failed', version: '0.9.9' })
   })
 
   it('助手确认就绪后才退出；取消退出会取消本次安装并保留安装入口', async () => {
@@ -88,7 +96,12 @@ describe('Windows 更新的下载与安装交接', () => {
     await service.downloadUpdate()
     const cancelPath = path.join(mocks.paths.cache, 'cancel')
     let acknowledge!: (value: unknown) => void
-    mocks.prepare.mockImplementation(() => new Promise((resolve) => { acknowledge = resolve }))
+    mocks.prepare.mockImplementation(
+      () =>
+        new Promise((resolve) => {
+          acknowledge = resolve
+        }),
+    )
     const installing = service.installUpdate()
     await vi.waitFor(() => expect(mocks.prepare).toHaveBeenCalled())
     expect(service.getUpdateState().phase).toBe('installing')
@@ -121,7 +134,9 @@ describe('Windows 更新的下载与安装交接', () => {
   it('下载缺少字节时拒绝安装，不能仅凭 HTTP 成功状态把包标记为可安装', async () => {
     const service = await import('./updater')
     await service.checkForUpdates()
-    mocks.fetch.mockResolvedValueOnce(new Response(new Uint8Array(payload.subarray(0, payload.length - 1))))
+    mocks.fetch.mockResolvedValueOnce(
+      new Response(new Uint8Array(payload.subarray(0, payload.length - 1))),
+    )
     await expect(service.downloadUpdate()).rejects.toThrow('更新包大小')
     expect(service.getUpdateState()).toMatchObject({ phase: 'error', canInstall: false })
     expect(await service.installUpdate()).toBe(false)
@@ -143,7 +158,11 @@ describe('Windows 更新的下载与安装交接', () => {
     await service.checkForUpdates()
     const downloaded = await service.downloadUpdate()
     await service.checkForUpdates()
-    expect(service.getUpdateState()).toMatchObject({ phase: 'downloaded', canInstall: true, selectedTag: 'v0.9.9' })
+    expect(service.getUpdateState()).toMatchObject({
+      phase: 'downloaded',
+      canInstall: true,
+      selectedTag: 'v0.9.9',
+    })
     writeFileSync(downloaded.downloadedPath!, Buffer.alloc(payload.length, 0))
     expect(await service.installUpdate()).toBe(false)
     expect(service.getUpdateState().canInstall).toBe(false)
@@ -152,9 +171,16 @@ describe('Windows 更新的下载与安装交接', () => {
   })
 
   it('安装回执不能替代当前运行版本：仍运行旧版时报告未完成，真正启动新版后才显示成功', async () => {
-    writeFileSync(path.join(mocks.paths.cache, 'client-update-install.json'), JSON.stringify({
-      format: 1, id: 'attempt', version: '0.9.9', status: 'installed', logPath: mocks.paths.logs,
-    }))
+    writeFileSync(
+      path.join(mocks.paths.cache, 'client-update-install.json'),
+      JSON.stringify({
+        format: 1,
+        id: 'attempt',
+        version: '0.9.9',
+        status: 'installed',
+        logPath: mocks.paths.logs,
+      }),
+    )
     const old = await import('./updater')
     expect(old.getUpdateState().phase).toBe('error')
     expect(old.getUpdateState().message).toContain('当前仍为 0.9.8')

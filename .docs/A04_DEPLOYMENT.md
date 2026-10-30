@@ -1,6 +1,6 @@
 # 多目标部署架构
 
-> **版本**：0.9.9 · **更新时间**：2026-10-26
+> **版本**：0.9.10 · **更新时间**：2026-10-26
 > **适用范围**：infOS 全项目部署策略
 > **依赖规范**：[A07_CROSS_PLATFORM](./A07_CROSS_PLATFORM.md)、[A08_DEVOPS](./A08_DEVOPS.md)
 >
@@ -30,6 +30,12 @@ Electron 首次启动先显示本地透明开屏，并在同一窗口内选择�
 安装包携带 `electron/splash/` 中的两套本地 PNG、HTML 内联 SVG、CSS、JS 和百分比字体，以及独立编译的开屏预加载脚本。渲染器等待两套插画解码、字体和初始状态就绪后才请求显窗；资源仅从本地读取，CSP 不允许内联脚本、外部网络和对象嵌入。设计实验保存在被 Git 忽略的 `TEMP/`，发行运行时不依赖该目录。标准版、Steam 版与便携版共用基础资源清单，浏览器与 Docker 入口不使用此过渡。
 
 ---
+
+### Electron 系统图标
+
+`public/system-icons/pero.png` 与 `pero.ico` 是 Electron 窗口、开屏、任务栏、托盘和 Windows 可执行文件共用的图标，采用 Pero 与 P 字母对话气泡组合，配无描边的米白至淡紫圆角底板以保持小尺寸下的视觉体量。PNG 为 512×512，圆角外部透明；ICO 包含 16、20、24、32、40、48、64、96、128、256 像素帧，小帧使用 32 位 DIB 与透明掩码，256 像素帧使用 PNG。`public/Logo.png`、`public/icon.png`、`public/icon.ico` 及 `resources` 中的同类兼容资源保持同步。
+
+导出时按有效透明轮廓裁切，再等比居中放入画布，最长边占约 98%，减少托盘小尺寸下的多余留白；像素尺寸取整后保留完整主体。运行时入口为 `electron/main/utils/appIcon.ts`、`appIdentity.ts` 与 `windowsTaskbarIcon.ts`；各 electron-builder 配置使用同一 ICO。开发启动器 `scripts/dev-electron.mjs` 将 ICO 摘要纳入独立运行时缓存标识，完整退出后重新启动即可使用更新资源；已打包 EXE 与快捷方式需通过新的发行产物更新。Steam 商店字标图独立维护，不替代桌面系统图标；应用内 SVG 品牌标志及角色头像仍由各自入口维护。
 
 ## 2. 核心设计原则
 

@@ -112,7 +112,7 @@ const isDownloading = computed(() => state.value?.phase === 'downloading')
 const isInstalling = computed(() => state.value?.phase === 'installing')
 const isDownloaded = computed(
   () =>
-    Boolean(state.value?.canInstall ?? (state.value?.phase === 'downloaded')) &&
+    Boolean(state.value?.canInstall ?? state.value?.phase === 'downloaded') &&
     state.value?.selectedTag === selectedTag.value,
 )
 const actionLabel = computed(() => {

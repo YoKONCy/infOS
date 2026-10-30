@@ -1,6 +1,6 @@
 # DevOps 与运维规范
 
-> **版本**：0.9.9 · **更新时间**：2026-10-26
+> **版本**：0.9.10 · **更新时间**：2026-10-26
 > **适用范围**：CI/CD、数据库迁移、版本发布、安全、可观测性、API 文档
 > **依赖规范**：[A04_DEPLOYMENT](./A04_DEPLOYMENT.md)、[S04_TESTING_STANDARDS](./S04_TESTING_STANDARDS.md)
 >

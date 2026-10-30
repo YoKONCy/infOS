@@ -190,7 +190,10 @@ describe('文档知识库持久化与 API', () => {
     const restored = await reopen()
     const result = await restored.index.search({ keywords: ['蓝莓'] })
     expect(result.items.map((item) => item.documentId)).toContain(payload.data!.id)
-    expect(restored.service.detail(payload.data!.id)).toMatchObject({ status: 'ready', partCount: 1 })
+    expect(restored.service.detail(payload.data!.id)).toMatchObject({
+      status: 'ready',
+      partCount: 1,
+    })
   })
 
   it('激活新维度后保留旧索引，重启可初始化，显式重建才切换文件维度', async () => {

@@ -135,7 +135,9 @@ try {
 `
 
 /** 助手写入就绪凭据之前不允许退出宿主；启动失败仍保留下载与诊断文件。 */
-export async function prepareUpdateInstall(input: UpdateInstallInput): Promise<PreparedUpdateInstall> {
+export async function prepareUpdateInstall(
+  input: UpdateInstallInput,
+): Promise<PreparedUpdateInstall> {
   const id = randomUUID()
   const directory = path.join(input.temporaryRoot, `install-${id}`)
   const target = path.dirname(path.resolve(input.executable))
@@ -166,21 +168,19 @@ export async function prepareUpdateInstall(input: UpdateInstallInput): Promise<P
     const powershell = process.env.SystemRoot
       ? path.join(process.env.SystemRoot, 'System32', 'WindowsPowerShell', 'v1.0', 'powershell.exe')
       : 'powershell.exe'
-    const bootstrap = Buffer.from(`& '${helperPath.replace(/'/g, "''")}'`, 'utf16le').toString('base64')
+    const bootstrap = Buffer.from(`& '${helperPath.replace(/'/g, "''")}'`, 'utf16le').toString(
+      'base64',
+    )
     // 只把系统程序路径与 base64 引导交给 cmd，不在命令文本中放用户路径。
     // cmd 脱离 Node 作业后等待 PowerShell；PowerShell 本身不能使用 DETACHED_PROCESS。
     const command = `""${powershell}" -NoLogo -NoProfile -NonInteractive -ExecutionPolicy Bypass -EncodedCommand ${bootstrap}"`
-    child = spawn(
-      process.env.ComSpec ?? 'cmd.exe',
-      ['/d', '/s', '/c', command],
-      {
-        cwd: directory,
-        detached: true,
-        windowsVerbatimArguments: true,
-        stdio: ['ignore', output, output],
-        windowsHide: true,
-      },
-    )
+    child = spawn(process.env.ComSpec ?? 'cmd.exe', ['/d', '/s', '/c', command], {
+      cwd: directory,
+      detached: true,
+      windowsVerbatimArguments: true,
+      stdio: ['ignore', output, output],
+      windowsHide: true,
+    })
   } catch (error) {
     throw Object.assign(error instanceof Error ? error : new Error('UPDATE_HELPER_FAILED'), {
       logPath: bootstrapPath,
@@ -197,7 +197,8 @@ export async function prepareUpdateInstall(input: UpdateInstallInput): Promise<P
     const deadline = Date.now() + 15_000
     while (Date.now() < deadline) {
       const ready = (await readFile(readyPath, 'utf8').catch(() => '')) === id
-      if (child.exitCode !== null || child.signalCode !== null) throw new Error('UPDATE_HELPER_EXITED')
+      if (child.exitCode !== null || child.signalCode !== null)
+        throw new Error('UPDATE_HELPER_EXITED')
       if (ready) {
         child.unref()
         return { id, child, cancelPath, receiptPath: input.receiptPath, logPath }

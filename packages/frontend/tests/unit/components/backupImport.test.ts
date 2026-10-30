@@ -162,7 +162,9 @@ describe('备份导入的口令与恢复引导', () => {
     expect(wrapper.find('.p-dialog').text()).toContain('重启命令已复制')
     await click(wrapper, '我知道了，保留页面指引')
     expect(wrapper.find('.backup-pending').text()).toContain('docker compose restart backend')
-    expect(wrapper.find('.backup-pending').text()).toContain('刷新浏览器或重启 frontend 容器不会应用恢复')
+    expect(wrapper.find('.backup-pending').text()).toContain(
+      '刷新浏览器或重启 frontend 容器不会应用恢复',
+    )
   })
 
   it('重启断线期间持续等待，重新连接后只展示服务端确认的恢复结果', async () => {

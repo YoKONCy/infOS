@@ -78,7 +78,7 @@ export class PictoriaHost {
           appId: pictoriaManifest.id,
           instanceId: this.instanceId,
           name: 'Pictoria',
-          appVersion: '0.9.9',
+          appVersion: '0.9.10',
           adapterVersion: '1.0.0',
           state: 'ready',
           endpoints: pictoriaManifest.endpoints,

@@ -282,7 +282,10 @@ async function fetchReleaseList(): Promise<{
       await writeFile(cachePath, JSON.stringify({ format: 1, checkedAt, releases: raw }), 'utf8')
     } catch (error) {
       // 缓存写入失败不能把已成功取得的在线结果退回旧缓存。
-      logger.warn('Updater', __t('electron.logs.updater', '保存更新列表缓存失败：{0}', [String(error)]))
+      logger.warn(
+        'Updater',
+        __t('electron.logs.updater', '保存更新列表缓存失败：{0}', [String(error)]),
+      )
     }
     return { list, cached: false, checkedAt }
   } catch (error) {
@@ -347,7 +350,10 @@ function restoreInstallResult(): void {
     })
   } catch (error) {
     if ((error as NodeJS.ErrnoException).code !== 'ENOENT')
-      logger.warn('Updater', __t('electron.logs.updater', '读取更新安装结果失败：{0}', [String(error)]))
+      logger.warn(
+        'Updater',
+        __t('electron.logs.updater', '读取更新安装结果失败：{0}', [String(error)]),
+      )
   }
 }
 
@@ -386,7 +392,9 @@ async function performUpdateCheck(): Promise<UpdateState> {
       progress: ready || !releases.length ? 100 : 0,
       canInstall: Boolean(ready),
       message: result.cached
-        ? __t('electron.ui.updater', '无法在线检查，当前显示缓存的 {0} 个更新版本', [releases.length])
+        ? __t('electron.ui.updater', '无法在线检查，当前显示缓存的 {0} 个更新版本', [
+            releases.length,
+          ])
         : ready
           ? __t('electron.ui.updater', '更新已下载，点击安装后应用将完整退出')
           : releases.length
@@ -416,8 +424,7 @@ function selectRelease(tagName?: string): UpdateRelease {
 async function verifyDigest(filePath: string, digest?: string): Promise<void> {
   if (!digest) return
   const match = /^sha256:([a-f0-9]{64})$/i.exec(digest)
-  if (!match)
-    throw new Error(__t('electron.ui.updater', '更新包摘要格式无效'))
+  if (!match) throw new Error(__t('electron.ui.updater', '更新包摘要格式无效'))
   const expected = match[1]!
   const hash = createHash('sha256')
   for await (const chunk of createReadStream(filePath)) hash.update(chunk)
@@ -540,7 +547,10 @@ async function performDownload(tagName?: string): Promise<UpdateState> {
       : join(paths.cache, 'client-updates')
   await mkdir(updatesBase, { recursive: true })
   const updateRoot = await mkdtemp(join(updatesBase, 'download-'))
-  const downloadPath = join(updateRoot, deployment() === 'portable' ? 'portable.zip' : 'installer.exe')
+  const downloadPath = join(
+    updateRoot,
+    deployment() === 'portable' ? 'portable.zip' : 'installer.exe',
+  )
   downloadedRelease = null
   portableStagingPath = null
   updateState({
@@ -671,7 +681,10 @@ async function performInstall(release: UpdateRelease, downloadPath: string): Pro
         ),
       })
     })
-    logger.info('Updater', __t('electron.logs.updater', '已启动退出安装助手: {0}', [release.version]))
+    logger.info(
+      'Updater',
+      __t('electron.logs.updater', '已启动退出安装助手: {0}', [release.version]),
+    )
     setImmediate(() => {
       if (
         activeInstall?.id === prepared.id &&
@@ -692,7 +705,9 @@ async function performInstall(release: UpdateRelease, downloadPath: string): Pro
       logPath: logPath ?? paths.logs,
       errorCode: 'UPDATE_PREPARATION_FAILED',
     }
-    await writeFile(join(paths.cache, INSTALL_RECEIPT), JSON.stringify(receipt), 'utf8').catch(() => {})
+    await writeFile(join(paths.cache, INSTALL_RECEIPT), JSON.stringify(receipt), 'utf8').catch(
+      () => {},
+    )
     updateState({
       phase: 'error',
       canInstall: packageVerified,
@@ -702,7 +717,10 @@ async function performInstall(release: UpdateRelease, downloadPath: string): Pro
         '安装准备失败，应用未退出，更新包已保留；请重试或手动安装，详情见更新日志',
       ),
     })
-    logger.error('Updater', __t('electron.logs.updater', '客户端更新安装失败：{0}', [String(error)]))
+    logger.error(
+      'Updater',
+      __t('electron.logs.updater', '客户端更新安装失败：{0}', [String(error)]),
+    )
     return false
   }
 }
@@ -721,7 +739,7 @@ export async function cancelUpdateInstall(): Promise<void> {
         join(process.env.SystemRoot!, 'System32', 'taskkill.exe'),
         ['/PID', String(prepared.child.pid), '/T', '/F'],
         { windowsHide: true },
-        (failure) => failure ? reject(failure) : resolve(),
+        (failure) => (failure ? reject(failure) : resolve()),
       ),
     )
   }
