@@ -7,6 +7,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { createConfigRouter } from '@infos/backend/routers/config.router'
 import { errorHandler } from '@infos/backend/middleware/errorHandler'
 import type { AppContext } from '@infos/backend/container'
+import { getLocale, setLocale } from '@infos/shared/i18n'
 
 const appVersion = (
   JSON.parse(
@@ -73,6 +74,7 @@ function createConfigContext(initial: Record<string, string> = {}) {
     reloadTtsConfig: vi.fn().mockResolvedValue(undefined),
     reloadAsrConfig: vi.fn().mockResolvedValue(undefined),
     appManager: { notifyConfigChanged: vi.fn().mockResolvedValue(undefined) },
+    gatewayHub: { pushStateUpdate: vi.fn().mockResolvedValue(undefined) },
   }
   return ctx as unknown as AppContext & typeof ctx
 }
@@ -82,6 +84,23 @@ async function readJson(response: Response) {
 }
 
 describe('createConfigRouter', () => {
+  it('删除语言偏好后恢复服务端环境语言，广播空偏好让客户端自行识别', async () => {
+    vi.stubEnv('INFOS_LANGUAGE', 'en-US')
+    setLocale('zh-CN')
+    try {
+      const ctx = createConfigContext({ 'user.language': 'zh-CN' })
+      const router = createConfigRouter(ctx)
+      const response = await router.request('/user.language', { method: 'DELETE' })
+      expect(response.status).toBe(200)
+      expect(await ctx.configRepo.get('user.language')).toBeUndefined()
+      expect(getLocale()).toBe('en-US')
+      expect(ctx.gatewayHub.pushStateUpdate).toHaveBeenCalledWith({ language: null })
+    } finally {
+      vi.unstubAllEnvs()
+      setLocale('zh-CN')
+    }
+  })
+
   it('配置保存完成后通知运行中的应用更新主人身份', async () => {
     const ctx = createConfigContext()
     const router = createConfigRouter(ctx)

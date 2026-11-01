@@ -60,7 +60,9 @@
 
 Store 继续使用标准数据库文件组和既有重建流程。维护互斥、旧引用保护及错误详情见 [B29 索引维护与诊断](./B29_INDEX_MAINTENANCE.md)。原生 close 的文件资源释放由 TriviumDB 上游负责，文件操作失败不能据此单独判断为杀毒软件拦截。
 
-TriviumDB 由上游 npm 包提供；后端与社交应用的依赖声明必须同步。当前接入使用 `0.9.0-beta.4` / 主文件格式 v10，文件头持久化向量类型、元素宽度与 CRC。升级沿用旧格式写入前备份和引擎迁移，不自动重新生成 Embedding。仓库维护 TS 适配、存储一致性与发行集成，不维护该库的 Rust 源码或 Cargo 编译链。版本与格式处理入口为 `packages/backend/src/repositories/storeRegistry.ts`、`triviumFiles.ts`。Store 注册表负责旧格式写入前备份、完整文件组重建/清理及一致性快照；持久化正文旁路文件 `.tdb.pld.<generation>`、属性/图索引、flush marker，以及发布恢复日志 `.publish` 与 `.publish.0`–`.publish.8` 必须按同一数据库文件组处理。升级备份按目标版本分目录保存，清空、永久遗忘和维度重建同时清理旧版本对应库的副本。每个常驻 Store 的 Payload 缓存上限为 32 MiB、单条缓存上限为 4 MiB；只读临时 Store 使用 8 MiB。旧库恢复、索引兼容和回退约束统一见 [A08_DEVOPS](./A08_DEVOPS.md#23-迁移原则)。
+TriviumDB 由上游 npm 包提供；后端与社交应用的依赖声明必须同步。当前接入使用 `0.9.0` 正式版 / 主文件格式 v10，文件头持久化向量类型、元素宽度与 CRC。升级沿用旧格式写入前备份和引擎迁移，不自动重新生成 Embedding。仓库维护 TS 适配、存储一致性与发行集成，不维护该库的 Rust 源码或 Cargo 编译链。版本与格式处理入口为 `packages/backend/src/repositories/storeRegistry.ts`、`triviumFiles.ts`。Store 注册表负责旧格式写入前备份、完整文件组重建/清理及一致性快照；持久化正文旁路文件 `.tdb.pld.<generation>`、属性/图索引、flush marker，以及发布恢复日志 `.publish` 与 `.publish.0`–`.publish.8` 必须按同一数据库文件组处理。升级备份按目标版本分目录保存，清空、永久遗忘和维度重建同时清理旧版本对应库的副本。每个常驻 Store 的 Payload 缓存上限为 32 MiB、单条缓存上限为 4 MiB；只读临时 Store 使用 8 MiB。旧库恢复、索引兼容和回退约束统一见 [A08_DEVOPS](./A08_DEVOPS.md#23-迁移原则)。
+
+正式版继续采用 v10 主文件格式，从 beta.4 切换不新增磁盘格式迁移。上游修复 Windows 后台关闭发布与再次打开时的文件身份/锁路径竞态，维度迁移发布改用不覆盖目标的排他原子重命名；应用继续使用现有注册表维护和文件组恢复协议，不自行替代上游的发布实现。嵌入式 Console 为新增可选 API，本项目暂未接入。依据见[上游 0.9.0 正式版说明](https://github.com/YoKONCy/TriviumDB/blob/v0.9.0/docs/changes/0.9.0.md)。
 
 Node.js 既有 CRUD、图查询、检索、事务和 `close()` 签名保持兼容。各 Store 未显式传入 `runtime`，复用上游默认共享资源运行时，仍由各实例的 `memoryLimitMb` 限制内核预算。同步 `close()` 成功意味着 WAL、映射和文件锁已释放；失败则保留资源以便重试，不得继续替换文件。新增关闭诊断、目录快照与 `rebuildTextIndex()` 暂未接入应用流程；备份继续采用注册表现有文件组协议。上游将 QuIVer 自动构建阈值提前到 `ceil(666667 / dim)`（限制在 209–834 节点，1536 维为 435 节点），已有索引不因此自动重建。API 与生命周期依据见[上游 beta.2 变更说明](https://github.com/YoKONCy/TriviumDB/blob/v0.9.0-beta.2/docs/changes/0.9.0-beta.2.md)。
 

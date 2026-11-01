@@ -17,6 +17,9 @@ import {
 } from './domain'
 import { Store } from './store'
 import { dismissedCanvasRuns } from './canvasNotificationState'
+import { CanvasStudio } from './canvasStudio'
+import { videoModels } from './videoModels'
+import { referencePurposes } from './creativeInputs'
 import { compileSchema, validate } from './schema'
 import { expandWorkflow, resolve, verifyWorkflow, publishedWorkflow } from './workflows'
 import { stepTemplates } from './templates'
@@ -46,18 +49,32 @@ import {
 export class PictoriaApplication {
   readonly assets: Assets
   readonly execution: ExecutionEngine
+  private readonly studio: CanvasStudio
   constructor(
     readonly store: Store,
     private readonly host?: HostPort,
   ) {
     this.assets = new Assets(store)
+    this.studio = new CanvasStudio(store)
     this.execution = new ExecutionEngine(store, new ServiceClient(store, this.assets), host)
   }
   catalog(owner: string) {
-    return this.store
-      .list<Step>(owner, 'step', 200)
+    return this.publicDefinitions<Step>(owner, 'step')
       .filter((s) => s.enabled)
       .map((step) => this.describeStep(step, owner))
+  }
+  /** 助手的不可变调用快照不进入创作菜单，也不挤占用户定义的列表额度。 */
+  private publicDefinitions<T extends { id: string }>(
+    owner: string,
+    kind: 'step' | 'service',
+  ): T[] {
+    const result: T[] = []
+    for (let offset = 0; result.length < 200; offset += 200) {
+      const page = this.store.list<T>(owner, kind, 200, offset)
+      result.push(...page.filter((entry) => !/^canvas-assistant-[a-f0-9]{24}$/.test(entry.id)))
+      if (page.length < 200) break
+    }
+    return result.slice(0, 200)
   }
   private describeStep(step: Step, owner: string) {
     const available = this.available(step, owner)
@@ -81,8 +98,22 @@ export class PictoriaApplication {
             : step.implementation.kind === 'llm'
               ? 'infOS'
               : undefined
+    const video =
+      service &&
+      videoModels.find(
+        (model) => model.adapter === service.adapter && model.id === service.submit.body.model,
+      )
+    const videoCapability =
+      video &&
+      (video.imageModel || video.id.startsWith('veo-')) &&
+      step.id === `builtin.${video.adapter}.video-generate` &&
+      !Object.hasOwn(step.inputSchema, 'x-pictoria-video')
+        ? { 'x-pictoria-video': { startFrameField: 'images' } }
+        : {}
+    const inputSchema: Step['inputSchema'] = { ...step.inputSchema, ...videoCapability }
     return {
       ...step,
+      inputSchema,
       modelName,
       providerName,
       available,
@@ -92,6 +123,7 @@ export class PictoriaApplication {
   async invoke(operation: string, raw: unknown, context: Invocation): Promise<unknown> {
     const value = object(raw)
     const owner = identifier.parse(context.owner)
+    if (operation.startsWith('canvas.')) return this.studio.invoke(owner, operation, value)
     if (
       operation.startsWith('workflow.draft.') ||
       operation === 'workflow.validate' ||
@@ -203,9 +235,9 @@ export class PictoriaApplication {
       case 'catalog.get':
         return { steps: this.catalog(owner) }
       case 'step.list':
-        return this.store
-          .list<Step>(owner, 'step', 200)
-          .map((step) => this.describeStep(step, owner))
+        return this.publicDefinitions<Step>(owner, 'step').map((step) =>
+          this.describeStep(step, owner),
+        )
       case 'step.get':
         return this.describeStep(this.require<Step>(owner, 'step', value.id), owner)
       case 'step.version': {
@@ -218,9 +250,9 @@ export class PictoriaApplication {
         return this.describeStep(result.snapshot, owner)
       }
       case 'service.list':
-        return this.store
-          .list<ServiceProfile>(owner, 'service', 200)
-          .map((service) => serviceDescriptor(this.store, owner, service))
+        return this.publicDefinitions<ServiceProfile>(owner, 'service').map((service) =>
+          serviceDescriptor(this.store, owner, service),
+        )
       case 'service.get': {
         return serviceDescriptor(
           this.store,
@@ -346,9 +378,33 @@ export class PictoriaApplication {
                 stepId: z.string().max(128),
                 text: z.string().max(64000),
                 inputsByStep: z.record(z.string(), z.record(z.string(), z.unknown())),
+                referenceUsesByStep: z
+                  .record(
+                    z.string(),
+                    z
+                      .array(
+                        z
+                          .object({
+                            field: z.string().min(1).max(128),
+                            assetId: identifier,
+                            purpose: z.enum(referencePurposes),
+                          })
+                          .strict(),
+                      )
+                      .max(2000),
+                  )
+                  .optional(),
               })
               .strict()
               .refine((value) => JSON.stringify(value).length <= 256_000, '创作参数超过大小限制')
+              .optional(),
+            viewport: z
+              .object({
+                x: z.number().finite(),
+                y: z.number().finite(),
+                scale: z.number().min(0.12).max(3),
+              })
+              .strict()
               .optional(),
             edges: z
               .array(
@@ -412,6 +468,7 @@ export class PictoriaApplication {
             {
               ...project,
               creation: project.creation ?? previous?.creation,
+              viewport: project.viewport ?? previous?.viewport,
               collectionId,
               edges,
               dismissedRunIds,

@@ -993,9 +993,7 @@ export function useWorkflow(owner: Ref<string>) {
     const id = crypto.randomUUID()
     doc.notes.push({
       id,
-      get title() {
-        return __t('apps.pictoria.ui', '备注')
-      },
+      title: __t('apps.pictoria.ui', '备注'),
       text: '',
       x,
       y,

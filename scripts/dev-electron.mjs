@@ -8,6 +8,7 @@ import { createHash } from 'node:crypto'
 import { execFile, spawn } from 'node:child_process'
 import { promisify } from 'node:util'
 import electronEnvironment from './electron-environment.cjs'
+import { runDevelopmentSessions } from '../electron/shared/developmentRestart.mjs'
 
 const { electronProcessEnvironment } = electronEnvironment
 
@@ -131,24 +132,15 @@ async function main() {
   const vitePackage = require.resolve('electron-vite/package.json')
   const cli = path.join(path.dirname(vitePackage), 'bin/electron-vite.js')
   const args = [cli, 'dev', '--config', 'electron.vite.config.ts', ...process.argv.slice(2)]
-  const child = spawn(process.execPath, args, {
-    cwd: root,
-    env,
-    stdio: 'inherit',
-    windowsHide: true,
-  })
-  child.once('error', (error) => {
-    console.error(__t('scripts.dev-electron', '[桌面启动] 启动失败：{0}', [error.message]))
-    process.exitCode = 1
-  })
-  child.once('exit', (code) => {
-    process.exitCode = code ?? 1
-  })
+  env.INFOS_DEV_RESTART_MANAGED = '1'
+  let child
   let stopping = false
+  const handlers = new Map()
   for (const signal of ['SIGINT', 'SIGTERM']) {
-    process.once(signal, () => {
-      if (stopping || !child.pid || child.exitCode !== null) return
+    const handler = () => {
+      if (stopping) return
       stopping = true
+      if (!child?.pid || child.exitCode !== null) return
       if (process.platform === 'win32') {
         execFile(
           'taskkill.exe',
@@ -157,7 +149,28 @@ async function main() {
           () => {},
         )
       } else child.kill(signal)
-    })
+    }
+    handlers.set(signal, handler)
+    process.once(signal, handler)
+  }
+  try {
+    process.exitCode = await runDevelopmentSessions(
+      () =>
+        new Promise((resolve, reject) => {
+          child = spawn(process.execPath, args, {
+            cwd: root,
+            env,
+            stdio: 'inherit',
+            windowsHide: true,
+          })
+          child.once('error', reject)
+          child.once('close', (code) => resolve(code ?? 1))
+        }),
+      () => stopping,
+      () => console.log(__t('scripts.dev-electron', '[桌面启动] 正在重启开发客户端及页面服务……')),
+    )
+  } finally {
+    for (const [signal, handler] of handlers) process.off(signal, handler)
   }
 }
 

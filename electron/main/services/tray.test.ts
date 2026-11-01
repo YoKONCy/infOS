@@ -17,6 +17,7 @@ const mock = vi.hoisted(() => ({
   connection: vi.fn(async () => {}),
   focusConnection: vi.fn(() => false),
   relaunch: vi.fn(),
+  restart: vi.fn(async () => {}),
 }))
 vi.mock('electron', () => ({
   app: { quit: mock.quit, relaunch: mock.relaunch },
@@ -37,6 +38,7 @@ vi.mock('../windows/manager', () => ({
 }))
 vi.mock('../../../packages/shared/src/i18n', () => ({ onLocaleChange: () => () => {} }))
 vi.mock('./resourceRecovery', () => ({ showResourceRecovery: mock.recovery }))
+vi.mock('./clientRestart', () => ({ requestClientRestart: mock.restart }))
 vi.mock('./clientConnectionSetup', () => ({
   showConnectionSetup: mock.connection,
   focusConnectionSetup: mock.focusConnection,
@@ -73,8 +75,8 @@ describe('托盘工作台入口', () => {
     entry.click!()
     await Promise.resolve()
     expect(mock.connection).toHaveBeenCalledWith(false)
-    expect(mock.relaunch).toHaveBeenCalledOnce()
-    expect(mock.quit).toHaveBeenCalledOnce()
+    expect(mock.restart).toHaveBeenCalledOnce()
+    expect(mock.relaunch).not.toHaveBeenCalled()
   })
   it('左键直接打开综合工作台，不经过启动器', () => {
     createTray()

@@ -1,8 +1,8 @@
 import path from 'node:path'
 import { NodeHost } from './nodeHost'
 import { OutboundCapabilityClient } from './outboundCapabilityClient'
-import { setLocale } from '@infos/shared/i18n'
-setLocale(process.env.INFOS_LANGUAGE ?? process.env.LANG)
+import { setLocale, resolveEnvironmentLocale } from '@infos/shared/i18n'
+setLocale(resolveEnvironmentLocale(process.env, Intl.DateTimeFormat().resolvedOptions().locale))
 
 function readNumberFlag(name: string): number | undefined {
   const prefix = `--${name}=`

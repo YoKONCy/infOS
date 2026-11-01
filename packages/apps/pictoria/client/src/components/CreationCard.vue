@@ -17,6 +17,8 @@ import {
 } from '../composables/useCanvasLinks'
 import Icon from './PictoriaIcon.vue'
 import ReferenceInput from './ReferenceInput.vue'
+import { referencePromptField } from '../../../src/creativeInputs'
+import { setReferenceUse } from '../services/referenceUses'
 import PictoriaSelect from './PictoriaSelect.vue'
 import { promptPlaceholder, stepLabel } from '../services/labels'
 import NodeAnnotation from './NodeAnnotation.vue'
@@ -214,6 +216,10 @@ function structured(name: string, event: Event) {
             v-if="isAssetField(field) || isAssetsField(field)"
             :owner="owner"
             :field-name="name"
+            :uses="item.content.referenceUses"
+            :purpose-enabled="
+              !!item.content.step && !!referencePromptField(item.content.step.inputSchema)
+            "
             :references="assets(name)"
             :candidates="items.filter((item) => acceptsAsset(name, item))"
             :thumbnails="thumbnails"
@@ -225,6 +231,19 @@ function structured(name: string, event: Event) {
             @remove="emit('removeReference', name, $event)"
             @move="(id, direction) => emit('reorderReference', name, id, direction)"
             @preview="emit('preview', $event)"
+            @purpose="
+              (id, purpose) => {
+                emit('checkpoint')
+                emit('content', {
+                  referenceUses: setReferenceUse(
+                    item.content.referenceUses || [],
+                    name,
+                    id,
+                    purpose,
+                  ),
+                })
+              }
+            "
           />
           <span v-else-if="references(name).length" class="draft-reference-list">
             <span v-for="edge in references(name)" :key="edge.id" class="draft-reference">

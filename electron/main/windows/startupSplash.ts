@@ -10,6 +10,7 @@ import { logger } from '../utils/logger'
 import { isPackagedRuntime } from '../utils/runtimeMode'
 import { guardTransparentWindowMaterial } from './windowConfig'
 import { clientConnection, type ConnectionInput } from '../services/clientConnection'
+import { connectionErrorSource } from '../services/remoteCertificateUi'
 import type {
   StartupFailureKind,
   StartupPhase,
@@ -27,6 +28,7 @@ export class StartupSplash {
   private win: BrowserWindow | null = null
   private phase: StartupPhase = 'opening'
   private failure: StartupFailureKind = 'shell'
+  private developmentPageUnavailable = false
   private revision = 0
   private painted = false
   private disposed = false
@@ -83,7 +85,7 @@ export class StartupSplash {
       connection: this.connection
         ? {
             ...this.connection,
-            error: this.connectionError ? t(scope, this.connectionError) : '',
+            error: this.connectionError ? t('electron.ui.connection', this.connectionError) : '',
           }
         : null,
       connectionLabels: Object.fromEntries(
@@ -116,7 +118,12 @@ export class StartupSplash {
         brandCaption: t(scope, '萌动链接：PeroperoChat'),
         loading: t(scope, '正在启动 infOS'),
         title: t(scope, '启动遇到问题'),
-        message: t(scope, messages[this.failure]),
+        message: t(
+          scope,
+          this.developmentPageUnavailable
+            ? '本机开发页面服务未启动。请在终端停止并重新运行 pnpm dev:electron 或 pnpm start。'
+            : messages[this.failure],
+        ),
         retry: t(scope, '重试'),
         logs: t(scope, '查看日志'),
         quit: t(scope, '退出'),
@@ -235,10 +242,7 @@ export class StartupSplash {
       return { ok: true }
     } catch (error) {
       if (selection !== this.selection) return { ok: false }
-      this.connectionError =
-        error instanceof Error && error.message === 'CONNECTION_ENCRYPTION_UNAVAILABLE'
-          ? '无法安全保存凭据，请检查系统密钥服务。'
-          : '连接失败，请检查地址、令牌和网络。'
+      this.connectionError = connectionErrorSource(error)
       return { ok: false }
     } finally {
       if (selection === this.selection && this.connection) {
@@ -371,6 +375,11 @@ export class StartupSplash {
   fail(kind: StartupFailureKind, error: unknown): void {
     if (this.disposed) return
     this.failure = kind
+    this.developmentPageUnavailable =
+      !isPackagedRuntime &&
+      kind === 'launcher' &&
+      error instanceof Error &&
+      /^startup-launcher-load:-102:/.test(error.message)
     this.phase = 'failed'
     logger.error(
       'StartupSplash',

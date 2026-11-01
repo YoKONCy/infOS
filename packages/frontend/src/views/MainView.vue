@@ -702,7 +702,8 @@ onUnmounted(() => {
 onMounted(() => {
   stopPerformance = startFrontendPerformanceObserver()
   stopWarmup = warmTabsWhenIdle(
-    ['workspace', 'stronghold'],
+    // Web 首屏不抢先下载工作区编辑器和据点模块，用户导航时仍按需加载。
+    isElectron() ? ['workspace', 'stronghold'] : [],
     () =>
       mainSurfaceVisible.value &&
       desktopEntryComplete.value &&

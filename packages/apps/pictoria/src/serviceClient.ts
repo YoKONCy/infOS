@@ -68,6 +68,23 @@ export class ServiceClient {
   canReplay(owner: string, service: ServiceProfile, key: string) {
     return this.journal.canReplay(service, this.journal.get(owner, key))
   }
+  validateAssistantImages(owner: string, value: unknown): Array<{ assetId: string }> {
+    const images = value === undefined ? [] : value
+    if (!Array.isArray(images) || images.length > 4) throw new Error('ASSISTANT_IMAGE_LIMIT')
+    let bytes = 0
+    for (const reference of images) {
+      if (!reference || typeof reference.assetId !== 'string')
+        throw new Error('ASSISTANT_IMAGE_LIMIT')
+      const asset = this.store.asset(reference.assetId, owner)
+      bytes += asset.sizeBytes
+      if (
+        !['image/png', 'image/jpeg', 'image/webp'].includes(asset.mimeType) ||
+        bytes > 20 * 1024 * 1024
+      )
+        throw new Error('ASSISTANT_IMAGE_LIMIT')
+    }
+    return images
+  }
   async request(
     owner: string,
     service: ServiceProfile,
@@ -175,7 +192,13 @@ export class ServiceClient {
           let detail = ''
           try {
             const data = JSON.parse(bytes.toString('utf8'))
-            detail = String(data.message ?? data.error?.message ?? data.error ?? '').slice(0, 300)
+            // 视觉接口的错误可能回显图片；此类请求只保留 HTTP 状态，不持久化错误正文。
+            if (
+              !Object.values(service.submit.fields).some(
+                (mapping) => mapping.format === 'openai_content',
+              )
+            )
+              detail = String(data.message ?? data.error?.message ?? data.error ?? '').slice(0, 300)
           } catch {
             /* 非 JSON 错误只显示状态码。 */
           }
@@ -491,7 +514,17 @@ export class ServiceClient {
         return this.assets.dataUrl(owner, source)
       }
       let value: unknown
-      if (mapping.format === 'data_url') {
+      if (mapping.format === 'openai_content') {
+        const images = this.validateAssistantImages(owner, inputs.images)
+        const content: Array<Record<string, unknown>> = [{ type: 'text', text: String(raw) }]
+        for (const reference of images) {
+          content.push({
+            type: 'image_url',
+            image_url: { url: await this.assets.dataUrl(owner, reference) },
+          })
+        }
+        value = content
+      } else if (mapping.format === 'data_url') {
         if (Array.isArray(raw)) {
           if (raw.length > 20) throw new Error('单次最多引用 20 份素材')
           const values: string[] = []

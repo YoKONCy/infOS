@@ -1,0 +1,6 @@
+{
+  "分析所选图片（{0} 张）": "Images · {0}",
+  "每次最多分析四张所选图片": "Select up to 4 images.",
+  "所选图片总量不能超过 20 MiB": "Selected images must total no more than 20 MiB.",
+  "助手图片输入仅支持最多四张 PNG、JPEG 或 WebP，总量不超过 20 MiB。": "Assistant image input supports up to four PNG, JPEG, or WebP images totaling at most 20 MiB."
+}

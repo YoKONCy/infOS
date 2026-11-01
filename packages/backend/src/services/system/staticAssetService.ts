@@ -29,17 +29,33 @@ const CONTENT_TYPES: Record<string, string> = {
   '.woff2': 'font/woff2',
   '.woff': 'font/woff',
   '.ttf': 'font/ttf',
+  '.avif': 'image/avif',
+}
+
+/** 只有内容哈希资源允许不可变缓存；固定名称与 HTML 每次通过 ETag 协商更新。 */
+export function staticAssetCacheControl(requested: string): string {
+  return /^assets\/[^/]+-[a-zA-Z0-9_-]{8,}\.[a-zA-Z0-9]+$/.test(requested.replaceAll('\\', '/'))
+    ? 'public, max-age=31536000, immutable'
+    : 'no-cache'
 }
 
 /** 发行包静态资源读取服务。 */
 export class StaticAssetService {
   constructor(private readonly root: string) {}
 
-  read(requested: string): { body: ArrayBuffer; contentType: string; cacheControl: string } | null {
+  private locate(requested: string) {
     const root = path.resolve(this.root)
     const target = path.resolve(root, requested)
     if (target !== root && !target.startsWith(`${root}${path.sep}`)) throw new Error('FORBIDDEN')
-    if (!existsSync(target) || !statSync(target).isFile()) return null
+    if (!existsSync(target)) return null
+    const stat = statSync(target)
+    return stat.isFile() ? { target, stat } : null
+  }
+
+  read(requested: string): { body: ArrayBuffer; contentType: string; cacheControl: string } | null {
+    const file = this.locate(requested)
+    if (!file) return null
+    const { target } = file
     const content = readFileSync(target)
     return {
       body: content.buffer.slice(
@@ -47,8 +63,39 @@ export class StaticAssetService {
         content.byteOffset + content.byteLength,
       ) as ArrayBuffer,
       contentType: CONTENT_TYPES[path.extname(target).toLowerCase()] ?? 'application/octet-stream',
-      cacheControl:
-        path.basename(target) === 'index.html' ? 'no-cache' : 'public, max-age=31536000, immutable',
+      cacheControl: staticAssetCacheControl(requested),
     }
+  }
+
+  /** 条件命中和 HEAD 都不读取正文；主应用与子应用共用同一缓存语义。 */
+  response(requested: string, request: Request): Response | null {
+    const file = this.locate(requested)
+    if (!file) return null
+    const { target, stat } = file
+    const etag = `W/"${stat.size.toString(16)}-${stat.mtimeMs.toString(16)}"`
+    const headers = new Headers({
+      'Content-Type':
+        CONTENT_TYPES[path.extname(target).toLowerCase()] ?? 'application/octet-stream',
+      'Cache-Control': staticAssetCacheControl(requested),
+      ETag: etag,
+      'Last-Modified': stat.mtime.toUTCString(),
+      'Referrer-Policy': 'same-origin',
+    })
+    const condition = request.headers.get('if-none-match')
+    const unchanged =
+      condition !== null
+        ? condition
+            .split(',')
+            .some(
+              (value) => value.trim() === '*' || value.trim().replace(/^W\//, '') === etag.slice(2),
+            )
+        : Boolean(request.headers.get('if-modified-since')) &&
+          Math.floor(stat.mtimeMs / 1000) * 1000 <=
+            Date.parse(request.headers.get('if-modified-since')!)
+    if (unchanged) return new Response(null, { status: 304, headers })
+    headers.set('Content-Length', String(stat.size))
+    return new Response(request.method === 'HEAD' ? null : new Uint8Array(readFileSync(target)), {
+      headers,
+    })
   }
 }

@@ -3,12 +3,25 @@ import { getBackendOrigin } from './clientConnection'
 import { ipcMain } from 'electron'
 import { desktopTabs } from '../windows/desktopTabs'
 import { startDesktopPictoria } from './pictoriaLifetime'
+import { t as __t } from '../utils/i18n'
 
 const operations = new Set([
+  'canvas.assistant.prepare',
+  'canvas.assistant.settings.get',
+  'canvas.assistant.settings.save',
+  'canvas.context.set',
+  'canvas.context.get',
+  'canvas.context.close',
+  'canvas.propose',
+  'canvas.proposal.list',
+  'canvas.proposal.resolve',
+  'canvas.conversation.get',
+  'canvas.conversation.save',
   'collection.list',
   'collection.save',
   'collection.delete',
   'project.move',
+  'project.rename',
   'prompt.search',
   'provider.settings',
   'provider.configure',
@@ -70,8 +83,12 @@ export function registerPictoriaSurface(): void {
     } else if (input.action === 'start') return startDesktopPictoria()
     else if (input.action === 'stop') endpoint = '/stop'
     else if (input.action === 'operation') {
-      if (typeof input.operation !== 'string' || !operations.has(input.operation))
-        throw new Error('此画布操作未开放')
+      if (typeof input.operation !== 'string')
+        throw new Error(__t('electron.ui.pictoria', '画布操作标识无效'))
+      if (!operations.has(input.operation))
+        throw new Error(
+          __t('electron.ui.pictoria', '此画布操作未开放：{0}', [input.operation.slice(0, 128)]),
+        )
       endpoint = `/operations/${encodeURIComponent(input.operation)}`
       body = { agentId: input.agentId, input: input.input ?? {} }
     } else if (input.action === 'upload') {

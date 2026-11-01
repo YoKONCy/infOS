@@ -78,9 +78,12 @@ export function decodeNodes(text: string): NodeClipboard | undefined {
           typeof item.id === 'string' &&
           point(item) &&
           object(item.content) &&
-          ['text', 'asset', 'run', 'draft'].includes(item.content.kind) &&
+          ['text', 'asset', 'run', 'draft', 'group'].includes(item.content.kind) &&
           [item.content.width, item.content.height].every(
-            (size) => Number.isFinite(size) && size > 0 && size <= 4000,
+            (size) =>
+              Number.isFinite(size) &&
+              size > 0 &&
+              size <= (item.content.kind === 'group' ? 100000 : 4000),
           ),
       )
     )

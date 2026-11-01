@@ -4,8 +4,8 @@ import { existsSync } from 'node:fs'
 import { fileURLToPath } from 'node:url'
 import { ApplicationProcessLifetime } from '@infos/node-host'
 import { ArcaApplicationHost } from './applicationHost'
-import { setLocale } from '@infos/shared/i18n'
-setLocale(process.env.INFOS_LANGUAGE ?? process.env.LANG)
+import { setLocale, resolveEnvironmentLocale } from '@infos/shared/i18n'
+setLocale(resolveEnvironmentLocale(process.env, Intl.DateTimeFormat().resolvedOptions().locale))
 
 function numberFlag(name: string): number | undefined {
   const prefix = `--${name}=`

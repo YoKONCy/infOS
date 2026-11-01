@@ -22,6 +22,8 @@ Manifest 已声明 `main.tab` 画布 Surface。客户端位于 `client/`：挂�
 
 ## 2. 独立运行与开发
 
+画布图像工作室、候选图、助手增量协议、节点编组和完整项目包的当前数据契约与失败恢复见 [画布工作室](../../../.docs/B30_PICTORIA_STUDIO.md)。
+
 `pnpm start` 会同时启动 Arca 与 Pictoria 客户端，并在 Pictoria 的 7363 端口就绪后启动 Electron。单独开发客户端可用 `pnpm --filter @infos/pictoria dev:client`。7363 被占用时明确退出，不自动换端口。开发后台直接通过 `--import` 注册 tsx 加载器，发现记录中的 PID 与托管进程一致。发行构建脚本已包含客户端资源。启动命令与发行构建本轮均未执行。
 
 独立开发使用 `pnpm --filter @infos/pictoria dev:standalone` 和 `pnpm --filter @infos/pictoria dev:client`，按后台输出的画布链接连接，不需要启动 infOS。
@@ -232,6 +234,10 @@ Manifest 已声明 `main.tab` 画布 Surface。客户端位于 `client/`：挂�
 结构错误在接受前拒绝；依赖上游实际生成的输入，则在对应节点请求前校验，不能承诺在上游生成前预测所有输出值。
 
 ## 6. LLM 节点
+
+画布视觉助手、`update_draft`、参考图用途与视频起始帧接续契约统一见 [.docs/B30_PICTORIA_STUDIO.md](../../../.docs/B30_PICTORIA_STUDIO.md)。`x-pictoria-video.startFrameField` 只表达 API 已有能力；接续 JPEG 仍是普通素材。`openai_content` 服务字段格式以 `prompt` 为文本、`images` 为显式素材引用，发送时编码多模态消息，不能用于推断任意供应商的协议。
+
+助手设置的范围、持久化和调用契约同见上述权威说明。`canvas.assistant.settings.get/save` 按画布保存独立设置；`HostPort.generate.options` 只承载经过校验的采样、输出、思考与超时参数，挂载主模型的协议与授权仍由 infOS 管理。新增画布操作必须同步 manifest 和 Electron 显式白名单。
 
 步骤 implementation 使用 `{kind:"llm",system:"作者提示词",modelId:"5",outputMode:"text"}`，其中 modelId 是 infOS 模型配置的数字 ID 字符串，不是供应商模型名。省略时使用角色模型。
 

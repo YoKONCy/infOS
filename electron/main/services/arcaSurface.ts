@@ -1,5 +1,5 @@
 import { getClientCredential } from '../utils/clientCredential'
-import { getBackendOrigin } from './clientConnection'
+import { getBackendOrigin, fetchBackend } from './clientConnection'
 import { ipcMain } from 'electron'
 import { desktopTabs } from '../windows/desktopTabs'
 
@@ -33,7 +33,7 @@ export function registerArcaSurface(): void {
       'content-type': 'application/json',
       ...(token ? { Authorization: `Bearer ${token}` } : {}),
     }
-    const response = await fetch(`${origin}/api/applications/arca/collaboration${route}`, {
+    const response = await fetchBackend(`${origin}/api/applications/arca/collaboration${route}`, {
       method,
       body,
       headers,
@@ -49,7 +49,7 @@ export function registerArcaSurface(): void {
         (status.agents ?? []).map(async (agent) => {
           if (!agent.avatarUrl) return
           try {
-            const avatar = await fetch(
+            const avatar = await fetchBackend(
               `${origin}/api/agents/${encodeURIComponent(agent.id)}/avatar`,
               { headers, signal: AbortSignal.timeout(8000), redirect: 'error' },
             )

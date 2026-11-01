@@ -13,9 +13,10 @@ COPY patches/ ./patches/
 COPY scripts/vite-browser-compat.ts ./scripts/vite-browser-compat.ts
 COPY public/ ./public/
 COPY scripts/pdfAssetsPlugin.ts ./scripts/pdfAssetsPlugin.ts
+COPY scripts/precompress-web-assets.mjs ./scripts/precompress-web-assets.mjs
 
 RUN pnpm install --frozen-lockfile --filter @infos/frontend...
-RUN pnpm --filter @infos/frontend build
+RUN pnpm --filter @infos/frontend build && node scripts/precompress-web-assets.mjs packages/frontend/dist
 
 FROM nginxinc/nginx-unprivileged:1.27-alpine AS production
 

@@ -1,6 +1,6 @@
 import './utils/stdioGuard'
 import { steamAchievements } from './services/steamAchievements'
-import { t as __t } from './utils/i18n'
+import { t as __t, initializeDesktopLanguage } from './utils/i18n'
 /**
  * @file Electron 主进程入口
  * @description 遵循 07_DUAL_DEPLOYMENT.md — Electron 壳层仅做窗口/IPC/系统能力
@@ -45,6 +45,11 @@ import {
   focusConnectionSetup,
 } from './services/clientConnectionSetup'
 import { notifyRendererError, reportMainError } from './utils/mainErrorHandler'
+import {
+  installRemoteCertificateTrust,
+  connectionErrorSource,
+} from './services/remoteCertificateUi'
+import { cancelClientRestart, completeClientRestart } from './services/clientRestart'
 
 configureClientCredential(process.env.PERO_DATA_DIR || paths.data)
 configureClientConnection(
@@ -163,8 +168,8 @@ const startupFlow = new StartupFlow({
     else if (selected.mode === 'remote') {
       try {
         await clientConnection().verify()
-      } catch {
-        await showConnectionSetup(true, '连接失败，请检查地址、令牌和网络。')
+      } catch (error) {
+        await showConnectionSetup(true, connectionErrorSource(error))
       }
     }
     // 开屏已绘制后再扫描资源；外部模型映射仍先于 Launcher 初始化。
@@ -259,6 +264,8 @@ async function startDesktop(): Promise<void> {
 app
   .whenReady()
   .then(async () => {
+    await initializeDesktopLanguage()
+    installRemoteCertificateTrust()
     // 恢复托盘先于后端加载，首次启动失败时也必须保留原生恢复入口。
     const { createTray } = await import('./services/tray')
     createTray()
@@ -280,12 +287,14 @@ app.on('before-quit', async (event) => {
   isPreparingQuit = true
   try {
     if (!(await desktopTabs.closeAll())) {
+      cancelClientRestart()
       isPreparingQuit = false
       await import('./services/updater').then(({ cancelUpdateInstall }) => cancelUpdateInstall())
       return
     }
   } catch (error) {
     isPreparingQuit = false
+    cancelClientRestart()
     await import('./services/updater')
       .then(({ cancelUpdateInstall }) => cancelUpdateInstall())
       .catch((cancelError) =>
@@ -389,7 +398,7 @@ app.on('before-quit', async (event) => {
     logger.close()
   }
 
-  app.quit()
+  if (!completeClientRestart()) app.quit()
 })
 
 app.on('second-instance', () => {

@@ -1,10 +1,10 @@
 # DevOps 与运维规范
 
-> **版本**：0.9.10 · **更新时间**：2026-10-26
+> **版本**：0.9.11 · **更新时间**：2026-10-26
 > **适用范围**：CI/CD、数据库迁移、版本发布、安全、可观测性、API 文档
 > **依赖规范**：[A04_DEPLOYMENT](./A04_DEPLOYMENT.md)、[S04_TESTING_STANDARDS](./S04_TESTING_STANDARDS.md)
 >
-> **当前事实**：普通 CI 执行 lint、测试和全包构建；Tag Release 构建 Windows 标准版、便携版、Steam 版，并在 Docker Hub 凭据存在时构建推送前后端镜像。Dockerfile、Compose、镜像黑盒验收和多架构发布仍需按实施路线完成生产校准。
+> **当前事实**：普通 CI 执行安全审计、规范提示、跨平台测试、类型检查、全包构建及 Docker 构建烟测；Tag Release 复用质量门禁，构建 Windows 标准版、便携版和 Steam 版，验收最终便携包，并通过 GitHub Container Registry 发布前后端镜像。
 
 ---
 
@@ -20,6 +20,7 @@
 | lint | ESLint 与格式提示；当前为非阻断任务，不是测试的前置依赖 |
 | test | Linux / Windows 矩阵运行功能测试；不另起重复覆盖率任务 |
 | build | 依赖 test，执行包/模板及测试代码类型检查、版本一致性、全包构建和 Daemon 发行依赖检查 |
+| docker-smoke | 构建镜像，验证健康入口、代理、子应用启动及停止，最后清理隔离容器 |
 
 不设覆盖率百分比门禁；手动 coverage 用于定位遗漏，不能代替有效断言。测试选取标准见 [S04](./S04_TESTING_STANDARDS.md)。
 
@@ -29,7 +30,7 @@ Linux 测试使用四个 worker，Windows 使用两个，避免原生模块、PD
 
 ### 1.2 触发与发行
 
-push 到 main/dev、面向 main 的 PR 触发普通 CI；Release 可通过 workflow_call 复用。标签发行构建 Windows 标准、便携和 Steam 产物；镜像发布取决于对应 Registry 凭据。普通 main push 不等同于 Electron Release，也不存在仅凭 release 分支名称就完成 Steam 发布的保证。
+push 到 main/dev、面向 main 的 PR 触发普通 CI；Release 通过 workflow_call 复用。标签发行构建 Windows 标准、便携和 Steam 产物，并以当前仓库的 `GITHUB_TOKEN` 发布 GHCR 镜像。创建 Release 等待标准版、最终便携包验收、Steam 构建及镜像发布完成。普通 main push 不等同于 Electron Release；Steam Depot 上传与审核另行操作。
 
 ### 1.3 运行时与依赖门禁
 
@@ -73,11 +74,13 @@ packages/backend/src/database/
 - **向前兼容**：新增列给默认值，不删除现有列（可标记 deprecated）
 - **不可逆操作需确认**：删表、改列类型等操作需要人工审批
 - **迁移目的明确、顺序稳定**：每个迁移聚焦相关结构变化；多迁移按 journal 顺序执行，不改写已发布迁移
-- **TriviumDB 升级需保护完整文件组**：当前固定 `0.9.0-beta.4`，主文件格式为 v10；首次可写打开 v5–v9 库前，注册表持有共享读锁并保留完整、带 SHA-256 清单的副本，再由引擎迁移并保存向量类型、元素宽度与头部 CRC。依赖升级不自动重算 Embedding 或触发全库重建。有待恢复 WAL 时停止旧格式迁移，先用原版本正常恢复并退出；历史仅 WAL、无类型空检查点附带非空 WAL 的库尤其需要先用原版本完成检查点。不要只备份 `.tdb` 主文件。
+- **TriviumDB 升级需保护完整文件组**：当前固定 `0.9.0` 正式版，主文件格式为 v10；首次可写打开 v5–v9 库前，注册表持有共享读锁并保留完整、带 SHA-256 清单的副本，再由引擎迁移并保存向量类型、元素宽度与头部 CRC。依赖升级不自动重算 Embedding 或触发全库重建。有待恢复 WAL 时停止旧格式迁移，先用原版本正常恢复并退出；历史仅 WAL、无类型空检查点附带非空 WAL 的库尤其需要先用原版本完成检查点。不要只备份 `.tdb` 主文件。
 
-新升级备份位于 `@data/.store-upgrades/0.9.0-beta.4/<原数据库相对路径>/<文件组摘要>/`，不参与分布式同步。0.8.9、0.8.11、0.9.0-beta.2、0.9.0-beta.3 等旧版本备份继续保留并纳入角色发现、重建、清空和永久删除的定向清理，防止已遗忘正文被恢复。回退版本前必须停止应用，并从同一备份目录恢复整组文件；旧引擎不能直接接管迁移后的 v10 主文件，也不能忽略新版发布中断现场。社交图谱不能作为可丢弃向量缓存处理。
+新升级备份位于 `@data/.store-upgrades/0.9.0/<原数据库相对路径>/<文件组摘要>/`，不参与分布式同步。0.8.9、0.8.11、0.9.0-beta.2、0.9.0-beta.3、0.9.0-beta.4 等旧版本备份继续保留并纳入角色发现、重建、清空和永久删除的定向清理，防止已遗忘正文被恢复。回退版本前必须停止应用，并从同一备份目录恢复整组文件；旧引擎不能直接接管迁移后的 v10 主文件，也不能忽略新版发布中断现场。社交图谱不能作为可丢弃向量缓存处理。
 
-beta.4 的属性索引采用 `.pidx` v8，旧复合 posting 按主文件事实查询，普通复合索引需要按原字段列表重新创建；唯一约束从主文件定义恢复。`.quiver.meta` v2 将索引与主文件、向量及 ID/slot 绑定；旧 v1 元数据遵循 `missingIndexPolicy`，注册表现有 `fallback` 策略允许回退，显式重建可发布新索引。主文件迁移与索引重建均不能省略备份。兼容依据见[上游 beta.4 变更说明](https://github.com/YoKONCy/TriviumDB/blob/v0.9.0-beta.4/docs/changes/0.9.0-beta.4.md)。
+0.9.0 正式版沿用 beta.4 的索引格式：属性索引采用 `.pidx` v8，旧复合 posting 按主文件事实查询，普通复合索引需要按原字段列表重新创建；唯一约束从主文件定义恢复。`.quiver.meta` v2 将索引与主文件、向量及 ID/slot 绑定；旧 v1 元数据遵循 `missingIndexPolicy`，注册表现有 `fallback` 策略允许回退，显式重建可发布新索引。主文件迁移与索引重建均不能省略备份。兼容依据见[上游 beta.4 变更说明](https://github.com/YoKONCy/TriviumDB/blob/v0.9.0-beta.4/docs/changes/0.9.0-beta.4.md)。
+
+从 beta.4 切换至正式版不新增主文件格式迁移。升级前先关闭旧实例并保存完整文件组；正式版的 Windows 打开身份校验、维度迁移原子发布和关闭排空规则由引擎负责，应用不得通过手动补建数据库、删除锁或吞掉 I/O 错误绕过。实际部署还需文件系统支持排他原子重命名。依据见[上游 0.9.0 正式版说明](https://github.com/YoKONCy/TriviumDB/blob/v0.9.0/docs/changes/0.9.0.md)。
 
 0.8.10 起的 Mmap 发布恢复增加 `.tdb.publish` 和发布副本；beta.2 将副本扩展为 `.tdb.publish.0`–`.tdb.publish.8`，覆盖主文件、向量、flush marker、QuIVer、文本及属性/图索引。受管文件识别、备份与重建清理包含这些文件及其 `.tmp` 文件；不要自行删除尚未恢复的日志或旧代备份。可写句柄由引擎恢复未提交发布；只读检查遇到待恢复状态时返回错误，不能用半发布文件创建同步快照。快照发现也检查仅有旁路文件的库，避免主文件暂缺时静默漏掉恢复现场。
 
@@ -114,7 +117,7 @@ beta.4 的属性索引采用 `.pidx` v8，旧复合 posting 按主文件事实�
 | -------------- | -------------------------------------- | ------------------------------------- |
 | GitHub Release | 推送版本 Tag                           | `.exe` 安装包 + 便携版 + 发布说明     |
 | Steam          | Tag Release 构建，SteamPipe 另行发布   | Depot 构建产物                        |
-| Docker Hub     | 推送版本 Tag 且配置 Registry 凭据      | Backend/Frontend 版本镜像             |
+| GitHub Container Registry | 推送版本 Tag，质量门禁通过 | Backend/Frontend 版本镜像与通道标签 |
 
 ---
 

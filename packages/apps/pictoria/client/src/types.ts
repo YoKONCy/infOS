@@ -1,3 +1,7 @@
+import type { ReferenceUse, VideoContinuation } from '../../src/creativeInputs'
+import type { LlmCallOptions } from '../../src/assistantSettings'
+export type { ReferenceUse, ReferencePurpose, VideoContinuation } from '../../src/creativeInputs'
+
 export interface Asset {
   id: string
   name: string
@@ -51,7 +55,7 @@ export interface CanvasItem {
   y: number
   content: {
     version: 1
-    kind: 'text' | 'asset' | 'run' | 'draft'
+    kind: 'text' | 'asset' | 'run' | 'draft' | 'group'
     width: number
     height: number
     text?: string
@@ -69,8 +73,15 @@ export interface CanvasItem {
     inputs?: Record<string, unknown>
     request?: { fingerprint: string; key: string }
     originId?: string
+    groupId?: string
+    candidateGroupId?: string
+    primaryAssetId?: string
+    candidatesExpanded?: boolean
+    candidateParentId?: string
     showAdvanced?: boolean
     inputOrder?: Record<string, string[]>
+    referenceUses?: ReferenceUse[]
+    continuation?: VideoContinuation
   }
 }
 export interface CanvasCollection {
@@ -82,6 +93,7 @@ export interface CreationPreferences {
   stepId: string
   text: string
   inputsByStep: Record<string, Record<string, unknown>>
+  referenceUsesByStep?: Record<string, ReferenceUse[]>
 }
 export interface Project {
   id: string
@@ -92,8 +104,10 @@ export interface Project {
   edges?: CanvasEdge[]
   dismissedRunIds?: string[]
   creation?: CreationPreferences
+  viewport?: { x: number; y: number; scale: number }
 }
 export interface FieldSchema {
+  [key: string]: unknown
   type?: string
   title?: string
   description?: string
@@ -127,6 +141,7 @@ export interface Step {
     system?: string
     modelId?: string
     outputMode?: 'text' | 'json'
+    options?: LlmCallOptions
     workflowId?: string
     revision?: number
   }

@@ -1,4 +1,4 @@
-import { t as __t } from '../utils/i18n'
+import { t as __t, getLocale } from '../utils/i18n'
 /**
  * 内置 Daemon — 打包发行版统一运行时拉起
  *
@@ -309,6 +309,7 @@ async function startPortableDaemon(): Promise<boolean> {
         {
           ...process.env,
           NODE_ENV: 'production',
+          INFOS_LANGUAGE: getLocale(),
           // 数据目录一锤定音，确保数据库、Agent、Workspace、扩展和 Skills 全部同根。
           PERO_DATA_DIR: dataDir,
           // 后端根目录（内置角色/提示词/预设资源位置）。

@@ -10,6 +10,7 @@ const props = defineProps<{
   selected: boolean
   url?: string
   missing?: boolean
+  candidateCount?: number
 }>()
 const emit = defineEmits<{
   pointer: [event: PointerEvent]
@@ -19,6 +20,7 @@ const emit = defineEmits<{
   edit: []
   cancel: []
   recover: []
+  candidates: []
   connect: [event: PointerEvent, port: OutputPort]
 }>()
 const editing = ref(false)
@@ -100,6 +102,14 @@ const states: Record<string, string> = {
       <p v-if="item.content.error" class="run-error">{{ item.content.error }}</p>
       <div class="run-card-actions">
         <button
+          v-if="(candidateCount || 0) > 1"
+          class="text-button"
+          @pointerdown.stop
+          @click.stop="emit('candidates')"
+        >
+          {{ __t('apps.pictoria.studio', '候选图') }} · {{ candidateCount }}
+        </button>
+        <button
           v-if="['waiting', 'failed', 'partial'].includes(item.content.state || '')"
           class="text-button"
           @click.stop="emit('recover')"
@@ -133,7 +143,16 @@ const states: Record<string, string> = {
       </div>
       <footer>
         <span>{{ caption }}</span>
-        <small>{{ video ? 'VIDEO' : audio ? 'AUDIO' : 'IMAGE' }}</small>
+        <button
+          v-if="(candidateCount || 0) > 1"
+          class="candidate-card-count"
+          @pointerdown.stop
+          @click.stop="emit('candidates')"
+        >
+          <Icon name="layers" :size="12" />
+          <span>{{ __t('apps.pictoria.studio', '候选图') }} · {{ candidateCount }}</span>
+        </button>
+        <small v-else>{{ video ? 'VIDEO' : audio ? 'AUDIO' : 'IMAGE' }}</small>
       </footer>
     </template>
     <template v-if="item.content.kind === 'asset' || item.content.kind === 'text'">

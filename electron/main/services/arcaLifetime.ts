@@ -1,5 +1,5 @@
 import { getClientCredential } from '../utils/clientCredential'
-import { getBackendOrigin, isRemoteConnection } from './clientConnection'
+import { getBackendOrigin, isRemoteConnection, fetchBackend } from './clientConnection'
 import { createServer, type Server, type Socket } from 'node:net'
 import { randomBytes, timingSafeEqual } from 'node:crypto'
 import { tmpdir } from 'node:os'
@@ -103,7 +103,7 @@ export async function closeArcaDesktopGuard(): Promise<void> {
 export async function startDesktopArca(): Promise<unknown> {
   const value = isRemoteConnection() ? undefined : await desktopGuard(),
     token = getClientCredential()
-  const response = await fetch(`${getBackendOrigin()}/api/applications/arca/start`, {
+  const response = await fetchBackend(`${getBackendOrigin()}/api/applications/arca/start`, {
     method: 'POST',
     headers: {
       'content-type': 'application/json',

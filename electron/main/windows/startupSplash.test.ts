@@ -98,6 +98,14 @@ afterEach(() => {
 })
 
 describe('开屏内的连接选择', () => {
+  it('开发页面拒绝连接时展示本机终端恢复方式', async () => {
+    const { splash } = host()
+    await paint(splash)
+    splash.fail('launcher', new Error('startup-launcher-load:-102:ERR_CONNECTION_REFUSED'))
+    expect(snapshot().labels.message).toBe(
+      '本机开发页面服务未启动。请在终端停止并重新运行 pnpm dev:electron 或 pnpm start。',
+    )
+  })
   it('复用已显示的开屏，不创建第二个窗口或暴露保存的令牌', async () => {
     const { splash } = host()
     await paint(splash)

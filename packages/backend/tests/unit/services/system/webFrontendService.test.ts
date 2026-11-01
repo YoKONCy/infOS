@@ -39,4 +39,28 @@ describe('主应用网页资源', () => {
     expect(fetcher).not.toHaveBeenCalled()
     expect(await (await service.response(new Request('http://host/')))?.text()).toBe('当前开发页面')
   })
+
+  it('字体支持条件缓存，HEAD 和 304 不返回资源正文', async () => {
+    directory = mkdtempSync(path.resolve('TEMP/infos-web-cache-'))
+    mkdirSync(path.join(directory, 'assets'))
+    writeFileSync(path.join(directory, 'index.html'), '<main>infOS</main>')
+    writeFileSync(path.join(directory, 'assets', 'font-Abc12345.ttf'), '字体夹具正文')
+    const service = new WebFrontendService(directory)
+    const address = 'http://host/assets/font-Abc12345.ttf'
+    const first = (await service.response(new Request(address)))!
+    expect(first.headers.get('cache-control')).toContain('immutable')
+    expect(first.headers.get('content-type')).toBe('font/ttf')
+    expect(await first.text()).toBe('字体夹具正文')
+    const etag = first.headers.get('etag')
+    expect(etag).toBeTruthy()
+    const cached = (await service.response(
+      new Request(address, { headers: { 'if-none-match': etag! } }),
+    ))!
+    expect(cached.status).toBe(304)
+    expect(await cached.text()).toBe('')
+    const head = (await service.response(new Request(address, { method: 'HEAD' })))!
+    expect(head.status).toBe(200)
+    expect(head.headers.get('etag')).toBe(etag)
+    expect(await head.text()).toBe('')
+  })
 })

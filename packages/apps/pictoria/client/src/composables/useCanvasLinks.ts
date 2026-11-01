@@ -1,4 +1,5 @@
 import { t as __t } from '../i18n'
+import { applyReferenceUses, videoStartField } from '../../../src/creativeInputs'
 import { computed, onBeforeUnmount, reactive, ref, watch } from 'vue'
 import Ajv from 'ajv'
 import type {
@@ -175,7 +176,12 @@ export function useCanvasLinks(
       : ''
   })
   function fail(error: unknown) {
-    store.error.value = error instanceof Error ? error.message : '操作未完成'
+    store.error.value =
+      error instanceof Error && error.message === 'REFERENCE_PURPOSE_PROMPT_REQUIRED'
+        ? __t('apps.pictoria.references', '该步骤没有可接收用途说明的提示词字段。')
+        : error instanceof Error
+          ? error.message
+          : '操作未完成'
   }
   function connect(
     sourceId: string,
@@ -238,6 +244,10 @@ export function useCanvasLinks(
         target.content.inputs[fieldName] as Array<{ assetId: string }>
       ).filter((ref) => ref.assetId !== source.content.assetId)
     if (asset) {
+      if (!isAssetsField(field))
+        target.content.referenceUses = target.content.referenceUses?.filter(
+          (entry) => entry.field !== fieldName || entry.assetId === source.content.assetId,
+        )
       target.content.inputOrder ||= {}
       target.content.inputOrder[fieldName] = isAssetsField(field)
         ? [...new Set([...refs.map((ref) => ref.assetId), source.content.assetId!])]
@@ -291,6 +301,9 @@ export function useCanvasLinks(
   }
   function removeReference(item: CanvasItem, field: string, assetId: string) {
     store.checkpoint()
+    item.content.referenceUses = item.content.referenceUses?.filter(
+      (entry) => entry.field !== field || entry.assetId !== assetId,
+    )
     const inputs = item.content.inputs || {},
       value = inputs[field]
     if (Array.isArray(value)) inputs[field] = value.filter((ref) => ref?.assetId !== assetId)
@@ -527,8 +540,24 @@ export function useCanvasLinks(
       return false
     }
     try {
-      const inputs = resolveInputs(item),
+      const inputs = applyReferenceUses(
+          current.inputSchema,
+          resolveInputs(item),
+          item.content.referenceUses,
+        ),
         validate = validator.compile(current.inputSchema)
+      if (item.content.continuation) {
+        const start = videoStartField(current.inputSchema)
+        const refs = start ? inputs[start] : undefined
+        const frame = Array.isArray(refs) ? refs[0] : refs
+        if (
+          !frame ||
+          typeof frame !== 'object' ||
+          !('assetId' in frame) ||
+          frame.assetId !== item.content.continuation.frame.assetId
+        )
+          throw new Error(__t('apps.pictoria.video', '接续起始帧已变化，请重新建立接续草稿'))
+      }
       if (!validate(inputs)) {
         const problem = validate.errors?.[0]
         const name = String(

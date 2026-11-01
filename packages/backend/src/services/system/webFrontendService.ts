@@ -71,16 +71,10 @@ export class WebFrontendService {
     if (!this.assets) return new Response('主应用网页资源尚未安装', { status: 503 })
     try {
       const name = decodeURIComponent(url.pathname).replace(/^\/+/, '') || 'index.html'
-      const asset =
-        this.assets.read(name) || (!path.extname(name) ? this.assets.read('index.html') : null)
-      if (!asset) return new Response('网页资源不存在', { status: 404 })
-      return new Response(request.method === 'HEAD' ? null : asset.body, {
-        headers: {
-          'Content-Type': asset.contentType,
-          'Cache-Control': asset.cacheControl,
-          'Referrer-Policy': 'same-origin',
-        },
-      })
+      const response =
+        this.assets.response(name, request) ||
+        (!path.extname(name) ? this.assets.response('index.html', request) : null)
+      return response ?? new Response('网页资源不存在', { status: 404 })
     } catch {
       return new Response('禁止访问', { status: 403 })
     }

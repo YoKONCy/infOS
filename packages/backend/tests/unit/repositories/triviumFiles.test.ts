@@ -74,20 +74,14 @@ describe('TriviumDB 文件组与升级副本', () => {
     expect(databaseFormat(source)).toBe(format)
     expect(databaseFormat(`${source}-missing`)).toBeNull()
     const backup = backupLegacyStore(root, source, format)
-    const expectedRoot = path.join(
-      root,
-      '.store-upgrades',
-      '0.9.0-beta.4',
-      'agent_pero',
-      'memory.tdb',
-    )
+    const expectedRoot = path.join(root, '.store-upgrades', '0.9.0', 'agent_pero', 'memory.tdb')
     expect(backup.startsWith(`${expectedRoot}${path.sep}`)).toBe(true)
     expect(readFileSync(path.join(backup, 'memory.tdb'))).toEqual(header)
     expect(readFileSync(path.join(backup, 'memory.tdb.vec'), 'utf8')).toBe('向量制品')
     expect(readFileSync(path.join(backup, 'memory.tdb.publish.8'), 'utf8')).toBe('图索引恢复副本')
     expect(existsSync(path.join(backup, 'memory.tdb.vec.tmp'))).toBe(false)
     expect(JSON.parse(readFileSync(path.join(backup, 'backup.json'), 'utf8'))).toMatchObject({
-      targetVersion: '0.9.0-beta.4',
+      targetVersion: '0.9.0',
       format,
       source: path.join('agent_pero', 'memory.tdb'),
     })

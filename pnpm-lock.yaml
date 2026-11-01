@@ -28,7 +28,7 @@ overrides:
   js-cookie@>=3.0.0 <3.0.7: ^3.0.7
   source-map-js@<1.2.2: ^1.2.2
   ip-address@<10.3.1: ^10.3.1
-  follow-redirects@<1.16.1: ^1.16.1
+  follow-redirects@<1.16.2: ^1.16.2
   postcss@>=8.0.0 <8.5.18: ^8.5.18
   dompurify@>=3.0.0 <3.4.17: ^3.4.17
   hono@>=4.0.0 <4.12.25: ^4.12.25
@@ -275,12 +275,18 @@ importers:
       '@infos/shared':
         specifier: workspace:*
         version: link:../../shared
+      '@noble/hashes':
+        specifier: 1.8.0
+        version: 1.8.0
       ajv:
         specifier: ^8.18.0
         version: 8.18.0
       better-sqlite3:
         specifier: 12.11.1
         version: 12.11.1
+      fflate:
+        specifier: ^0.8.3
+        version: 0.8.3
       vue:
         specifier: ^3.5.42
         version: 3.5.44(typescript@5.9.3)
@@ -337,8 +343,8 @@ importers:
         specifier: 7.0.0
         version: 7.0.0
       triviumdb:
-        specifier: 0.9.0-beta.4
-        version: 0.9.0-beta.4
+        specifier: 0.9.0
+        version: 0.9.0
       uuid:
         specifier: ^14.0.0
         version: 14.0.0
@@ -458,8 +464,8 @@ importers:
         specifier: 1.0.22
         version: 1.0.22
       triviumdb:
-        specifier: 0.9.0-beta.4
-        version: 0.9.0-beta.4
+        specifier: 0.9.0
+        version: 0.9.0
       typescript:
         specifier: ^5.9.3
         version: 5.9.3
@@ -4259,8 +4265,8 @@ packages:
   focus-trap@7.8.0:
     resolution: {integrity: sha512-/yNdlIkpWbM0ptxno3ONTuf+2g318kh2ez3KSeZN5dZ8YC6AAmgeWz+GasYYiBJPFaYcSAPeu4GfhUaChzIJXA==}
 
-  follow-redirects@1.16.1:
-    resolution: {integrity: sha512-FNvFGzoMLWmE6Yj9spb/zjd7yiNCHiAW9/Tg9CXrQ8wuu32HtlJOwWO11OJafl5FfY3DxTdQ0vj42zU1kvv5jg==}
+  follow-redirects@1.16.2:
+    resolution: {integrity: sha512-/kVP2U8z596Ia0gwFrwyIeo74ta5aVmSeU1FfAUMAmcEP5EP7zydmag3SLiN64NaRKef3lxsq7i/g7ltJQDGow==}
     engines: {node: '>=4.0'}
     peerDependencies:
       debug: '*'
@@ -6423,8 +6429,8 @@ packages:
   trim-lines@3.0.1:
     resolution: {integrity: sha512-kRj8B+YHZCc9kQYdWfJB2/oUl9rA99qbowYYBtr4ui4mZyAQ2JpvVBd/6U2YloATfqBhBTSMhTpgBHtU0Mf3Rg==}
 
-  triviumdb@0.9.0-beta.4:
-    resolution: {integrity: sha512-pkQ+sc90XelNrhxODDI5/bVwbWzsWVi1ccQJM7VyVGYcCl0qF3MIFGt+OINTxUPhXKdcp+RvQm7ul3H0XkA4Cw==}
+  triviumdb@0.9.0:
+    resolution: {integrity: sha512-/7FBuLfKV2LMHyE4lWSp+5cHBIxckCin+8SL3I04A79qWXz2GbkcH/B3jDZY3NVybnDaPeSznicQuJi361bwOA==}
 
   truncate-utf8-bytes@1.0.2:
     resolution: {integrity: sha512-95Pu1QXQvruGEhv62XCMO3Mm90GscOCClvrIUwCM0PYOXK3kaF3l3sIHxx71ThJfcbM2O5Au6SO3AWCSEfW4mQ==}
@@ -9525,7 +9531,7 @@ snapshots:
 
   axios@1.20.0:
     dependencies:
-      follow-redirects: 1.16.1
+      follow-redirects: 1.16.2
       form-data: 4.0.6
       https-proxy-agent: 5.0.1
       proxy-from-env: 2.1.0
@@ -9753,7 +9759,7 @@ snapshots:
 
   centra@2.7.0:
     dependencies:
-      follow-redirects: 1.16.1
+      follow-redirects: 1.16.2
     transitivePeerDependencies:
       - debug
 
@@ -10911,7 +10917,7 @@ snapshots:
     dependencies:
       tabbable: 6.4.0
 
-  follow-redirects@1.16.1: {}
+  follow-redirects@1.16.2: {}
 
   fontkit@2.0.4:
     dependencies:
@@ -13288,7 +13294,7 @@ snapshots:
 
   trim-lines@3.0.1: {}
 
-  triviumdb@0.9.0-beta.4: {}
+  triviumdb@0.9.0: {}
 
   truncate-utf8-bytes@1.0.2:
     dependencies:

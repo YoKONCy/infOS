@@ -1,6 +1,7 @@
 /** 不依赖 Vue、Electron 或服务端的共用翻译运行时。 */
 export const SUPPORTED_LOCALES = ['zh-CN', 'zh-TW', 'en-US'] as const
 export type AppLocale = (typeof SUPPORTED_LOCALES)[number]
+export const DEFAULT_LOCALE: AppLocale = 'en-US'
 export const LANGUAGE_CONFIG_KEY = 'user.language'
 export const LANGUAGE_OPTIONS = [
   { label: '简体中文', value: 'zh-CN' },
@@ -17,18 +18,54 @@ let diagnosticPatterns: Array<{
   pattern: RegExp
   indices: number[]
 }> | null = null
-let locale: AppLocale = 'zh-CN'
+let locale: AppLocale = DEFAULT_LOCALE
 
-export function normalizeLocale(value: unknown): AppLocale {
-  const language = String(value ?? '')
+/** 识别单个语言标记；无法识别时保留空值，供偏好列表继续查找。 */
+export function matchLocale(value: unknown): AppLocale | null {
+  if (typeof value !== 'string') return null
+  const language = value
     .split(',')[0]!
     .split(';')[0]!
     .trim()
+    .split(/[.@]/)[0]!
     .replaceAll('_', '-')
     .toLowerCase()
-  if (/^zh-(?:tw|hk|mo|hant)(?:-|$)/.test(language)) return 'zh-TW'
+  if (/^zh(?:-|$)/.test(language)) {
+    const parts = language.split('-')
+    if (parts.includes('hant')) return 'zh-TW'
+    if (parts.includes('hans')) return 'zh-CN'
+    return parts.some((part) => ['tw', 'hk', 'mo'].includes(part)) ? 'zh-TW' : 'zh-CN'
+  }
   if (/^en(?:-|$)/.test(language)) return 'en-US'
-  return 'zh-CN'
+  return null
+}
+
+/** 按系统给出的优先级选择首个受支持语言，不把未知语言误判为中文。 */
+export function resolvePreferredLocale(values: readonly string[]): AppLocale {
+  for (const value of values) {
+    for (const item of value.split(',')) {
+      if (/;\s*q=0(?:\.0*)?\s*(?:;|$)/i.test(item)) continue
+      const language = matchLocale(item)
+      if (language) return language
+    }
+  }
+  return DEFAULT_LOCALE
+}
+
+export function normalizeLocale(value: unknown): AppLocale {
+  return typeof value === 'string' ? resolvePreferredLocale([value]) : DEFAULT_LOCALE
+}
+
+/** Node 与脚本入口的环境语言；显式覆盖优先于系统提供的区域信息。 */
+export function resolveEnvironmentLocale(
+  environment: Readonly<Record<string, string | undefined>>,
+  systemLocale: string,
+): AppLocale {
+  if (environment.INFOS_LANGUAGE?.trim()) return normalizeLocale(environment.INFOS_LANGUAGE)
+  return resolvePreferredLocale([
+    environment.LC_ALL || environment.LC_MESSAGES || environment.LANG || '',
+    systemLocale,
+  ])
 }
 
 export function getLocale(): AppLocale {
@@ -103,7 +140,11 @@ export function translate(
   language: AppLocale = locale,
 ): string {
   const entry = catalogs.get(scope)
-  const text = entry?.[language]?.[source] ?? entry?.['zh-CN']?.[source] ?? source
+  const text =
+    entry?.[language]?.[source] ??
+    entry?.['en-US']?.[source] ??
+    entry?.['zh-CN']?.[source] ??
+    source
   return text.replace(/\{(\d+)\}/g, (token, index: string) =>
     Number(index) < parameters.length ? String(parameters[Number(index)] ?? '') : token,
   )

@@ -10,6 +10,7 @@ import {
   requestFingerprint,
   readDismissedCanvasRuns,
   pictoriaManifest,
+  llmCallOptionsSchema,
   type Asset,
   type Run,
   type Step,
@@ -218,6 +219,7 @@ export class PictoriaIntegration {
           system: string
           inputs: Record<string, unknown>
           modelId?: string
+          options?: unknown
         }
         const result = await this.generate(value)
         res.setHeader('content-type', 'application/json')
@@ -518,9 +520,12 @@ export class PictoriaIntegration {
       { id },
       { principalId: owner, correlationId: randomUUID() },
     )
-    if (metadata.sizeBytes > 20 * 1024 * 1024) throw new Error('此素材超过画布预览上限 20 MB')
+    const maximumMiB = metadata.mimeType.startsWith('video/') ? 100 : 20
+    if (metadata.sizeBytes > maximumMiB * 1024 * 1024)
+      throw new Error(__t('apps.pictoria.video', '此素材超过画布预览上限 {0} MiB', [maximumMiB]))
     const { info, bytes } = await this.asset(owner, id)
-    if (bytes.length > 20 * 1024 * 1024) throw new Error('此素材超过画布预览上限 20 MB')
+    if (bytes.length > maximumMiB * 1024 * 1024)
+      throw new Error(__t('apps.pictoria.video', '此素材超过画布预览上限 {0} MiB', [maximumMiB]))
     return { info, base64: bytes.toString('base64') }
   }
   private rearmDelivery(runId: string, agentId: string): void {
@@ -728,9 +733,11 @@ export class PictoriaIntegration {
     system: string
     inputs: Record<string, unknown>
     modelId?: string
+    options?: unknown
   }) {
     const call = this.calls.get(value.callId)
     if (!call || call.appId !== pictoriaManifest.id) throw new Error('模型调用缺少有效创作任务')
+    const options = llmCallOptionsSchema.parse(value.options ?? {})
     const grants = await this.deps.applicationIntegration.listGrants(pictoriaManifest.id)
     const selected = value.modelId ? Number(value.modelId) : undefined
     if (value.modelId && (!Number.isSafeInteger(selected) || selected! <= 0))
@@ -773,8 +780,16 @@ export class PictoriaIntegration {
           { role: 'user', content },
         ],
         {
+          temperature: options.temperature,
+          topP: options.topP,
+          maxTokens: options.maxTokens,
+          reasoningEffort: options.reasoningEffort,
+          timeout: options.timeoutMs,
+          totalTimeout: options.timeoutMs,
           usageContext: { agentId: call.agentId, purpose: 'task' },
-          signal: this.shutdownSignal.signal,
+          signal: options.timeoutMs
+            ? AbortSignal.any([this.shutdownSignal.signal, AbortSignal.timeout(options.timeoutMs)])
+            : this.shutdownSignal.signal,
         },
       )
       return { text: result.choices[0]?.message.content ?? '' }

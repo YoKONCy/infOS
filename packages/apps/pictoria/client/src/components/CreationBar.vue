@@ -10,10 +10,13 @@ import type {
   InputConnection,
   OutputPort,
   Step,
+  ReferenceUse,
 } from '../types'
 import { acceptsAsset, isAssetField, isAssetsField } from '../composables/useCanvasLinks'
 import Icon from './PictoriaIcon.vue'
 import ReferenceInput from './ReferenceInput.vue'
+import { referencePromptField } from '../../../src/creativeInputs'
+import { setReferenceUse } from '../services/referenceUses'
 import PictoriaSelect from './PictoriaSelect.vue'
 import { promptPlaceholder, stepLabel } from '../services/labels'
 
@@ -28,8 +31,19 @@ const props = defineProps<{
   online: boolean
 }>()
 const emit = defineEmits<{
-  run: [step: Step, inputs: Record<string, unknown>, key: string, connections: InputConnection[]]
-  draft: [step: Step, inputs: Record<string, unknown>, connections: InputConnection[]]
+  run: [
+    step: Step,
+    inputs: Record<string, unknown>,
+    key: string,
+    connections: InputConnection[],
+    uses: ReferenceUse[],
+  ]
+  draft: [
+    step: Step,
+    inputs: Record<string, unknown>,
+    connections: InputConnection[],
+    uses: ReferenceUse[],
+  ]
   note: [text: string]
   upload: []
   clear: []
@@ -39,7 +53,9 @@ const emit = defineEmits<{
   anchor: [point: { x: number; y: number }]
 }>()
 const creation = defineModel<CreationPreferences>('creation')
-const preferences = computed(() => creation.value ?? { stepId: '', text: '', inputsByStep: {} })
+const preferences = computed<CreationPreferences>(
+  () => creation.value ?? { stepId: '', text: '', inputsByStep: {} },
+)
 const stepId = computed({
   get: () => preferences.value.stepId,
   set: (value) => {
@@ -65,6 +81,16 @@ watch(
   { immediate: true, flush: 'sync' },
 )
 const fields = computed(() => preferences.value.inputsByStep[stepId.value] ?? {})
+const referenceUses = computed(() => preferences.value.referenceUsesByStep?.[stepId.value] ?? [])
+function setPurpose(field: string, assetId: string, purpose: string) {
+  creation.value = {
+    ...preferences.value,
+    referenceUsesByStep: {
+      ...preferences.value.referenceUsesByStep,
+      [stepId.value]: setReferenceUse(referenceUses.value, field, assetId, purpose),
+    },
+  }
+}
 const details = reactive<Record<string, AssetReference>>({})
 const sourcePorts = reactive<Record<string, { source: string; port: OutputPort }>>({})
 const noteSource = ref<{ id: string; port: OutputPort }>()
@@ -171,6 +197,7 @@ function removeReference(key: string, id: string) {
         .map((ref) => ({ assetId: ref.assetId }))
     : undefined
   delete sourcePorts[`${key}:${id}`]
+  setPurpose(key, id, '')
   validation.value = ''
 }
 function addLibraryReference(key: string, asset: Asset) {
@@ -336,13 +363,18 @@ function submit(asDraft = false) {
     }
     const snapshot = connections.value.map((connection) => ({ ...connection }))
     if (asDraft) {
-      emit('draft', step.value, inputs, snapshot)
+      emit('draft', step.value, inputs, snapshot, referenceUses.value)
       return
     }
-    const fingerprint = JSON.stringify([step.value.id, step.value.revision, inputs])
+    const fingerprint = JSON.stringify([
+      step.value.id,
+      step.value.revision,
+      inputs,
+      referenceUses.value,
+    ])
     if (!previous || previous.fingerprint !== fingerprint)
       previous = { fingerprint, key: crypto.randomUUID() }
-    emit('run', step.value, inputs, previous.key, snapshot)
+    emit('run', step.value, inputs, previous.key, snapshot, referenceUses.value)
   } catch (e) {
     validation.value = e instanceof Error ? e.message : '请检查输入参数'
     settings.value = true
@@ -563,6 +595,8 @@ defineExpose({
           <ReferenceInput
             :owner="owner"
             :field-name="key"
+            :uses="referenceUses"
+            :purpose-enabled="!!step && !!referencePromptField(step.inputSchema)"
             :references="references(key)"
             :candidates="items.filter((item) => acceptsAsset(key, item))"
             :thumbnails="thumbnails"
@@ -574,6 +608,7 @@ defineExpose({
             @remove="removeReference(key, $event)"
             @move="(id, direction) => moveReference(key, id, direction)"
             @preview="emit('preview', $event)"
+            @purpose="(id, purpose) => setPurpose(key, id, purpose)"
           />
         </section>
       </div>

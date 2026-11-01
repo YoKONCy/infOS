@@ -64,6 +64,10 @@ Electron 的开发依赖、锁文件和发行配置必须一致。升级宿主 N
 
 仓库通过 npm 接入 TriviumDB、node-pty、better-sqlite3 等原生依赖，不维护这些依赖的 Rust 源码或 Cargo 工程。`scripts/rebuild-daemon-deps.mjs` 按 Electron 声明重建指定 ABI 依赖，`scripts/collect-daemon-deps.mjs` 收集实际运行文件。升级时分别核对 ABI、存储格式、资源路径与目标架构；源码依赖能安装不代表安装包完整。
 
+Windows x64 壳层的 Koffi 同时用于全局按住说话、原生窗口图标与透明背景处理。Koffi 3 的原生二进制位于 `@koromix/koffi-win32-x64` 平台包，不能只分发 `koffi` 的 JavaScript 主包。公共 `afterPack` 调用 `scripts/electron-native-runtime.cjs`，从 Koffi 自身的依赖作用域解析同版本平台包，将二进制与许可证复制到上游加载器支持的 `resources/koffi/win32_x64/` 路径，并记录版本、目标架构和 SHA-256。缺少平台包或版本不一致时停止发行，不降级成仅保留功能不可用提示。
+
+同一发行流程使用最终 Electron 可执行文件的副本，在独立子进程的 Node 模式中从 `app.asar` 的公共 Koffi 入口加载模块，核对资源目录和包版本，再调用 `user32.GetAsyncKeyState` 验证 Windows FFI。该检查覆盖标准版、Steam 版和便携版；它验证发行包的模块查找路径、原生模块加载及目标接口调用，不替代桌宠录音、快捷键按下与松开或窗口透明合成的完整运行验证。新增 Electron 平台或架构须同步扩展目标包收集与真实运行验证，不能套用构建机架构。
+
 Windows 透明窗口不能通过 Electron `backgroundMaterial`（包括 none）关闭系统背景，该路径可能破坏透明合成。现有实现使用 koffi 调用 DWM 仅关闭系统 backdrop，原生接口不可用时保持透明配置。维护者应检查桌宠、开屏与通知层的首次显示和重新显窗，不能以普通不透明窗口替代验证。
 
 前端语法目标集中于 `scripts/vite-browser-compat.ts`。依赖预打包和正式输出分别使用明确目标，Web、Electron、子应用和 Wiki 入口都须审阅；只改 build.target 不能解决 optimizeDeps 的语法兼容问题，也不能伪造 supported 掩盖编译器限制。

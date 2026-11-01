@@ -1,6 +1,6 @@
 import { t as __t } from '../utils/i18n'
 import { getClientCredential } from '../utils/clientCredential'
-import { getBackendOrigin } from './clientConnection'
+import { getBackendOrigin, fetchBackend } from './clientConnection'
 import { BrowserWindow, app, session } from 'electron'
 import http from 'node:http'
 import { desktopTabs } from '../windows/desktopTabs'
@@ -207,7 +207,7 @@ export async function startNapCatWithDashboard(replaceId?: string) {
   if (!getNapCatStatus().running) {
     try {
       const token = getClientCredential()
-      const response = await fetch(`${getBackendOrigin()}/api/social/status`, {
+      const response = await fetchBackend(`${getBackendOrigin()}/api/social/status`, {
         headers: token ? { Authorization: `Bearer ${token}` } : undefined,
         signal: AbortSignal.timeout(5000),
       })

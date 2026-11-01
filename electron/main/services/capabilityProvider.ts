@@ -5,6 +5,7 @@ import path from 'node:path'
 import { app, screen } from 'electron'
 import { runtimeDiagnostics } from './runtimeDiagnostics'
 import WebSocket from 'ws'
+import https from 'node:https'
 import type {
   DaemonToNodeMessage,
   KernelCapabilityOffer,
@@ -28,6 +29,8 @@ import { completionAlerts } from './completionAlerts'
 import { isApplicationFocused } from './notificationVisibility'
 import { renderDocumentPdf } from './documentPdf'
 import { getCapabilityEndpoint, isRemoteConnection, clientConnection } from './clientConnection'
+import { pinnedTlsOptions, trustedCertificateFor } from './remoteCertificates'
+import { localizedConnectionError } from './remoteCertificateUi'
 
 const CAPABILITY_PORT = Number(process.env.PERO_CAPABILITY_PORT ?? 9121)
 const DAEMON_HOST = process.env.PERO_DAEMON_HOST ?? '127.0.0.1'
@@ -159,7 +162,8 @@ class ElectronCapabilityProvider {
       } else if (isRemoteConnection()) {
         await clientConnection().verify()
       }
-    } catch {
+    } catch (error) {
+      logger.error('CapabilityProvider', localizedConnectionError(error))
       if (!this.stopped) this.scheduleReconnect()
       return
     }
@@ -168,7 +172,16 @@ class ElectronCapabilityProvider {
       'CapabilityProvider',
       __t('electron.logs.capabilityProvider', '正在连接 Daemon: {0}', [url]),
     )
-    const socket = new WebSocket(url)
+    const certificate = isRemoteConnection()
+      ? trustedCertificateFor(url, clientConnection().current?.certificates)
+      : undefined
+    const agent = certificate
+      ? new https.Agent({ ...pinnedTlsOptions(certificate), maxCachedSessions: 0 })
+      : undefined
+    const socket = new WebSocket(url, {
+      agent,
+      followRedirects: false,
+    })
     this.socket = socket
     socket.on('open', () => {
       const message: OutboundCapabilityMessage = {
@@ -180,6 +193,7 @@ class ElectronCapabilityProvider {
     })
     socket.on('message', (data) => void this.handleMessage(data.toString()))
     socket.on('close', () => {
+      agent?.destroy()
       for (const controller of this.invocations.values()) controller.abort('能力连接断开')
       desktopControl.disconnect()
       this.screenObservations.clear()

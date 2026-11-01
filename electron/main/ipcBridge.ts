@@ -24,7 +24,12 @@ import {
   webContents,
 } from 'electron'
 import AdmZip from 'adm-zip'
-import { getLocale, setLocale, t } from './utils/i18n'
+import {
+  restoreDesktopLanguage,
+  initializeDesktopLanguage,
+  applyDesktopLanguage,
+  t,
+} from './utils/i18n'
 import { systemFileOpenAction } from '../../packages/shared/src/resources'
 import { normalizeLocale } from '../../packages/shared/src/i18n'
 import os from 'node:os'
@@ -70,10 +75,12 @@ import { logger } from './utils/logger'
 import { getClientCredential } from './utils/clientCredential'
 import {
   getBackendOrigin,
+  fetchBackend,
   ensureSelectedBackend,
   isRemoteConnection,
 } from './services/clientConnection'
 import { showConnectionSetup, focusConnectionSetup } from './services/clientConnectionSetup'
+import { requestClientRestart } from './services/clientRestart'
 
 // ─── 按功能边界延迟导入的服务 ─────────────────────────
 // 窗口、桌面感知与 Steam 状态已有启动期静态依赖，直接复用；
@@ -277,18 +284,21 @@ function trustedWindow(sender: Electron.WebContents): boolean {
 export function registerIpcHandlers(): void {
   const languageFile = path.join(paths.data, 'client-language.txt')
   try {
-    setLocale(fs.readFileSync(languageFile, 'utf8').trim())
+    restoreDesktopLanguage(fs.readFileSync(languageFile, 'utf8').trim())
   } catch {
-    /* 首次启动使用默认语言 */
+    /* 首次启动由原生系统语言决定。 */
   }
-  ipcMain.handle('i18n:get-language', () => getLocale())
-  ipcMain.handle('i18n:set-language', (event, value: unknown) => {
+  ipcMain.handle('i18n:get-language', () => initializeDesktopLanguage())
+  ipcMain.handle('i18n:set-language', async (event, value: unknown) => {
     if (!trustedWindow(event.sender) || !trustedClient(event.sender.getURL()))
       throw new Error('仅主应用可以修改界面语言')
-    const language = normalizeLocale(value)
-    fs.mkdirSync(path.dirname(languageFile), { recursive: true })
-    fs.writeFileSync(languageFile, language, 'utf8')
-    setLocale(language)
+    await initializeDesktopLanguage()
+    if (value == null) fs.rmSync(languageFile, { force: true })
+    else {
+      fs.mkdirSync(path.dirname(languageFile), { recursive: true })
+      fs.writeFileSync(languageFile, normalizeLocale(value), 'utf8')
+    }
+    const language = applyDesktopLanguage(value)
     for (const contents of webContents.getAllWebContents())
       if (!contents.isDestroyed()) contents.send('i18n:changed', language)
     return language
@@ -308,8 +318,7 @@ export function registerIpcHandlers(): void {
       return
     }
     setImmediate(() => {
-      app.relaunch()
-      app.quit()
+      void requestClientRestart()
     })
   })
   ipcMain.on('client-access:credential', (event, kind?: string) => {
@@ -521,7 +530,7 @@ function registerDesktopTabHandlers(): void {
     if (action === 'start') return startDesktopArca()
     const origin = getBackendOrigin()
     const token = getClientCredential()
-    const response = await fetch(`${origin}/api/applications/arca/${action}`, {
+    const response = await fetchBackend(`${origin}/api/applications/arca/${action}`, {
       method: action === 'status' ? 'GET' : 'POST',
       headers: token ? { Authorization: `Bearer ${token}` } : undefined,
       signal: AbortSignal.timeout(30_000),

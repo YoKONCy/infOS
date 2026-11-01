@@ -151,6 +151,9 @@ export function configureVideo(
     usageDescription: `${brand} 的 ${model.name}。使用自然语言描述动作、场景和镜头。参考图片可选，按顺序提供最多 ${model.maxImages} 张 PNG/JPEG/WebP，每张不超过 10 MB。${id.startsWith('veo-') ? '固定 8 秒，参考图顺序为首帧、尾帧。' : adapter === 'atlascloud' ? '参考图决定起始画面；无参考时按比例生成。' : '多图作为人物与场景参考。'}参数遵循 schema，未声明的字段不可传入。`,
     inputSchema: {
       type: 'object',
+      ...(model.imageModel || id.startsWith('veo-')
+        ? { 'x-pictoria-video': { startFrameField: 'images' } }
+        : {}),
       properties: {
         prompt: {
           type: 'string',

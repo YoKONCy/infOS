@@ -1,5 +1,17 @@
 // 按模块、语言分别维护词库；此入口只装配当前运行端需要的资源。
 import { registerCatalog } from '../index'
+import pictoriaUiZh from '../locales/zh-CN/electron/ui/pictoria.json'
+import pictoriaUiTw from '../locales/zh-TW/electron/ui/pictoria.json'
+import pictoriaUiEn from '../locales/en-US/electron/ui/pictoria.json'
+registerCatalog('electron.ui.pictoria', 'zh-CN', pictoriaUiZh)
+registerCatalog('electron.ui.pictoria', 'zh-TW', pictoriaUiTw)
+registerCatalog('electron.ui.pictoria', 'en-US', pictoriaUiEn)
+import connectionUiZh from '../locales/zh-CN/electron/ui/connection.json'
+import connectionUiTw from '../locales/zh-TW/electron/ui/connection.json'
+import connectionUiEn from '../locales/en-US/electron/ui/connection.json'
+registerCatalog('electron.ui.connection', 'zh-CN', connectionUiZh)
+registerCatalog('electron.ui.connection', 'zh-TW', connectionUiTw)
+registerCatalog('electron.ui.connection', 'en-US', connectionUiEn)
 import achievementsCn from '../locales/zh-CN/electron/logs/achievements.json'
 import achievementsTw from '../locales/zh-TW/electron/logs/achievements.json'
 import achievementsEn from '../locales/en-US/electron/logs/achievements.json'

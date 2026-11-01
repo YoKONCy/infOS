@@ -2,6 +2,7 @@ import { t as __t } from '../i18n'
 import { computed, nextTick, onBeforeUnmount, reactive, ref, watch } from 'vue'
 import { desktop, fileBase64, pictoria, standalone } from '../services/transport'
 import { normalizeCreationPreferences } from '../services/creationPreferences'
+import { descendants } from '../../../src/canvasDocument'
 import type { Asset, CanvasCollection, CanvasItem, HostStatus, Project, Run, Step } from '../types'
 import {
   assertClipboardOwner,
@@ -30,10 +31,15 @@ function assetIds(value: unknown): string[] {
 }
 
 export function useCanvas() {
+  // 空画布名称跟随语言切换；加载、重命名与撤销仍须能够写入标题。
+  const projectTitle = ref<string | null>(null)
   const project = reactive<Project>({
     id: uid(),
     get title() {
-      return __t('apps.pictoria.ui', '未命名画布')
+      return projectTitle.value ?? __t('apps.pictoria.ui', '未命名画布')
+    },
+    set title(value: string) {
+      projectTitle.value = value === __t('apps.pictoria.ui', '未命名画布') ? null : value
     },
     revision: 0,
     items: [],
@@ -96,6 +102,7 @@ export function useCanvas() {
       items: project.items,
       edges: project.edges || [],
       dismissedRunIds: project.dismissedRunIds || [],
+      viewport: project.viewport,
     })
   const draftKey = () => `pictoria.canvas.${agentId.value || 'local'}.${project.id}`
   const remember = () => {
@@ -283,6 +290,7 @@ export function useCanvas() {
     project.items = snapshot.items
     project.edges = snapshot.edges || []
     project.dismissedRunIds = snapshot.dismissedRunIds || []
+    project.viewport = snapshot.viewport
     selected.value = selected.value.filter((id) => project.items.some((item) => item.id === id))
     warmMedia()
   }
@@ -321,6 +329,8 @@ export function useCanvas() {
     // 只移除画布卡片，不取消后台任务；删除记录阻止恢复逻辑再次补回卡片。
     project.dismissedRunIds = [...new Set([...(project.dismissedRunIds || []), ...removedRuns])]
     project.items = project.items.filter((item) => !ids.has(item.id))
+    for (const item of project.items)
+      if (item.content.groupId && ids.has(item.content.groupId)) delete item.content.groupId
     project.edges = (project.edges || []).filter(
       (edge) => !ids.has(edge.source) && !ids.has(edge.target),
     )
@@ -344,8 +354,9 @@ export function useCanvas() {
   }
   function copyNodes(): NodeClipboard | undefined {
     if (!activeItems.value.length) return
-    const ids = new Set(selected.value)
-    const items = cloneNodes(activeItems.value)
+    const members = descendants(project, selected.value) as CanvasItem[]
+    const ids = new Set(members.map((item) => item.id))
+    const items = cloneNodes(members)
     for (const item of items) {
       delete item.content.request
       delete item.content.runId
@@ -372,6 +383,9 @@ export function useCanvas() {
     const dx = point.x - Math.min(...source.items.map((item) => item.x)),
       dy = point.y - Math.min(...source.items.map((item) => item.y))
     const copies = source.items.map((item) => {
+      if (item.content.groupId) item.content.groupId = ids.get(item.content.groupId)
+      if (item.content.candidateGroupId)
+        item.content.candidateGroupId = ids.get(item.content.candidateGroupId)
       item.id = ids.get(item.id)!
       item.x += dx
       item.y += dy
@@ -498,6 +512,7 @@ export function useCanvas() {
         edges: project.edges || [],
         dismissedRunIds: project.dismissedRunIds || [],
         creation: project.creation,
+        viewport: project.viewport,
       }),
     )
     saving.value = true
@@ -547,6 +562,7 @@ export function useCanvas() {
     conflictDraft.value = undefined
     Object.assign(project, value)
     project.creation = normalizeCreationPreferences(value.creation)
+    project.viewport = value.viewport
     project.collectionId = value.collectionId ?? null
     project.edges = value.edges || []
     project.dismissedRunIds = value.dismissedRunIds || []
@@ -564,7 +580,7 @@ export function useCanvas() {
         const assetId = content.assetId
         const runId = content.runId
         const kind: CanvasItem['content']['kind'] =
-          content.kind && ['text', 'asset', 'run', 'draft'].includes(content.kind)
+          content.kind && ['text', 'asset', 'run', 'draft', 'group'].includes(content.kind)
             ? content.kind
             : assetId
               ? 'asset'
@@ -578,8 +594,14 @@ export function useCanvas() {
             version: 1 as const,
             kind,
             text: typeof content.text === 'string' ? content.text : '',
-            width: Math.max(120, Math.min(1600, Number(content.width) || 280)),
-            height: Math.max(90, Math.min(1600, Number(content.height) || 220)),
+            width: Math.max(
+              120,
+              Math.min(kind === 'group' ? 100000 : 1600, Number(content.width) || 280),
+            ),
+            height: Math.max(
+              90,
+              Math.min(kind === 'group' ? 100000 : 1600, Number(content.height) || 220),
+            ),
           },
         }
       })
@@ -600,6 +622,7 @@ export function useCanvas() {
           project.edges = draft.edges || []
           project.dismissedRunIds = draft.dismissedRunIds || []
           project.creation = normalizeCreationPreferences(draft.creation ?? project.creation)
+          project.viewport = draft.viewport ?? project.viewport
           dirty.value = true
           notice.value = '已恢复本地草稿。'
         } else {
@@ -656,9 +679,7 @@ export function useCanvas() {
     if (dirty.value) remember()
     loadDocument({
       id: uid(),
-      get title() {
-        return __t('apps.pictoria.ui', '未命名画布')
-      },
+      title: __t('apps.pictoria.ui', '未命名画布'),
       revision: 0,
       collectionId,
       items: [],
@@ -684,9 +705,7 @@ export function useCanvas() {
         if (previousOwner)
           loadDocument({
             id: uid(),
-            get title() {
-              return __t('apps.pictoria.ui', '未命名画布')
-            },
+            title: __t('apps.pictoria.ui', '未命名画布'),
             revision: 0,
             items: [],
           })
@@ -763,9 +782,7 @@ export function useCanvas() {
     collections.value = []
     loadDocument({
       id: uid(),
-      get title() {
-        return __t('apps.pictoria.ui', '未命名画布')
-      },
+      title: __t('apps.pictoria.ui', '未命名画布'),
       revision: 0,
       items: [],
     })
@@ -977,9 +994,7 @@ export function useCanvas() {
       if (project.id === id) {
         loadDocument({
           id: uid(),
-          get title() {
-            return __t('apps.pictoria.ui', '未命名画布')
-          },
+          title: __t('apps.pictoria.ui', '未命名画布'),
           revision: 0,
           items: [],
         })
@@ -1014,6 +1029,11 @@ export function useCanvas() {
     const provenance = (project.edges || [])
       .filter((edge) => edge.target === originId && !edge.historical)
       .map((edge) => ({ ...edge }))
+    const origin = project.items.find((item) => item.id === originId)
+    const referenceUses = JSON.parse(JSON.stringify(origin?.content.referenceUses ?? []))
+    const continuation = origin?.content.continuation
+      ? JSON.parse(JSON.stringify(origin.content.continuation))
+      : undefined
     await nextTick()
     if (disposed || generation !== context) throw new Error('画布已切换，此次尚未提交')
     if ((dirty.value || project.revision === 0) && !(await save()))
@@ -1053,6 +1073,8 @@ export function useCanvas() {
         inputs: JSON.parse(JSON.stringify(inputs)),
         step: JSON.parse(JSON.stringify(step)),
         originId,
+        referenceUses,
+        continuation,
       },
     }
     project.items.push(card)
@@ -1109,6 +1131,15 @@ export function useCanvas() {
             if (disposed || paused || generation !== context) return
             if (!project.items.includes(card)) break
             const output = addAsset(info, card.x + i * 330, card.y + card.content.height + 44)
+            output.content.candidateGroupId = card.content.candidateParentId || card.id
+            if (info.mimeType.startsWith('video/') && card.content.continuation)
+              output.content.continuation = JSON.parse(JSON.stringify(card.content.continuation))
+            const parent =
+              card.content.candidateParentId &&
+              project.items.find((item) => item.id === card.content.candidateParentId)
+            if (parent)
+              parent.content.outputIds = [...new Set([...(parent.content.outputIds || []), id])]
+            if (info.mimeType.startsWith('image/')) card.content.primaryAssetId ||= id
             project.edges ||= []
             if (project.edges.length < 8000)
               project.edges.push({
@@ -1157,6 +1188,12 @@ export function useCanvas() {
         const right = project.items.length
           ? Math.max(...project.items.map((item) => item.x + item.content.width)) + 60
           : 0
+        const origin = project.items.find(
+          (item) =>
+            item.content.kind === 'draft' &&
+            item.content.request?.fingerprint ===
+              JSON.stringify([run.nodes[0]?.step?.id, run.nodes[0]?.step?.revision, run.inputs]),
+        )
         project.items.push({
           id: uid(),
           x: right,
@@ -1170,6 +1207,12 @@ export function useCanvas() {
             state: run.state,
             name: run.name,
             inputs: run.inputs,
+            step: run.nodes[0]?.step,
+            originId: origin?.id,
+            continuation: origin?.content.continuation
+              ? JSON.parse(JSON.stringify(origin.content.continuation))
+              : undefined,
+            referenceUses: JSON.parse(JSON.stringify(origin?.content.referenceUses ?? [])),
           },
         })
       }
@@ -1263,6 +1306,7 @@ export function useCanvas() {
       project.edges,
       project.dismissedRunIds,
       project.creation,
+      project.viewport,
     ],
     () => {
       if (restoring || disposed) return
@@ -1339,6 +1383,7 @@ export function useCanvas() {
     library,
     selected,
     activeItems,
+    movingItems: () => descendants(project, selected.value) as CanvasItem[],
     urls,
     thumbnails,
     missing,

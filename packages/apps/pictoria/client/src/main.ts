@@ -5,6 +5,7 @@ import './styles/canvas.css'
 import './styles/canvas-creation.css'
 import './styles/canvas-polish.css'
 import './styles/workflow.css'
+import './styles/studio.css'
 
 const bridge = (window as unknown as { electron?: SurfaceBridge }).electron
 let mounted = false

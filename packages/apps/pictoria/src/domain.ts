@@ -1,5 +1,6 @@
 import { t as __t } from './i18n'
 import { z } from 'zod'
+import { llmCallOptionsSchema, type LlmCallOptions } from './assistantSettings'
 
 export const identifier = z.string().regex(/^[a-zA-Z0-9][a-zA-Z0-9_.:-]{0,127}$/)
 const record = z.record(z.string(), z.unknown())
@@ -19,6 +20,7 @@ export const stepSchema = z
         system: z.string().max(32000).default(''),
         modelId: identifier.optional(),
         outputMode: z.enum(['text', 'json']).default('text'),
+        options: llmCallOptionsSchema.optional(),
       }),
       z.object({
         kind: z.literal('workflow'),
@@ -120,7 +122,9 @@ export const endpointSchema = z
         z
           .object({
             from: z.string().min(1),
-            format: z.enum(['value', 'data_url', 'text', 'file']).default('value'),
+            format: z
+              .enum(['value', 'data_url', 'text', 'file', 'openai_content'])
+              .default('value'),
           })
           .strict(),
       )
@@ -268,7 +272,13 @@ export interface Invocation {
 }
 export interface HostPort {
   generate(
-    input: { callId: string; system: string; inputs: Record<string, unknown>; modelId?: string },
+    input: {
+      callId: string
+      system: string
+      inputs: Record<string, unknown>
+      modelId?: string
+      options?: LlmCallOptions
+    },
     signal: AbortSignal,
   ): Promise<Record<string, unknown>>
 }

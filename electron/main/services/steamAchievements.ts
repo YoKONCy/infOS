@@ -3,7 +3,7 @@ import {
   type AchievementSnapshot,
   type SteamAchievementSyncResult,
 } from '@infos/shared'
-import { getBackendOrigin } from './clientConnection'
+import { getBackendOrigin, fetchBackend } from './clientConnection'
 import { getClientCredential } from '../utils/clientCredential'
 import { getSteamUser, isSteamAchievementActivated, submitSteamAchievement } from './steam'
 import { logger } from '../utils/logger'
@@ -58,7 +58,7 @@ class SteamAchievements {
       token === getClientCredential() &&
       user.steamId === getSteamUser()?.steamId
     const request = (suffix: string, body?: unknown) =>
-      fetch(`${origin}/api/achievements${suffix}`, {
+      fetchBackend(`${origin}/api/achievements${suffix}`, {
         method: body ? 'POST' : 'GET',
         headers: {
           Authorization: `Bearer ${token}`,

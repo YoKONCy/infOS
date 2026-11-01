@@ -26,6 +26,7 @@ vi.mock('../utils/logger', () => ({
   logger: { info: vi.fn(), warn: vi.fn(), error: vi.fn() },
 }))
 vi.mock('../utils/i18n', () => ({
+  getLocale: () => 'zh-TW',
   t: (_scope: string, source: string, args: unknown[] = []) =>
     source.replace(/\{(\d+)\}/g, (_token, index: string) => String(args[Number(index)])),
 }))
@@ -95,6 +96,16 @@ afterEach(() => {
 })
 
 describe('内置 Daemon 生命周期', () => {
+  it('将桌面已选择的语言传给新建后台进程', async () => {
+    state.spawn.mockImplementation(() => {
+      state.healthy = true
+      return new FakeChild()
+    })
+    const daemon = await import('./portableDaemon')
+    expect(await daemon.ensurePortableDaemon()).toBe(true)
+    expect(state.spawn.mock.calls[0]?.[2].env.INFOS_LANGUAGE).toBe('zh-TW')
+  })
+
   it('远程模式的启动和健康重试均不探测或拉起本机后台', async () => {
     state.remote = true
     const daemon = await import('./portableDaemon')

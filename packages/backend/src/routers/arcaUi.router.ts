@@ -14,11 +14,7 @@ export function createArcaUiRouter(assets: StaticAssetService, application = 'ar
       return c.text('请求路径无效', 400)
     }
     try {
-      const asset = assets.read(decoded)
-      if (!asset) return c.text('应用界面资源不存在', 404)
-      c.header('Content-Type', asset.contentType)
-      c.header('Cache-Control', asset.cacheControl)
-      return c.body(asset.body)
+      return assets.response(decoded, c.req.raw) ?? c.text('应用界面资源不存在', 404)
     } catch {
       return c.text('禁止访问', 403)
     }

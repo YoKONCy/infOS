@@ -1,7 +1,8 @@
 <script setup lang="ts">
 import { t as __t } from '../i18n'
 
-import { onBeforeUnmount, onMounted, ref } from 'vue'
+import { computed, onBeforeUnmount, onMounted, ref } from 'vue'
+import { isAssetField, isAssetsField } from '../composables/useCanvasLinks'
 import type { FieldSchema, Step } from '../types'
 import { pictoria, standalone } from '../services/transport'
 import Icon from './PictoriaIcon.vue'
@@ -38,9 +39,7 @@ const inputSchema = ref<FieldSchema>(
         properties: {
           prompt: {
             type: 'string',
-            get title() {
-              return __t('apps.pictoria.ui', '提示词')
-            },
+            title: __t('apps.pictoria.ui', '提示词'),
           },
         },
         required: ['prompt'],
@@ -59,9 +58,7 @@ const outputSchema = ref<FieldSchema>(
               properties: {
                 text: {
                   type: 'string',
-                  get title() {
-                    return __t('apps.pictoria.ui', '文本')
-                  },
+                  title: __t('apps.pictoria.ui', '文本'),
                 },
               },
               required: ['text'],
@@ -72,9 +69,7 @@ const outputSchema = ref<FieldSchema>(
               properties: {
                 images: {
                   type: 'array',
-                  get title() {
-                    return __t('apps.pictoria.ui', '图片')
-                  },
+                  title: __t('apps.pictoria.ui', '图片'),
                   items: {
                     type: 'object',
                     properties: { assetId: { type: 'string' } },
@@ -106,16 +101,12 @@ if (props.videoApi && !props.step) {
     properties: {
       prompt: {
         type: 'string',
-        get title() {
-          return __t('apps.pictoria.ui', '提示词')
-        },
+        title: __t('apps.pictoria.ui', '提示词'),
         minLength: 1,
       },
       images: {
         type: 'array',
-        get title() {
-          return __t('apps.pictoria.ui', '参考图片')
-        },
+        title: __t('apps.pictoria.ui', '参考图片'),
         items: asset,
         default: [],
       },
@@ -128,9 +119,7 @@ if (props.videoApi && !props.step) {
     properties: {
       videos: {
         type: 'array',
-        get title() {
-          return __t('apps.pictoria.ui', '视频')
-        },
+        title: __t('apps.pictoria.ui', '视频'),
         items: asset,
         minItems: 1,
       },
@@ -140,6 +129,25 @@ if (props.videoApi && !props.step) {
   }
 }
 const privateStepId = crypto.randomUUID()
+const continuationField = computed({
+  get: () =>
+    String(
+      (inputSchema.value['x-pictoria-video'] as { startFrameField?: string } | undefined)
+        ?.startFrameField || '',
+    ),
+  set: (value: string) => {
+    const schema = { ...inputSchema.value }
+    if (value) schema['x-pictoria-video'] = { startFrameField: value }
+    else schema['x-pictoria-video'] = { startFrameField: null }
+    inputSchema.value = schema
+  },
+})
+const continuationFields = computed(() => [
+  { value: '', label: __t('apps.pictoria.video', '不提供起始帧接续') },
+  ...Object.entries(inputSchema.value.properties || {})
+    .filter(([, field]) => isAssetField(field) || isAssetsField(field))
+    .map(([name, field]) => ({ value: name, label: field.title || name })),
+])
 const previousFocus = document.activeElement
 function trapFocus(event: KeyboardEvent) {
   const values = Array.from(
@@ -206,9 +214,7 @@ async function save() {
                 properties: {
                   text: {
                     type: 'string',
-                    get title() {
-                      return __t('apps.pictoria.ui', '文本')
-                    },
+                    title: __t('apps.pictoria.ui', '文本'),
                   },
                 },
                 required: ['text'],
@@ -319,6 +325,23 @@ async function save() {
         <textarea v-model="usage" maxlength="16000" rows="3" />
       </label>
       <p v-if="error" class="workflow-field-error" role="alert">{{ error }}</p>
+      <label v-if="videoApi || outputSchema.properties?.videos" class="panel-field">
+        {{ __t('apps.pictoria.video', '起始帧字段') }}
+        <PictoriaSelect
+          v-model="continuationField"
+          :options="continuationFields"
+          :label="__t('apps.pictoria.video', '起始帧字段')"
+          :disabled="busy"
+        />
+        <small>
+          {{
+            __t(
+              'apps.pictoria.video',
+              '仅在 API 确实把该字段作为起始帧时启用；数组的第一张为起始帧。',
+            )
+          }}
+        </small>
+      </label>
       <footer>
         <button class="text-button" :disabled="busy" @click="emit('close')">
           {{ __t('apps.pictoria.ui', '取消') }}

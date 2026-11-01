@@ -1,10 +1,13 @@
 <script setup lang="ts">
 import { t as __t } from '../i18n'
 
-import { computed, onBeforeUnmount, ref, watch } from 'vue'
-import type { Asset, AssetReference, CanvasItem } from '../types'
+import { computed, onBeforeUnmount, reactive, ref, watch } from 'vue'
+import type { Asset, AssetReference, CanvasItem, ReferenceUse } from '../types'
+import { referencePurposeNames } from '../services/referenceUses'
 import Icon from './PictoriaIcon.vue'
 import AssetLibraryPicker from './AssetLibraryPicker.vue'
+import PictoriaSelect from './PictoriaSelect.vue'
+import { pictoria } from '../services/transport'
 
 const props = defineProps<{
   references: AssetReference[]
@@ -15,6 +18,8 @@ const props = defineProps<{
   online: boolean
   owner?: string
   fieldName?: string
+  purposeEnabled?: boolean
+  uses?: ReferenceUse[]
 }>()
 const emit = defineEmits<{
   add: [assetId: string]
@@ -22,8 +27,58 @@ const emit = defineEmits<{
   remove: [assetId: string]
   move: [assetId: string, direction: number]
   preview: [assetId: string]
+  purpose: [assetId: string, purpose: string]
 }>()
 const libraryOpen = ref(false)
+const purposesOpen = ref(false)
+const metadata = reactive<Record<string, Asset>>({})
+const resolvedReferences = computed(() =>
+  props.references.map((reference) => {
+    const asset = metadata[reference.assetId]
+    return asset
+      ? { ...reference, name: asset.meta?.title || asset.name, mimeType: asset.mimeType }
+      : reference
+  }),
+)
+watch(
+  () =>
+    [props.owner, props.online, props.references.map((entry) => entry.assetId).join('|')] as const,
+  async ([owner, online], _previous, onCleanup) => {
+    let stale = false
+    onCleanup(() => {
+      stale = true
+    })
+    if (_previous?.[0] !== owner) for (const id of Object.keys(metadata)) delete metadata[id]
+    if (!owner || !online) return
+    for (const reference of props.references) {
+      if (reference.mimeType || metadata[reference.assetId]) continue
+      try {
+        const asset = await pictoria.operation<Asset>(owner, 'asset.get', { id: reference.assetId })
+        if (stale) return
+        metadata[reference.assetId] = asset
+        if (asset.mimeType.startsWith('image/')) emit('preview', asset.id)
+      } catch {
+        /* 素材暂不可用时保留已有引用，不用其他图片替换。 */
+      }
+    }
+  },
+  { immediate: true },
+)
+const purposeOptions = computed(() => [
+  { value: '', label: __t('apps.pictoria.references', '未指定') },
+  ...Object.entries(referencePurposeNames).map(([value, name]) => ({
+    value,
+    label: __t('apps.pictoria.references', name),
+  })),
+])
+function purposeLabel(assetId: string) {
+  const purpose = props.uses?.find(
+    (entry) => entry.field === props.fieldName && entry.assetId === assetId,
+  )?.purpose
+  return purpose && referencePurposeNames[purpose]
+    ? __t('apps.pictoria.references', referencePurposeNames[purpose])
+    : ''
+}
 const mediaType = computed(() =>
   /image|mask|图/i.test(props.fieldName || '')
     ? 'image'
@@ -56,10 +111,15 @@ function add(id: string) {
   if (!props.multiple) open.value = false
 }
 function outside(event: PointerEvent) {
-  if (root.value && !root.value.contains(event.target as Node)) open.value = false
+  if (event.target instanceof Element && event.target.closest('.select-popover')) return
+  if (root.value && !root.value.contains(event.target as Node)) {
+    open.value = false
+    purposesOpen.value = false
+  }
 }
 function close() {
   open.value = false
+  purposesOpen.value = false
 }
 function key(event: KeyboardEvent) {
   if (['Delete', 'Backspace', ' '].includes(event.key)) event.stopPropagation()
@@ -73,15 +133,18 @@ watch(
   },
   { immediate: true },
 )
-watch(open, (value) => {
-  if (value) {
-    window.addEventListener('pointerdown', outside, true)
-    window.addEventListener('blur', close)
-  } else {
-    window.removeEventListener('pointerdown', outside, true)
-    window.removeEventListener('blur', close)
-  }
-})
+watch(
+  () => open.value || purposesOpen.value,
+  (value) => {
+    if (value) {
+      window.addEventListener('pointerdown', outside, true)
+      window.addEventListener('blur', close)
+    } else {
+      window.removeEventListener('pointerdown', outside, true)
+      window.removeEventListener('blur', close)
+    }
+  },
+)
 onBeforeUnmount(() => {
   window.removeEventListener('pointerdown', outside, true)
   window.removeEventListener('blur', close)
@@ -89,14 +152,14 @@ onBeforeUnmount(() => {
 </script>
 
 <template>
-  <div ref="root" class="reference-input" data-ui @keydown="key" @keydown.esc.stop="open = false">
+  <div ref="root" class="reference-input" data-ui @keydown="key" @keydown.esc.stop="close">
     <div
       class="reference-strip"
       role="list"
       :aria-label="__t('apps.pictoria.ui', '按顺序排列的参考素材')"
     >
       <div
-        v-for="(reference, index) in references"
+        v-for="(reference, index) in resolvedReferences"
         :key="reference.assetId"
         class="reference-tile"
         role="listitem"
@@ -120,6 +183,13 @@ onBeforeUnmount(() => {
           :size="19"
         />
         <b class="reference-number">{{ index + 1 }}</b>
+        <span
+          v-if="purposeLabel(reference.assetId)"
+          class="reference-purpose-badge"
+          :title="purposeLabel(reference.assetId)"
+        >
+          {{ purposeLabel(reference.assetId) }}
+        </span>
         <button
           class="reference-remove"
           :aria-label="__t('apps.pictoria.ui', '移除参考 {0}：{1}', [index + 1, reference.name])"
@@ -154,11 +224,27 @@ onBeforeUnmount(() => {
     </div>
     <div class="reference-toolbar">
       <button
+        v-if="
+          purposeEnabled && resolvedReferences.some((entry) => entry.mimeType?.startsWith('image/'))
+        "
+        class="reference-add"
+        :aria-expanded="purposesOpen"
+        @click="
+          () => {
+            purposesOpen = !purposesOpen
+            open = false
+          }
+        "
+      >
+        {{ __t('apps.pictoria.references', '用途') }}
+      </button>
+      <button
         class="reference-add"
         :aria-expanded="open"
         @click="
           () => {
             open = !open
+            purposesOpen = false
             query = ''
           }
         "
@@ -181,6 +267,7 @@ onBeforeUnmount(() => {
         @click="
           () => {
             open = false
+            purposesOpen = false
             libraryOpen = true
           }
         "
@@ -192,6 +279,42 @@ onBeforeUnmount(() => {
         {{ references.length }} / {{ limit }}{{ full ? __t('apps.pictoria.ui', ' · 已满') : '' }}
       </small>
     </div>
+    <section
+      v-if="purposesOpen && purposeEnabled"
+      class="reference-purpose-picker floating-panel"
+      @pointerdown.stop
+    >
+      <header>
+        <strong>{{ __t('apps.pictoria.references', '参考图用途') }}</strong>
+        <button
+          class="icon-button"
+          :aria-label="__t('apps.pictoria.ui', '关闭')"
+          @click="purposesOpen = false"
+        >
+          <Icon name="close" :size="13" />
+        </button>
+      </header>
+      <label
+        v-for="reference in resolvedReferences.filter((entry) =>
+          entry.mimeType?.startsWith('image/'),
+        )"
+        :key="reference.assetId"
+      >
+        <span>{{ reference.name }}</span>
+        <PictoriaSelect
+          :label="__t('apps.pictoria.references', '参考图用途')"
+          :options="purposeOptions"
+          :model-value="
+            uses?.find((entry) => entry.field === fieldName && entry.assetId === reference.assetId)
+              ?.purpose || ''
+          "
+          @update:model-value="emit('purpose', reference.assetId, $event)"
+        />
+      </label>
+      <small>
+        {{ __t('apps.pictoria.references', '用途说明随提示词发送，具体约束取决于模型。') }}
+      </small>
+    </section>
     <AssetLibraryPicker
       v-if="libraryOpen && owner"
       :owner="owner"

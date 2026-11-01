@@ -99,7 +99,7 @@ describe('MemoryStoreRegistry维度联动', () => {
         expect(readFileSync(join(backupRoot, backups[0]!, name))).toEqual(bytes)
       expect(
         JSON.parse(readFileSync(join(backupRoot, backups[0]!, 'backup.json'), 'utf8')),
-      ).toMatchObject({ targetVersion: '0.9.0-beta.4', format: 9 })
+      ).toMatchObject({ targetVersion: '0.9.0', format: 9 })
     } finally {
       registry.closeAll()
     }
@@ -247,82 +247,91 @@ describe('MemoryStoreRegistry维度联动', () => {
     registry.closeAll()
   })
 
-  it('重置 Store 时清理完整文件组与历代升级备份，保留相邻文件', () => {
-    const root = join(temporaryRoot, `infos-store-reset-${Date.now()}-${Math.random()}`)
-    roots.push(root)
-    mkdirSync(root, { recursive: true })
-    const resolver = {
-      resolve(alias: string) {
-        if (alias === '@data') return root
-        if (alias.startsWith('@data/')) return join(root, alias.slice('@data/'.length))
-        throw new Error(`未处理路径: ${alias}`)
-      },
-    }
-    const registry = new MemoryStoreRegistry(resolver as never, 4)
-    const storePath = registry.resolveAgentStorePath('pero', 'main')
-    mkdirSync(join(root, 'agent_pero'), { recursive: true })
-    const suffixes = [
-      '',
-      '.vec',
-      '.wal',
-      '.lock',
-      '.flush_ok',
-      '.quiver',
-      '.quiver.meta',
-      '.text',
-      '.text.meta',
-      '.dimension',
-      '.pidx',
-      '.gidx',
-      '.manifest.json',
-      '.pld.1792345678900',
-      '.pld.1792345678901',
-      '.pld.1792345678901.tmp',
-      '.publish',
-      '.publish.0',
-      '.publish.1',
-      '.publish.2',
-      '.publish.3',
-      '.publish.4',
-      '.publish.5',
-      '.publish.6',
-      '.publish.7',
-      '.publish.8',
-      '.publish.8.tmp',
-      '.publish.0.tmp',
-    ]
-    for (const suffix of suffixes) writeFileSync(`${storePath}${suffix}`, '测试')
-    writeFileSync(`${storePath}.notes.md`, '用户文档')
-    const social = registry.resolveAgentStorePath('pero', 'social')
-    writeFileSync(`${social}.pld.123`, '其他库')
-    const backup = upgradeBackupPath(root, storePath)
-    mkdirSync(backup, { recursive: true })
-    writeFileSync(join(backup, '旧正文'), '待删除')
-    const oldBackup = join(root, '.store-upgrades', '0.8.9', 'agent_pero', 'memory.tdb')
-    mkdirSync(oldBackup, { recursive: true })
-    writeFileSync(join(oldBackup, '旧正文'), '升级前版本的备份')
-    const oldSocialBackup = join(root, '.store-upgrades', '0.8.9', 'agent_pero', 'social.tdb')
-    mkdirSync(oldSocialBackup, { recursive: true })
-    writeFileSync(join(oldSocialBackup, '社交正文'), '其他库的备份')
-    const recovery = join(root, 'agent_pero', `.index-${randomUUID()}`, '.previous')
-    mkdirSync(recovery, { recursive: true })
-    writeFileSync(join(recovery, 'memory.tdb.pld.456'), '重建失败留下的正文')
-    writeFileSync(join(recovery, 'social.tdb.pld.456'), '其他库的恢复文件')
-    const removedAgentBackup = join(root, '.store-upgrades', '0.8.9', 'agent_removed', 'memory.tdb')
-    mkdirSync(removedAgentBackup, { recursive: true })
-    expect(registry.listStoredAgentIds()).toContain('removed')
+  it.each(['0.8.9', '0.9.0-beta.4'])(
+    '重置 Store 时清理完整文件组与 %s 旧备份，保留相邻文件',
+    (oldVersion) => {
+      const root = join(temporaryRoot, `infos-store-reset-${Date.now()}-${Math.random()}`)
+      roots.push(root)
+      mkdirSync(root, { recursive: true })
+      const resolver = {
+        resolve(alias: string) {
+          if (alias === '@data') return root
+          if (alias.startsWith('@data/')) return join(root, alias.slice('@data/'.length))
+          throw new Error(`未处理路径: ${alias}`)
+        },
+      }
+      const registry = new MemoryStoreRegistry(resolver as never, 4)
+      const storePath = registry.resolveAgentStorePath('pero', 'main')
+      mkdirSync(join(root, 'agent_pero'), { recursive: true })
+      const suffixes = [
+        '',
+        '.vec',
+        '.wal',
+        '.lock',
+        '.flush_ok',
+        '.quiver',
+        '.quiver.meta',
+        '.text',
+        '.text.meta',
+        '.dimension',
+        '.pidx',
+        '.gidx',
+        '.manifest.json',
+        '.pld.1792345678900',
+        '.pld.1792345678901',
+        '.pld.1792345678901.tmp',
+        '.publish',
+        '.publish.0',
+        '.publish.1',
+        '.publish.2',
+        '.publish.3',
+        '.publish.4',
+        '.publish.5',
+        '.publish.6',
+        '.publish.7',
+        '.publish.8',
+        '.publish.8.tmp',
+        '.publish.0.tmp',
+      ]
+      for (const suffix of suffixes) writeFileSync(`${storePath}${suffix}`, '测试')
+      writeFileSync(`${storePath}.notes.md`, '用户文档')
+      const social = registry.resolveAgentStorePath('pero', 'social')
+      writeFileSync(`${social}.pld.123`, '其他库')
+      const backup = upgradeBackupPath(root, storePath)
+      mkdirSync(backup, { recursive: true })
+      writeFileSync(join(backup, '旧正文'), '待删除')
+      const oldBackup = join(root, '.store-upgrades', oldVersion, 'agent_pero', 'memory.tdb')
+      mkdirSync(oldBackup, { recursive: true })
+      writeFileSync(join(oldBackup, '旧正文'), '升级前版本的备份')
+      const oldSocialBackup = join(root, '.store-upgrades', oldVersion, 'agent_pero', 'social.tdb')
+      mkdirSync(oldSocialBackup, { recursive: true })
+      writeFileSync(join(oldSocialBackup, '社交正文'), '其他库的备份')
+      const recovery = join(root, 'agent_pero', `.index-${randomUUID()}`, '.previous')
+      mkdirSync(recovery, { recursive: true })
+      writeFileSync(join(recovery, 'memory.tdb.pld.456'), '重建失败留下的正文')
+      writeFileSync(join(recovery, 'social.tdb.pld.456'), '其他库的恢复文件')
+      const removedAgentBackup = join(
+        root,
+        '.store-upgrades',
+        oldVersion,
+        'agent_removed',
+        'memory.tdb',
+      )
+      mkdirSync(removedAgentBackup, { recursive: true })
+      expect(registry.listStoredAgentIds()).toContain('removed')
 
-    registry.resetAgentStore('pero', 'main')
+      registry.resetAgentStore('pero', 'main')
 
-    for (const suffix of suffixes) expect(existsSync(`${storePath}${suffix}`)).toBe(false)
-    expect(existsSync(backup)).toBe(false)
-    expect(existsSync(oldBackup)).toBe(false)
-    expect(readFileSync(join(oldSocialBackup, '社交正文'), 'utf8')).toBe('其他库的备份')
-    expect(readFileSync(`${storePath}.notes.md`, 'utf8')).toBe('用户文档')
-    expect(existsSync(`${social}.pld.123`)).toBe(true)
-    expect(existsSync(join(recovery, 'memory.tdb.pld.456'))).toBe(false)
-    expect(readFileSync(join(recovery, 'social.tdb.pld.456'), 'utf8')).toBe('其他库的恢复文件')
-  })
+      for (const suffix of suffixes) expect(existsSync(`${storePath}${suffix}`)).toBe(false)
+      expect(existsSync(backup)).toBe(false)
+      expect(existsSync(oldBackup)).toBe(false)
+      expect(readFileSync(join(oldSocialBackup, '社交正文'), 'utf8')).toBe('其他库的备份')
+      expect(readFileSync(`${storePath}.notes.md`, 'utf8')).toBe('用户文档')
+      expect(existsSync(`${social}.pld.123`)).toBe(true)
+      expect(existsSync(join(recovery, 'memory.tdb.pld.456'))).toBe(false)
+      expect(readFileSync(join(recovery, 'social.tdb.pld.456'), 'utf8')).toBe('其他库的恢复文件')
+    },
+  )
 
   it('文本预热失败向上传播并保留脏标记，后续请求可以重试', () => {
     const registry = fixture(4)

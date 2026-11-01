@@ -10,7 +10,7 @@ import PToast from './components/notification/PToast.vue'
 import PModal from './components/notification/PModal.vue'
 import { computed, onMounted, watch } from 'vue'
 import { useAchievements } from './composables/system/useAchievements'
-import { applyLanguage } from './i18n'
+import { getLanguageRevision, restoreLanguage } from './i18n'
 import { configApi } from './api/modules/configApi'
 import { LANGUAGE_CONFIG_KEY } from '@infos/shared/i18n'
 import ClientPairing from './components/connection/ClientPairing.vue'
@@ -21,12 +21,18 @@ const { session, check } = useClientSession()
 useAchievements(computed(() => session.value.authenticated))
 watch(
   () => session.value.authenticated,
-  (authenticated) => {
+  (authenticated, _previous, onCleanup) => {
     if (!authenticated) return
+    let active = true
+    const languageRevision = getLanguageRevision()
+    onCleanup(() => {
+      active = false
+    })
     void configApi
       .get<{ value: string | null }>(LANGUAGE_CONFIG_KEY)
       .then((response) => {
-        if (session.value.authenticated && response.data?.value) applyLanguage(response.data.value)
+        if (active && session.value.authenticated && response.data)
+          restoreLanguage(response.data.value, languageRevision)
       })
       .catch(() => {
         /* 连接恢复前保留本机语言 */

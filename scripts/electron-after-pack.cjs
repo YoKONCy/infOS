@@ -6,6 +6,7 @@ const http = require('node:http')
 const { createHash, randomBytes } = require('node:crypto')
 const { createRequire } = require('node:module')
 const { electronProcessEnvironment } = require('./electron-environment.cjs')
+const { prepareKoffiRuntime, validateKoffiRuntime } = require('./electron-native-runtime.cjs')
 
 async function removePath(targetPath) {
   await fs.rm(targetPath, { recursive: true, force: true, maxRetries: 12, retryDelay: 250 })
@@ -354,6 +355,7 @@ exports.default = async function afterPack(context) {
   await validatePortableRuntime(resourcesDir)
   await validateOfficialApplications(resourcesDir)
   if (process.platform === 'win32') {
+    const koffiRuntime = await prepareKoffiRuntime(context)
     const productFilename = context.packager.appInfo.productFilename
     const executable = path.join(
       appOutDir,
@@ -365,6 +367,7 @@ exports.default = async function afterPack(context) {
     try {
       // 检查最终二进制的副本，避免探测产生的短暂映像锁影响后续签名与资源写入。
       await require('./electron-security-after-pack.cjs')(context, smokeExecutable)
+      await validateKoffiRuntime(koffiRuntime, smokeExecutable)
       await validateArcaBoot(appOutDir, resourcesDir, path.basename(smokeExecutable))
       await validateDaemonBoot(appOutDir, resourcesDir, path.basename(smokeExecutable))
     } finally {

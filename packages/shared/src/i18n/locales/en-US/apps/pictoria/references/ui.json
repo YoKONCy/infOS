@@ -1,0 +1,12 @@
+{
+  "用途": "Purpose",
+  "参考图用途": "Reference image purpose",
+  "未指定": "Unspecified",
+  "主体身份": "Subject identity",
+  "视觉风格": "Visual style",
+  "构图": "Composition",
+  "场景": "Scene",
+  "服装": "Clothing",
+  "用途说明随提示词发送，具体约束取决于模型。": "Sent with the prompt; interpreted by the model.",
+  "该步骤没有可接收用途说明的提示词字段。": "This step has no prompt field that can receive reference purposes."
+}

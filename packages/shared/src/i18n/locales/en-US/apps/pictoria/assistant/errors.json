@@ -1,0 +1,9 @@
+{
+  "填写模型名称": "Enter a model name.",
+  "请检查参数范围": "Check the parameter ranges.",
+  "检查{0}": "Check {0}.",
+  "设置未保存": "Settings were not saved.",
+  "无法读取供应商": "Could not load providers.",
+  "先选择画布内容": "Select canvas items first.",
+  "上下文过长，请缩小范围或提高上限": "Context is too long. Narrow the scope or raise the limit."
+}

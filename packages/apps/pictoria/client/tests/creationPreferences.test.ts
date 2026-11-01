@@ -9,6 +9,7 @@ describe('Pictoria 草稿创作参数', () => {
         stepId: '',
         text: '',
         inputsByStep: {},
+        referenceUsesByStep: {},
       })
     },
   )
@@ -24,6 +25,28 @@ describe('Pictoria 草稿创作参数', () => {
       stepId: 'image',
       text: '海边',
       inputsByStep: { image: { aspectRatio: '16:9', resolution: '2k' } },
+      referenceUsesByStep: {},
+    })
+  })
+
+  it('恢复按步骤保存的参考图用途，丢弃损坏分组和不支持的用途', () => {
+    const restored = normalizeCreationPreferences({
+      referenceUsesByStep: {
+        image: [
+          { field: 'images', assetId: 'subject-image', purpose: 'subject' },
+          { field: 'images', assetId: 'style-image', purpose: 'style' },
+          { field: 'images', assetId: 'invalid-image', purpose: 'unknown' },
+          { assetId: 'missing-field', purpose: 'scene' },
+          null,
+        ],
+        invalid: null,
+      },
+    })
+    expect(restored.referenceUsesByStep).toEqual({
+      image: [
+        { field: 'images', assetId: 'subject-image', purpose: 'subject' },
+        { field: 'images', assetId: 'style-image', purpose: 'style' },
+      ],
     })
   })
 })

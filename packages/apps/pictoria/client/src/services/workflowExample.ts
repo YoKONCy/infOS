@@ -9,9 +9,7 @@ const object = (
 const text = (title: string): FieldSchema => ({ type: 'string', title })
 const images = (): FieldSchema => ({
   type: 'array',
-  get title() {
-    return __t('apps.pictoria.ui', '图片')
-  },
+  title: __t('apps.pictoria.ui', '图片'),
   items: object({ assetId: { type: 'string' } }),
 })
 const example = (
@@ -36,21 +34,17 @@ export function createWorkflowExample(): WorkflowDraft {
     id: crypto.randomUUID(),
     name: '示例 · 从灵感到图片',
     revision: 0,
-    get usageDescription() {
-      return __t(
-        'apps.pictoria.ui',
-        '输入画面创意、编辑要求和可选参考图。示例演示 LLM 润色 → 图像生成 → 多参考图编辑；各步骤的输入要求由作者自行声明。',
-      )
-    },
+    usageDescription: __t(
+      'apps.pictoria.ui',
+      '输入画面创意、编辑要求和可选参考图。示例演示 LLM 润色 → 图像生成 → 多参考图编辑；各步骤的输入要求由作者自行声明。',
+    ),
     inputSchema: object(
       {
         prompt: text('创意'),
         edit: text(__t('apps.pictoria.ui', '编辑要求')),
         references: {
           ...images(),
-          get title() {
-            return __t('apps.pictoria.ui', '参考图')
-          },
+          title: __t('apps.pictoria.ui', '参考图'),
           default: [],
         },
       },
@@ -60,9 +54,7 @@ export function createWorkflowExample(): WorkflowDraft {
     nodes: [
       {
         id: 'polish',
-        get label() {
-          return __t('apps.pictoria.ui', '提示词润色')
-        },
+        label: __t('apps.pictoria.ui', '提示词润色'),
         x: 0,
         y: 0,
         comment: '',
@@ -80,9 +72,7 @@ export function createWorkflowExample(): WorkflowDraft {
       },
       {
         id: 'generate',
-        get label() {
-          return __t('apps.pictoria.ui', '图像生成')
-        },
+        label: __t('apps.pictoria.ui', '图像生成'),
         x: 0,
         y: 600,
         comment: '',
@@ -100,9 +90,7 @@ export function createWorkflowExample(): WorkflowDraft {
       },
       {
         id: 'edit',
-        get label() {
-          return __t('apps.pictoria.ui', '多参考图编辑')
-        },
+        label: __t('apps.pictoria.ui', '多参考图编辑'),
         x: 0,
         y: 1200,
         comment: '',

@@ -6,6 +6,7 @@ import { field, type ServiceClient } from './serviceClient'
 import type { Store } from './store'
 import { backoff, requestError, transient } from './requestSafety'
 import { dependencies } from './bindings'
+import { CANVAS_ASSISTANT_SYSTEM } from './canvasDocument'
 
 const terminal = new Set(['completed', 'failed', 'cancelled', 'skipped'])
 const delay = (ms: number, signal: AbortSignal) =>
@@ -403,6 +404,8 @@ export class ExecutionEngine {
           submitted = true
         }
         if (node.step.implementation.kind === 'llm') {
+          if (node.step.implementation.system.startsWith(CANVAS_ASSISTANT_SYSTEM))
+            this.client.validateAssistantImages(run.owner, inputs.images)
           beforeSend()
           node.response = await this.host!.generate(
             {
@@ -414,8 +417,16 @@ export class ExecutionEngine {
                   : ''),
               inputs,
               modelId: node.step.implementation.modelId,
+              ...(node.step.implementation.options
+                ? { options: node.step.implementation.options }
+                : {}),
             },
-            nodeSignal,
+            node.step.implementation.options?.timeoutMs
+              ? AbortSignal.any([
+                  nodeSignal,
+                  AbortSignal.timeout(node.step.implementation.options.timeoutMs),
+                ])
+              : nodeSignal,
           )
         } else {
           node.response = await this.client.submit(

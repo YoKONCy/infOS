@@ -8,6 +8,7 @@ import CanvasGuides from './components/CanvasGuides.vue'
 import CreationBar from './components/CreationBar.vue'
 import CreationCard from './components/CreationCard.vue'
 import ResourceLibrary from './components/ResourceLibrary.vue'
+import CanvasStudio from './components/CanvasStudio.vue'
 
 import ProjectBrowser from './components/ProjectBrowser.vue'
 import PictoriaSelect from './components/PictoriaSelect.vue'
@@ -21,6 +22,7 @@ import { useNodeClipboard } from './composables/useNodeClipboard'
 import { curve, outputAnchor, useCanvasLinks } from './composables/useCanvasLinks'
 import { useCanvasSearch } from './composables/useCanvasSearch'
 import { desktop, pictoria, standalone } from './services/transport'
+import { canvasCandidates } from './services/canvasCandidates'
 import type { Step, Asset, InputConnection, Prompt } from './types'
 
 const store = useCanvas()
@@ -48,6 +50,8 @@ const {
 const surface = ref<HTMLElement | null>(null)
 const mode = ref<'canvas' | 'workflow'>('canvas')
 const providersOpen = ref(false)
+const studioModal = ref(false)
+const studioAssistantOpen = ref(false)
 const workflowDirty = ref(false)
 const workflowEditor = ref<InstanceType<typeof WorkflowEditor> | null>(null)
 const exitOpen = ref(false),
@@ -59,11 +63,39 @@ const navigation = useCanvasNavigation(
   store,
   surface,
   computed(
-    () => mode.value === 'canvas' && !providersOpen.value && !exitOpen.value && !exited.value,
+    () =>
+      mode.value === 'canvas' &&
+      !providersOpen.value &&
+      !studioModal.value &&
+      !exitOpen.value &&
+      !exited.value,
   ),
 )
 const { viewport, tool, panActive, dragging, guides, marquee, selectionToolbar } = navigation
+let restoringViewport = false
+watch(
+  () => project.viewport,
+  (value) => {
+    if (!value) return
+    restoringViewport = true
+    Object.assign(viewport, value)
+    restoringViewport = false
+  },
+  { deep: true, immediate: true, flush: 'sync' },
+)
+watch(
+  viewport,
+  (value) => {
+    if (!restoringViewport && !loading.value) project.viewport = { ...value }
+  },
+  { flush: 'sync' },
+)
+function restoreView() {
+  if (project.viewport) Object.assign(viewport, project.viewport)
+  else navigation.fit()
+}
 const composer = ref<InstanceType<typeof CreationBar> | null>(null)
+const studio = ref<InstanceType<typeof CanvasStudio> | null>(null)
 const composerLinks = ref<InputConnection[]>([]),
   composerAnchor = ref({ x: 0, y: 0 })
 const links = useCanvasLinks(store, navigation.world, (source, port) =>
@@ -76,7 +108,7 @@ const search = useCanvasSearch(
     links.finishArrangement()
     navigation.reveal(item)
   },
-  () => mode.value === 'canvas' && !exitOpen.value && !exited.value,
+  () => mode.value === 'canvas' && !studioModal.value && !exitOpen.value && !exited.value,
 )
 const {
   open: searchOpen,
@@ -147,15 +179,34 @@ const visible = computed(() => {
     top = (-viewport.y - 500) / viewport.scale
   const right = (dimensions.value.width - viewport.x + 500) / viewport.scale,
     bottom = (dimensions.value.height - viewport.y + 500) / viewport.scale
-  return project.items.filter(
-    (item) =>
-      selected.value.includes(item.id) ||
-      item.id === searchCurrent.value ||
-      (item.x < right &&
-        item.x + item.content.width > left &&
-        item.y < bottom &&
-        item.y + item.content.height > top),
-  )
+  return project.items
+    .filter(candidateVisible)
+    .filter(
+      (item) =>
+        selected.value.includes(item.id) ||
+        item.id === searchCurrent.value ||
+        (item.x < right &&
+          item.x + item.content.width > left &&
+          item.y < bottom &&
+          item.y + item.content.height > top),
+    )
+    .sort((a, b) => Number(b.content.kind === 'group') - Number(a.content.kind === 'group'))
+})
+const candidateIndex = computed(() => canvasCandidates(project.items, project.edges))
+function showCandidates(id: string) {
+  selected.value = [id]
+  studio.value?.openCandidates()
+}
+function candidateVisible(item: (typeof project.items)[number]) {
+  if (selected.value.includes(item.id) || item.id === searchCurrent.value) return true
+  const group = candidateIndex.value.get(item.id)
+  if (!group || item.content.kind === 'run' || group.parent.content.candidatesExpanded) return true
+  if (project.edges?.some((edge) => edge.source === item.id && !edge.historical)) return true
+  return item.id === group.primary?.id
+}
+const canvasEdges = computed(() => {
+  const shown = new Set(project.items.filter(candidateVisible).map((item) => item.id))
+  return edges.value.filter((edge) => shown.has(edge.source) && shown.has(edge.target))
 })
 const saveLabel = computed(() =>
   saving.value
@@ -241,7 +292,7 @@ function newCanvas(collectionId: string | null = project.collectionId ?? null) {
   void store
     .newProject(collectionId)
     .then(() => nextTick())
-    .then(() => navigation.fit())
+    .then(restoreView)
 }
 function openCanvas(id: string) {
   links.finishArrangement()
@@ -249,7 +300,7 @@ function openCanvas(id: string) {
   void store
     .openProject(id)
     .then(() => nextTick())
-    .then(() => navigation.fit())
+    .then(restoreView)
 }
 function switchOwner(value: string) {
   if (configBusy.value || store.hierarchyBusy.value) return
@@ -257,11 +308,11 @@ function switchOwner(value: string) {
   void store
     .switchAgent(value)
     .then(() => nextTick())
-    .then(() => navigation.fit())
+    .then(restoreView)
 }
 async function connect() {
   await store.connect(true)
-  navigation.fit()
+  restoreView()
 }
 async function importFiles(files: File[], x?: number, y?: number) {
   const point = x === undefined || y === undefined ? navigation.center() : navigation.world(x, y)
@@ -323,6 +374,7 @@ const clipboard = useNodeClipboard({
   enabled: () =>
     mode.value === 'canvas' &&
     !providersOpen.value &&
+    !studioModal.value &&
     !recoveryId.value &&
     !loading.value &&
     !exitOpen.value &&
@@ -350,6 +402,7 @@ function paste(event: ClipboardEvent) {
     event.defaultPrevented ||
     mode.value !== 'canvas' ||
     providersOpen.value ||
+    studioModal.value ||
     recoveryId.value ||
     loading.value ||
     exitOpen.value ||
@@ -380,6 +433,7 @@ async function create(
   inputs: Record<string, unknown>,
   key: string,
   connections: InputConnection[] = [],
+  uses: import('./types').ReferenceUse[] = [],
 ) {
   if (submitting.value) return
   submitting.value = true
@@ -388,7 +442,7 @@ async function create(
     const item =
       project.items.find(
         (item) => item.content.kind === 'draft' && item.content.request?.key === key,
-      ) || createDraft(step, inputs, connections)
+      ) || createDraft(step, inputs, connections, uses)
     if (await links.submit(item, key)) composer.value?.acceptNewRequest()
   } catch (e) {
     error.value = e instanceof Error ? e.message : '创作提交失败，请确认任务后再重试'
@@ -415,14 +469,17 @@ function createDraft(
   step: Step,
   inputs: Record<string, unknown>,
   connections: InputConnection[] = [],
+  uses: import('./types').ReferenceUse[] = [],
 ) {
   const box = navigation.bounds.value
-  return links.addDraft(
+  const item = links.addDraft(
     step,
     inputs,
     box ? { x: box.x + box.width + 90, y: box.y } : navigation.center(),
     connections,
   )
+  item.content.referenceUses = JSON.parse(JSON.stringify(uses))
+  return item
 }
 function previewReference(id: string) {
   if (online.value) void store.ensureThumbnail(id).catch(() => {})
@@ -624,7 +681,7 @@ onMounted(async () => {
       dimensions.value = { width: entry.contentRect.width, height: entry.contentRect.height }
   })
   if (surface.value) observer.observe(surface.value)
-  navigation.fit()
+  restoreView()
   window.addEventListener('paste', paste)
   window.addEventListener('beforeunload', guardUnload)
   window.addEventListener('keydown', escape)
@@ -643,7 +700,7 @@ onMounted(async () => {
       .catch(() => {})
   }
   await store.connect()
-  if (!disposed) navigation.fit()
+  if (!disposed) restoreView()
 })
 onBeforeUnmount(() => {
   disposed = true
@@ -670,6 +727,7 @@ onBeforeUnmount(() => {
       'is-connecting': connecting,
       'is-arranging': arranging,
       'is-background': pageHidden,
+      'studio-assistant-open': studioAssistantOpen,
     }"
     :style="{
       '--grid-size': `${24 * viewport.scale}px`,
@@ -896,7 +954,7 @@ onBeforeUnmount(() => {
         :aria-label="__t('apps.pictoria.ui', '创作引用关系')"
       >
         <g
-          v-for="edge in edges"
+          v-for="edge in canvasEdges"
           :key="edge.id"
           :class="{ historical: edge.historical, active: selectedEdge === edge.id }"
         >
@@ -923,8 +981,25 @@ onBeforeUnmount(() => {
         <path v-if="connecting" class="edge-pending" :d="pendingPath" />
       </svg>
       <template v-for="item in visible" :key="item.id">
+        <article
+          v-if="item.content.kind === 'group'"
+          class="studio-group"
+          :class="{ selected: selected.includes(item.id) }"
+          :style="{
+            width: `${item.content.width}px`,
+            height: `${item.content.height}px`,
+            transform: `translate(${item.x}px, ${item.y}px)`,
+          }"
+        >
+          <header :data-canvas-item="item.id" @pointerdown.stop="itemPointer($event, item.id)">
+            <span>{{ item.content.name }}</span>
+            <small>
+              {{ project.items.filter((child) => child.content.groupId === item.id).length }}
+            </small>
+          </header>
+        </article>
         <CreationCard
-          v-if="item.content.kind === 'draft'"
+          v-else-if="item.content.kind === 'draft'"
           :owner="agentId"
           :item="item"
           :items="project.items"
@@ -968,6 +1043,7 @@ onBeforeUnmount(() => {
           v-else
           :item="item"
           :selected="selected.includes(item.id)"
+          :candidate-count="candidateIndex.get(item.id)?.items.length"
           :class="{
             'search-match': search.ids.value.has(item.id),
             'search-current': searchCurrent === item.id,
@@ -977,6 +1053,7 @@ onBeforeUnmount(() => {
           @pointer="itemPointer($event, item.id)"
           @resize="itemPointer($event, item.id, true)"
           @edit="noteEdit"
+          @candidates="showCandidates(item.id)"
           @text="item.content.text = $event"
           @comment="item.content.comment = $event"
           @recover="recoveryId = item.content.runId || ''"
@@ -995,6 +1072,22 @@ onBeforeUnmount(() => {
       />
     </div>
     <CanvasGuides :guides="guides" :viewport="viewport" />
+    <CanvasStudio
+      ref="studio"
+      :store="store"
+      :links="links"
+      :viewport="viewport"
+      :size="dimensions"
+      @modal="studioModal = $event"
+      @assistant="studioAssistantOpen = $event"
+      @providers="providersOpen = true"
+      @navigate="
+        (x, y) => {
+          viewport.x = dimensions.width / 2 - x * viewport.scale
+          viewport.y = dimensions.height / 2 - y * viewport.scale
+        }
+      "
+    />
 
     <nav
       class="canvas-toolrail floating-panel"
@@ -1175,6 +1268,59 @@ onBeforeUnmount(() => {
           {{ __t('apps.pictoria.ui', '下一步') }}
         </button>
         <i class="header-divider" />
+        <button
+          v-if="activeItems.length === 1 && activeItems[0]?.content.mimeType?.startsWith('video/')"
+          class="quiet-button"
+          :disabled="studio?.busy"
+          @click="studio?.openVideo()"
+        >
+          <Icon name="play" :size="16" />
+          {{ __t('apps.pictoria.video', '接着生成') }}
+        </button>
+        <button
+          v-if="activeItems.length === 1 && activeItems[0]?.content.mimeType?.startsWith('image/')"
+          class="icon-button"
+          :disabled="studio?.busy"
+          :aria-label="__t('apps.pictoria.studio', '图像工作室')"
+          :title="__t('apps.pictoria.studio', '图像工作室')"
+          @click="studio?.openImage()"
+        >
+          <Icon name="crop" :size="17" />
+        </button>
+        <button
+          class="icon-button"
+          :disabled="studio?.busy"
+          :aria-label="
+            __t(
+              'apps.pictoria.studio',
+              activeItems.length === 1 && activeItems[0]?.content.kind === 'group'
+                ? '解散分组'
+                : '编组',
+            )
+          "
+          :title="
+            __t(
+              'apps.pictoria.studio',
+              activeItems.length === 1 && activeItems[0]?.content.kind === 'group'
+                ? '解散分组'
+                : '编组',
+            )
+          "
+          @click="
+            activeItems.length === 1 && activeItems[0]?.content.kind === 'group'
+              ? studio?.ungroup()
+              : studio?.group()
+          "
+        >
+          <Icon
+            :name="
+              activeItems.length === 1 && activeItems[0]?.content.kind === 'group'
+                ? 'ungroup'
+                : 'group'
+            "
+            :size="17"
+          />
+        </button>
         <button
           class="icon-button"
           :aria-label="__t('apps.pictoria.ui', '复制选中内容')"
@@ -1481,7 +1627,12 @@ onBeforeUnmount(() => {
       :agent-id="agentId"
       :online="online"
       @close="providersOpen = false"
-      @updated="refreshSteps"
+      @updated="
+        () => {
+          refreshSteps()
+          studio?.refreshProviders()
+        }
+      "
     />
   </Transition>
   <WorkflowEditor

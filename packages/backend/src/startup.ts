@@ -37,7 +37,7 @@ import path from 'node:path'
 import { registerProcessGuards, onShutdown } from './lib/processGuards'
 import { setupGatewayWebSocket } from './services/gateway/wsUpgrade'
 import { initTelemetry, shutdownTelemetry } from './lib/telemetry'
-import { setLocale } from './lib/i18n'
+import { setLocale, getAutomaticLocale } from './lib/i18n'
 import { LANGUAGE_CONFIG_KEY } from '@infos/shared/i18n'
 import { acquireDaemonLease, retryStartupIo, verifyDataDirectory } from './lib/startupStorage'
 import { ResourceVersions } from '@infos/shared/resource-versions'
@@ -176,11 +176,7 @@ export async function startServer(options: StartServerOptions): Promise<void> {
         () => {},
       )
   }
-  setLocale(
-    (await ctx.configRepo.get(LANGUAGE_CONFIG_KEY)) ??
-      process.env.INFOS_LANGUAGE ??
-      process.env.LANG,
-  )
+  setLocale((await ctx.configRepo.get(LANGUAGE_CONFIG_KEY)) ?? getAutomaticLocale())
 
   if (resourceBoot.safeMode)
     logger.warn(

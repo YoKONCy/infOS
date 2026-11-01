@@ -1,6 +1,6 @@
 # 多目标部署架构
 
-> **版本**：0.9.10 · **更新时间**：2026-10-26
+> **版本**：0.9.11 · **更新时间**：2026-10-26
 > **适用范围**：infOS 全项目部署策略
 > **依赖规范**：[A07_CROSS_PLATFORM](./A07_CROSS_PLATFORM.md)、[A08_DEVOPS](./A08_DEVOPS.md)
 >
@@ -36,6 +36,22 @@ Electron 首次启动先显示本地透明开屏，并在同一窗口内选择�
 `public/system-icons/pero.png` 与 `pero.ico` 是 Electron 窗口、开屏、任务栏、托盘和 Windows 可执行文件共用的图标，采用 Pero 与 P 字母对话气泡组合，配无描边的米白至淡紫圆角底板以保持小尺寸下的视觉体量。PNG 为 512×512，圆角外部透明；ICO 包含 16、20、24、32、40、48、64、96、128、256 像素帧，小帧使用 32 位 DIB 与透明掩码，256 像素帧使用 PNG。`public/Logo.png`、`public/icon.png`、`public/icon.ico` 及 `resources` 中的同类兼容资源保持同步。
 
 导出时按有效透明轮廓裁切，再等比居中放入画布，最长边占约 98%，减少托盘小尺寸下的多余留白；像素尺寸取整后保留完整主体。运行时入口为 `electron/main/utils/appIcon.ts`、`appIdentity.ts` 与 `windowsTaskbarIcon.ts`；各 electron-builder 配置使用同一 ICO。开发启动器 `scripts/dev-electron.mjs` 将 ICO 摘要纳入独立运行时缓存标识，完整退出后重新启动即可使用更新资源；已打包 EXE 与快捷方式需通过新的发行产物更新。Steam 商店字标图独立维护，不替代桌面系统图标；应用内 SVG 品牌标志及角色头像仍由各自入口维护。
+
+### 开发客户端切换连接后的重启
+
+`pnpm dev:electron` 的父启动器管理 electron-vite CLI；CLI 会在 Electron 退出时关闭 Vite 并退出。开发版不能直接调用 `app.relaunch()` 重开 EXE，否则新进程继承的 `ELECTRON_RENDERER_URL` 仍指向已关闭的本机 7359 页面服务，即使远程后端身份和健康验证通过，也会在 Launcher 阶段收到 `ERR_CONNECTION_REFUSED`。
+
+托盘和分布式连接设置共用 `clientRestart.ts`：退出被应用标签取消时撤销重启意图，所有退出清理完成后才交接；受管开发会话以 `developmentRestart.mjs` 的专用退出码通知父启动器，父启动器等待旧 CLI 完整关闭后重新启动 Vite 与 Electron，顶层 `pnpm start` 不会将这次切换视为 Electron 退出而连带清理其余开发服务。普通退出、异常退出和 Ctrl+C 不自动重启。直接使用 electron-vite 等非受管入口时，连接保存后提示在终端手动重启；正式版仍由 Electron 的重启机制处理。启动器页面首帧门控继续保留，开发页面拒绝连接时显示对应的终端恢复指引。
+
+### Docker Web 静态资源缓存
+
+前端 Nginx 对 `assets/` 下带内容哈希的 JS、CSS、字体、图片和 WASM 返回一年不可变缓存；HTML 入口和固定文件名资源使用 `no-cache` 与 ETag，刷新时协商更新，避免旧入口引用已经被替换的模块。TTF、MJS、WASM、PDF CMap 等资源纳入静态规则，不再依赖通用页面回退路径的默认缓存行为。业务 API、预览与附件继续遵循各自鉴权和缓存边界，不启用共享业务响应缓存。
+
+Docker 前端镜像在前端构建后运行 `scripts/precompress-web-assets.mjs`，为压缩后确有收益的公开文本、字体及解码资源生成 gzip 副本；Nginx 通过 `gzip_static` 按请求协商发送，并设置 `Vary: Accept-Encoding`。未预压缩的响应仍可动态 gzip。原文件保留，未声明 gzip 的客户端继续使用原格式；不重复压缩 PNG、WOFF2 等已压缩资源。
+
+主应用的后端静态入口及 `/applications/arca/`、`/applications/pictoria/` 共用 `StaticAssetService.response`，提供 ETag、Last-Modified、HEAD 和条件命中的 304，条件命中时不读取或传输文件正文。固定文件名不标记 immutable，内容哈希资源允许长期复用。开发代理继续保留 `no-store`，便于 HMR 与源码更新；不将生产缓存规则套到开发接口。
+
+Web 主面板不在首屏后自动预热工作区编辑器与据点模块，改由用户导航时按需加载；Electron 保留本地资源的空闲预热。镜像验收入口 `scripts/docker-runtime-smoke.mjs` 实际比较 gzip 与未压缩资源内容，并验证主模块及像素字体的缓存响应与 304；该验收依赖真实构建镜像，不能由配置文件存在性代替。
 
 ## 2. 核心设计原则
 
@@ -76,6 +92,14 @@ Daemon
 Electron 启动 Daemon 是桌面全包发行的进程编排方式，不改变 Daemon 的纯 Node 边界；Daemon 必须能在 Docker/服务器形态独立运行。
 
 **客户端连接规则**：Electron 标准版、Steam 版和便携版在本地开屏后、任何 Daemon 拉起之前读取用户根目录的 `client-connection.json`。首次启动或远程验证失败时显示本地 HTML 连接页；本地模式按原有链路启动，远程模式校验服务器身份后统一切换业务 HTTP/SSE/WS 和能力通道，失败不能自动回退本地。凭据经系统密钥服务加密。托盘与“分布式”Tab 均可打开连接页，运行中修改只写下次启动配置并重启，旧窗口和退出清理继续使用原连接。远程退出不停止服务器上的共享子应用。远程模式禁用本机 Steam 业务快照上传和恢复，服务器数据由服务器备份；设备身份、连接配置和凭据不进入业务快照。
+
+**自部署 HTTPS 与证书信任**：允许使用 IP 和自签证书。保存远程连接时，主进程先建立不发送应用数据的 TLS 握手，读取公开叶证书；未受系统信任或与已保存指纹不同的证书需要用户在原生确认框核对 SHA-256 指纹、签发者和有效期。未确认前不发送访问令牌；默认按钮为取消，取消、鉴权失败或保存失败都保留原配置。过期或尚未生效的证书需在服务端修复或校准设备时间，不能通过确认绕过。
+
+信任记录作为公开证书及指纹保存在本机 `client-connection.json` 的 `trustedCertificates` 字段，按 HTTPS 入口保存，切换本地模式仍保留历史信任。主进程业务请求通过 `fetchBackend` 使用专用 CA、叶证书指纹和禁用会话复用的 Agent；能力 WSS 使用同样的 TLS 选项，Chromium 页面在 Session 验证回调中仅接受当前业务主机已确认的叶证书。系统其他服务与站点继续使用各自正常验证规则；不会写入系统证书库，也不会设置全局跳过 TLS 校验。
+
+默认能力地址仍为同主机的 9121 端口，可复用相同叶证书。能力入口使用不同证书或不同主机时，在高级选项中显式填写地址并单独核验；其 HTTPS／WSS 反向代理和端口映射仍由服务端部署负责，客户端信任证书不会自动公开 Docker 默认绑定回环地址的能力端口。Chromium 页面按当前业务主机使用业务证书，独立 Node 能力通道按其入口选择证书。证书变化后的后台重连不自动更换信任，需要重新打开连接设置确认；服务器业务身份仍独立校验，不因接受新证书而自动接受不同 `serverId`。
+
+实现入口：`electron/main/services/remoteCertificates.ts` 负责证书探测及 Node TLS 请求，`remoteCertificateUi.ts` 负责确认、Chromium 验证及错误分类，`clientConnection.ts` 负责与连接配置一起落盘。连接页区分证书、鉴权、身份变化、超时、拒绝连接及服务器响应错误；回环 HTTPS／WSS 回归入口为 `remoteCertificates.test.ts`。
 
 **大备份导入**：以下路径均以 `/api/backups` 为前缀：`POST /imports` 预约一项导入，`PUT /imports/:id/content` 流式接收原包后返回 202；解包与预览继续由 `BackupImports` 持有，`GET /imports/:id` 查询阶段与接收／解包计数，`DELETE /imports/:id` 取消。服务端已有备份通过 `POST /:id/import` 使用同一进度链路，取消不会删除原备份。完整库 `integrity_check` 在受控 Worker 中运行，局部记录冲突检查分批让出事件循环。分行器按字节限制并保持背压，格式仍为 `infos.backup` v1，文件、行与解压总量限制继续有效。旧 `/previews` 入口保留兼容。
 

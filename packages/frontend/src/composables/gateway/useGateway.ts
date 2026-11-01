@@ -916,7 +916,8 @@ export function createGatewayClient() {
           break
         }
         case 'state_update':
-          if (typeof msg.payload.language === 'string') applyLanguage(msg.payload.language)
+          if (typeof msg.payload.language === 'string' || msg.payload.language === null)
+            applyLanguage(msg.payload.language)
           events.onStateUpdate?.(msg.payload)
           break
         case 'audio_chunk': {

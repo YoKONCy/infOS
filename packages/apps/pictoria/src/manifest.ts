@@ -3,6 +3,17 @@ import { defineApplicationAdapter } from '@infos/node-sdk'
 import type { ApplicationAdapterManifest } from '@infos/shared'
 
 export const operations = [
+  'canvas.assistant.prepare',
+  'canvas.assistant.settings.get',
+  'canvas.assistant.settings.save',
+  'canvas.context.set',
+  'canvas.context.get',
+  'canvas.context.close',
+  'canvas.propose',
+  'canvas.proposal.list',
+  'canvas.proposal.resolve',
+  'canvas.conversation.get',
+  'canvas.conversation.save',
   'collection.list',
   'collection.save',
   'collection.delete',
@@ -66,7 +77,7 @@ export const pictoriaManifest = defineApplicationAdapter({
   description: __t('apps.pictoria.ui', '画布创作与可编排媒体工作流'),
   adapterVersion: '1.0.0',
   protocolVersion: 1,
-  application: { versions: '>=0.9.10 <1.0.0', transports: ['websocket'] },
+  application: { versions: '>=0.9.11 <1.0.0', transports: ['websocket'] },
   backend: { entry: '@infos/pictoria' },
   frontend: {
     entry: '@infos/pictoria/client',
@@ -98,7 +109,17 @@ export const pictoriaManifest = defineApplicationAdapter({
         properties: {
           action: {
             type: 'string',
-            enum: ['catalog', 'run', 'get', 'list', 'cancel', 'resume', 'canvas'],
+            enum: [
+              'catalog',
+              'run',
+              'get',
+              'list',
+              'cancel',
+              'resume',
+              'canvas',
+              'canvas_read',
+              'canvas_propose',
+            ],
           },
           stepId: { type: 'string' },
           stepRevision: { type: 'integer', minimum: 1 },
@@ -111,6 +132,15 @@ export const pictoriaManifest = defineApplicationAdapter({
             ),
           },
           projectId: { type: 'string' },
+          sessionId: { type: 'string' },
+          sequence: { type: 'integer' },
+          proposal: {
+            type: 'object',
+            description: __t(
+              'apps.pictoria.studio',
+              'canvas_propose 使用 canvas_read 返回的 projectId、sessionId、sequence；proposal={message,operations}。操作支持 note、move、resize、rename、remove、group、ungroup、select、viewport、connect、disconnect、draft、update_draft；仅提交待用户确认的增量操作，不会自动执行生成任务。',
+            ),
+          },
           id: { type: 'string' },
           expectedRevision: { type: 'integer' },
           nodeId: { type: 'string' },

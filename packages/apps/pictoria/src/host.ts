@@ -78,7 +78,7 @@ export class PictoriaHost {
           appId: pictoriaManifest.id,
           instanceId: this.instanceId,
           name: 'Pictoria',
-          appVersion: '0.9.10',
+          appVersion: '0.9.11',
           adapterVersion: '1.0.0',
           state: 'ready',
           endpoints: pictoriaManifest.endpoints,
@@ -195,6 +195,8 @@ export class PictoriaHost {
         cancel: 'task.cancel',
         resume: 'task.resume',
         canvas: 'project.save',
+        canvas_read: 'canvas.context.get',
+        canvas_propose: 'canvas.propose',
       }
       const target = actions[String(value.action)]
       if (!target) throw new Error('工具操作无效')

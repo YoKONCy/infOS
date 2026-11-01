@@ -1,4 +1,5 @@
 {
+  "本机开发页面服务未启动。请在终端停止并重新运行 pnpm dev:electron 或 pnpm start。": "本机开发页面服务未启动。请在终端停止并重新运行 pnpm dev:electron 或 pnpm start。",
   "萌动链接：PeroperoChat": "萌动链接：PeroperoChat",
   "正在启动 infOS": "正在启动 infOS",
   "启动遇到问题": "启动遇到问题",

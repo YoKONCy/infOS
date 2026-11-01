@@ -1,0 +1,6 @@
+{
+  "不支持的桌面原生模块发行目标：{0}/{1}": "Unsupported desktop native module release target: {0}/{1}",
+  "Koffi 主包与平台包版本不一致：{0} / {1}": "Koffi package and platform package versions do not match: {0} / {1}",
+  "Koffi 发行源不完整：{0}": "Koffi release source is incomplete: {0}",
+  "发行产物 Koffi 原生模块加载验证失败：{0}": "Packaged Koffi native module loading validation failed: {0}"
+}

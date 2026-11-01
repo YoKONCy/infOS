@@ -13,6 +13,7 @@ import { logger } from '../utils/logger'
 import { onLocaleChange } from '../../../packages/shared/src/i18n'
 import { showResourceRecovery } from './resourceRecovery'
 import { showConnectionSetup, focusConnectionSetup } from './clientConnectionSetup'
+import { requestClientRestart } from './clientRestart'
 
 let tray: Tray | null = null
 let stopLocaleListener: (() => void) | undefined
@@ -37,8 +38,7 @@ function updateTrayMenu(): void {
           if (focusConnectionSetup()) return
           void showConnectionSetup(false)
             .then(() => {
-              app.relaunch()
-              app.quit()
+              return requestClientRestart()
             })
             .catch(() => {})
         },

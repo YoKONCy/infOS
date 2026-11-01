@@ -29,7 +29,7 @@ import { AppError } from '../lib/appError'
 import { EmbeddingService } from '../services/embedding/embeddingService'
 import { commitEmbeddingConfig } from '../services/embedding/activateEmbeddingConfig'
 import { LANGUAGE_CONFIG_KEY, normalizeLocale, SUPPORTED_LOCALES } from '@infos/shared/i18n'
-import { getLocale, setLocale } from '../lib/i18n'
+import { getLocale, setLocale, getAutomaticLocale } from '../lib/i18n'
 import {
   EMBEDDING_ENABLED_KEY,
   MEMORY_BACKGROUND_ENABLED_KEY,
@@ -288,14 +288,14 @@ export function createConfigRouter(ctx: AppContext) {
       )
     }
     await ctx.configRepo.delete(key)
-    if (key === LANGUAGE_CONFIG_KEY) setLocale('zh-CN')
+    if (key === LANGUAGE_CONFIG_KEY) setLocale(getAutomaticLocale())
     for (const { prefix, method } of HOT_RELOAD_MAP) if (key.startsWith(prefix)) await ctx[method]()
     if (key === MEMORY_RUNTIME_CONFIG_KEY)
       ctx.eventMemoryService.syncAdvancedRetrievalConfig(
         await loadMemoryRuntimeConfig(ctx.configRepo),
       )
     await ctx.appManager?.notifyConfigChanged?.([key])
-    if (key === LANGUAGE_CONFIG_KEY) await ctx.gatewayHub.pushStateUpdate({ language: getLocale() })
+    if (key === LANGUAGE_CONFIG_KEY) await ctx.gatewayHub.pushStateUpdate({ language: null })
     return c.json({ code: 'OK', message: __t('server.routers', '配置 "{0}" 已删除', [key]) })
   })
 

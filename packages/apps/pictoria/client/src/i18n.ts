@@ -1,12 +1,27 @@
 import { ref } from 'vue'
-import { getLocale, setLocale, onLocaleChange, translate } from '@infos/shared/i18n'
+import { getLocale, onLocaleChange, translate } from '@infos/shared/i18n'
+import { createClientLanguage, LANGUAGE_STORAGE_KEY } from '@infos/shared/i18n/client'
 import '@infos/shared/i18n/catalogs/pictoria'
 
-try {
-  setLocale(localStorage.getItem('infos.language') ?? navigator.language)
-} catch {
-  /* 使用默认语言 */
-}
+const bridge = (
+  window as unknown as {
+    electron?: {
+      embedded?: boolean
+      invoke?: (channel: string, ...args: unknown[]) => Promise<unknown>
+      on?: (channel: string, listener: (value: unknown) => void) => unknown
+    }
+  }
+).electron
+const clientLanguage = createClientLanguage({
+  preferredLanguages: () =>
+    navigator.languages?.length ? navigator.languages : [navigator.language],
+  storage: {
+    getItem: (key) => localStorage.getItem(key),
+    setItem: (key, value) => localStorage.setItem(key, value),
+    removeItem: (key) => localStorage.removeItem(key),
+  },
+  bridge,
+})
 const locale = ref(getLocale())
 document.documentElement.lang = locale.value
 onLocaleChange((value) => {
@@ -14,26 +29,10 @@ onLocaleChange((value) => {
   document.documentElement.lang = value
 })
 window.addEventListener('storage', (event) => {
-  if (event.key === 'infos.language' && event.newValue) setLocale(event.newValue)
+  if (event.key === LANGUAGE_STORAGE_KEY || event.key === null)
+    clientLanguage.receiveStorage(event.newValue)
 })
+window.addEventListener('languagechange', () => clientLanguage.refreshAutomatic())
 export function t(scope: string, source: string, parameters: readonly unknown[] = []): string {
   return translate(scope, source, parameters, locale.value)
 }
-
-const bridge = (
-  window as unknown as {
-    electron?: {
-      invoke?: (channel: string) => Promise<unknown>
-      on?: (channel: string, listener: (value: unknown) => void) => unknown
-    }
-  }
-).electron
-bridge?.on?.('i18n:changed', (value) => setLocale(value))
-void bridge
-  ?.invoke?.('i18n:get-language')
-  .then((value) => {
-    if (value) setLocale(value)
-  })
-  .catch(() => {
-    /* 独立模式无需宿主连接 */
-  })

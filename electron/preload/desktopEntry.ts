@@ -1,6 +1,11 @@
 /// <reference lib="dom" />
 import { ipcRenderer } from 'electron'
-import { normalizeLocale, registerCatalog, translate } from '../../packages/shared/src/i18n'
+import {
+  normalizeLocale,
+  resolvePreferredLocale,
+  registerCatalog,
+  translate,
+} from '../../packages/shared/src/i18n'
 import zhCN from '../../packages/shared/src/i18n/locales/zh-CN/electron/ui/desktopEntry.json'
 import zhTW from '../../packages/shared/src/i18n/locales/zh-TW/electron/ui/desktopEntry.json'
 import enUS from '../../packages/shared/src/i18n/locales/en-US/electron/ui/desktopEntry.json'
@@ -26,7 +31,9 @@ export function installDesktopEntry(): void {
   let settleStyles: ((ready: boolean) => void) | undefined
   let stylesheetLoaded = Promise.resolve(false)
   let bodyObserver: MutationObserver | undefined
-  let language = normalizeLocale(navigator.language)
+  let language = resolvePreferredLocale(
+    navigator.languages?.length ? navigator.languages : [navigator.language],
+  )
   const animations = new Set<Animation>()
   const t = (source: string) => translate('electron.ui.desktopEntry', source, [], language)
   // 角部先松开，上斜面抬起、下切片沉落，最后退开左侧主面；避免整屏同向扫走。
@@ -49,16 +56,23 @@ export function installDesktopEntry(): void {
     root.querySelector('[data-entry-window-close]')!.setAttribute('aria-label', t('关闭窗口'))
     root.querySelector('[data-entry-minimize]')!.setAttribute('aria-label', t('最小化'))
   }
-  const onLanguage = (_event: Electron.IpcRendererEvent, value: unknown) => updateLanguage(value)
+  let languageRevision = 0
+  const onLanguage = (_event: Electron.IpcRendererEvent, value: unknown) => {
+    languageRevision++
+    updateLanguage(value)
+  }
   const onVisibility = (_event: Electron.IpcRendererEvent, value: unknown) => {
     // 原生窗口可能先在后台绘制；首次显示或恢复时，重新给品牌留出可读时间。
     if (value === true && !revealing && !finished && !disposed) visibleAt = performance.now()
   }
   ipcRenderer.on('i18n:changed', onLanguage)
   ipcRenderer.on('window-visibility-changed', onVisibility)
+  const requestedLanguageRevision = languageRevision
   void ipcRenderer
     .invoke('i18n:get-language')
-    .then(updateLanguage)
+    .then((value) => {
+      if (languageRevision === requestedLanguageRevision) updateLanguage(value)
+    })
     .catch(() => {})
   function motion(): string {
     const level = document.documentElement.dataset.desktopEntryMotion
