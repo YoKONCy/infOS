@@ -69,7 +69,7 @@ const applications = [
     config: 'tsconfig.json',
     client: true,
     migrations: true,
-    external: ['better-sqlite3', 'ajv', 'zod', 'ws'],
+    external: ['better-sqlite3', 'ajv', 'zod', 'ws', '@noble/hashes'],
   },
 ]
 const selected = process.argv.find((argument) => argument.startsWith('--app='))?.slice(6)

@@ -2,6 +2,8 @@
 
 本文描述当前画布编辑、助手与项目迁移的职责边界；供应商和任务执行仍由 Pictoria 自治 Host 管理。客户端入口为 `packages/apps/pictoria/client/src/components/CanvasStudio.vue`。
 
+画布文档摘要使用 `@noble/hashes`，它同时属于 Pictoria 生产依赖与官方 Host 的显式发行外部依赖。`build-official-apps.mjs` 保留依赖边界检查，`collect-daemon-deps.mjs` 从 Pictoria 的生产依赖收集对应运行文件；新增 Host 依赖时须同时维护声明与发行边界。
+
 常驻入口为右上角画布助手和项目工具菜单；图片编辑与编组放在选中节点后的原有浮动工具条。图像编辑器将蒙版方式与步骤选择收在弹窗参数栏中，统一使用 Pictoria 的图标、下拉组件和深浅色变量。助手打开时创作栏让出侧栏空间；多图任务和图片卡片显示候选数量，点击后展开可关闭的候选面板。空画布不显示小地图，小地图可手动收起。
 
 ## 图像编辑与候选结果
