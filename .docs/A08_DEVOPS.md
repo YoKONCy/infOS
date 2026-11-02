@@ -42,6 +42,8 @@ Wiki 面向普通用户，目录按读者意图分为 `guide/`（开始使用）
 
 本机 `wrangler login` 使用 OAuth，登录状态不随源码同步给 GitHub Actions。CI 使用独立的 Pages 编辑令牌；不能把本机短期 OAuth access token 当作长期 CI 凭据。GitHub Pages 的域名与 HTTPS 设置由仓库 Pages 后台管理，Actions 部署时仓库内的 `CNAME` 文件不能替代该设置。
 
+官网工作流通过 `pnpm dlx` 运行固定版本的 Wrangler，不向工作区根目录添加部署依赖；升级 CLI 时同时核对 Pages 行为与 Node 要求。
+
 官网四位角色的立绘、表情帧、Q 版与场景插画位于 `public/art/`。立绘的眨眼和说话通过表情补丁实现，补丁位置在 `src/faces.json`；重新生成立绘时需同步更新。角色台词改写自角色档案，在 `src/characters.ts`；简体中文、繁體中文、英语和日语的词库及切换方式见 [国际化说明](./B25_I18N.md#官网语言)。页面粒子等动态效果跟随系统或用户的减少动态效果设置。
 
 ### 1.3 运行时与依赖门禁
