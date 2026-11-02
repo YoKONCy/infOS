@@ -16,7 +16,7 @@
   },
   "devDependencies": {
     "@types/node": "^22.15.0",
-    "@types/ws": "^8.18.1",
+    "@types/ws": "^8.18.2",
     "electron": "44.9.3",
     "electron-vite": "^3.1.0",
     "rimraf": "^6.1.2",
