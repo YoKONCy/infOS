@@ -123,7 +123,7 @@ const { messages, sendMessage } = useChatFlow()
 
 - **资源管理**：所有 Texture/Geometry 必须在 `onUnmounted` 中手动 dispose。
 - **画质选择**：桌宠画质档位调整渲染分辨率、阴影贴图和目标帧率；具体设置由客户端处理。
-- **隐藏窗口**：桌宠隐藏时暂停画面更新，持续隐藏后回收视觉资源；重新显示时再加载。实现与使用方式见 [Bedrock 3D 引擎](../packages/wiki/peripheral-systems/bedrock.md)。
+- **隐藏窗口**：桌宠隐藏时暂停画面更新，持续隐藏后回收视觉资源；重新显示时再加载。实现与使用方式见 [桌宠与 3D 造型](../packages/wiki/companion/desktop-pet.md)。
 
 ---
 

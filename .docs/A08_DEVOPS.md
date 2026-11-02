@@ -34,6 +34,8 @@ push 到 main/dev、面向 main 的 PR 触发普通 CI；Release 通过 workflow
 
 `.github/workflows/wiki.yml` 在 `main` 更新时独立构建 Wiki 并部署到 GitHub Pages，也支持从 `main` 手动触发。产物目录为 `packages/wiki/.vitepress/dist`，站点使用自定义域名 `www.perofamily.top` 和根路径；发布需要仓库 Pages 的来源保持为 GitHub Actions，并在 `github-pages` 环境的部署分支规则中允许 `main`。普通 CI 的全包构建仍会检查 Wiki，Release 复用的质量门禁不触发站点部署。
 
+Wiki 面向普通用户，目录按读者意图分为 `guide/`（开始使用）、`companion/`（和伙伴相处）、`work/`（请伙伴帮忙）、`deployment/` 与 `advanced/`（进阶与原理），侧栏在 `.vitepress/config.mts` 中维护。移动或删除页面时，同步维护 `.vitepress/theme/redirects.ts`：GitHub Pages 对旧路径返回 404 页，404 页在浏览器端查表跳转到新地址。站内角色只使用 Pero 与佩诺菈，素材是 `public/characters/` 下由应用角色图压缩的 WebP；正文提示用 `<CompanionNote who="pero|penora">`，页面 frontmatter 的 `buddy` 切换或关闭右侧陪读角色。页面不写死版本号。
+
 ### 1.3 运行时与依赖门禁
 
 Node、Electron 声明、锁文件与 Docker 镜像必须符合 `scripts/runtime-security-policy.json`。独立 Node 与 Electron 内嵌 Node 分别判断；兼容下限放行仍保留安全差异，不能写成统一安全下限已经满足。Release 在构建前、beforePack 与 afterPack 检查实际 Electron 二进制。完整规则和回补证据见 [B27](./B27_RUNTIME_SECURITY.md)。

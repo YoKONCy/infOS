@@ -1,51 +1,47 @@
 <template>
   <div class="bedrock-demo-wrapper">
-    <!-- 3D 容器 -->
-    <div ref="container" class="bedrock-avatar-container" style="outline: none" tabindex="0">
+    <!-- 3D 舞台 -->
+    <div ref="container" class="bedrock-avatar-container" role="img" aria-label="Bedrock 模型 3D 预览">
       <div ref="canvasContainer" class="canvas-container"></div>
-      <div v-if="loading" class="loading-overlay">Loading 3D Model...</div>
-      <div v-if="errorMsg" class="error-overlay">
+      <div v-if="loading" class="state-overlay">正在加载 3D 模型……</div>
+      <div v-if="errorMsg" class="state-overlay is-error">
         {{ errorMsg }}
-      </div>
-
-      <!-- 简单的控制面板覆盖层 -->
-      <div class="demo-controls">
-        <div class="control-group">
-          <span class="label">动作 (Animation):</span>
-          <select v-model="selectedAnim" @change="playAnimation">
-            <option value="">-- Idle --</option>
-            <option v-for="anim in animList" :key="anim" :value="anim">{{ anim }}</option>
-          </select>
-        </div>
-        <div class="control-group">
-          <span class="label">服装 (Clothing):</span>
-          <div class="checkbox-group">
-            <label>
-              <input v-model="clothingState.dress" type="checkbox" @change="updateClothing" />
-              Dress
-            </label>
-            <label>
-              <input v-model="clothingState.hat" type="checkbox" @change="updateClothing" />
-              Hat
-            </label>
-            <label>
-              <input v-model="clothingState.armour" type="checkbox" @change="updateClothing" />
-              Armour
-            </label>
-          </div>
-        </div>
       </div>
     </div>
 
+    <!-- 控制面板 -->
+    <div class="demo-controls">
+      <label class="control-group">
+        <span class="label">动作</span>
+        <select v-model="selectedAnim" @change="playAnimation">
+          <option value="">待机</option>
+          <option v-for="anim in animList" :key="anim" :value="anim">{{ anim }}</option>
+        </select>
+      </label>
+      <fieldset class="control-group">
+        <legend class="label">穿搭</legend>
+        <div class="checkbox-group">
+          <label>
+            <input v-model="clothingState.dress" type="checkbox" @change="updateClothing" />
+            裙装
+          </label>
+          <label>
+            <input v-model="clothingState.hat" type="checkbox" @change="updateClothing" />
+            帽子
+          </label>
+          <label>
+            <input v-model="clothingState.armour" type="checkbox" @change="updateClothing" />
+            护甲
+          </label>
+        </div>
+      </fieldset>
+    </div>
+
     <div class="demo-instructions">
-      <p>
-        👆
-        <b>交互演示</b>
-        : 左键旋转视角 | Ctrl + 左键平移 | 滚轮缩放
-      </p>
+      <p>左键拖拽旋转 · Ctrl + 左键平移 · 滚轮缩放；触屏可单指旋转、双指缩放</p>
       <p class="author-credit">
-        模型作者:
-        <a href="https://space.bilibili.com/5950899" target="_blank" rel="noopener">@Dr咕咚</a>
+        模型作者
+        <a href="https://space.bilibili.com/5950899" target="_blank" rel="noopener noreferrer">@Dr咕咚</a>
       </p>
     </div>
   </div>
@@ -323,7 +319,7 @@ async function loadModel() {
     lastTime = performance.now()
   } catch (e: any) {
     console.error(e)
-    errorMsg.value = 'Failed to load model. Please ensure assets are in public/assets.'
+    errorMsg.value = '模型没能加载出来，请刷新页面再试一次。'
     loading.value = false
   }
 }
@@ -357,15 +353,20 @@ function onResize() {
 
 <style scoped>
 .bedrock-demo-wrapper {
+  margin: 24px 0;
+  border: 1px solid var(--vp-c-divider);
+  border-radius: var(--wk-radius-lg);
   overflow: hidden;
-  margin: 20px 0;
-  background: transparent;
+  background:
+    radial-gradient(60% 70% at 50% 35%, var(--wk-sky-soft), transparent 70%),
+    radial-gradient(50% 50% at 80% 90%, var(--wk-pink-soft), transparent 70%),
+    var(--vp-c-bg-elv);
 }
 
 .bedrock-avatar-container {
   position: relative;
   width: 100%;
-  height: 500px;
+  height: 460px;
 }
 
 .canvas-container {
@@ -373,91 +374,107 @@ function onResize() {
   height: 100%;
 }
 
-.loading-overlay,
-.error-overlay {
+.state-overlay {
   position: absolute;
   top: 50%;
   left: 50%;
-  transform: translate(-50%, -50%);
-  background: var(--moe-cloud-white);
-  padding: 20px;
-  border: 2px solid var(--moe-cocoa-brown);
-  box-shadow: 4px 4px 0 var(--moe-cocoa-brown);
-  font-weight: bold;
-  color: var(--moe-cocoa-brown);
   z-index: 10;
+  transform: translate(-50%, -50%);
+  padding: 12px 18px;
+  font-size: 14px;
+  color: var(--vp-c-text-2);
+  background: var(--vp-c-bg-elv);
+  border: 1px solid var(--vp-c-divider);
+  border-radius: var(--wk-radius-md);
 }
 
-.error-overlay {
-  color: #ef4444;
+.state-overlay.is-error {
+  color: var(--vp-c-danger-1);
 }
 
 .demo-controls {
-  position: absolute;
-  bottom: 20px;
-  left: 20px;
-  right: 20px;
-  background: var(--moe-cloud-white);
-  padding: 15px;
   display: flex;
-  flex-direction: column;
-  gap: 10px;
-  border: 2px solid var(--moe-cocoa-brown);
-  box-shadow: 4px 4px 0 var(--moe-sakura-pink);
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 12px 28px;
+  padding: 14px 18px;
+  border-top: 1px solid var(--vp-c-divider);
+  background: var(--vp-c-bg-soft);
 }
 
 .control-group {
   display: flex;
   align-items: center;
   gap: 10px;
+  margin: 0;
+  padding: 0;
+  border: 0;
 }
 
 .label {
-  font-weight: 900;
-  font-size: 0.9em;
-  color: var(--moe-cocoa-brown);
-  min-width: 80px;
+  float: left;
+  padding: 0;
+  font-family: var(--vp-font-family-mono);
+  font-size: 12px;
+  font-weight: 600;
+  letter-spacing: 0.08em;
+  color: var(--wk-pink-text);
 }
 
 select {
-  padding: 4px 8px;
-  border: 2px solid var(--moe-cocoa-brown);
-  background: var(--moe-vanilla-yellow);
-  color: var(--moe-cocoa-brown);
-  font-family: 'DotGothic16', sans-serif;
-  outline: none;
+  height: 32px;
+  padding: 0 10px;
+  font-size: 14px;
+  color: var(--vp-c-text-1);
+  background: var(--vp-c-bg-elv);
+  border: 1px solid var(--vp-c-border);
+  border-radius: var(--wk-radius-sm);
 }
 
-select:focus {
-  border-color: var(--moe-sakura-pink-dark);
+select:focus-visible {
+  outline: 2px solid var(--vp-c-brand-1);
+  outline-offset: 1px;
 }
 
 .checkbox-group {
   display: flex;
-  gap: 15px;
+  flex-wrap: wrap;
+  gap: 14px;
 }
 
 .checkbox-group label {
   display: flex;
   align-items: center;
-  gap: 4px;
-  font-size: 0.9em;
+  gap: 6px;
+  font-size: 14px;
+  color: var(--vp-c-text-1);
   cursor: pointer;
-  color: var(--moe-cocoa-brown);
-  font-weight: bold;
+}
+
+.checkbox-group input {
+  accent-color: var(--wk-pink-strong);
 }
 
 .demo-instructions {
-  padding: 10px 15px;
-  background: var(--moe-cloud-white);
-  border: 2px solid var(--moe-cocoa-brown);
-  border-top: none;
-  font-size: 0.85em;
-  color: var(--moe-cocoa-brown);
-  text-align: center;
   display: flex;
   flex-direction: column;
-  gap: 4px;
+  gap: 2px;
+  padding: 10px 18px 12px;
+  border-top: 1px dashed var(--vp-c-divider);
+  font-size: 13px;
+  text-align: center;
+  color: var(--vp-c-text-2);
+}
+
+.demo-instructions p {
+  margin: 0;
+  line-height: 1.7;
+}
+
+@media (max-width: 640px) {
+  .bedrock-avatar-container {
+    height: 360px;
+  }
 }
 
 .author-credit {

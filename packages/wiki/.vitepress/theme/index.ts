@@ -1,50 +1,27 @@
 /**
  * Wiki 自定义主题入口
  *
- * 扩展 VitePress 默认主题，注册全局组件和插件。
+ * 在 VitePress 默认主题上替换布局插槽（陪读、404），并注册正文可用的全局组件。
  *
  * @module packages/wiki/.vitepress/theme
  */
 
 import DefaultTheme from 'vitepress/theme'
 import type { Theme } from 'vitepress'
-import { inBrowser } from 'vitepress'
-import ArchitectureGraph from '../components/ArchitectureGraph.vue'
-import MemoryNetworkGraph from '../components/MemoryNetworkGraph.vue'
+import Layout from './Layout.vue'
+import HomePage from '../components/HomePage.vue'
+import CompanionNote from '../components/CompanionNote.vue'
 import BedrockDemo from '../components/BedrockDemo.vue'
-import MDPGraph from '../components/MDPGraph.vue'
-import ParallaxCodeStream from '../components/ParallaxCodeStream.vue'
-import MoePixelHome from '../components/MoePixelHome.vue'
 import Mermaid from '../components/Mermaid.vue'
 import './style.css'
 
 export default {
   extends: DefaultTheme,
-  enhanceApp({ app, router }) {
-    // 注册 Wiki 专用全局组件
-    app.component('MoePixelHome', MoePixelHome)
-    app.component('ParallaxCodeStream', ParallaxCodeStream)
-    app.component('ArchitectureGraph', ArchitectureGraph)
-    app.component('MemoryNetworkGraph', MemoryNetworkGraph)
+  Layout,
+  enhanceApp({ app }) {
+    app.component('HomePage', HomePage)
+    app.component('CompanionNote', CompanionNote)
     app.component('BedrockDemo', BedrockDemo)
-    app.component('MDPGraph', MDPGraph)
     app.component('Mermaid', Mermaid)
-
-    // 页面切换 View Transition (仅浏览器端)
-    if (inBrowser) {
-      // @ts-ignore — View Transitions API 尚未被所有 TypeScript 版本识别
-      if (!document.startViewTransition) return
-
-      router.onBeforeRouteChange = () => {
-        // @ts-ignore
-        const transition = document.startViewTransition(() => {
-          // DOM 更新完成后 resolve
-        })
-
-        transition.finished.then(() => {
-          // 过渡完成，如需清理可在此处理
-        })
-      }
-    }
   },
 } satisfies Theme

@@ -296,18 +296,7 @@ syncSourceVersion(
 )
 
 console.log(__t('scripts.sync-version', '\n── 📖 当前文档与 Wiki 展示 ──'))
-syncSourceVersion(
-  'packages/wiki/.vitepress/components/MoePixelHome.vue',
-  /v\d+\.\d+\.\d+(?:-[\w.-]+)?/g,
-  `v${VERSION}`,
-  'Wiki 首页版本',
-)
-syncSourceVersion(
-  'packages/wiki/.vitepress/components/ArchitectureGraph.vue',
-  /v\d+\.\d+\.\d+(?:-[\w.-]+)?(?=<)/,
-  `v${VERSION}`,
-  'Wiki 架构图版本',
-)
+// Wiki 页面不写死版本号，版本只随上方的 packages/wiki/package.json 同步。
 for (const entry of fs.readdirSync(path.join(ROOT, '.docs'), { withFileTypes: true })) {
   if (!entry.isFile() || !entry.name.endsWith('.md')) continue
   const relPath = `.docs/${entry.name}`

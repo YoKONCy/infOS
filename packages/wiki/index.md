@@ -1,6 +1,8 @@
 ---
-layout: false
-title: 萌动链接：PeroperoChat！- 官方 Wiki
+layout: home
+title: 萌动链接：PeroperoChat！使用文档
+titleTemplate: false
+markdownStyles: false
 ---
 
-<MoePixelHome />
+<HomePage />

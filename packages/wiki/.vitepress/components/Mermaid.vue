@@ -1,191 +1,103 @@
 <template>
-  <div class="moe-mermaid-wrapper" ref="wrapperRef">
-    <!-- 顶部标题栏与交互按钮组 -->
-    <div class="moe-mermaid-header">
-      <div class="moe-mermaid-title">
-        <span class="moe-mermaid-dot dot-red"></span>
-        <span class="moe-mermaid-dot dot-yellow"></span>
-        <span class="moe-mermaid-dot dot-green"></span>
-        <span class="moe-mermaid-label">架构流程图 · Flowchart</span>
-      </div>
-
-      <!-- 操作工具栏 -->
-      <div class="moe-mermaid-toolbar">
-        <button
-          type="button"
-          class="moe-tool-btn"
-          title="放大 (Zoom In)"
-          @click.stop="zoomInInline"
-        >
-          ➕
-        </button>
-        <button
-          type="button"
-          class="moe-tool-btn"
-          title="缩小 (Zoom Out)"
-          @click.stop="zoomOutInline"
-        >
-          ➖
-        </button>
-        <button
-          type="button"
-          class="moe-tool-btn"
-          title="复位 (Reset)"
-          @click.stop="resetInline"
-        >
-          🔄
-        </button>
-        <button
-          type="button"
-          class="moe-tool-btn highlight"
-          title="全屏沉浸放大查看 (Fullscreen)"
-          @click.stop="openModal"
-        >
-          ⛶ 全屏放大
-        </button>
-        <button
-          type="button"
-          class="moe-tool-btn"
-          title="复制 Mermaid 源码"
-          @click.stop="copyCode"
-        >
-          {{ isCopied ? '✓ 已复制' : '📋 源码' }}
+  <figure ref="wrapperRef" class="wk-diagram">
+    <!-- 顶部标签与操作 -->
+    <div class="wk-diagram-bar">
+      <span class="wk-diagram-label">
+        <PixelIcon name="sparkle" :size="10" />
+        流程图
+      </span>
+      <div class="wk-diagram-tools">
+        <button type="button" class="wk-tool" aria-label="放大" @click.stop="zoomInInline">＋</button>
+        <button type="button" class="wk-tool" aria-label="缩小" @click.stop="zoomOutInline">－</button>
+        <button type="button" class="wk-tool" aria-label="复位缩放" @click.stop="resetInline">1:1</button>
+        <button type="button" class="wk-tool" aria-label="全屏查看" @click.stop="openModal">全屏</button>
+        <button type="button" class="wk-tool" aria-label="复制 Mermaid 源码" @click.stop="copyCode">
+          {{ isCopied ? '已复制' : '源码' }}
         </button>
       </div>
     </div>
 
-    <!-- 流程图主体渲染区 -->
-    <div
-      class="moe-mermaid-body"
-      title="双击或点击右上角可全屏放大"
-      @dblclick="openModal"
-    >
-      <div v-if="isLoading" class="moe-mermaid-loading">
-        <span class="loading-icon">✨</span>
-        <span>正在绘制流程图...</span>
-      </div>
-      <div v-else-if="error" class="moe-mermaid-error">
-        <div class="error-tip">⚠️ 流程图渲染提示：</div>
+    <!-- 图表主体 -->
+    <div class="wk-diagram-body" @dblclick="openModal">
+      <div v-if="isLoading" class="wk-diagram-state">正在绘制流程图……</div>
+      <div v-else-if="error" class="wk-diagram-state is-error">
+        <p>流程图暂时没能画出来：</p>
         <pre>{{ error }}</pre>
       </div>
       <div
         v-else
-        class="moe-mermaid-viewport"
-      >
-        <div
-          class="moe-mermaid-svg-container"
-          :style="{ transform: `scale(${inlineScale})`, transformOrigin: 'center center' }"
-          v-html="svgContent"
-        ></div>
-
-        <!-- 悬浮提示胶囊 -->
-        <div class="moe-zoom-hint" @click.stop="openModal">
-          <span>🔍 点击放大查看</span>
-        </div>
-      </div>
+        class="wk-diagram-svg"
+        :style="{ transform: `scale(${inlineScale})` }"
+        v-html="svgContent"
+      ></div>
     </div>
 
-    <!-- 全屏灯箱模态框 (Teleport 到 body 避免被父级 overflow 遮挡) -->
+    <!-- 全屏查看（挂到 body，避免被正文 overflow 裁切） -->
     <Teleport to="body">
-      <Transition name="moe-modal-fade">
+      <Transition name="wk-fade">
         <div
           v-if="isModalOpen"
-          class="moe-lightbox-mask"
+          class="wk-lightbox"
+          role="dialog"
+          aria-modal="true"
+          aria-label="全屏查看流程图"
           @click.self="closeModal"
         >
-          <!-- 灯箱顶部浮动控制条 -->
-          <div class="moe-lightbox-bar">
-            <div class="lightbox-info">
-              <span class="lightbox-title">🌸 架构流程图全屏检视</span>
-              <span class="lightbox-scale-badge">{{ Math.round(modalScale * 100) }}%</span>
-            </div>
-            <div class="lightbox-actions">
-              <button
-                type="button"
-                class="lightbox-btn"
-                title="放大"
-                @click="zoomInModal"
-              >
-                ➕
-              </button>
-              <button
-                type="button"
-                class="lightbox-btn"
-                title="缩小"
-                @click="zoomOutModal"
-              >
-                ➖
-              </button>
-              <button
-                type="button"
-                class="lightbox-btn"
-                title="重置居中"
-                @click="resetModal"
-              >
-                🔄 复位
-              </button>
-              <button
-                type="button"
-                class="lightbox-btn close-btn"
-                title="关闭 (Esc)"
-                @click="closeModal"
-              >
-                ✕ 关闭
+          <div class="wk-lightbox-bar">
+            <span class="wk-lightbox-scale">{{ Math.round(modalScale * 100) }}%</span>
+            <div class="wk-diagram-tools">
+              <button type="button" class="wk-tool" aria-label="放大" @click="zoomInModal">＋</button>
+              <button type="button" class="wk-tool" aria-label="缩小" @click="zoomOutModal">－</button>
+              <button type="button" class="wk-tool" aria-label="复位并居中" @click="resetModal">复位</button>
+              <button ref="closeRef" type="button" class="wk-tool is-close" aria-label="关闭全屏" @click="closeModal">
+                关闭
               </button>
             </div>
           </div>
-
-          <!-- 灯箱可拖拽画布区域 -->
           <div
-            class="moe-lightbox-canvas"
+            class="wk-lightbox-canvas"
             :class="{ grabbing: isDragging }"
             @wheel.prevent="handleWheel"
-            @mousedown="startDrag"
-            @mousemove="onDrag"
-            @mouseup="stopDrag"
-            @mouseleave="stopDrag"
+            @pointerdown="startDrag"
+            @pointermove="onDrag"
+            @pointerup="stopDrag"
+            @pointercancel="stopDrag"
           >
             <div
-              class="moe-lightbox-svg-wrapper"
-              :style="{
-                transform: `translate(${panX}px, ${panY}px) scale(${modalScale})`,
-                cursor: isDragging ? 'grabbing' : 'grab'
-              }"
+              class="wk-lightbox-svg"
+              :style="{ transform: `translate(${panX}px, ${panY}px) scale(${modalScale})` }"
               v-html="svgContent"
             ></div>
           </div>
-
-          <!-- 底部快捷操作提示 -->
-          <div class="moe-lightbox-footer">
-            <span>💡 提示：按住鼠标左键可拖动画布，滚轮可自由缩放，按 <b>ESC</b> 键随时退出全屏</span>
-          </div>
+          <p class="wk-lightbox-hint">拖动画布可平移，滚轮缩放，按 Esc 退出</p>
         </div>
       </Transition>
     </Teleport>
-  </div>
+  </figure>
 </template>
-
 <script setup lang="ts">
-import { ref, onMounted, onUnmounted, watch } from 'vue'
+import { nextTick, onMounted, onUnmounted, ref, watch } from 'vue'
+import { useData } from 'vitepress'
+import PixelIcon from './PixelIcon.vue'
 
-const props = defineProps<{
-  code: string
-}>()
+/**
+ * Mermaid 流程图：进入视口后再加载 mermaid 并渲染，跟随站点深浅色重新绘制。
+ */
+const props = defineProps<{ code: string }>()
+const { isDark } = useData()
 
 const wrapperRef = ref<HTMLElement | null>(null)
+const closeRef = ref<HTMLButtonElement | null>(null)
 const svgContent = ref('')
 const isLoading = ref(true)
 const error = ref('')
 const isCopied = ref(false)
 
-// 懒渲染状态与 IntersectionObserver
 let isRendered = false
 let observer: IntersectionObserver | null = null
+let lastFocus: HTMLElement | null = null
 
-// 页内缩放状态
 const inlineScale = ref(1)
-
-// 全屏灯箱状态
 const isModalOpen = ref(false)
 const modalScale = ref(1.2)
 const panX = ref(0)
@@ -193,10 +105,46 @@ const panY = ref(0)
 const isDragging = ref(false)
 const dragStart = { x: 0, y: 0 }
 
-// 模块级单例初始化状态
-let mermaidInitialized = false
+// 两套配色与 style.css 的浅蓝 / 浅粉令牌保持一致
+const PALETTES = {
+  light: {
+    primaryColor: '#eaf4fc',
+    primaryTextColor: '#1d2433',
+    primaryBorderColor: '#7cc0ea',
+    lineColor: '#8a97ad',
+    secondaryColor: '#fdeef5',
+    tertiaryColor: '#f3f6fb',
+    background: '#ffffff',
+    mainBkg: '#eaf4fc',
+    nodeBorder: '#7cc0ea',
+    clusterBkg: '#f7f9fc',
+    clusterBorder: '#f4a6c6',
+    edgeLabelBackground: '#ffffff',
+    actorBorder: '#7cc0ea',
+    actorBkg: '#eaf4fc',
+    signalColor: '#8a97ad',
+    signalTextColor: '#1d2433',
+  },
+  dark: {
+    primaryColor: '#1d2a3d',
+    primaryTextColor: '#e9edf5',
+    primaryBorderColor: '#5fa6d8',
+    lineColor: '#7d889d',
+    secondaryColor: '#2a2030',
+    tertiaryColor: '#192030',
+    background: '#12161f',
+    mainBkg: '#1d2a3d',
+    nodeBorder: '#5fa6d8',
+    clusterBkg: '#161c28',
+    clusterBorder: '#b9789c',
+    edgeLabelBackground: '#12161f',
+    actorBorder: '#5fa6d8',
+    actorBkg: '#1d2a3d',
+    signalColor: '#7d889d',
+    signalTextColor: '#e9edf5',
+  },
+}
 
-// 页内缩放控制
 function zoomInInline() {
   inlineScale.value = Math.min(inlineScale.value + 0.2, 2.5)
 }
@@ -209,26 +157,25 @@ function resetInline() {
   inlineScale.value = 1
 }
 
-// 全屏灯箱控制
 function openModal() {
+  if (!svgContent.value) return
+  lastFocus = document.activeElement as HTMLElement | null
   isModalOpen.value = true
   modalScale.value = 1.3
   panX.value = 0
   panY.value = 0
-  if (typeof document !== 'undefined') {
-    document.body.style.overflow = 'hidden'
-  }
+  document.body.style.overflow = 'hidden'
+  nextTick(() => closeRef.value?.focus())
 }
 
 function closeModal() {
   isModalOpen.value = false
-  if (typeof document !== 'undefined') {
-    document.body.style.overflow = ''
-  }
+  document.body.style.overflow = ''
+  lastFocus?.focus()
+  lastFocus = null
 }
-
 function zoomInModal() {
-  modalScale.value = Math.min(modalScale.value + 0.25, 4.0)
+  modalScale.value = Math.min(modalScale.value + 0.25, 4)
 }
 
 function zoomOutModal() {
@@ -241,20 +188,20 @@ function resetModal() {
   panY.value = 0
 }
 
-// 滚轮无极缩放
 function handleWheel(event: WheelEvent) {
   const delta = event.deltaY < 0 ? 0.15 : -0.15
   modalScale.value = Math.max(0.4, Math.min(modalScale.value + delta, 4.5))
 }
 
-// 鼠标拖拽画布
-function startDrag(event: MouseEvent) {
+// 指针拖拽：鼠标、触屏与触控笔共用
+function startDrag(event: PointerEvent) {
   isDragging.value = true
   dragStart.x = event.clientX - panX.value
   dragStart.y = event.clientY - panY.value
+  ;(event.currentTarget as HTMLElement).setPointerCapture(event.pointerId)
 }
 
-function onDrag(event: MouseEvent) {
+function onDrag(event: PointerEvent) {
   if (!isDragging.value) return
   panX.value = event.clientX - dragStart.x
   panY.value = event.clientY - dragStart.y
@@ -264,514 +211,300 @@ function stopDrag() {
   isDragging.value = false
 }
 
-// 复制源码
 async function copyCode() {
   try {
-    const raw = decodeURIComponent(props.code).trim()
-    await navigator.clipboard.writeText(raw)
+    await navigator.clipboard.writeText(decodeURIComponent(props.code).trim())
     isCopied.value = true
-    setTimeout(() => {
-      isCopied.value = false
-    }, 2000)
+    setTimeout(() => (isCopied.value = false), 2000)
   } catch (err) {
-    console.error('Copy failed:', err)
+    console.error('[Mermaid]', err)
   }
 }
 
-// 全局 ESC 退出全屏监听
 function handleKeydown(event: KeyboardEvent) {
-  if (event.key === 'Escape' && isModalOpen.value) {
-    closeModal()
-  }
+  if (event.key === 'Escape' && isModalOpen.value) closeModal()
 }
 
 async function renderDiagram() {
   if (typeof window === 'undefined') return
-  isLoading.value = true
+  // 重绘（例如切换深浅色）时保留旧图，不闪成加载提示
+  isLoading.value = !svgContent.value
   error.value = ''
 
   try {
     let rawCode = decodeURIComponent(props.code).trim()
-    if (!rawCode) {
-      isLoading.value = false
-      return
-    }
+    if (!rawCode) return
 
-    // 语法自愈预处理：连接线文本 -->|text| 若包含括号 () 等字符，自动加双引号包裹
-    rawCode = rawCode.replace(/-->\|([^"\n|]+)\|/g, (match, label) => {
+    // 连线文字 -->|text| 含括号等字符时补上引号，避免 Mermaid 解析失败
+    rawCode = rawCode.replace(/-->\|([^"\n|]+)\|/g, (match, label: string) => {
       const trimmed = label.trim()
-      if (
-        (trimmed.startsWith('"') && trimmed.endsWith('"')) ||
-        (trimmed.startsWith("'") && trimmed.endsWith("'"))
-      ) {
-        return match
-      }
-      if (/[()[\]{}:;]/.test(trimmed)) {
-        return `-->|"${trimmed}"|`
-      }
-      return match
+      if (/^(["']).*\1$/.test(trimmed)) return match
+      return /[()[\]{}:;]/.test(trimmed) ? `-->|"${trimmed}"|` : match
     })
 
-    // 快速检测字体，最多等待 150ms 超时回退，彻底防止外部网络波动卡死渲染
-    if (typeof document !== 'undefined' && document.fonts?.ready) {
-      await Promise.race([
-        document.fonts.ready,
-        new Promise((resolve) => setTimeout(resolve, 150)),
-      ])
-    }
-
     const { default: mermaid } = await import('mermaid')
+    // 每次按当前深浅色初始化，切换主题后重新渲染即可换色
+    mermaid.initialize({
+      startOnLoad: false,
+      securityLevel: 'loose',
+      theme: 'base',
+      // 字体名不带引号，避免写入 SVG 样式时转义出错
+      fontFamily: 'Inter, PingFang SC, Microsoft YaHei, Noto Sans SC, sans-serif',
+      flowchart: {
+        padding: 20,
+        htmlLabels: true,
+        useMaxWidth: true,
+        nodeSpacing: 46,
+        rankSpacing: 46,
+        curve: 'basis',
+      },
+      themeVariables: { ...PALETTES[isDark.value ? 'dark' : 'light'], fontSize: '14px' },
+    })
 
-    if (!mermaidInitialized) {
-      mermaid.initialize({
-        startOnLoad: false,
-        securityLevel: 'loose',
-        theme: 'base',
-        fontFamily: "-apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'PingFang SC', 'Microsoft YaHei', sans-serif",
-        flowchart: {
-          padding: 24,
-          htmlLabels: true,
-          useMaxWidth: true,
-          nodeSpacing: 50,
-          rankSpacing: 50,
-          curve: 'basis',
-        },
-        themeVariables: {
-          primaryColor: '#fce7f3',
-          primaryTextColor: '#2d1b1e',
-          primaryBorderColor: '#f472b6',
-          lineColor: '#836551',
-          secondaryColor: '#fef3c7',
-          tertiaryColor: '#e0f2fe',
-          background: '#ffffff',
-          mainBkg: '#fff5f8',
-          nodeBorder: '#f472b6',
-          clusterBkg: 'rgba(255, 255, 255, 0.75)',
-          clusterBorder: '#f9a8d4',
-          fontSize: '13.5px',
-          edgeLabelBackground: '#ffffff',
-          actorBorder: '#f472b6',
-          actorBkg: '#fce7f3',
-          signalColor: '#836551',
-          signalTextColor: '#2d1b1e',
-        },
-      })
-      mermaidInitialized = true
-    }
-
-    const uniqueId = `mermaid-${Math.random().toString(36).substring(2, 9)}`
+    const uniqueId = `mermaid-${Math.random().toString(36).slice(2, 9)}`
     const { svg } = await mermaid.render(uniqueId, rawCode)
     svgContent.value = svg
   } catch (err) {
-    console.error('[Mermaid Render Error]', err)
+    console.error('[Mermaid]', err)
     error.value = err instanceof Error ? err.message : String(err)
   } finally {
     isLoading.value = false
   }
 }
 
-function initLazyRender() {
-  if (typeof window === 'undefined') return
+onMounted(() => {
+  window.addEventListener('keydown', handleKeydown)
   if ('IntersectionObserver' in window && wrapperRef.value) {
     observer = new IntersectionObserver(
       (entries) => {
-        for (const entry of entries) {
-          if (entry.isIntersecting && !isRendered) {
-            isRendered = true
-            renderDiagram()
-            observer?.disconnect()
-            observer = null
-            break
-          }
-        }
+        if (!entries.some((e) => e.isIntersecting) || isRendered) return
+        isRendered = true
+        renderDiagram()
+        observer?.disconnect()
+        observer = null
       },
-      { rootMargin: '250px 0px' }
+      { rootMargin: '250px 0px' },
     )
     observer.observe(wrapperRef.value)
   } else {
-    // 降级兜底直接渲染
     isRendered = true
     renderDiagram()
-  }
-}
-
-onMounted(() => {
-  initLazyRender()
-  if (typeof window !== 'undefined') {
-    window.addEventListener('keydown', handleKeydown)
   }
 })
 
 onUnmounted(() => {
-  if (observer) {
-    observer.disconnect()
-    observer = null
-  }
-  if (typeof window !== 'undefined') {
-    window.removeEventListener('keydown', handleKeydown)
-    document.body.style.overflow = ''
-  }
+  observer?.disconnect()
+  observer = null
+  window.removeEventListener('keydown', handleKeydown)
+  document.body.style.overflow = ''
 })
 
-watch(() => props.code, () => {
-  renderDiagram()
+watch(() => props.code, renderDiagram)
+// 已渲染过的图在切换深浅色时重绘
+watch(isDark, () => {
+  if (isRendered) renderDiagram()
 })
 </script>
-
 <style scoped>
-.moe-mermaid-wrapper {
-  margin: 1.8rem 0;
-  background: rgba(255, 255, 255, 0.9);
-  border: 2px solid var(--moe-cocoa-brown, #4a3728);
-  border-radius: 8px;
+.wk-diagram {
+  margin: 24px 0;
+  border: 1px solid var(--vp-c-divider);
+  border-radius: var(--wk-radius-md);
+  background: var(--vp-c-bg-elv);
   overflow: hidden;
-  box-shadow: 4px 4px 0 var(--moe-sakura-pink, #f472b6);
-  backdrop-filter: blur(8px);
   content-visibility: auto;
   contain-intrinsic-size: 1px 300px;
-  transition: transform 0.2s ease, box-shadow 0.2s ease;
 }
 
-.moe-mermaid-wrapper:hover {
-  box-shadow: 6px 6px 0 var(--moe-sakura-pink, #f472b6);
-}
-
-.moe-mermaid-header {
+.wk-diagram-bar,
+.wk-lightbox-bar {
   display: flex;
+  flex-wrap: wrap;
   align-items: center;
   justify-content: space-between;
-  padding: 8px 14px;
-  background: #fff0f5;
-  border-bottom: 2px solid var(--moe-cocoa-brown, #4a3728);
   gap: 8px;
+  padding: 8px 12px;
+  border-bottom: 1px solid var(--vp-c-divider);
+  background: var(--vp-c-bg-soft);
+}
+
+.wk-diagram-label {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-family: var(--vp-font-family-mono);
+  font-size: 12px;
+  font-weight: 600;
+  letter-spacing: 0.08em;
+  color: var(--wk-pink-text);
+}
+
+.wk-diagram-tools {
+  display: flex;
   flex-wrap: wrap;
-}
-
-.moe-mermaid-title {
-  display: flex;
-  align-items: center;
   gap: 6px;
 }
 
-.moe-mermaid-dot {
-  width: 9px;
-  height: 9px;
-  border-radius: 50%;
-  display: inline-block;
-  border: 1px solid rgba(0, 0, 0, 0.15);
+.wk-tool {
+  min-width: 30px;
+  height: 28px;
+  padding: 0 10px;
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--vp-c-text-2);
+  background: var(--vp-c-bg-elv);
+  border: 1px solid var(--vp-c-border);
+  border-radius: var(--wk-radius-sm);
+  transition:
+    color 0.15s,
+    border-color 0.15s,
+    transform 0.1s steps(2, end);
 }
 
-.dot-red { background: #ff5f56; }
-.dot-yellow { background: #ffbd2e; }
-.dot-green { background: #27c93f; }
-
-.moe-mermaid-label {
-  margin-left: 6px;
-  font-size: 0.85rem;
-  font-weight: 700;
-  color: var(--moe-cocoa-brown, #4a3728);
-  letter-spacing: 0.5px;
+.wk-tool:hover {
+  color: var(--vp-c-brand-1);
+  border-color: var(--wk-sky);
 }
 
-/* 操作工具栏 */
-.moe-mermaid-toolbar {
-  display: flex;
-  align-items: center;
-  gap: 6px;
+.wk-tool:active {
+  transform: translateY(1px);
 }
 
-.moe-tool-btn {
-  padding: 3px 8px;
-  font-size: 0.78rem;
-  font-weight: 700;
-  color: var(--moe-cocoa-brown, #4a3728);
-  background: #ffffff;
-  border: 1.5px solid var(--moe-cocoa-brown, #4a3728);
-  border-radius: 4px;
-  box-shadow: 1px 1px 0 var(--moe-cocoa-brown, #4a3728);
-  cursor: pointer;
-  transition: all 0.1s ease;
-  user-select: none;
+.wk-tool:focus-visible {
+  outline: 2px solid var(--vp-c-brand-1);
+  outline-offset: 2px;
 }
 
-.moe-tool-btn:hover {
-  transform: translate(-1px, -1px);
-  box-shadow: 2px 2px 0 var(--moe-cocoa-brown, #4a3728);
-  background: #fff5f8;
-}
-
-.moe-tool-btn:active {
-  transform: translate(1px, 1px);
-  box-shadow: 0 0 0;
-}
-
-.moe-tool-btn.highlight {
-  background: #fbcfe8;
-  color: #9d174d;
-}
-
-.moe-tool-btn.highlight:hover {
-  background: #f472b6;
-  color: #ffffff;
-}
-
-/* 主体内容区 */
-.moe-mermaid-body {
-  position: relative;
-  padding: 1.5rem 1rem;
+.wk-diagram-body {
   display: flex;
   justify-content: center;
-  align-items: center;
-  overflow-x: auto;
+  padding: 24px 16px;
   min-height: 140px;
-  cursor: zoom-in;
+  overflow-x: auto;
 }
 
-.moe-mermaid-viewport {
-  width: 100%;
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  position: relative;
-}
-
-.moe-mermaid-svg-container {
-  width: 100%;
+.wk-diagram-svg {
   display: flex;
   justify-content: center;
+  width: 100%;
+  transform-origin: center top;
   transition: transform 0.2s ease;
 }
 
-.moe-mermaid-svg-container :deep(svg) {
+.wk-diagram-svg :deep(svg) {
   max-width: 100% !important;
   height: auto !important;
 }
 
-/* 阻止 foreignObject 裁剪文字 */
-.moe-mermaid-svg-container :deep(foreignObject) {
+.wk-diagram-svg :deep(foreignObject),
+.wk-lightbox-svg :deep(foreignObject) {
   overflow: visible !important;
 }
 
-.moe-mermaid-svg-container :deep(.node .label) {
+.wk-diagram-svg :deep(.node .label) {
   line-height: 1.45 !important;
-  font-size: 13.5px !important;
-  font-weight: 600 !important;
-  color: #2d1b1e !important;
-  text-align: center !important;
+  font-weight: 500 !important;
 }
 
-.moe-mermaid-svg-container :deep(.node rect),
-.moe-mermaid-svg-container :deep(.node polygon) {
-  stroke-width: 2px !important;
-  rx: 6px !important;
-  ry: 6px !important;
-}
-
-.moe-mermaid-svg-container :deep(.edgeLabel) {
-  font-size: 12px !important;
-  color: #4a3728 !important;
-}
-
-/* 仅对内层文本标签应用背景防连线遮挡，绝不对外层 SVG <g> 容器设置 border 避免产生悬空半括号残边 */
-.moe-mermaid-svg-container :deep(.edgeLabel span),
-.moe-mermaid-svg-container :deep(.edgeLabel p) {
-  background-color: rgba(255, 255, 255, 0.95) !important;
+.wk-diagram-svg :deep(.edgeLabel span),
+.wk-diagram-svg :deep(.edgeLabel p) {
   padding: 2px 6px !important;
   border-radius: 4px !important;
-  display: inline-block;
   line-height: 1.35 !important;
 }
-
-/* 悬浮提示胶囊 */
-.moe-zoom-hint {
-  position: absolute;
-  right: 10px;
-  bottom: -6px;
-  background: rgba(255, 255, 255, 0.92);
-  border: 1.5px solid #f472b6;
-  border-radius: 20px;
-  padding: 3px 10px;
-  font-size: 0.75rem;
-  font-weight: 700;
-  color: #db2777;
-  box-shadow: 0 2px 6px rgba(244, 114, 182, 0.2);
-  opacity: 0.6;
-  transition: opacity 0.2s ease, transform 0.2s ease;
-  pointer-events: auto;
-  cursor: pointer;
+.wk-diagram-state {
+  align-self: center;
+  font-size: 14px;
+  color: var(--vp-c-text-2);
 }
 
-.moe-mermaid-body:hover .moe-zoom-hint {
-  opacity: 1;
-  transform: translateY(-2px);
+.wk-diagram-state.is-error {
+  align-self: stretch;
+  padding: 12px 14px;
+  border-left: 4px solid var(--vp-c-danger-3);
+  background: var(--vp-c-danger-soft);
+  border-radius: 0 var(--wk-radius-sm) var(--wk-radius-sm) 0;
 }
 
-/* 加载中与错误状态 */
-.moe-mermaid-loading {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  color: #db2777;
-  font-weight: 600;
-  font-size: 0.95rem;
+.wk-diagram-state.is-error p {
+  margin: 0;
 }
 
-.loading-icon {
-  animation: spin 1.5s infinite linear;
-  display: inline-block;
-}
-
-@keyframes spin {
-  from { transform: rotate(0deg); }
-  to { transform: rotate(360deg); }
-}
-
-.moe-mermaid-error {
-  width: 100%;
-  padding: 12px;
-  background: #fff1f2;
-  border: 1px dashed #f43f5e;
-  border-radius: 6px;
-  color: #be123c;
-  font-size: 0.85rem;
-}
-
-.moe-mermaid-error pre {
-  margin-top: 6px;
-  font-size: 0.8rem;
+.wk-diagram-state pre {
+  margin: 6px 0 0;
+  font-size: 12px;
   white-space: pre-wrap;
   word-break: break-all;
 }
 
-/* --- 全屏灯箱模态框样式 (Lightbox Modal) --- */
-.moe-lightbox-mask {
+/* 全屏查看 */
+.wk-lightbox {
   position: fixed;
   inset: 0;
-  z-index: 99999;
-  background: rgba(45, 27, 30, 0.75);
-  backdrop-filter: blur(12px) saturate(160%);
+  z-index: 200;
   display: flex;
   flex-direction: column;
-  user-select: none;
+  background: var(--vp-c-bg);
+  background: color-mix(in srgb, var(--vp-c-bg) 92%, transparent);
+  -webkit-backdrop-filter: blur(10px);
+  backdrop-filter: blur(10px);
 }
 
-.moe-lightbox-bar {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  padding: 12px 24px;
-  background: rgba(255, 255, 255, 0.92);
-  border-bottom: 2px solid var(--moe-cocoa-brown, #4a3728);
-  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.15);
+.wk-lightbox-scale {
+  font-family: var(--vp-font-family-mono);
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--vp-c-text-2);
 }
 
-.lightbox-info {
-  display: flex;
-  align-items: center;
-  gap: 12px;
+.wk-tool.is-close {
+  color: var(--vp-c-text-1);
+  border-color: var(--wk-pink);
 }
 
-.lightbox-title {
-  font-size: 1rem;
-  font-weight: 800;
-  color: var(--moe-cocoa-brown, #4a3728);
-}
-
-.lightbox-scale-badge {
-  background: #fce7f3;
-  color: #db2777;
-  font-weight: 700;
-  font-size: 0.85rem;
-  padding: 2px 8px;
-  border-radius: 12px;
-  border: 1px solid #f472b6;
-}
-
-.lightbox-actions {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-}
-
-.lightbox-btn {
-  padding: 6px 14px;
-  font-size: 0.85rem;
-  font-weight: 700;
-  color: var(--moe-cocoa-brown, #4a3728);
-  background: #ffffff;
-  border: 2px solid var(--moe-cocoa-brown, #4a3728);
-  border-radius: 6px;
-  box-shadow: 2px 2px 0 var(--moe-cocoa-brown, #4a3728);
-  cursor: pointer;
-  transition: all 0.1s ease;
-}
-
-.lightbox-btn:hover {
-  transform: translate(-1px, -1px);
-  box-shadow: 3px 3px 0 var(--moe-cocoa-brown, #4a3728);
-  background: #fff5f8;
-}
-
-.lightbox-btn:active {
-  transform: translate(1px, 1px);
-  box-shadow: 0 0 0;
-}
-
-.lightbox-btn.close-btn {
-  background: #f43f5e;
-  color: #ffffff;
-  border-color: #be123c;
-  margin-left: 12px;
-}
-
-.lightbox-btn.close-btn:hover {
-  background: #e11d48;
-}
-
-.moe-lightbox-canvas {
+.wk-lightbox-canvas {
   flex: 1;
-  position: relative;
   display: flex;
   justify-content: center;
   align-items: center;
-  overflow: hidden;
   padding: 40px;
+  overflow: hidden;
+  cursor: grab;
+  touch-action: none;
+  user-select: none;
 }
 
-.moe-lightbox-svg-wrapper {
-  transition: transform 0.05s ease-out;
+.wk-lightbox-canvas.grabbing {
+  cursor: grabbing;
+}
+
+.wk-lightbox-svg {
   transform-origin: center center;
   will-change: transform;
 }
 
-.moe-lightbox-svg-wrapper :deep(svg) {
-  min-width: 600px;
+.wk-lightbox-svg :deep(svg) {
+  min-width: min(600px, 90vw);
   max-width: none !important;
   height: auto !important;
-  filter: drop-shadow(0 10px 25px rgba(0, 0, 0, 0.25));
 }
 
-.moe-lightbox-svg-wrapper :deep(foreignObject) {
-  overflow: visible !important;
-}
-
-.moe-lightbox-footer {
-  padding: 8px 16px;
-  background: rgba(255, 255, 255, 0.85);
-  border-top: 1px solid rgba(0, 0, 0, 0.1);
+.wk-lightbox-hint {
+  margin: 0;
+  padding: 10px 16px;
+  font-size: 13px;
   text-align: center;
-  font-size: 0.82rem;
-  color: #4a3728;
+  color: var(--vp-c-text-2);
+  border-top: 1px solid var(--vp-c-divider);
 }
 
-/* 渐变过渡动画 */
-.moe-modal-fade-enter-active,
-.moe-modal-fade-leave-active {
-  transition: opacity 0.2s ease, transform 0.2s ease;
+.wk-fade-enter-active,
+.wk-fade-leave-active {
+  transition: opacity 0.2s ease;
 }
 
-.moe-modal-fade-enter-from,
-.moe-modal-fade-leave-to {
+.wk-fade-enter-from,
+.wk-fade-leave-to {
   opacity: 0;
 }
 </style>
