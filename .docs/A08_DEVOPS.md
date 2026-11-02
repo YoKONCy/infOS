@@ -36,9 +36,11 @@ push 到 main/dev、面向 main 的 PR 触发普通 CI；Release 通过 workflow
 
 Wiki 面向普通用户，目录按读者意图分为 `guide/`（开始使用）、`companion/`（和伙伴相处）、`work/`（请伙伴帮忙）、`deployment/` 与 `advanced/`（进阶与原理），侧栏在 `.vitepress/config.mts` 中维护。移动或删除页面时，同步维护 `.vitepress/theme/redirects.ts`：GitHub Pages 对旧路径返回 404 页，404 页在浏览器端查表跳转到新地址。站内角色只使用 Pero 与佩诺菈，素材是 `public/characters/` 下由应用角色图压缩的 WebP；正文提示用 `<CompanionNote who="pero|penora">`，页面 frontmatter 的 `buddy` 切换或关闭右侧陪读角色。页面不写死版本号。
 
-`packages/site` 是萌动链接官网：Vite + Vue 静态单页，`base: './'`，构建产物位于 `packages/site/dist`。`.github/workflows/site.yml` 在 `main` 更新或从 `main` 手动触发时独立构建官网，检查入口后将产物上传到 Cloudflare Pages 项目 `peroperochat-site` 的 `main` 生产分支；同一时刻只进行一次官网发布，普通 CI 的全包构建也会构建官网。
+`packages/site` 是萌动链接官网：Vite + Vue 静态单页，`base: './'`，构建产物位于 `packages/site/dist`。`.github/workflows/site.yml` 在 `main` 更新或从 `main` 手动触发时独立构建官网，检查入口后保存 `official-site` 静态产物，再核对发布凭据并上传到 Cloudflare Pages 项目 `peroperochat-site` 的 `main` 生产分支。凭据缺失时发布任务明确失败，但已完成的构建产物仍可下载排查或通过已授权的本机 CLI 部署；同一时刻只进行一次官网发布，普通 CI 的全包构建也会构建官网。
 
 官网发布需提前在 Cloudflare 创建生产分支为 `main` 的 Pages 项目 `peroperochat-site`，并在 GitHub 仓库 Secrets 中配置 `CLOUDFLARE_ACCOUNT_ID` 与拥有该账户 Pages 编辑权限的 `CLOUDFLARE_API_TOKEN`。目标域名为 `www.perofamily.top`，还需在 Pages 绑定该域名，并在 DNS 服务商将 `www` 指向 Pages 项目提供的地址。若项目已启用 Cloudflare 的 Git 自动部署，应关闭该自动部署，避免与工作流重复发布。
+
+本机 `wrangler login` 使用 OAuth，登录状态不随源码同步给 GitHub Actions。CI 使用独立的 Pages 编辑令牌；不能把本机短期 OAuth access token 当作长期 CI 凭据。GitHub Pages 的域名与 HTTPS 设置由仓库 Pages 后台管理，Actions 部署时仓库内的 `CNAME` 文件不能替代该设置。
 
 官网四位角色的立绘、表情帧、Q 版与场景插画位于 `public/art/`。立绘的眨眼和说话通过表情补丁实现，补丁位置在 `src/faces.json`；重新生成立绘时需同步更新。角色台词改写自角色档案，在 `src/characters.ts`；简体中文、繁體中文、英语和日语的词库及切换方式见 [国际化说明](./B25_I18N.md#官网语言)。页面粒子等动态效果跟随系统或用户的减少动态效果设置。
 

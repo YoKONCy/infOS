@@ -21,15 +21,6 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 20
     steps:
-      - name: 检查 Cloudflare 发布配置
-        env:
-          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
-          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
-        run: |
-          if [ -z "$CLOUDFLARE_API_TOKEN" ] || [ -z "$CLOUDFLARE_ACCOUNT_ID" ]; then
-            echo '::error::请在仓库 Secrets 中配置 CLOUDFLARE_API_TOKEN 和 CLOUDFLARE_ACCOUNT_ID。'
-            exit 1
-          fi
       - uses: actions/checkout@v6
       - uses: pnpm/action-setup@v4
       - uses: actions/setup-node@v4
@@ -42,6 +33,21 @@ jobs:
         run: pnpm --filter @infos/site build
       - name: 检查官网入口
         run: test -s packages/site/dist/index.html
+      - name: 保存官网静态产物
+        uses: actions/upload-artifact@v7
+        with:
+          name: official-site
+          path: packages/site/dist/
+          if-no-files-found: error
+      - name: 检查 Cloudflare 发布配置
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+        run: |
+          if [ -z "$CLOUDFLARE_API_TOKEN" ] || [ -z "$CLOUDFLARE_ACCOUNT_ID" ]; then
+            echo '::error::请在仓库 Secrets 中配置 CLOUDFLARE_API_TOKEN 和 CLOUDFLARE_ACCOUNT_ID。'
+            exit 1
+          fi
       - name: 发布到 Cloudflare Pages
         uses: cloudflare/wrangler-action@v4
         with:
