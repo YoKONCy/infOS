@@ -33,8 +33,8 @@
 
 同一组件必须能同时运行在 **Electron (桌面)** 和 **Browser (Docker 版)** 中。
 
-- **Electron 模式**：通过 `window.electron` 调用主进程 IPC
-- **Browser 模式**：通过 `fetch/WebSocket` 调用后端 API
+- **业务通信**：Electron 和浏览器均通过 HTTP、SSE 与 WebSocket 连接当前服务端；`api/transport.ts` 管理地址、设备凭据和请求。
+- **客户端能力**：桌面窗口、托盘等 Electron 专有操作通过 `window.electron` 与主进程 IPC；浏览器环境使用相应 Web 能力或受限回退。
 
 所有 API 调用统一封装在 `api/` 目录下，并根据环境自动切换实现。
 
@@ -47,9 +47,9 @@
 ### 3.1 `<keep-alive>` 白名单
 
 - **原则**：只缓存切换频繁且初始化开销大的页面。
-- **Electron 白名单**：`['DashboardView']`
-- **Browser/Docker 例外**：`WebShellView` 作为 Web 容器入口承载浏览器模式的长生命周期 Shell 状态，顶层允许在 Browser/Docker 模式缓存 `['WebShellView']`。
-- **必须销毁**：`Pet3DView` (释放 WebGL)、`LauncherView` (停止下载计时器)、`ChatInterface` (断开 SSE)
+- **顶层路由**：Electron 和浏览器共用 `MainView`；`App.vue` 在完成认证后仅将 `MainView` 加入顶层缓存。
+- **主界面 Tab**：`MainView.vue` 对 `ChatTab`、`WorkspaceTab`、`StrongholdTab`、`SocialTab` 使用最多四项的 `KeepAlive` 缓存。组件在停用和卸载时分别处理连接、计时器及重型视图资源。
+- **独立路由**：`LauncherView` 和 `Pet3DView` 仅 Electron 可访问，浏览器对应路径转向主界面。
 
 ### 3.2 响应式性能
 
@@ -115,20 +115,15 @@ const { messages, sendMessage } = useChatFlow()
 
 ### 4.2 路由分包
 
-使用 `defineAsyncComponent` 实现路由级代码分割：
-
-```typescript
-const DashboardView = () => import('@/views/DashboardView.vue')
-const Pet3DView = () => import('@/views/Pet3DView.vue') // 3D 组件必须异步加载
-```
+`router/index.ts` 使用动态导入加载 `MainView`、`LauncherView` 和 `Pet3DView`；`MainView.vue` 通过 `defineAsyncComponent` 和 Tab 加载器按需加载主界面各分区。
 
 ---
 
 ## 5. 3D 与动画规范 (Three.js)
 
 - **资源管理**：所有 Texture/Geometry 必须在 `onUnmounted` 中手动 dispose。
-- **降级处理**：低功耗设备模式下（由 backend 探测），禁用 Bloom、SAO 等昂贵 Shader。
-- **离屏渲染**：主 UI 操作时，降低 3D 渲染帧率。
+- **画质选择**：桌宠画质档位调整渲染分辨率、阴影贴图和目标帧率；具体设置由客户端处理。
+- **隐藏窗口**：桌宠隐藏时暂停画面更新，持续隐藏后回收视觉资源；重新显示时再加载。实现与使用方式见 [Bedrock 3D 引擎](../packages/wiki/peripheral-systems/bedrock.md)。
 
 ---
 
@@ -299,20 +294,22 @@ Internal Surface Protocol仅供infOS系统组件、Projection、Shell与Composit
 
 ### 8.2 语义节点与操作
 
-核心节点包括`text`、`markdown`、`code`、`tool-call`、`tool-result`、`status`、`approval`、`progress`、`image`、`chart`、`document`与`app`。节点必须具有稳定`nodeId`和递增`revision`。
+当前节点类型包括 `markdown`、`thinking`、`native-reasoning`、`model-retry`、`code`、`math`、`mermaid`、`tool-call`、`tool-result`、`status`、`error`、`attachment`、`approval`、`progress`、`input`、`panel`、`table`、`notification`、`document` 和 `programmable-island`。节点有 `nodeId`、`revision` 和生命周期标记；完整定义见 `packages/shared/src/types/surface.types.ts`。
 
 协议操作固定为：
 
 ```text
-create_surface
-attach_node
-patch_node
-replace_range
-commit_surface
-freeze_surface
-resume_surface
-destroy_surface
+surface.open
+surface.append-text
+surface.append-tool-arguments
+surface.upsert-node
+surface.patch-node
+surface.commit
+surface.fail
+surface.dispose
 ```
+
+实时帧包含协议版本、Surface 身份、generation、revision、sequence、operationId 和具体操作；同一 generation 内的 sequence 递增。
 
 聊天HTML始终作为源码展示；可执行内容只能进入独立沙箱Surface。流式Frame不进入持久日志，网络delta只做帧合并，不得人为拆词减速。
 

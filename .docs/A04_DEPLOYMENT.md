@@ -64,7 +64,7 @@ Web 主面板不在首屏后自动预热工作区编辑器与据点模块，改�
 │  packages/shared/    →  0 个 Electron 依赖            │
 │  electron/           →  仅做壳层                       │
 │                                                       │
-│  所有业务 API 走 HTTP（即使在 Electron 也走 localhost） │
+│  业务 API 连接所选 Daemon（本地或远程）                │
 │  IPC 仅用于 Electron 专属的系统能力                    │
 └───────────────────────────────────────────────────────┘
 ```
@@ -77,7 +77,7 @@ Web 主面板不在首屏后自动预热工作区编辑器与据点模块，改�
 
 ```text
 Electron Main
-  ├─ 启动打包内置 Daemon（开发环境可由开发脚本编排）
+  ├─ 本地模式启动打包内置 Daemon；远程模式连接所选服务
   ├─ 注入 PERO_DATA_DIR、PERO_APP_ROOT、PERO_WORKSHOP_DIRS
   ├─ 注册 asset:// 只读资产协议
   ├─ 提供窗口、托盘、Steam 与桌面能力
@@ -89,7 +89,7 @@ Daemon
   └─ 通过 Capability Provider 向 Electron 请求平台能力
 ```
 
-Electron 启动 Daemon 是桌面全包发行的进程编排方式，不改变 Daemon 的纯 Node 边界；Daemon 必须能在 Docker/服务器形态独立运行。
+Electron 本地模式启动 Daemon 是桌面全包发行的进程编排方式；远程模式连接已有 Daemon。Daemon 也能在 Docker/服务器形态独立运行。
 
 **客户端连接规则**：Electron 标准版、Steam 版和便携版在本地开屏后、任何 Daemon 拉起之前读取用户根目录的 `client-connection.json`。首次启动或远程验证失败时显示本地 HTML 连接页；本地模式按原有链路启动，远程模式校验服务器身份后统一切换业务 HTTP/SSE/WS 和能力通道，失败不能自动回退本地。凭据经系统密钥服务加密。托盘与“分布式”Tab 均可打开连接页，运行中修改只写下次启动配置并重启，旧窗口和退出清理继续使用原连接。远程退出不停止服务器上的共享子应用。远程模式禁用本机 Steam 业务快照上传和恢复，服务器数据由服务器备份；设备身份、连接配置和凭据不进入业务快照。
 
@@ -139,16 +139,7 @@ Electron 启动 Daemon 是桌面全包发行的进程编排方式，不改变 Da
 
 ### 4.1 仅 IPC 的能力（Electron 专属）
 
-| 能力       | IPC 通道                          | Docker 替代                  |
-| ---------- | --------------------------------- | ---------------------------- |
-| 窗口管理   | `window-minimize`, `window-close` | N/A（浏览器行为）            |
-| 托盘操作   | `tray-set-tooltip`, `tray-flash`  | N/A                          |
-| 文件对话框 | `dialog-open-file`, `dialog-save` | 浏览器 `<input type="file">` |
-| 系统通知   | `notification-show`               | Web Notification API         |
-| 剪贴板     | `clipboard-write`                 | `navigator.clipboard`        |
-| 全局快捷键 | `shortcut-register`               | N/A                          |
-| Steam 集成 | `steam-*`                         | N/A                          |
-| 进程管理   | `backend-restart`, `get-app-path` | Docker restart               |
+窗口、桌宠、托盘、Steam 和本地客户端连接等能力由 Electron 主进程提供。预加载层通过 `window.electron` 暴露 IPC；例如 `window-minimize`、`window-close` 和 `open-pet-window`。主进程的通道及访问限制以 `electron/main/ipcBridge.ts` 和 `electron/preload/index.ts` 为准。浏览器端按功能使用浏览器能力或提供对应的不可用状态，具体处理见 `packages/frontend/src/utils/ipcAdapter.ts`。
 
 ### 4.2 走 HTTP 的能力（两种模式通用）
 
@@ -165,23 +156,7 @@ Electron 启动 Daemon 是桌面全包发行的进程编排方式，不改变 Da
 
 ## 5. 前端运行时检测
 
-```typescript
-// config/runtime.ts
-export const isElectron = typeof window !== 'undefined' && !!(window as any).electron
-export const isDocker = !isElectron
-
-// 功能特性检测
-export const features = {
-  /** 是否支持原生文件对话框 */
-  nativeFileDialog: isElectron,
-  /** 是否支持托盘 */
-  systemTray: isElectron,
-  /** 是否支持全局快捷键 */
-  globalShortcuts: isElectron,
-  /** 是否支持 Steam */
-  steam: isElectron,
-}
-```
+`packages/frontend/src/utils/ipcAdapter.ts` 的 `isElectron()` 检查预加载桥接；`api/transport.ts` 的 `isElectronRuntime()` 与 `isLocalBackendRuntime()` 分别判断桌面运行环境和本地连接。Electron 的服务器地址来自主进程选择的连接，浏览器使用当前来源或所选服务器。浏览器访问可能连接 Docker、开发环境或其他部署，运行环境判断与服务端部署形态应分别处理。
 
 ---
 
@@ -189,78 +164,36 @@ export const features = {
 
 ### 6.1 构建变体总览
 
-| #   | 变体             | 平台        | Electron | Steam SDK | 打包格式       | 自动更新         | 状态       |
-| --- | ---------------- | ----------- | -------- | --------- | -------------- | ---------------- | ---------- |
-| 1   | **Steam 版**     | Windows x64 | ✅       | ✅        | NSIS 安装包    | Steam 自带       | 当前主力   |
-| 2   | **标准版**       | Windows x64 | ✅       | ❌        | NSIS 安装包    | electron-updater | 当前主力   |
-| 3   | **便携版**       | Windows x64 | ✅       | ❌        | ZIP 解压即用   | electron-updater | 当前主力   |
-| 4   | **Docker 版**    | Linux x64   | ❌       | ❌        | Docker Image   | docker pull      | 接线校准中 |
-| 5   | **Linux 桌面版** | Linux x64   | ✅       | ❌        | AppImage / deb | 待定             | 待实现     |
-| 6   | **Mac 版**       | macOS ARM64 | ✅       | ❌        | DMG            | 待定             | 待实现     |
+| 变体 | 平台 | 产物 | 更新方式 |
+| --- | --- | --- | --- |
+| Steam 版 | Windows x64 | NSIS 及目录产物 | Steam |
+| 标准版 | Windows x64 | NSIS 安装包 | 自有 Release 更新服务 |
+| 便携版 | Windows x64 | ZIP | 自有 Release 更新服务 |
+| Docker 版 | Linux 容器 | 前后端镜像及 Compose 文件 | 拉取所选版本镜像 |
 
-### 6.2 双轴解耦模型
+发行范围和实际产物以 `.github/workflows/release.yml`、根目录的 Electron Builder 配置为准。Linux 和 macOS 桌面包属于后续平台方向。
 
-差异只有三个维度，代码层面只需处理前两个：
+### 6.2 版本与平台
 
-```
-维度 1: Edition（版本）   → steam | standard     ← 代码分支
-维度 2: Platform（平台）  → win-x64 | linux-x64 | mac-arm64 | docker  ← 代码分支
-维度 3: Packaging（打包） → nsis | portable | appimage | dmg | docker  ← 纯构建配置
-```
-
-### 6.3 Edition 编译标记
-
-```typescript
-// edition.ts
-export const EDITION = (process.env.INFOS_EDITION ?? 'standard') as 'steam' | 'standard'
-export const IS_STEAM = EDITION === 'steam'
-```
-
-Steam 相关代码**全部用 dynamic import + IS_STEAM 门控**，standard 版构建时 tree-shaking 完全去除。
+发行脚本使用 `INFOS_EDITION` 区分 `standard`、`steam` 和 `portable`。Steam 功能在运行时受 Steam 环境检查约束；其原生依赖和 SDK 文件只由 Steam 构建配置打入。具体构建和运行时检查分别见根目录 `package.json`、`electron-builder.*.yml` 与 `electron/main/services/steam.ts`。
 
 ### 6.4 Electron Builder 配置矩阵
 
 ```
-electron/
+项目根目录/
   ├── electron-builder.base.yml       ← 共享配置
   ├── electron-builder.steam.yml      ← extends base + Steam 文件
-  ├── electron-builder.standard.yml   ← extends base, 无 Steam
-  └── electron-builder.portable.yml   ← extends standard, target=portable
+  ├── electron-builder.standard.yml   ← extends base
+  └── electron-builder.portable.yml   ← extends base，输出 ZIP
 ```
 
 ### 6.5 构建脚本
 
-```jsonc
-// package.json (root)
-{
-  "scripts": {
-    // ── 当前主力 ──
-    "electron:build": "electron-builder --config electron-builder.standard.yml",
-    "electron:build:steam": "cross-env INFOS_EDITION=steam electron-builder --config electron-builder.steam.yml",
-    "electron:build:portable": "electron-builder --config electron-builder.portable.yml",
-    "build:docker": "docker build -t infos-backend .",
-
-    // ── 待实现 ──
-    "electron:build:linux": "electron-builder --linux --config electron-builder.standard.yml",
-    "electron:build:mac": "electron-builder --mac --arm64 --config electron-builder.standard.yml",
-  },
-}
-```
+根目录 `package.json` 提供 `electron:build:standard`、`electron:build:steam`、`electron:build:portable` 和 `docker:build` 等脚本。桌面构建还包含安全检查、主应用与官方子应用构建、Daemon 依赖收集和原生依赖适配；CI 使用的完整步骤以 Release workflow 为准。
 
 ### 6.6 便携模式 (Portable)
 
-在 `.exe` 同级目录下新建 `.portable` 空白文件，应用将读写本地 `userData/` 目录而非系统 `%APPDATA%`。
-
-```typescript
-// electron/main/utils/portable.ts
-const portableMarker = path.join(path.dirname(process.execPath), '.portable')
-export const IS_PORTABLE = fs.existsSync(portableMarker)
-
-export function getDataDir(): string {
-  if (IS_PORTABLE) return path.join(path.dirname(process.execPath), 'userData')
-  return app.getPath('userData')
-}
-```
+打包运行时，`.exe` 同级的 `.portable` 标记启用便携模式；用户根目录是可执行文件所在目录，业务数据写入其 `data/` 子目录。标准安装版与 Steam 版使用系统 `userData/data`，开发模式使用 `~/.infos`。路径由 `electron/main/utils/env.ts` 管理。
 
 ### 6.7 自动更新策略
 
@@ -307,42 +240,9 @@ WebUI 的 SPA 回退固定发送 `index.html`，并将静态目录设为 `sendFi
 
 ### 7.1 Docker Compose
 
-```yaml
-# docker-compose.yml
-version: '3.8'
-services:
-  backend:
-    build:
-      context: .
-      dockerfile: docker/Dockerfile.backend
-    ports:
-      - '9120:9120'
-    volumes:
-      - pero-data:/app/data
-    environment:
-      - PERO_PORT=9120
-      - PERO_DATA_DIR=/app/data
-      - PERO_DATABASE_PATH=/app/data/infos.db
-      # 鉴权（可选，不设则首次启动自动生成）
-      - INFOS_AUTH_TOKEN=your_custom_password
-    healthcheck:
-      test: ['CMD', 'curl', '-f', 'http://localhost:9120/api/health']
-      interval: 30s
-      timeout: 5s
-      retries: 3
+以仓库根目录 `docker-compose.yml` 为源码构建的权威配置；`docker-compose.release.yml` 是 Release 附件模板，由发布流程填入固定镜像版本。两者均包含 Node 后端和 Nginx 前端，前端等待后端健康检查通过后启动。
 
-  frontend:
-    build:
-      context: .
-      dockerfile: docker/Dockerfile.frontend
-    ports:
-      - '3000:80'
-    depends_on:
-      - backend
-
-volumes:
-  pero-data:
-```
+`frontend` 默认将宿主机 `3000` 映射到容器 `8080`；`backend` 的 `9120` 业务端口和 `9121` 能力端口默认只绑定宿主机 `127.0.0.1`。`infos-data`、`infos-workspaces` 分别挂载到 `/app/data`、`/app/workspaces`；角色工作区默认位于数据目录的 `principals/<agentId>/workspace`。Compose 变量、登录与设备配对见[用户文档](../packages/wiki/deployment/docker.md)及本文件第 11 节。
 
 ### 7.2 运行时选择
 
@@ -358,54 +258,19 @@ volumes:
 
 ## 8. 鉴权系统
 
-### 8.1 设计原则
+### 8.1 身份与入口
 
-| 原则                      | 说明                          |
-| ------------------------- | ----------------------------- |
-| **Electron 版不需要鉴权** | localhost 本机访问，天然安全  |
-| **Docker 版必须鉴权**     | 端口暴露到公网/内网，需要保护 |
-| **单用户模型**            | 不存在多用户、不需要角色权限  |
-| **轻量实现**              | Token → JWT，不引入 OAuth/SSO |
+`ClientAccessService` 是当前设备身份的权威来源，Electron 本地客户端和 Web 客户端的业务请求都经过身份校验。`INFOS_API_TOKEN` 存在时作为管理员凭据，否则使用安装实例的本地管理员凭据。设备可通过一次性配对码或管理员凭据取得自己的设备会话；普通设备与管理员的权限分别检查。
 
-### 8.2 Token 来源
+### 8.2 配对与登录
 
-```
-优先级：
-1. 环境变量 INFOS_AUTH_TOKEN（用户预设）
-2. data/auth.json 中保存的 bcrypt 哈希（用户在控制面板修改的密码）
-3. 首次启动自动生成随机 Token → 打印到日志 + 写入 data/auth.json
-```
+`/api/client-access/pair` 使用短期配对码，`/api/client-access/login` 验证管理员凭据；两者都接收设备名及保持登录选项。服务端颁发设备令牌并写入 HttpOnly、SameSite Cookie；设备令牌摘要和有效期保存在服务端。需要 Bearer 凭据的客户端可显式使用相应的凭据模式。
 
-### 8.3 登录流程
+首次启动时，未配置 `INFOS_API_TOKEN` 且没有已配对设备，服务端日志会提供五分钟有效的首次管理员配对码。管理员在分布式页面生成的新设备配对码同样五分钟有效、仅可兑换一次。保持登录对应 30 天设备会话；未勾选时使用浏览器会话 Cookie，服务端有效期为一天。
 
-```
-前端                              后端
-  │                                │
-  │  POST /api/auth/login          │
-  │  { token: "a7k9x3m2p5" }      │
-  │ ──────────────────────────────→│
-  │                                │ bcrypt.compare(token, hash)
-  │  200 { jwt: "eyJ..." }        │
-  │ ←──────────────────────────────│
-  │                                │
-  │  存入 localStorage             │
-  │                                │
-  │  GET /api/memories             │
-  │  Authorization: Bearer eyJ...  │
-  │ ──────────────────────────────→│
-  │                                │ JWT 验证
-  │  200 { code: "OK", data: [...]}│
-  │ ←──────────────────────────────│
-```
+### 8.3 持续连接与权限
 
-### 8.4 JWT 配置
-
-| 配置项  | 值                                       | 说明                   |
-| ------- | ---------------------------------------- | ---------------------- |
-| 算法    | HS256                                    | 对称加密，单服务器足够 |
-| 有效期  | **7 天**                                 | 平衡安全性与便利性     |
-| Secret  | 首次启动随机生成 → `data/jwt_secret.key` | 重启后 JWT 仍有效      |
-| Payload | `{ sub: 'owner', iat, exp }`             | 单用户模型             |
+`app.ts` 校验业务请求，`services/gateway/wsUpgrade.ts` 在 WebSocket 升级时验证设备身份；设备撤销或过期后关闭关联的 Gateway/SSE 连接。管理员操作由各路由继续检查管理员身份；能力通道有独立的节点配对与设备凭据。完整边界和部署入口见第 11 节。
 
 ---
 

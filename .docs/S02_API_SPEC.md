@@ -1,19 +1,18 @@
 # API 响应规范
 
-> **适用范围**：infOS-TS 后端所有 REST API
-> **最后更新**：2026-10-17
+> **适用范围**：infOS 后端的 JSON 业务 API；流式、文件和其他特殊响应见各接口契约。
 
 ---
 
 ## 1. 统一响应信封
 
-**所有** REST API 必须返回以下格式。Router应优先使用项目级响应工厂；`apiContractMiddleware`负责补齐默认中文`message`并阻止未注册业务码离开后端。
+JSON 业务接口使用以下信封。Router 应优先使用项目级响应工厂；`apiContractMiddleware` 为适用的 API 响应补齐默认 `message`，并拦截未注册业务码。SSE、文件与资源响应使用各自的格式。
 
 ```typescript
 interface ApiResponse<T = unknown> {
   /** 业务状态码（UPPER_SNAKE_CASE，从规范表中选取） */
   code: string
-  /** 面向用户的友好消息（中文），可直接显示在 UI 上 */
+  /** 面向用户的消息；展示时按当前语言本地化 */
   message: string
   /** 业务数据（成功时）或错误详情（失败时） */
   data?: T
@@ -40,17 +39,16 @@ export const CODE_MESSAGES: Record<string, string> = {
 ### 2.2 规则
 
 - **大多数场景**：使用默认 message，保证一致性
-- **需要上下文时**：后端可覆盖默认 message，追加具体信息
-- **前端兜底**：后端返回为空时，前端用 `CODE_MESSAGES[code]` 回填
-- **固定中文**：面向终端用户；技术细节放 `data` 或日志
+- **需要上下文时**：后端可覆盖默认 message，通过国际化词条和占位符提供具体信息
+- **展示与翻译**：中文是消息词条原文，前端展示错误时通过诊断翻译入口转换为当前语言。业务判断使用稳定的 `code`，动态信息使用占位符；详见 [国际化说明](./B25_I18N.md)。
 
 ```typescript
 // 使用默认 message
 throw new AppError('NOT_FOUND')
 // → { code: "NOT_FOUND", message: "请求的资源不存在" }
 
-// 覆盖 message，追加上下文
-throw new AppError('NOT_FOUND', { message: '未找到 ID 为 42 的记忆' })
+// 覆盖 message 时使用对应运行端的国际化入口
+throw new AppError('NOT_FOUND', { message: t('errors.backend', '目标会话不存在') })
 ```
 
 ---
@@ -116,8 +114,8 @@ throw new AppError('NOT_FOUND', { message: '未找到 ID 为 42 的记忆' })
 | 400  | `OUT_OF_RANGE`           | 参数值超出允许范围       | `{ field, min?, max? }`              | importance > 10         |
 | 400  | `INVALID_PARAMETER`      | 参数类型或值无效         | `{ field, expected }`                | 期望 number 传了 string |
 | 401  | `UNAUTHORIZED`           | 未认证，请先登录         | —                                    | 通用兜底                |
-| 401  | `TOKEN_EXPIRED`          | 认证已过期，请重新登录   | —                                    | JWT 过期                |
-| 401  | `TOKEN_INVALID`          | 认证信息无效             | —                                    | JWT 签名错误            |
+| 401  | `TOKEN_EXPIRED`          | 认证已过期，请重新登录   | —                                    | 凭据过期                |
+| 401  | `TOKEN_INVALID`          | 认证信息无效             | —                                    | 凭据无效                |
 | 403  | `FORBIDDEN`              | 无权执行此操作           | —                                    | 权限不足                |
 | 404  | `NOT_FOUND`              | 请求的资源不存在         | `{ resource?, id? }`                 | 通用资源不存在          |
 | 404  | `AGENT_NOT_FOUND`        | 指定的 Agent 不存在      | `{ agentId }`                        | 查询不存在的 Agent      |
@@ -127,6 +125,7 @@ throw new AppError('NOT_FOUND', { message: '未找到 ID 为 42 的记忆' })
 | 409  | `CONFLICT`               | 资源冲突                 | 可选                                 | 通用兜底                |
 | 409  | `DUPLICATE_NAME`         | 名称已存在               | `{ name, existingId? }`              | 模型名重复              |
 | 409  | `ALREADY_EXISTS`         | 资源已存在               | `{ resource }`                       | 重复创建                |
+| 409  | `REACT_TURN_LIMIT`       | 已达到执行轮次上限，任务尚未完成 | 可选                         | 执行达到轮次上限        |
 | 413  | `PAYLOAD_TOO_LARGE`      | 上传内容过大             | `{ maxSize, actualSize? }`           | 文件超限                |
 | 415  | `UNSUPPORTED_MEDIA_TYPE` | 不支持该文件类型         | `{ received, allowed[] }`            | 格式不支持              |
 | 422  | `UNPROCESSABLE`          | 请求无法处理             | 可选                                 | 通用兜底                |
@@ -152,74 +151,13 @@ throw new AppError('NOT_FOUND', { message: '未找到 ID 为 42 的记忆' })
 | 504  | `GATEWAY_TIMEOUT`      | 上游服务响应超时           | `{ service? }`              | 通用超时                |
 | 504  | `LLM_TIMEOUT`          | AI 服务响应超时            | `{ provider, model? }`      | LLM 超时                |
 
-**统计**：HTTP 状态码 17 个，业务 code 41 个（成功 4 / 客户端错误 25 / 服务端错误 12）。
+注册表及 HTTP 映射的权威来源是 `packages/shared/src/constants/responseCodes.ts`；新增或调整业务码时同步维护本文。
 
 ---
 
 ## 6. AppError 实现
 
-```typescript
-// lib/appError.ts
-import { CODE_MESSAGES } from '@infos/shared'
-
-export class AppError extends Error {
-  public httpStatus: number
-  public code: string
-  public data?: unknown
-
-  constructor(code: string, options?: { message?: string; data?: unknown }) {
-    const message = options?.message ?? CODE_MESSAGES[code] ?? '未知错误'
-    super(message)
-    this.code = code
-    this.data = options?.data
-    this.httpStatus = CODE_TO_HTTP[code] ?? 500
-  }
-}
-
-const CODE_TO_HTTP: Record<string, number> = {
-  OK: 200,
-  CREATED: 201,
-  ACCEPTED: 202,
-  NOT_CONFIGURED: 200,
-  BAD_REQUEST: 400,
-  VALIDATION_ERROR: 400,
-  MISSING_FIELD: 400,
-  INVALID_FORMAT: 400,
-  OUT_OF_RANGE: 400,
-  INVALID_PARAMETER: 400,
-  UNAUTHORIZED: 401,
-  TOKEN_EXPIRED: 401,
-  TOKEN_INVALID: 401,
-  FORBIDDEN: 403,
-  NOT_FOUND: 404,
-  AGENT_NOT_FOUND: 404,
-  MEMORY_NOT_FOUND: 404,
-  MODEL_NOT_FOUND: 404,
-  METHOD_NOT_ALLOWED: 405,
-  CONFLICT: 409,
-  DUPLICATE_NAME: 409,
-  ALREADY_EXISTS: 409,
-  PAYLOAD_TOO_LARGE: 413,
-  UNSUPPORTED_MEDIA_TYPE: 415,
-  UNPROCESSABLE: 422,
-  RESOURCE_BUSY: 422,
-  TASK_ALREADY_RUNNING: 422,
-  PRECONDITION_FAILED: 422,
-  RATE_LIMITED: 429,
-  INTERNAL_ERROR: 500,
-  DB_ERROR: 500,
-  CONFIG_ERROR: 500,
-  LLM_ERROR: 502,
-  LLM_RATE_LIMITED: 502,
-  EMBEDDING_ERROR: 502,
-  EXTERNAL_ERROR: 502,
-  MCP_ERROR: 502,
-  SERVICE_UNAVAILABLE: 503,
-  SERVICE_INITIALIZING: 503,
-  GATEWAY_TIMEOUT: 504,
-  LLM_TIMEOUT: 504,
-}
-```
+`packages/backend/src/lib/appError.ts` 中的 `AppError` 接收 shared 定义的 `ResponseCode`，从 `CODE_MESSAGES` 和 `CODE_TO_HTTP` 读取默认消息与 HTTP 状态。调用方可传入 `message`、`data` 和 `cause`；错误处理器负责将错误转换为响应。业务码、消息和状态映射统一维护在 `packages/shared/src/constants/responseCodes.ts`。
 
 ---
 
@@ -234,52 +172,13 @@ const CODE_TO_HTTP: Record<string, number> = {
 
 ## 7. 分页响应
 
-### 7.1 参数
-
-| 参数       | 默认值 | 最小值 | 最大值 | 说明                     |
-| ---------- | ------ | ------ | ------ | ------------------------ |
-| `page`     | `1`    | `1`    | —      | 超出总页数时返回空 items |
-| `pageSize` | `20`   | `1`    | `100`  | 超过 100 自动截断        |
-
-### 7.2 数据结构
-
-```typescript
-interface PaginatedData<T> {
-  items: T[]
-  total: number
-  page: number
-  pageSize: number
-  hasMore: boolean
-}
-
-// → HTTP 200 + { code: "OK", message: "获取成功", data: PaginatedData<MemoryDto> }
-```
+分页参数与返回结构由具体接口定义。例如记忆档案查询的 `page` 默认为 1，`pageSize` 默认为 30、最大为 100；超出校验范围的参数会被拒绝。返回数据包含 `items`、`page`、`pageSize`、`total`、`pageCount`、`facets` 和 `stats`，页码超过末页时调整到有效页。其他列表也可能使用游标，应以对应路由和共享类型为准。
 
 ---
 
 ## 8. 流式 / SSE 响应
 
-流式接口（如 `/api/chat/stream`）不遵循信封格式，使用 SSE：
-
-```
-event: delta
-data: {"content":"你好"}
-
-event: tool_call
-data: {"name":"file_search","args":{"query":"TypeScript"}}
-
-event: tool_result
-data: {"name":"file_search","result":{...}}
-
-event: status
-data: {"state":"thinking","message":"正在思考...","turn":1}
-
-event: done
-data: {"usage":{"promptTokens":100,"completionTokens":50}}
-
-event: error
-data: {"code":"LLM_ERROR","message":"AI 服务异常"}
-```
+`/api/chat/stream` 使用 SSE。正文、思考过程、工具调用、状态等对话呈现由 `ConversationSurfaceSession` 转换为 `surface` 帧；检索进度使用 `rag_progress`，结束和错误分别使用 `done`、`error`。路由还会发送心跳。帧结构以 `@infos/shared` 中的 Surface 类型及 `chatStreamRunner.ts` 为准。
 
 ## 9. AIOS Thread、SSE 与能力契约
 
@@ -287,7 +186,7 @@ data: {"code":"LLM_ERROR","message":"AI 服务异常"}
 
 - `ThreadChannel` 仅包含 `desktop`、`group`；前者由主 Agent Compiler 处理，后者专属于 Stronghold。
 - Social、Arca、Coding 等 Application Realm 身份由 `appId/realmId` 表达，不得扩大全局 `ThreadChannel` 联合。
-- SSE 的 `tool_call` / `tool_result` 使用 `callId` 关联，字段统一为 `args`、`result`、`success`。
+- 内部工具调用与结果使用 `callId` 关联，并投影为 Surface 节点；具体字段以共享类型和投影实现为准。
 - `done` 是成功结束的显式事件，前端收到 EOF 但未收到 `done` 时不得视作成功。
 - Provider 节点的能力协议与 SSE 业务流分离；能力调用消息的类型必须由 shared 包统一定义。
 

@@ -610,12 +610,7 @@ REST 保持统一响应信封；API DTO 与 SSE discriminated union 放在 `@inf
 
 ### 10.2 SSE 事件
 
-流式事件至少包括：`delta`、`thinking`、`tool_call`、`tool_result`、`status`、`error`、`done`。
-
-- 工具调用与结果必须用 `callId` 关联；
-- 工具参数统一为 `args`，结果统一为 `result`，状态使用 `success`；
-- 流成功结束必须显式发送 `done`，前端不能仅依赖 EOF 判断成功；
-- 未收到 `done` 的流应视为可恢复的截断状态。
+聊天 SSE 以 `surface` 帧传递正文、思考、状态和工具等呈现内容，另有 `rag_progress`、`error` 和 `done` 事件。内部工具调用与结果通过 `callId` 关联，再由 `ConversationSurfaceSession` 投影。流成功结束会显式发送 `done`；前端应将缺少 `done` 的断流视为截断。事件定义和实现入口见 [API 响应规范](./S02_API_SPEC.md#8-流式--sse-响应)。
 
 ---
 

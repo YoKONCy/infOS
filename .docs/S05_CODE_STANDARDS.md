@@ -34,7 +34,7 @@ Repository 层 →  仅负责：数据访问（SQLite / TriviumDB）
 | Router              | 直接操作 DB/Repository/文件系统、包含跨资源业务编排、catch 后吞错误                                 |
 | Service             | import Hono Context、直接构造 HTTP 响应                                                             |
 | Repository          | 包含业务逻辑、直接返回 HTTP 响应                                                                    |
-| Gateway             | 直接操作 DB（应调用 Service）                                                                       |
+| Gateway             | 承担领域业务编排；持久通知通过注入的 Repository 接入                                                |
 | Shared Package      | 保存具体Application Manifest、单一产品实现、UI专用生成器、Backend Service/Repository或领域策略常量   |
 | Application Package | 深路径导入 Backend 内部 Service/Repository/Logger；只能使用 Shared Port 与公开 Application Host ABI |
 
@@ -87,11 +87,11 @@ const dbPath = env.PERO_DATABASE_PATH ?? path.join(getDataDir(), 'infos.db')
 
 | 优先级 | 要求                                                                       |
 | ------ | -------------------------------------------------------------------------- |
-| **P0** | `<keep-alive>` 白名单控制（仅缓存 DashboardView）                          |
+| **P0** | `<keep-alive>` 白名单控制（顶层缓存 MainView，主界面 Tab 范围见 A03）       |
 | **P0** | 使用 `useEventListener` / `useInterval` composable 管理事件/定时器生命周期 |
 | **P0** | SSE 流式 Markdown 采用"稳定区/尾部区"分段渲染 + 30fps 帧率限制             |
 | **P0** | IntersectionObserver 暂停不可见消息的动画/媒体                             |
-| **P1** | 分批渲染历史消息 (先 5 条 + requestIdleCallback 分批)                      |
+| **P1** | 历史消息分页与视口窗口化，保留滚动锚点，详见 A03                            |
 | **P1** | Tab 组件 `defineAsyncComponent` 异步加载                                   |
 | **P1** | Vite `manualChunks` 分包                                                   |
 

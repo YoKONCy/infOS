@@ -31,157 +31,35 @@
 
 ## 2. Router 层
 
-```typescript
-// routers/memory.router.ts
-export function createMemoryRouter(ctx: AppContext) {
-  const router = new Hono()
-
-  router.get('/', async (c) => {
-    const page = Number(c.req.query('page') ?? 1)
-    const pageSize = Number(c.req.query('pageSize') ?? 20)
-    const result = await ctx.memoryService.list({ page, pageSize })
-    return c.json({ code: 'OK', message: '获取成功', data: result })
-  })
-
-  router.post('/', validate('json', createMemorySchema), async (c) => {
-    const body = c.req.valid('json')
-    const memory = await ctx.memoryService.create(body)
-    return c.json({ code: 'CREATED', message: '记忆已创建', data: memory }, 201)
-  })
-
-  return router
-}
-```
+Router 由 `app.ts` 挂载，使用 `AppContext` 获取所需服务。以 `routers/memory.router.ts` 为例，`GET /api/memories` 通过项目级 `validate` 包装器校验查询参数，构造档案筛选条件，再调用 `eventMemoryService.archiveQuery()`。请求字段和默认值以 Router Schema 为准。
 
 ---
 
 ## 3. Service 层
 
-### 3.1 构造函数注入
-
-```typescript
-export class MemoryService {
-  constructor(
-    private memoryRepo: MemoryRepository,
-    private vectorRepo: VectorRepository,
-    private vectorWriteHelper: VectorWriteHelper,
-  ) {}
-
-  async create(data: CreateMemoryDto): Promise<MemoryDto> {
-    const memory = await this.memoryRepo.create(data)
-    await this.vectorWriteHelper.upsertWithFallback({
-      memoryId: memory.id,
-      content: data.content,
-      agentId: data.agentId,
-      metadata: { importance: data.importance },
-    })
-    return memory
-  }
-}
-```
+服务负责领域编排，并通过构造函数或明确的 Port 获得依赖。事件记忆由 `services/memory/eventMemoryService.ts`、`eventNoteDraftCommitter.ts` 等协作处理；来源覆盖、持久化与失败恢复见 [记忆引擎](./A05_MEMORY_ENGINE.md)。
 
 ---
 
 ## 4. Repository 层
 
-### 4.1 SQLite Repository (Drizzle)
-
-```typescript
-export class MemoryRepository {
-  constructor(private db: DrizzleDb) {}
-
-  async create(data: CreateMemoryDto) {
-    const [memory] = await this.db
-      .insert(memoryNodes)
-      .values({ content: data.content, agentId: data.agentId })
-      .returning()
-    return memory
-  }
-
-  async findById(id: number) {
-    return this.db.select().from(memoryNodes).where(eq(memoryNodes.id, id)).get()
-  }
-}
-```
-
-### 4.2 TriviumDB Repository
-
-```typescript
-export class VectorRepository {
-  constructor(private store: TriviumStore) {}
-
-  async upsert(id: number, vector: number[], payload: Record<string, unknown>) {
-    await this.store.insertWithId(id, vector, payload)
-  }
-
-  async search(query: number[], topK: number, filter?: Record<string, unknown>) {
-    return this.store.searchHybrid(query, topK, { payloadFilter: filter })
-  }
-}
-```
-
-引入 Repo 层的理由：双数据源隔离、可测试性（mock Repository 测 Service）、未来可扩展。
+SQLite 访问由 `repositories/` 下各领域 Repository 和 Drizzle Schema 承担；`EventNoteRepository` 管理事件记忆的 SQLite 备份与事务记录。TriviumDB 句柄及文件组由 `MemoryStoreRegistry` 管理，事件记忆和事实分别使用自己的领域实现。两种存储的权威关系、事务重放和重建边界见 [记忆引擎](./A05_MEMORY_ENGINE.md)。
 
 ---
 
 ## 5. DI 容器
 
-```typescript
-// container.ts
-export interface AppContext {
-  db: DrizzleDb
-  memoryRepo: MemoryRepository
-  vectorRepo: VectorRepository
-  // ...
-  memoryService: MemoryService
-  memorySearchService: MemorySearchService
-  scorerService: ScorerService
-  // ...
-}
-
-export function createAppContext(config: AppConfig): AppContext {
-  const db = createDrizzleConnection(config.databasePath)
-  const storeRegistry = new MemoryStoreRegistry(config.dataDir)
-  const memoryRepo = new MemoryRepository(db)
-  const vectorRepo = new VectorRepository(storeRegistry)
-  // ... 按依赖顺序初始化
-  return { db, memoryRepo, vectorRepo /* ... */ }
-}
-```
+`container.ts` 定义 `AppConfig`、`AppContext` 和异步 `createAppContext()`，按依赖组装数据库、Repository、领域服务、内核和应用集成；`initAppContext()` 执行后续初始化。`startup.ts` 管理服务启动和退出。实际依赖和生命周期以这两个入口为准。
 
 ---
 
 ## 6. LLM Provider 模式
 
-```typescript
-export interface LlmProvider {
-  chat(messages: ChatMessage[], opts: ChatOptions): Promise<ChatCompletion>
-  chatStream(messages: ChatMessage[], opts: ChatOptions): AsyncIterable<ChatDelta>
-  listModels(): Promise<string[]>
-}
-
-// 内置 Provider：
-// - OpenAiProvider   (OpenAI 兼容，覆盖绝大多数厂商)
-// - GeminiProvider   (Gemini REST API)
-// - AnthropicProvider (Anthropic Messages API)
-
-export class LlmService {
-  private createProvider(config: ModelConfig): LlmProvider {
-    switch (config.provider) {
-      case 'gemini':
-        return new GeminiProvider(config)
-      case 'anthropic':
-        return new AnthropicProvider(config)
-      default:
-        return new OpenAiProvider(config)
-    }
-  }
-}
-```
+`services/llm/types.ts` 定义 Provider 接口，`llmService.ts` 根据解析后的请求协议和接口类型选择 OpenAI 兼容 Chat Completions、OpenAI Responses、Gemini 或 Anthropic 实现。服务商品牌、连接认证和请求协议分别配置；连接继承规则见 [服务商连接](./B22_PROVIDER_CONNECTIONS.md)。
 
 ---
 
-## 7. Gateway 层
+### 6.1 模型调用与恢复
 
 模型请求的临时 HTTP、网络和超时故障使用统一、可取消的有限退避；ReAct 每轮最多重试 5 次，所有尝试共用请求总预算。鉴权、参数、额度耗尽、主动停止及明确不可重试故障不会自动重发。流式 EOF 缺少完成标记按中断处理；已收到部分响应时，受控 ReAct 冻结旧展示片段、丢弃未执行的工具草稿，再重新请求当前轮，前面完成的工具不重放。后台普通调用默认只在未交付部分输出时重试。
 
@@ -195,11 +73,13 @@ Embedding Provider 区分配置启用状态与服务健康状态：验证页、�
 
 OpenAI 兼容模型列表请求仅在 `/models` 返回 404/405 且不是验证页时探测兼容列表端点；403、鉴权、限流、网络故障及损坏响应直接报告错误，不返回成功空列表。真正的空列表保持空数组。Embedding、Reranker 和 OpenAI 兼容接口统一识别 `cf-mitigated: challenge` 与 HTML 验证页，错误提示服务商放行 API 或检查基址，日志不输出验证页原文。上游安全规则仍由服务商调整。
 
+## 7. Gateway 层
+
 ### 7.1 架构
 
 - **端口**：与 HTTP 共用 `:9120`
 - **协议**：WebSocket + 版本化 JSON Envelope；消息进入路由前必须通过 Shared Schema 校验与协议版本协商
-- **鉴权**：Hello 消息携带 Token；远程 Node 使用 TLS/mTLS 与持久 Trust，未配置凭据时仅允许受限本机部署
+- **鉴权**：WebSocket 升级时校验设备身份，随后完成版本化 Hello；能力节点使用独立能力通道及相应凭据。远程 TLS 与证书信任见 [部署架构](./A04_DEPLOYMENT.md)。
 
 ### 7.2 文件组织
 
@@ -214,33 +94,13 @@ services/gateway/
 
 ### 7.3 Service 集成
 
-后端 Service 通过 DI 注入受限 Event/Surface Port，不直接把 `GatewayHub` 传播给 Application、Router 或 Repository。Gateway 只负责连接与消息路由，不访问数据库。
-
-```typescript
-export class AgentService {
-  constructor(private events: ConversationEventPort) {}
-
-  async onLlmResponse(response: string) {
-    await this.events.publish('conversation.response', { response })
-  }
-}
-```
+GatewayHub 管理连接、协议握手、订阅与消息路由，并通过注入的持久通知 Repository 提供通知相关能力。具体推送入口及不同模块依赖以 `gatewayHub.ts` 和 `container.ts` 为准；Application 通过受限 Host ABI 接入。
 
 ---
 
 ## 8. 错误处理
 
-全局错误中间件：
-
-```typescript
-app.onError((err, c) => {
-  if (err instanceof AppError) {
-    return c.json({ code: err.code, message: err.message, data: err.data }, err.httpStatus)
-  }
-  logger.error('未捕获异常', { error: err.message, stack: err.stack })
-  return c.json({ code: 'INTERNAL_ERROR', message: '服务内部错误，请稍后再试' }, 500)
-})
-```
+`app.ts` 注册 `middleware/errorHandler.ts`：`AppError` 按业务码映射状态并返回信封，未知异常记录日志并返回 `INTERNAL_ERROR`。消息依据请求语言通过诊断翻译入口处理，堆栈保留在服务端日志。业务码与特殊响应边界见 [API 响应规范](./S02_API_SPEC.md)。
 
 ## 9. AIOS 领域架构约束
 

@@ -43,9 +43,12 @@ export function cjkFriendlyEmphasis(md: MarkdownIt): void {
 
       // 步骤 1：保护行内代码 `...`，避免正则误伤代码段内的星号
       const inlineCodes: string[] = []
+      // 占位符避开强调符，并确保不会与原文内容冲突。
+      let codeMarker = '\uE000'
+      while (token.content.includes(codeMarker)) codeMarker += '\uE000'
       let text = token.content.replace(/`([^`]+)`/g, (match) => {
         inlineCodes.push(match)
-        return `__INLINE_CODE_${inlineCodes.length - 1}__`
+        return `${codeMarker}${inlineCodes.length - 1}\uE001`
       })
 
       // 步骤 2：修复强调符（** 或 __）内部包含两端空格的情况
@@ -86,7 +89,7 @@ export function cjkFriendlyEmphasis(md: MarkdownIt): void {
       }
 
       // 步骤 6：还原被保护的行内代码块
-      text = text.replace(/__INLINE_CODE_(\d+)__/g, (_, index) => inlineCodes[Number(index)])
+      text = text.replace(new RegExp(`${codeMarker}(\\d+)\uE001`, 'g'), (_, index) => inlineCodes[Number(index)])
 
       token.content = text
     }

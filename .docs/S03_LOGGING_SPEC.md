@@ -13,23 +13,14 @@
 
 ### 1.2 初始化
 
-```typescript
-// lib/logger.ts
-import { createConsola } from 'consola'
-
-export function createLogger(module: string) {
-  return createConsola({ defaults: { tag: module } })
-}
-```
+`packages/backend/src/lib/logger.ts` 的 `createLogger()` 创建带模块标签的 consola 实例，并接入文件和 SSE reporter。`initLogFile()` 初始化文件输出；`setLogLevel()` 可调整已创建实例的级别。
 
 ### 1.3 使用
 
 ```typescript
-const logger = createLogger('MemoryService')
+const logger = createLogger('EventMemoryService')
 
-logger.info('记忆已创建', { memoryId: 42, agentId: 'pero' })
-logger.warn('LLM 调用重试', { attempt: 2, maxRetries: 3 })
-logger.error('数据库操作失败', { error: err.message, stack: err.stack })
+logger.info(t('logs.memory', 'Agent 八小时补记周期已完成'), { agentId: 'pero' })
 ```
 
 ### 1.4 日志级别
@@ -43,36 +34,13 @@ logger.error('数据库操作失败', { error: err.message, stack: err.stack })
 
 ### 1.5 日志语言
 
-**日志消息使用中文**，结构化数据字段用英文 key：
-
-```typescript
-// ✅
-logger.info('记忆已创建', { memoryId: 42 })
-// ❌
-logger.info('Memory created', { memoryId: 42 })
-```
+日志通过对应运行端的 i18n 入口获取；中文是词条原文，动态值使用占位符，实际输出跟随语言配置。结构化数据字段使用英文 key；词条维护见 [国际化说明](./B25_I18N.md)。
 
 ---
 
 ## 2. 前端日志
 
-```typescript
-// lib/logger.ts
-export const logger = {
-  info: (tag: string, message: string, data?: unknown) => {
-    console.log(`[${tag}] ${message}`, data ?? '')
-    if ((window as any).electron) {
-      ;(window as any).electron.send('log-from-renderer', `[${tag}] ${message}`)
-    }
-  },
-  warn: (tag: string, message: string, data?: unknown) => {
-    console.warn(`[${tag}] ${message}`, data ?? '')
-  },
-  error: (tag: string, message: string, data?: unknown) => {
-    console.error(`[${tag}] ${message}`, data ?? '')
-  },
-}
-```
+`packages/frontend/src/lib/logger.ts` 提供 `debug`、`info`、`warn` 和 `error`，并翻译诊断消息。Electron 环境下 `info`、`warn` 和 `error` 同时转发主进程；`debug` 在开发环境输出到控制台。
 
 禁止直接使用 `console.log`。
 
@@ -111,26 +79,7 @@ export const logger = {
 
 ## 5. 健康检查
 
-```typescript
-app.get('/api/health', (c) =>
-  c.json({
-    status: 'ok',
-    uptime: process.uptime(),
-    version: APP_VERSION,
-    memory: process.memoryUsage(),
-  }),
-)
-```
-
-Docker Compose 中配置 healthcheck：
-
-```yaml
-healthcheck:
-  test: ['CMD', 'curl', '-f', 'http://localhost:9120/api/health']
-  interval: 30s
-  timeout: 5s
-  retries: 3
-```
+`app.ts` 将健康路由挂载到 `/api/health`；具体响应见 `routers/health.router.ts`。Compose 后端健康检查使用 Node 请求该地址，前端检查 Nginx 的 `/healthz`，实际配置见根目录 `docker-compose.yml`。
 
 ---
 

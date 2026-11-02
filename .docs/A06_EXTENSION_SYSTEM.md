@@ -53,19 +53,22 @@ interface PackageManifest {
 一个 Package 可以声明多种 Contribution：
 
 ```text
-Application
-Service Process
-Capability Provider
-Runtime Adapter
-Tool ABI
-Skill Resource
-Policy
-Event Subscriber
-Presenter
-Web UI
-Asset
-Schema / Migration
+application
+service
+capability-provider
+runtime-adapter
+tool
+skill
+policy
+event-subscriber
+presenter
+web-ui
+asset
+context-provider
+agent-flow
 ```
+
+这些名称对应 shared 中 `PackageContributionKind` 的当前联合类型；Service Process、Tool ABI 等是相关运行时概念。数据库 Schema 与迁移由对应领域维护，当前联合中没有独立的 `schema` 或 `migration` Contribution Kind。
 
 Manifest 只描述静态意图，不保存运行实例、连接、Handle、进程或健康状态。
 

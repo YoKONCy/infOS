@@ -8,7 +8,7 @@
 
 ## 1. 概述
 
-infOS 同时支持 **Electron 桌面版（Steam 上架）** 和 **Docker 后端版**。Steam 相关功能（Workshop、Cloud Sync、成就、Overlay）仅存在于 Electron 版，Docker 版完全不涉及 Steam。
+Steam SDK、Workshop 发现、Steam Cloud 和 Overlay 由 Electron 客户端接入。服务端独立管理内部成就；Steam 可用时由客户端提交已达成记录。Docker 后端也能保存内部成就。
 
 ---
 
@@ -61,6 +61,9 @@ packages/backend/src/core/
 | `@data/`     | 用户可写数据   | ✅                | 统一应用数据目录                          | `PERO_DATA_DIR` |
 | `@workshop/` | Steam Workshop | ❌ 只读，多订阅根 | 由 `steamApi.workshop.installInfo()` 发现 | ❌ 不可用       |
 | `@temp/`     | 运行时临时     | ✅                | 系统 temp                                 | 系统 temp       |
+| `@principal/` | 角色工作区    | 由具体访问策略决定 | `@data/principals/<agentId>/workspace`   | 同左            |
+
+`@principal` 使用 `resolvePrincipal(agentId, relativePath)`，需要角色上下文；工作区访问仍需经过领域权限与范围检查。
 
 ### 3.2 Workshop 路径传递
 
@@ -109,23 +112,12 @@ Docker 版不设此环境变量，`@workshop` 自然为空。
 | 人设 (agents)       | **后端**             | 人设注入 system prompt  |
 | 插件 schema         | **后端**             | Tool calling 在后端     |
 | 3D 模型（标准资源） | **前端**             | Three.js 渲染在渲染进程 |
-| UI 资产 (图片/音频) | **Electron**         | 前端展示                |
-| config.json         | **后端写，前端只读** | 后端为权威源            |
+| UI 资产 (图片/音频) | **客户端**           | Electron 或浏览器展示   |
+| 业务配置            | **后端管理**         | 前端通过接口读取与修改  |
 
 ### 4.4 提示词覆盖查找
 
-```typescript
-class PromptTemplateLoader {
-  async load(templatePath: string): Promise<string> {
-    // 1. 用户自定义优先
-    const customPath = pathResolver.resolve(`@data/custom/prompts/${templatePath}`)
-    if (await pathExists(customPath)) return readFile(customPath, 'utf-8')
-
-    // 2. 回退到官方
-    return readFile(pathResolver.resolve(`@app/prompts/${templatePath}`), 'utf-8')
-  }
-}
-```
+`core/promptTemplateLoader.ts` 按用户自定义、Workshop、官方内置的顺序查找；多个 Workshop 根按订阅列表倒序查找。官方兜底路径为 `@app/backend/src/services/mdp/prompts/`，都不存在时记录警告并返回空字符串。
 
 ---
 
@@ -133,52 +125,23 @@ class PromptTemplateLoader {
 
 ### 5.1 产品语义
 
-Steam 版客户端始终与同设备内置 Daemon 死绑定，不允许切换远程 Server。Steam Cloud 不承担实时同步、文件级自动合并、分布式锁或 Authority Fence；它只是手动完整同步包的存储适配器。
+Steam 客户端可以选择本地或远程服务；Steam Cloud 的完整快照上传与下载只在本地模式可用。云适配器提供手动上传、下载和清除接口，启动和退出时不自动同步，也不做文件级合并。
 
-面向用户只提供：
-
-```text
-“从 Steam Cloud 同步最新数据”
-```
-
-用户点击后，以 Steam Cloud 中最新的完整同步包为唯一来源，完整覆写当前本机 Server 的全部用户数据。应用启动和退出不自动下载、上传或合并。
+当前主进程提供 `steam-cloud-upload`、`steam-cloud-download`、`steam-cloud-sync` 等 IPC，其中兼容接口 `steam-cloud-sync` 等同于下载；前端入口以实际页面为准。
 
 ### 5.2 同步范围
 
-默认同步全部用户数据：
+快照包含受管数据目录内的业务数据及一致性数据库副本，包括角色、会话、记忆、工作区和配置。节点身份、设备凭据、部分运行状态、缓存、日志与临时数据按同步服务的排除规则处理；安装包和 Workshop 安装目录由各自的发行渠道管理。
 
-- SQLite、TriviumDB 及各应用 Store 的一致性 Snapshot；
-- Agent、Thread、Message、Memory、Task、Approval、AgentInput、Notification；
-- config、API Key、MCP Credential、TTS/ASR 配置等用户凭据；
-- Applications、插件、Skills、自定义 Prompt、用户模型和头像资源；
-- Workspace、附件、Asset、Social、Arca 及其他用户可写目录；
-- Workshop 订阅和用户配置状态。
-
-只自动排除：
-
-- Server/Client/Capability Node ID、私钥、证书、Gateway Token 和 Trust Session；
-- Session、Lease、Input Seat、临时 Handle、PID、锁文件、Socket、WAL/SHM、缓存、临时文件和日志；
-- 随安装包分发的只读官方资源；
-- Steam Workshop 实际安装文件，由 Steam 根据同步后的订阅状态重新获取。
-
-API Key 等凭据不能以裸明文写入 Steam Cloud。生成同步包时使用同步包密钥加密，目标本机 Daemon 导入后使用本机主密钥重新封装。
+快照由 Daemon 使用传输密钥加密。Steam 适配器根据 Steam 身份派生传输密钥，Steam Cloud 的账号权限是外层访问边界；导入后暂存内容由本机密钥重新加密。具体纳入和排除规则以 `distributedSyncService.ts` 为准。
 
 ### 5.3 完整快照与覆写流程
 
-```text
-1. 本机 Daemon 通过 SQLite Backup/Checkpoint 和各 Store Snapshot 生成一致性视图
-2. 收集全部用户可写目录
-3. 生成 Manifest、App/Schema Version、文件清单和 Checksum
-4. 加密并上传完整同步包
-5. 用户在目标设备点击“从 Steam Cloud 同步最新数据”
-6. 下载到隔离区并完成版本、路径、大小、签名和摘要预检
-7. 自动生成当前本机数据的 pre-sync 回滚快照
-8. 暂停业务写入与 Runtime
-9. 原子切换全部数据库和用户目录
-10. 重封装凭据、执行迁移、重建索引并重启 Runtime
-```
+1. 上传时，本机 Daemon 生成一致性快照并加密，Electron 将其写入 Steam Cloud。
+2. 下载时，Electron 读取云端快照并提交本机 Daemon；Daemon 解密、校验并暂存导入。此时返回的 `restartRequired` 表示还需要重启。
+3. 下次启动、打开数据库之前，服务端生成当前数据的回滚副本并应用暂存包，保留本机节点身份。完成状态和失败恢复以分布式同步实现为准。
 
-同步失败必须恢复原状态，不能留下部分新数据。同步完成后不会自动反向上传；用户需要时显式生成并上传新的完整快照。
+上传和下载互斥。同步完成后需要显式上传才会更新云端快照。
 
 ### 5.4 冲突与恢复
 
@@ -188,78 +151,28 @@ API Key 等凭据不能以裸明文写入 Steam Cloud。生成同步包时使用
 Cloud Snapshot → 完整覆写当前本机用户数据
 ```
 
-当前本机数据在覆写前自动备份，用户可以撤销上次同步。若 App/Schema Version 不兼容、同步包损坏、凭据无法重封装或空间不足，则在切换前 fail-closed。
+应用暂存包时会保留本机数据的回滚副本；分布式服务提供暂存回滚操作，实际恢复同样在后续启动时进行。兼容性、完整性或存储检查失败时应查看服务端错误，具体检查以同步服务实现为准。
 
 ### 5.5 触发时机
 
 | 事件 | 动作 |
 | --- | --- |
-| 应用启动 | 仅检查云端快照元数据并提示，不自动下载或覆写 |
+| 应用启动 | 不自动下载或覆写 |
 | 应用退出 | 不自动上传 |
 | 用户手动上传 | 生成并上传当前完整快照 |
-| 用户手动同步 | 下载最新完整快照并原子覆写当前本机数据 |
+| 手动下载 | 校验并暂存完整快照，重启后应用 |
 
 ---
 
-## 6. 成就系统（预留）
+## 6. 成就系统
 
-仅定义接口，不实现具体触发逻辑：
-
-```typescript
-interface AchievementProvider {
-  unlock(id: string): boolean
-  isUnlocked(id: string): boolean
-}
-
-const ACHIEVEMENTS = {
-  FIRST_ENCOUNTER: 'FIRST_ENCOUNTER',
-  WEEKLY_COMPANION: 'WEEKLY_COMPANION',
-  MONTHLY_BESTIE: 'MONTHLY_BESTIE',
-  INTERACTION_MASTER: 'INTERACTION_MASTER',
-} as const
-
-// Electron: SteamAchievementProvider (基于 steamworks.js)
-// Docker: NoOpAchievementProvider (空实现)
-```
-
-App ID 硬编码 `4457100`，无需提取为配置。
+服务端记录内部成就，Electron 主进程在 Steam 可用时提交已达成记录；远程服务端也可以保存内部成就。当前内置首个成就是 `fresh_start`，Steam API Name 为 `ACH_FRESH_START`。触发条件、身份范围、提交与 Steam 后台配置见 [成就与 Steam 提交](./B30_ACHIEVEMENTS.md)。Steam App ID 在 `electron/main/services/steam.ts` 中配置为 `4457100`。
 
 ---
 
 ## 7. 打包后目录结构
 
-```
-infOS/                          (安装根目录 = @app/)
-├── infOS.exe
-├── steam_api64.dll
-├── resources/
-│   ├── app.asar                   ← 前端 + 主进程代码（只读）
-│   ├── app.asar.unpacked/         ← native addon
-│   ├── backend/
-│   │   ├── dist/                  ← 后端 JS 编译产物（只读）
-│   │   ├── prompts/               ← 官方提示词模板（只读）
-│   │   └── agents/                ← 官方人设定义（只读）
-│   └── assets/
-│       └── 3d/                    ← 官方 3D 模型（只读）
-
-%APPDATA%/infOS/                 (@data/ = 用户可写)
-├── db/
-│   ├── infos.db
-│   └── social_storage.db
-├── memory/
-│   ├── memory.tdb
-│   └── agents/
-├── workspace/
-│   ├── diary/
-│   └── reports/
-├── custom/                        ← 用户覆盖层
-│   ├── prompts/
-│   ├── agents/
-│   ├── models/
-│   └── plugins/
-├── config.json
-└── sync_manifest.json
-```
+发行资源的实际布局以根目录 `electron-builder.base.yml` 和 `electron-builder.steam.yml` 为准：主进程、预加载及渲染代码进入应用包，Daemon、依赖、应用与资产作为发行资源携带，Steam 配置额外加入 SDK 文件。用户数据与安装资源分离；安装版使用系统 `userData/data`，便携版使用程序同级 `data`。数据路径见 `electron/main/utils/env.ts`，存储组织见 [项目结构](./A01_PROJECT_STRUCTURE.md)。
 
 ---
 

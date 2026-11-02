@@ -1,0 +1,56 @@
+# 文档站发布：main 更新或手动触发后部署到 GitHub Pages。
+name: Wiki
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+# 已开始的部署完成后，再发布最新等待中的版本。
+concurrency:
+  group: wiki-pages
+  cancel-in-progress: false
+
+jobs:
+  build:
+    name: Build Wiki
+    if: github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      pages: read
+    steps:
+      - uses: actions/checkout@v6
+      - uses: pnpm/action-setup@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version-file: .node-version
+          cache: pnpm
+      - name: 安装依赖
+        run: pnpm install --frozen-lockfile
+      - name: 配置 GitHub Pages
+        uses: actions/configure-pages@v5
+      - name: 构建文档站
+        run: pnpm --filter @infos/wiki build
+      - name: 上传 Pages 产物
+        uses: actions/upload-pages-artifact@v4
+        with:
+          path: packages/wiki/.vitepress/dist
+
+  deploy:
+    name: Deploy Wiki
+    needs: build
+    runs-on: ubuntu-latest
+    permissions:
+      pages: write
+      id-token: write
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - name: 发布到 GitHub Pages
+        id: deployment
+        uses: actions/deploy-pages@v4

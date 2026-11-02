@@ -47,8 +47,8 @@ infOS-TS/
 │   │       ├── capabilities/       # CapabilityGate、Provider 注册与调用桥接
 │   │       ├── lifecycle/          # 启动、关闭、Scheduler
 │   │       ├── core/               # PathResolver、资产注册表与领域基础设施
-│   │       ├── lib/                # 底层工具库 (logger, env, paths)
-│   │       └── shared/             # 后端共享工具 (llmJsonParser, vectorWriteHelper)
+│   │       ├── lib/                # 底层工具库 (logger, env)
+│   │       └── shared/             # 后端共享工具 (llmJsonParser)
 │   │
 │   ├── frontend/                  # @infos/frontend — Vue 3 + Pinia
 │   │   └── src/
@@ -58,7 +58,7 @@ infOS-TS/
 │   │       ├── components/        # 组件 (ui/chat/avatar/dashboard/settings...)
 │   │       ├── views/             # 页面级视图
 │   │       ├── router/            # Vue Router
-│   │       └── config/            # 运行时配置
+│   │       └── utils/             # 前端工具与 IPC 适配
 │   │
 │   ├── document-engine/            # @infos/document-engine — 语义文档权威与投影
 │   ├── avatar-assets/              # @infos/avatar-assets — 3D角色（YSM）资产与清单生成

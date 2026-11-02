@@ -20,8 +20,8 @@
 | ------------ | ---------------------------------------------- |
 | 测试框架     | **Vitest**                                     |
 | 断言/Mock    | Vitest 内置 (`expect`, `vi.fn`)                |
-| 前端组件测试 | **@vue/test-utils** + **@testing-library/vue** |
-| HTTP Mock    | **msw** (Mock Service Worker)                  |
+| 前端组件测试 | **@vue/test-utils**，按需使用 jsdom 等 DOM 环境 |
+| HTTP 边界    | 依据测试场景使用注入端口、模拟响应或真实本地服务 |
 | 覆盖率       | Vitest 内置 `--coverage` (v8)                  |
 
 ---
@@ -43,10 +43,8 @@ packages/backend/
     ├── unit/
     │   ├── services/memory/
     │   │   └── eventMemoryService.test.ts
-    │   └── repositories/
-    │       └── eventNote.repo.test.ts
-    └── integration/
-        └── memoryPipeline.integration.test.ts
+    │   └── ...
+    └── integration/               # 跨组件场景按实际需要组织
 ```
 
 ### 命名规则

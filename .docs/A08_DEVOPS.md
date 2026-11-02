@@ -32,6 +32,8 @@ Linux 测试使用四个 worker，Windows 使用两个，避免原生模块、PD
 
 push 到 main/dev、面向 main 的 PR 触发普通 CI；Release 通过 workflow_call 复用。标签发行构建 Windows 标准、便携和 Steam 产物，并以当前仓库的 `GITHUB_TOKEN` 发布 GHCR 镜像。创建 Release 等待标准版、最终便携包验收、Steam 构建及镜像发布完成。普通 main push 不等同于 Electron Release；Steam Depot 上传与审核另行操作。
 
+`.github/workflows/wiki.yml` 在 `main` 更新时独立构建 Wiki 并部署到 GitHub Pages，也支持从 `main` 手动触发。产物目录为 `packages/wiki/.vitepress/dist`，站点使用自定义域名 `www.perofamily.top` 和根路径；发布需要仓库 Pages 的来源保持为 GitHub Actions，并在 `github-pages` 环境的部署分支规则中允许 `main`。普通 CI 的全包构建仍会检查 Wiki，Release 复用的质量门禁不触发站点部署。
+
 ### 1.3 运行时与依赖门禁
 
 Node、Electron 声明、锁文件与 Docker 镜像必须符合 `scripts/runtime-security-policy.json`。独立 Node 与 Electron 内嵌 Node 分别判断；兼容下限放行仍保留安全差异，不能写成统一安全下限已经满足。Release 在构建前、beforePack 与 afterPack 检查实际 Electron 二进制。完整规则和回补证据见 [B27](./B27_RUNTIME_SECURITY.md)。
@@ -136,7 +138,7 @@ app.post('/api/chat', validate('json', chatSchema), handler)
 
 - **校验信封**：Zod失败统一返回HTTP 400、`VALIDATION_ERROR`和`data.fields`，Router只能使用项目级`validate()`包装器
 - **响应契约**：业务码必须注册；HTTP 201绑定`CREATED`，HTTP 202绑定`ACCEPTED`
-- **路径遍历防护**：PathResolver 的 `resolve()` 必须检查解析后的路径不超出 roots 边界
+- **路径遍历防护**：受管逻辑前缀由 `PathResolver` 约束根目录；工作区等业务路径还要经过各自的范围和权限检查，绝对路径与 `resolvePrincipal()` 不能单独作为授权依据
 - **SQL 注入**：Drizzle ORM 的参数化查询天然防注入
 - **XSS**：Vue 的模板自动转义 + CSP 头（Electron 版由 `webPreferences` 控制）
 

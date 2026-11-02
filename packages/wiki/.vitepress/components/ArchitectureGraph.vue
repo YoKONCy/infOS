@@ -11,7 +11,7 @@
         <span class="title-chip">✦ BLUEPRINT ✦</span>
         <span class="title-text">infOS-TS 全栈智能体操作系统架构拓扑</span>
       </div>
-      <div class="header-badge">v0.9.11</div>
+      <div class="header-badge">AIOS</div>
     </div>
 
     <!-- 架构主舞台 -->
@@ -25,7 +25,7 @@
         <div class="card-grid cols-4">
           <div class="blueprint-card">
             <div class="card-icon">🪟</div>
-            <div class="card-name">Electron 33+</div>
+            <div class="card-name">Electron</div>
             <div class="card-desc">无边框透明置顶 / 穿透 / 悬浮视窗</div>
           </div>
           <div class="blueprint-card">
@@ -36,7 +36,7 @@
           <div class="blueprint-card highlight-card">
             <div class="card-icon">🎮</div>
             <div class="card-name">3D Desktop Engine</div>
-            <div class="card-desc">Minecraft-Like 风格骨骼动画 / 物理惯性</div>
+            <div class="card-desc">Bedrock 模型 / 骨骼动画与交互</div>
           </div>
           <div class="blueprint-card">
             <div class="card-icon">📦</div>
@@ -51,7 +51,7 @@
         <div class="bus-line">
           <span class="bus-arrow">↕</span>
           <span class="bus-text">
-            Gateway Hub (WebSocket / Protobuf 二进制流 / HTTP REST 全双工总线)
+            业务请求：HTTP / SSE / WebSocket · 能力调用：独立节点连接
           </span>
           <span class="bus-arrow">↕</span>
         </div>
@@ -61,7 +61,7 @@
       <div class="blueprint-layer layer-kernel">
         <div class="layer-tag tag-kernel">
           <span class="tag-icon">🧠</span>
-          <span>AIOS 智能操作系统微内核 (Node.js + Hono)</span>
+          <span>AIOS 逻辑内核与业务服务 (Node.js + Hono)</span>
         </div>
 
         <!-- 调度与管控 -->
@@ -69,8 +69,8 @@
           <div class="sub-title">核心调度与安全边界 (Kernel Management)</div>
           <div class="card-grid cols-3">
             <div class="blueprint-card mini">
-              <div class="card-name">⏰ CompanionScheduler</div>
-              <div class="card-desc">4段时段感知 / 自动空闲陪伴开场</div>
+              <div class="card-name">⏰ 任务与主动工作</div>
+              <div class="card-desc">任务调度 / 可选主动陪伴</div>
             </div>
             <div class="blueprint-card mini highlight-pink">
               <div class="card-name">✍️ Context Compiler</div>
@@ -85,7 +85,7 @@
 
         <!-- 六大一等公民资源 -->
         <div class="sub-section">
-          <div class="sub-title">六大一等公民资源模型 (First-Class AIOS Resources)</div>
+          <div class="sub-title">角色关联的六类资源</div>
           <div class="card-grid cols-6">
             <div class="resource-card">
               <span class="res-icon">🪪</span>
@@ -115,7 +115,7 @@
             <div class="resource-card">
               <span class="res-icon">⚡</span>
               <span class="res-name">Capability</span>
-              <span class="res-sub">NIT 工具能力</span>
+              <span class="res-sub">工具与能力</span>
             </div>
           </div>
         </div>
@@ -130,11 +130,11 @@
             </div>
             <div class="blueprint-card mini">
               <div class="card-name">📝 EventMemoryService</div>
-              <div class="card-desc">EventNote 提炼 / 日记自动汇总</div>
+              <div class="card-desc">事件记忆的记录与检索</div>
             </div>
             <div class="blueprint-card mini">
               <div class="card-name">🧭 ContextRNN (minGRU)</div>
-              <div class="card-desc">256维对话轨迹编码 / 扩散偏置</div>
+              <div class="card-desc">高级记忆检索的可选模块</div>
             </div>
             <div class="blueprint-card mini">
               <div class="card-name">🏰 Stronghold</div>
@@ -148,7 +148,7 @@
       <div class="blueprint-bus bus-native">
         <div class="bus-line">
           <span class="bus-arrow">↕</span>
-          <span class="bus-text">Node-API 原生直连绑定 (Zero-Copy C ABI 内存交互)</span>
+          <span class="bus-text">通过上游 npm 包接入原生存储与检索能力</span>
           <span class="bus-arrow">↕</span>
         </div>
       </div>
@@ -157,7 +157,7 @@
       <div class="blueprint-layer layer-native">
         <div class="layer-tag tag-native">
           <span class="tag-icon">⚡</span>
-          <span>TriviumDB 高性能图谱向量算力核心 (Rust Native)</span>
+          <span>TriviumDB 存储与可选高级检索</span>
         </div>
         <div class="card-grid cols-5">
           <div class="blueprint-card native-card">
@@ -173,12 +173,12 @@
           <div class="blueprint-card native-card">
             <div class="card-icon">🎯</div>
             <div class="card-name">FISTA 残差寻隐</div>
-            <div class="card-desc">L1 稀疏约束 / 挖掘微弱因果信号</div>
+            <div class="card-desc">可选的稀疏残差检索</div>
           </div>
           <div class="blueprint-card native-card">
             <div class="card-icon">✨</div>
             <div class="card-name">DPP 多样性采样</div>
-            <div class="card-desc">行列式点过程 / 杜绝语义同质化</div>
+            <div class="card-desc">可选的结果多样性采样</div>
           </div>
           <div class="blueprint-card native-card">
             <div class="card-icon">🧩</div>

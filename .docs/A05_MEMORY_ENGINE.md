@@ -1,8 +1,8 @@
-# 记忆引擎架构 (PEDSA)
+# 记忆引擎架构
 
 > **适用范围**：`packages/backend/src/services/memory/`
 > **核心引擎**：SQLite (Drizzle) + TriviumDB (Vector + Graph)
-> **理论基础**：PEDSA v2 (Pipeline for Embedded Directed Semantic Analysis)
+> **范围**：事件记忆、自动检索与主动图查询；社交应用有独立的记忆处理流程
 > **最后更新**：2026-10-26
 
 ---
@@ -37,7 +37,7 @@
 
 记忆检索拆成两条合同不同的路径：
 
-1. **对话前自动 RAG**：默认向量 + BM25；可在总览页启用 **SA-PPR 高级管线**（含 FISTA / DPP / ContextRNN / Leiden / 反馈闭环）。固定补充物理时间轴末尾事件与每个命中事件的直接前驱，均不占 `top_k`。
+1. **对话前自动 RAG**：默认向量 + BM25；可在「核心记忆」→「RAG 配置」→「高级检索」启用 **SA-PPR 高级管线**（含 FISTA / DPP / ContextRNN / Leiden / 反馈闭环）。固定补充物理时间轴末尾事件与每个命中事件的直接前驱，均不占 `top_k`。
 2. **Agent 主动图查询**（`query_event_notes`）：确定性 **BFS**，严格遵守方向、边标签、最大深度、最大节点数与返回 Token 预算，**不受 SA-PPR 开关影响**。
 
 ---
@@ -74,16 +74,7 @@ Node.js 既有 CRUD、图查询、检索、事务和 `close()` 签名保持兼�
 
 原生 JSON 边界拒绝 `undefined` 等非法值。事实记录构造时省略未设置的 `source`、`confidence`；自动修订事件通过删除复制后 origin 的人工修订字段清除标记，不写入 `manualEdit: undefined`。不通过整体字符串化把非法数值或不支持的对象静默改成其他内容。
 
-TS 层必须通过 `VectorWriteHelper` 操作数据库，确保原子性：
-
-```typescript
-// insertWithId 确保 SQLite ID ↔ TriviumDB ID 一致
-store.insertWithId(sqliteId, vector, payload)
-// 必须调 buildTextIndex() 增量索引才生效
-store.buildTextIndex()
-// 开启自动压缩防止内存膨胀
-store.enableAutoCompaction(300)
-```
+事件记忆与事实分别由领域服务、Repository 和 Store Registry 协调 SQLite 事务记录、TDB 写入与失败重放。维护写入时应沿用领域提交入口；`indexText()` 登记正文，`buildTextIndex()` 用于预热关键词自动机，索引也可按需编译。具体过程见 `eventMemoryService.ts`、`facts.repo.ts` 和 `storeRegistry.ts`。
 
 ---
 

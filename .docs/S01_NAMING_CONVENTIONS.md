@@ -9,7 +9,7 @@
 
 | 类型             | 规则                           | 示例                                             |
 | ---------------- | ------------------------------ | ------------------------------------------------ |
-| TypeScript 文件  | **camelCase**                  | `memoryService.ts`, `vectorWriteHelper.ts`       |
+| TypeScript 文件  | **camelCase**                  | `eventMemoryService.ts`, `llmJsonParser.ts`       |
 | Vue 单文件组件   | **PascalCase**                 | `ChatInterface.vue`, `MessageItem.vue`           |
 | 测试文件         | `<模块名>.test.ts`             | `memoryService.test.ts`                          |
 | 集成测试         | `<场景名>.integration.test.ts` | `memoryPipeline.integration.test.ts`             |
@@ -63,7 +63,7 @@
 | 表名         | **snake_case 复数** | `memory_nodes`, `conversation_logs`           |
 | 列名         | **snake_case**      | `agent_id`, `created_at`, `is_deleted`        |
 | 索引名       | `idx_<表>_<列>`     | `idx_memories_agent_id`                       |
-| Drizzle 变量 | **camelCase**       | `export const memoryNodes = sqliteTable(...)` |
+| Drizzle 变量 | **camelCase**       | `export const taskPlans = sqliteTable(...)` |
 
 ### 2.5 API 业务状态码
 
@@ -80,21 +80,17 @@
 ### 3.1 语言要求
 
 - **所有代码注释必须使用中文**（函数名、专业术语等本就是英文的除外）
-- **日志消息使用中文**，结构化数据字段用英文 key
+- **日志消息通过对应运行端的 i18n 入口获取**，中文作为词条原文，结构化数据字段用英文 key；动态值使用占位符。维护规则见 [国际化说明](./B25_I18N.md)。
 - 变量名、函数名、类名使用英文
 
 ```typescript
 // ✅ 正确
-/** 根据 Agent ID 获取记忆列表 */
-async function getMemories(agentId: string): Promise<MemoryDto[]> {
-  logger.info('记忆查询完成', { agentId, count: result.length })
-}
+/** 记录 Agent 后台补记状态 */
+logger.info(t('logs.memory', 'Agent 八小时补记周期已完成'), { agentId })
 
 // ❌ 错误
-/** Get memories by agent ID */
-async function getMemories(agentId: string): Promise<MemoryDto[]> {
-  logger.info('Memory query completed', { agentId, count: result.length })
-}
+/** Log completed memory maintenance */
+logger.info('Memory maintenance completed', { agentId })
 ```
 
 ### 3.2 注释风格
@@ -185,8 +181,8 @@ import { eq } from 'drizzle-orm'
 import type { ApiResponse } from '@infos/shared'
 
 // 4. 项目内部模块（相对路径）
-import { MemoryRepository } from '../repositories/memory.repo'
-import { VectorWriteHelper } from '../shared/vectorWriteHelper'
+import { EventNoteRepository } from '../repositories/eventNote.repo'
+import { parseLlmJson } from '../shared/llmJsonParser'
 ```
 
 ---

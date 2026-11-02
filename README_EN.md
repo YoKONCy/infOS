@@ -146,7 +146,7 @@ Put the three together and you get **infOS**: solid infrastructure carrying a wa
 - **🎮 Immersive 3D Interaction**: Pero isn't a static image — it's a 3D character with skeletal animation (built on the Bedrock 3D engine). You can drag it, poke it, and it reacts physically; transparent rendering makes it feel like it's floating above your desktop window.
 - **🎭 Multi-character Coexistence & Custom Personas**: Want several companions at once? No problem. Each persona file declares a character's personality, which tools it can use, and what it's good at — multiple distinct AI companions can live on your desktop at the same time.
 - **🏠 Multi-character Stronghold Rooms**: Put several companions in one "room". Each has its own memory and permissions, yet they can naturally chat with each other — a direct, intuitive expression of "one principal Agent manages the whole, and rooms never overstep each other".
-- **🗂️ Saves & Workshop**: Characters, models, and extensions can all be saved, subscribed to, and shared via Steam Cloud and the Workshop, with sources split into **Official / Workshop / Local** tiers. Install and use; switch devices without losing anything.
+- **🗂️ Resources & saves**: Use official and local resources, and discover Steam Workshop models in the desktop client. Steam local mode provides manual full-snapshot interfaces; check the backup and restore results when moving between devices.
 - **🎨 Pixel + Glass Design Language**: Pixel-art icons + frosted-glass texture, softened with gentle shadows and micro-animations for a light, breathing feel. The whole UI is kept consistent by a custom component library (PButton, PCard, PModal, etc.).
 
 <br />
@@ -405,7 +405,7 @@ infOS separates “automatic memory recall” from “Agent-initiated graph quer
 
 | Mode | Entry | Retrieval | Guarantee |
 | :--- | :--- | :--- | :--- |
-| **Automatic RAG** | Context compilation for each turn | Vector + BM25 by default; optional SA-PPR advanced pipeline in Overview settings | Always adds the physical timeline tail and each hit's direct predecessor without consuming `top_k` |
+| **Automatic RAG** | Context compilation for each turn | Vector + BM25 by default; optional SA-PPR pipeline under Core Memory → RAG Configuration → Advanced Retrieval | Always adds the physical timeline tail and each hit's direct predecessor without consuming `top_k` |
 | **Active graph query** | `query_event_notes` tool | Deterministic BFS | Strict direction, edge-label, maximum-depth, maximum-node, and return-token budgets; unaffected by the SA-PPR switch |
 
 Advanced automatic RAG calls TriviumDB `searchAdvanced()`. `Enable SA-PPR advanced pipeline` is the master switch. When it is off, both frontend and backend force FISTA, DPP, ContextRNN, Leiden, and the feedback loop off.

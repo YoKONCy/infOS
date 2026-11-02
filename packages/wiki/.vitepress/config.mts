@@ -22,7 +22,7 @@ export default defineConfig({
   },
   title: 'Perofamily Wiki',
   description: 'Documentation for infOS - The AI Desktop Companion',
-  // base: '/infOS/', // Deploy to GitHub Pages: https://YoKONCy.github.io/infOS/
+  // 自定义域名 www.perofamily.top 从根路径提供文档站。
   head: [
     ['link', { rel: 'icon', href: '/Logo.png' }],
     // 异步非阻塞加载外部字体，配置本地字体优雅回退，避免因网络波动阻塞渲染
@@ -76,33 +76,42 @@ export default defineConfig({
       {
         text: '🧠 核心系统',
         items: [
-          { text: '记忆系统', link: '/core-systems/memory' },
-          { text: '扩散激活算法', link: '/core-systems/spreading-activation' },
-          { text: 'MDP 系统', link: '/core-systems/mdp' },
-          { text: 'NIT 协议', link: '/core-systems/nit' },
+          { text: 'AIOS 架构', link: '/core-systems/aios' },
+          { text: '上下文编译', link: '/core-systems/context' },
+          { text: '工具与能力', link: '/core-systems/tools' },
+          { text: '工作区与任务', link: '/core-systems/workspace-tasks' },
+          { text: '记忆与知识', link: '/core-systems/memory' },
+          { text: '拓展与子应用', link: '/core-systems/extensions-apps' },
         ],
       },
       {
         text: '⚙️ 外围系统',
         items: [
-          { text: 'Bedrock 3D 引擎', link: '/peripheral-systems/bedrock' },
           { text: '控制面板', link: '/peripheral-systems/dashboard' },
+          { text: '对话与工作区', link: '/peripheral-systems/conversation-workspace' },
+          { text: '据点（群聊）模式', link: '/peripheral-systems/stronghold' },
+          { text: '社交模式', link: '/peripheral-systems/social' },
+          { text: '提示词框架', link: '/core-systems/mdp' },
+          { text: '内置浏览器', link: '/peripheral-systems/browser' },
+          { text: 'Bedrock 3D 引擎', link: '/peripheral-systems/bedrock' },
           { text: '角色管理', link: '/peripheral-systems/character' },
         ],
       },
       {
         text: '🌐 生态扩展',
         items: [
-          { text: 'MOD组件', link: '/ecosystem/mod' },
-          { text: '社交模式', link: '/ecosystem/social' },
-          { text: '浏览器插件', link: '/ecosystem/extension' },
+          { text: '插件', link: '/ecosystem/plugins' },
+          { text: 'Skills 与 MCP', link: '/ecosystem/skills-mcp' },
+          { text: '3D 模型', link: '/ecosystem/models' },
           { text: '移动端 App', link: '/ecosystem/mobile' },
-          { text: '创意工坊', link: '/ecosystem/workshop' },
         ],
       },
       {
         text: '🚀 部署运维',
-        items: [{ text: 'Docker 部署', link: '/deployment/docker' }],
+        items: [
+          { text: '分布式', link: '/deployment/distributed' },
+          { text: 'Docker 部署', link: '/deployment/docker' },
+        ],
       },
     ],
 

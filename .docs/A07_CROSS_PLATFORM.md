@@ -55,38 +55,9 @@ const parts = filePath.split(/[/\\]/)
 
 ### 1.4 统一路径工厂
 
-所有运行时路径应从统一的工厂函数获取：
+后端通过 `packages/backend/src/lib/env.ts` 的 `getDataDir()`、`getDatabasePath()` 等函数计算数据路径，再由 `container.ts` 创建 `RuntimeEnv`。`core/pathResolver.ts` 将 `@app`、`@data`、`@workshop` 和 `@temp` 映射到运行时根目录，角色工作区通过 `resolvePrincipal()` 按角色定位。Electron 路径统一由 `electron/main/utils/env.ts` 的 `paths` 提供，便携版和安装版的区别见 [部署架构](./A04_DEPLOYMENT.md#66-便携模式-portable)。
 
-```typescript
-// lib/paths.ts
-import path from 'node:path'
-import os from 'node:os'
-
-/** 应用数据根目录 */
-export function getDataDir(): string {
-  return process.env.PERO_DATA_DIR ?? path.join(os.homedir(), '.infos')
-}
-
-/** 数据库文件路径 */
-export function getDatabasePath(): string {
-  return process.env.PERO_DATABASE_PATH ?? path.join(getDataDir(), 'infos.db')
-}
-
-/** Agent 工作区目录 */
-export function getAgentWorkspace(agentId: string): string {
-  return path.join(getDataDir(), 'principals', agentId, 'workspace')
-}
-
-/** TriviumDB 存储目录 */
-export function getTriviumDir(): string {
-  return path.join(getDataDir(), 'trivium')
-}
-
-/** Package目录 */
-export function getPackagesDir(): string {
-  return process.env.PERO_PACKAGES_DIR ?? path.join(getDataDir(), 'packages')
-}
-```
+路径解析与访问授权需要分别处理：`PathResolver.resolve()` 对受管逻辑前缀进行根目录约束，也接受绝对路径；`resolvePrincipal()` 负责拼接角色路径。处理用户或工具传入的路径时，应使用对应领域的范围和权限检查，工作区检查入口见 `services/workspace/workspaceService.ts`。
 
 ---
 
