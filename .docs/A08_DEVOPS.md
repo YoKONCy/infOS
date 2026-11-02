@@ -1,6 +1,6 @@
 # DevOps 与运维规范
 
-> **版本**：0.9.11 · **更新时间**：2026-10-26
+> **版本**：0.9.12 · **更新时间**：2026-10-26
 > **适用范围**：CI/CD、数据库迁移、版本发布、安全、可观测性、API 文档
 > **依赖规范**：[A04_DEPLOYMENT](./A04_DEPLOYMENT.md)、[S04_TESTING_STANDARDS](./S04_TESTING_STANDARDS.md)
 >
@@ -32,9 +32,15 @@ Linux 测试使用四个 worker，Windows 使用两个，避免原生模块、PD
 
 push 到 main/dev、面向 main 的 PR 触发普通 CI；Release 通过 workflow_call 复用。标签发行构建 Windows 标准、便携和 Steam 产物，并以当前仓库的 `GITHUB_TOKEN` 发布 GHCR 镜像。创建 Release 等待标准版、最终便携包验收、Steam 构建及镜像发布完成。普通 main push 不等同于 Electron Release；Steam Depot 上传与审核另行操作。
 
-`.github/workflows/wiki.yml` 在 `main` 更新时独立构建 Wiki 并部署到 GitHub Pages，也支持从 `main` 手动触发。产物目录为 `packages/wiki/.vitepress/dist`，站点使用自定义域名 `www.perofamily.top` 和根路径；发布需要仓库 Pages 的来源保持为 GitHub Actions，并在 `github-pages` 环境的部署分支规则中允许 `main`。普通 CI 的全包构建仍会检查 Wiki，Release 复用的质量门禁不触发站点部署。
+`.github/workflows/wiki.yml` 在 `main` 更新时独立构建 Wiki 并部署到 GitHub Pages，也支持从 `main` 手动触发。产物目录为 `packages/wiki/.vitepress/dist`，站点使用根路径，目标自定义域名为 `wiki.perofamily.top`。发布需要仓库 Pages 的来源保持为 GitHub Actions，并在 `github-pages` 环境的部署分支规则中允许 `main`；域名切换还需在 GitHub Pages 和 DNS 服务商处完成配置。普通 CI 的全包构建仍会检查 Wiki，Release 复用的质量门禁不触发站点部署。
 
 Wiki 面向普通用户，目录按读者意图分为 `guide/`（开始使用）、`companion/`（和伙伴相处）、`work/`（请伙伴帮忙）、`deployment/` 与 `advanced/`（进阶与原理），侧栏在 `.vitepress/config.mts` 中维护。移动或删除页面时，同步维护 `.vitepress/theme/redirects.ts`：GitHub Pages 对旧路径返回 404 页，404 页在浏览器端查表跳转到新地址。站内角色只使用 Pero 与佩诺菈，素材是 `public/characters/` 下由应用角色图压缩的 WebP；正文提示用 `<CompanionNote who="pero|penora">`，页面 frontmatter 的 `buddy` 切换或关闭右侧陪读角色。页面不写死版本号。
+
+`packages/site` 是萌动链接官网：Vite + Vue 静态单页，`base: './'`，构建产物位于 `packages/site/dist`。`.github/workflows/site.yml` 在 `main` 更新或从 `main` 手动触发时独立构建官网，检查入口后将产物上传到 Cloudflare Pages 项目 `peroperochat-site` 的 `main` 生产分支；同一时刻只进行一次官网发布，普通 CI 的全包构建也会构建官网。
+
+官网发布需提前在 Cloudflare 创建生产分支为 `main` 的 Pages 项目 `peroperochat-site`，并在 GitHub 仓库 Secrets 中配置 `CLOUDFLARE_ACCOUNT_ID` 与拥有该账户 Pages 编辑权限的 `CLOUDFLARE_API_TOKEN`。目标域名为 `www.perofamily.top`，还需在 Pages 绑定该域名，并在 DNS 服务商将 `www` 指向 Pages 项目提供的地址。若项目已启用 Cloudflare 的 Git 自动部署，应关闭该自动部署，避免与工作流重复发布。
+
+官网四位角色的立绘、表情帧、Q 版与场景插画位于 `public/art/`。立绘的眨眼和说话通过表情补丁实现，补丁位置在 `src/faces.json`；重新生成立绘时需同步更新。角色台词改写自角色档案，在 `src/characters.ts`；简体中文、繁體中文、英语和日语的词库及切换方式见 [国际化说明](./B25_I18N.md#官网语言)。页面粒子等动态效果跟随系统或用户的减少动态效果设置。
 
 ### 1.3 运行时与依赖门禁
 

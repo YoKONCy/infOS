@@ -11,6 +11,7 @@ import {
   watch,
 } from 'vue'
 import { PButton, PDialog, PInput, PSelect, PSwitch, PixelIcon } from '../../pixel'
+import SteamCloudStatus from '../SteamCloudStatus.vue'
 import { t, getDisplayLocale } from '../../../i18n'
 import { backupApi, type BackupCatalogue } from '../../../api/modules/backupApi'
 import { inspectBackupFile } from '../../../api/modules/backupFile'
@@ -641,6 +642,7 @@ onBeforeUnmount(() => {
         </PButton>
       </div>
     </header>
+    <SteamCloudStatus />
     <p v-if="error" role="alert" class="backup-message error">{{ error }}</p>
     <p v-if="notice" role="status" class="backup-message">{{ notice }}</p>
     <section

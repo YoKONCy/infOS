@@ -1,0 +1,16 @@
+{
+  "Steam 云存档": "Steam Cloud saves",
+  "本机云存档已停用": "Local cloud saves disabled",
+  "等待保存": "Waiting to save",
+  "正在保存…": "Saving…",
+  "已交给 Steam 同步": "Handed to Steam for sync",
+  "等待重试": "Waiting to retry",
+  "需要处理冲突": "Conflict needs attention",
+  "本机已保存": "Saved locally",
+  "上次交给 Steam": "Last handed to Steam",
+  "暂无": "None yet",
+  "聊天和设置变化后自动保存，退出前再次保存。": "Saves automatically after chats or settings change, and again before exit.",
+  "未完成的存档保留在本机，连接恢复后自动重试。": "Pending saves stay on this device and retry automatically when the connection returns.",
+  "云端写入已暂停，重新启动后选择要保留的存档。": "Cloud writes are paused. Restart to choose which save to keep.",
+  "远程数据由服务器备份。": "Remote data is backed up by the server."
+}

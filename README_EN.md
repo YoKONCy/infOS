@@ -17,7 +17,7 @@
     <a href="https://github.com/YoKONCy/infOS/releases"><img src="https://img.shields.io/github/downloads/YoKONCy/infOS/total?style=flat-square&amp;label=Downloads&amp;labelColor=252737&amp;color=c78faf" alt="Total release downloads" /></a>
     <a href="https://github.com/YoKONCy/infOS/stargazers"><img src="https://img.shields.io/github/stars/YoKONCy/infOS?style=flat-square&amp;logo=github&amp;labelColor=252737&amp;color=b5a0da" alt="GitHub Stars" /></a>
   </p>
-  <p><a href="#quick-start"><b>Download</b></a>　 /　 <a href="https://www.perofamily.top"><b>Documentation</b></a>　 /　 <a href="#sub-apps"><b>Explore sub-apps</b></a>　 /　 <a href="https://github.com/YoKONCy/infOS/issues"><b>Feedback</b></a></p>
+  <p><a href="#quick-start"><b>Download</b></a>　 /　 <a href="https://wiki.perofamily.top"><b>Documentation</b></a>　 /　 <a href="#sub-apps"><b>Explore sub-apps</b></a>　 /　 <a href="https://github.com/YoKONCy/infOS/issues"><b>Feedback</b></a></p>
 </div>
 
 <br />
@@ -146,7 +146,7 @@ Put the three together and you get **infOS**: solid infrastructure carrying a wa
 - **🎮 Immersive 3D Interaction**: Pero isn't a static image — it's a 3D character with skeletal animation (built on the Bedrock 3D engine). You can drag it, poke it, and it reacts physically; transparent rendering makes it feel like it's floating above your desktop window.
 - **🎭 Multi-character Coexistence & Custom Personas**: Want several companions at once? No problem. Each persona file declares a character's personality, which tools it can use, and what it's good at — multiple distinct AI companions can live on your desktop at the same time.
 - **🏠 Multi-character Stronghold Rooms**: Put several companions in one "room". Each has its own memory and permissions, yet they can naturally chat with each other — a direct, intuitive expression of "one principal Agent manages the whole, and rooms never overstep each other".
-- **🗂️ Resources & saves**: Use official and local resources, and discover Steam Workshop models in the desktop client. Steam local mode provides manual full-snapshot interfaces; check the backup and restore results when moving between devices.
+- **🗂️ Resources & saves**: Use official and local resources, and discover Steam Workshop models in the desktop client. Steam local mode saves full snapshots automatically and again before exit, retaining local checkpoints for retries. Recovery across devices preserves local data and handles conflicts.
 - **🎨 Pixel + Glass Design Language**: Pixel-art icons + frosted-glass texture, softened with gentle shadows and micro-animations for a light, breathing feel. The whole UI is kept consistent by a custom component library (PButton, PCard, PModal, etc.).
 
 <br />
@@ -308,7 +308,8 @@ infOS/
 │   │       ├── components/        # 🧱 UI component library (Chat / Avatar / Stronghold / pixel/)
 │   │       ├── stores/            # 📦 Pinia global state
 │   │       └── api/               # 📡 Transport layer (IPC / REST auto-switch)
-│   └── wiki/                      # 📖 VitePress documentation site
+│   ├── wiki/                      # 📖 VitePress documentation site
+│   └── site/                      # 🌸 PeroperoChat official website
 │
 ├── electron/                      # 🖥️ Electron shell (main process/preload)
 ├── docker/                        # 🐳 Dockerfile (backend + frontend)
@@ -731,7 +732,7 @@ Create an empty `.portable` file in the same directory as the `.exe`. The app wi
 
 ## 11 · Love & Community
 
-<p><a href="./LICENSE"><img src="https://img.shields.io/badge/Open_Source-Apache_2.0-9b87cf?style=flat-square&amp;labelColor=252737" alt="Apache-2.0 open source project" /></a>　<a href="https://github.com/YoKONCy/infOS/pulls">Contribute code</a> · <a href="https://github.com/YoKONCy/infOS/issues">Share ideas</a> · <a href="https://www.perofamily.top">Improve the docs</a></p>
+<p><a href="./LICENSE"><img src="https://img.shields.io/badge/Open_Source-Apache_2.0-9b87cf?style=flat-square&amp;labelColor=252737" alt="Apache-2.0 open source project" /></a>　<a href="https://github.com/YoKONCy/infOS/pulls">Contribute code</a> · <a href="https://github.com/YoKONCy/infOS/issues">Share ideas</a> · <a href="https://wiki.perofamily.top">Improve the docs</a></p>
 
 **infOS and PeroperoChat are completely non-profit open source projects.**
 

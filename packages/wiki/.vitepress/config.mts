@@ -25,8 +25,9 @@ export default defineConfig({
   },
   lang: 'zh-CN',
   title: '萌动链接 Wiki',
-  description: '萌动链接：PeroperoChat！与 infOS 的使用文档：安装上手、和伙伴相处、请伙伴帮忙，以及部署与原理。',
-  // 自定义域名 www.perofamily.top 从根路径提供文档站。
+  description:
+    '萌动链接：PeroperoChat！与 infOS 的使用文档：安装上手、和伙伴相处、请伙伴帮忙，以及部署与原理。',
+  // 自定义域名 wiki.perofamily.top 从根路径提供文档站。
   head: [
     ['link', { rel: 'icon', type: 'image/png', href: '/favicon.png' }],
     ['link', { rel: 'apple-touch-icon', href: '/apple-touch-icon.png' }],

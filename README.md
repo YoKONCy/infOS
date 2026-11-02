@@ -17,7 +17,7 @@
     <a href="https://github.com/YoKONCy/infOS/releases"><img src="https://img.shields.io/github/downloads/YoKONCy/infOS/total?style=flat-square&amp;label=Downloads&amp;labelColor=252737&amp;color=c78faf" alt="Release 累计下载量" /></a>
     <a href="https://github.com/YoKONCy/infOS/stargazers"><img src="https://img.shields.io/github/stars/YoKONCy/infOS?style=flat-square&amp;logo=github&amp;labelColor=252737&amp;color=b5a0da" alt="GitHub Stars" /></a>
   </p>
-  <p><a href="#quick-start"><b>下载安装</b></a>　 /　 <a href="https://www.perofamily.top"><b>阅读文档</b></a>　 /　 <a href="#sub-apps"><b>探索子应用</b></a>　 /　 <a href="https://github.com/YoKONCy/infOS/issues"><b>交流与反馈</b></a></p>
+  <p><a href="#quick-start"><b>下载安装</b></a>　 /　 <a href="https://wiki.perofamily.top"><b>阅读文档</b></a>　 /　 <a href="#sub-apps"><b>探索子应用</b></a>　 /　 <a href="https://github.com/YoKONCy/infOS/issues"><b>交流与反馈</b></a></p>
 </div>
 
 <br />
@@ -146,7 +146,7 @@ PeroperoChat 不仅仅是一个桌宠应用，它是 **Pero** 的"灵魂容器"�
 - **🎮 沉浸式 3D 交互**：Pero 并非一张贴图——它是一个会动、有骨骼动画的 3D 角色（基于 Bedrock 3D 引擎）。你可以拖它、戳它，它会有物理反馈；透明渲染让它仿佛"浮"在桌面窗口之上。
 - **🎭 多角色并存与自定义人设**：想同时养好几个伙伴？没问题。每个人设文件声明一个角色的性格、会用什么工具、擅长什么技能，多个性格迥异的 AI 伙伴可以同时住在你的桌面上。
 - **🏠 据点多角色房间（Stronghold）**：把多位伙伴放进同一间"房"。它们各有各的记忆和权限，却能在房间里自然地互动聊天——这是"一个主 Agent 管全局、不同房间互不越界"这一设计的直观体现。
-- **🗂️ 资源与存档**：支持官方和本地资源；桌面客户端可扫描 Steam 创意工坊模型。Steam 本地模式提供手动完整快照接口，跨设备迁移时请确认备份和恢复结果。
+- **🗂️ 资源与存档**：支持官方和本地资源；桌面客户端可扫描 Steam 创意工坊模型。Steam 本地模式自动保存完整快照，退出前再次保存，失败后保留本机检查点并重试；跨设备恢复时保护本机数据并处理冲突。
 - **🎨 Pixel + Glass 设计语言**：像素风图标 + 毛玻璃质感，再配柔和的阴影和微动效，看起来轻盈又有呼吸感。整套界面由自研组件库（PButton、PCard、PModal 等）统一风格。
 
 <br />
@@ -308,7 +308,8 @@ infOS/
 │   │       ├── components/        # 🧱 UI 组件库 (Chat / Avatar / Stronghold / pixel/)
 │   │       ├── stores/            # 📦 Pinia 全局状态
 │   │       └── api/               # 📡 Transport 层 (IPC / REST 自动切换)
-│   └── wiki/                      # 📖 VitePress 文档站
+│   ├── wiki/                      # 📖 VitePress 文档站
+│   └── site/                      # 🌸 萌动链接官网
 │
 ├── electron/                      # 🖥️ Electron 壳层 (主进程/预加载)
 ├── docker/                        # 🐳 Dockerfile (backend + frontend)
@@ -756,7 +757,7 @@ pnpm electron:build:portable
 
 ## 11 · 爱与社区
 
-<p><a href="./LICENSE"><img src="https://img.shields.io/badge/Open_Source-Apache_2.0-9b87cf?style=flat-square&amp;labelColor=252737" alt="Apache-2.0 开源项目" /></a>　<a href="https://github.com/YoKONCy/infOS/pulls">贡献代码</a> · <a href="https://github.com/YoKONCy/infOS/issues">提出建议</a> · <a href="https://www.perofamily.top">一起完善文档</a></p>
+<p><a href="./LICENSE"><img src="https://img.shields.io/badge/Open_Source-Apache_2.0-9b87cf?style=flat-square&amp;labelColor=252737" alt="Apache-2.0 开源项目" /></a>　<a href="https://github.com/YoKONCy/infOS/pulls">贡献代码</a> · <a href="https://github.com/YoKONCy/infOS/issues">提出建议</a> · <a href="https://wiki.perofamily.top">一起完善文档</a></p>
 
 **infOS 与 PeroperoChat 是完全非盈利的开源项目。**
 

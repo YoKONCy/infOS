@@ -66,6 +66,7 @@ infOS-TS/
 │   ├── node-host/                  # @infos/node-host — 独立Capability Provider宿主
 │   ├── daemon/                     # @infos/daemon — Daemon发行入口
 │   ├── wiki/                       # @infos/wiki — 文档站
+│   ├── site/                       # @infos/site — 萌动链接官网（静态单页）
 │   ├── apps/
 │   │   ├── social/                 # infos.social Application Realm
 │   │   ├── arca/                   # Arca自治Host与独立Client双入口
@@ -102,6 +103,7 @@ infOS-TS/
 @infos/frontend            ← 依赖shared + arca + avatar-assets
 @infos/daemon              ← 依赖backend + arca + shared（Backend发行入口）
 @infos/wiki                ← 文档站
+@infos/site                ← 官网，独立静态页，不依赖其他工作区包
 Electron                   ← 主Frontend与本机Capability Provider壳层
 ```
 

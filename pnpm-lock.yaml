@@ -729,6 +729,25 @@ importers:
         specifier: ^5.9.3
         version: 5.9.3
 
+  packages/site:
+    dependencies:
+      vue:
+        specifier: ^3.5.42
+        version: 3.5.44(typescript@5.9.3)
+    devDependencies:
+      '@vitejs/plugin-vue':
+        specifier: ^6.0.1
+        version: 6.0.6(vite@6.4.5(@types/node@26.6.5)(jiti@2.6.1)(lightningcss@1.32.0)(tsx@4.21.0)(yaml@2.9.0))(vue@3.5.44(typescript@5.9.3))
+      typescript:
+        specifier: ^5.9.3
+        version: 5.9.3
+      vite:
+        specifier: ^6.4.4
+        version: 6.4.5(@types/node@26.6.5)(jiti@2.6.1)(lightningcss@1.32.0)(tsx@4.21.0)(yaml@2.9.0)
+      vue-tsc:
+        specifier: ^2.2.0
+        version: 2.2.12(typescript@5.9.3)
+
   packages/wiki:
     devDependencies:
       '@types/three':
@@ -9016,6 +9035,12 @@ snapshots:
     dependencies:
       '@rolldown/pluginutils': 1.0.0-rc.13
       vite: 6.4.5(@types/node@22.19.17)(jiti@2.6.1)(lightningcss@1.32.0)(tsx@4.21.0)(yaml@2.9.0)
+      vue: 3.5.44(typescript@5.9.3)
+
+  '@vitejs/plugin-vue@6.0.6(vite@6.4.5(@types/node@26.6.5)(jiti@2.6.1)(lightningcss@1.32.0)(tsx@4.21.0)(yaml@2.9.0))(vue@3.5.44(typescript@5.9.3))':
+    dependencies:
+      '@rolldown/pluginutils': 1.0.0-rc.13
+      vite: 6.4.5(@types/node@26.6.5)(jiti@2.6.1)(lightningcss@1.32.0)(tsx@4.21.0)(yaml@2.9.0)
       vue: 3.5.44(typescript@5.9.3)
 
   '@vitest/coverage-v8@4.1.12(vitest@4.1.12)':

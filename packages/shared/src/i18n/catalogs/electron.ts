@@ -1,5 +1,11 @@
 // 按模块、语言分别维护词库；此入口只装配当前运行端需要的资源。
 import { registerCatalog } from '../index'
+import cloudUiCn from '../locales/zh-CN/electron/ui/cloudSync.json'
+import cloudUiTw from '../locales/zh-TW/electron/ui/cloudSync.json'
+import cloudUiEn from '../locales/en-US/electron/ui/cloudSync.json'
+registerCatalog('electron.ui.cloudSync', 'zh-CN', cloudUiCn)
+registerCatalog('electron.ui.cloudSync', 'zh-TW', cloudUiTw)
+registerCatalog('electron.ui.cloudSync', 'en-US', cloudUiEn)
 import pictoriaUiZh from '../locales/zh-CN/electron/ui/pictoria.json'
 import pictoriaUiTw from '../locales/zh-TW/electron/ui/pictoria.json'
 import pictoriaUiEn from '../locales/en-US/electron/ui/pictoria.json'

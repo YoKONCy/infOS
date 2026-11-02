@@ -59,12 +59,8 @@ import {
   writeClipboardImage,
   getActiveWindow,
 } from './services/desktopAwareness'
-import {
-  getSteamUser,
-  getSubscribedItems,
-  getWorkshopInstallations,
-  getCloudStatus,
-} from './services/steam'
+import { getSteamUser, getSubscribedItems, getWorkshopInstallations } from './services/steam'
+import { steamCloudAutoSave } from './services/cloudAutoSave'
 import { completionAlerts } from './services/completionAlerts'
 import { steamAchievements } from './services/steamAchievements'
 import { registerPictoriaSurface } from './services/pictoriaSurface'
@@ -1135,7 +1131,7 @@ function registerSteamHandlers(): void {
   // 云存档系列
   ipcMain.handle('steam-cloud-get-status', async () => {
     try {
-      return getCloudStatus()
+      return steamCloudAutoSave.getStatus()
     } catch {
       return { enabled: false }
     }
@@ -1143,8 +1139,7 @@ function registerSteamHandlers(): void {
 
   ipcMain.handle('steam-cloud-upload', async () => {
     try {
-      const { cloudSyncService } = await import('./services/cloudSync')
-      return cloudSyncService.uploadFullSnapshot()
+      return steamCloudAutoSave.saveNow('requested', 60_000, true)
     } catch {
       return { success: false, errors: ['Steam 不可用'] }
     }
@@ -1152,8 +1147,7 @@ function registerSteamHandlers(): void {
 
   ipcMain.handle('steam-cloud-download', async () => {
     try {
-      const { cloudSyncService } = await import('./services/cloudSync')
-      return cloudSyncService.downloadFullSnapshot()
+      return steamCloudAutoSave.restoreFromCloud()
     } catch {
       return { success: false, errors: ['Steam 不可用'] }
     }
@@ -1161,8 +1155,7 @@ function registerSteamHandlers(): void {
 
   ipcMain.handle('steam-cloud-sync', async () => {
     try {
-      const { cloudSyncService } = await import('./services/cloudSync')
-      return cloudSyncService.sync()
+      return steamCloudAutoSave.restoreFromCloud()
     } catch {
       return { success: false, uploaded: [], downloaded: [], failed: [], errors: ['Steam 不可用'] }
     }

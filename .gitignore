@@ -19,6 +19,9 @@ release-electron/
 .env.local
 .env.*.local
 
+# 本机临时审核凭据
+/NEWAPI.txt
+
 # 编辑器
 .vscode/
 !.vscode/settings.json

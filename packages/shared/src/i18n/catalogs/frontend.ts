@@ -1,4 +1,11 @@
 import indexMaintenanceCn from '../locales/zh-CN/ui/index-maintenance.json'
+import steamCloudCn from '../locales/zh-CN/ui/steam-cloud.json'
+import steamCloudTw from '../locales/zh-TW/ui/steam-cloud.json'
+import steamCloudEn from '../locales/en-US/ui/steam-cloud.json'
+import { registerCatalog as registerSteamCloud } from '../index'
+registerSteamCloud('ui.steam-cloud', 'zh-CN', steamCloudCn)
+registerSteamCloud('ui.steam-cloud', 'zh-TW', steamCloudTw)
+registerSteamCloud('ui.steam-cloud', 'en-US', steamCloudEn)
 import browserObserverCn from '../locales/zh-CN/ui/browser-observer.json'
 import browserObserverTw from '../locales/zh-TW/ui/browser-observer.json'
 import browserObserverEn from '../locales/en-US/ui/browser-observer.json'

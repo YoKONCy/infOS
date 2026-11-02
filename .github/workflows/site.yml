@@ -1,0 +1,51 @@
+# 官网发布：main 更新或手动触发后部署到 Cloudflare Pages。
+name: Official Site
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+# 已开始的部署完成后，再发布最新等待中的版本。
+concurrency:
+  group: official-site-cloudflare-pages
+  cancel-in-progress: false
+
+jobs:
+  deploy:
+    name: Build & Deploy Official Site
+    if: github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - name: 检查 Cloudflare 发布配置
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+        run: |
+          if [ -z "$CLOUDFLARE_API_TOKEN" ] || [ -z "$CLOUDFLARE_ACCOUNT_ID" ]; then
+            echo '::error::请在仓库 Secrets 中配置 CLOUDFLARE_API_TOKEN 和 CLOUDFLARE_ACCOUNT_ID。'
+            exit 1
+          fi
+      - uses: actions/checkout@v6
+      - uses: pnpm/action-setup@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version-file: .node-version
+          cache: pnpm
+      - name: 安装依赖
+        run: pnpm install --frozen-lockfile
+      - name: 构建官网
+        run: pnpm --filter @infos/site build
+      - name: 检查官网入口
+        run: test -s packages/site/dist/index.html
+      - name: 发布到 Cloudflare Pages
+        uses: cloudflare/wrangler-action@v4
+        with:
+          apiToken: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          accountId: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          wranglerVersion: '4'
+          command: pages deploy packages/site/dist --project-name=peroperochat-site --branch=main

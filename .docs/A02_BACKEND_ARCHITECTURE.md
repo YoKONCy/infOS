@@ -45,6 +45,8 @@ Router 由 `app.ts` 挂载，使用 `AppContext` 获取所需服务。以 `route
 
 SQLite 访问由 `repositories/` 下各领域 Repository 和 Drizzle Schema 承担；`EventNoteRepository` 管理事件记忆的 SQLite 备份与事务记录。TriviumDB 句柄及文件组由 `MemoryStoreRegistry` 管理，事件记忆和事实分别使用自己的领域实现。两种存储的权威关系、事务重放和重建边界见 [记忆引擎](./A05_MEMORY_ENGINE.md)。
 
+主库在 `database/connection.ts` 使用 `journal_mode=WAL` 与 `synchronous=FULL`，事务提交同步 WAL，以增加系统崩溃或断电时已提交记录的持久性；代价是每次提交增加同步磁盘写入。Steam 自动云存档建立在已提交数据及一致性快照之上，触发、缓存与恢复边界见 [Steam 集成](./M04_STEAM_INTEGRATION.md#5-steam-cloud-自动完整快照同步)。
+
 ---
 
 ## 5. DI 容器

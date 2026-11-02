@@ -2,5 +2,10 @@
   "Steam Cloud API 不可用": "Steam Cloud API is not available",
   "写入 Steam Cloud 失败: {0} — {1}": "failed to write to Steam Cloud: {0} — {1}",
   "读取 Steam Cloud 失败: {0} — {1}": "Failed to read Steam Cloud: {0} — {1}",
-  "已清除 {0} 个云端快照文件": "{0} cloud snapshot files cleared"
+  "已清除 {0} 个云端快照文件": "{0} cloud snapshot files cleared",
+  "云存档初始化未完成：{0}": "Cloud save initialization did not complete: {0}",
+  "云存档恢复未完成：{0}": "Cloud save recovery did not complete: {0}",
+  "云存档文件监测暂不可用：{0}": "Cloud save file monitoring is temporarily unavailable: {0}",
+  "自动云存档暂未完成，将保留本机数据并重试：{0}": "Automatic cloud saving did not complete. Local data will be preserved and retried: {0}",
+  "退出云存档未完成：{0}": "Cloud saving before exit did not complete: {0}"
 }

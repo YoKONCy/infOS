@@ -212,6 +212,15 @@ export async function ensurePortableDaemon(): Promise<boolean> {
   }
 }
 
+/** 启动显窗之前应用云快照；仅重启本模块拥有的后端，不终止外部服务。 */
+export async function restartPortableDaemon(signal: AbortSignal): Promise<boolean> {
+  if (!ownsPortableDaemon() || isRemoteConnection()) return false
+  await stopPortableDaemon()
+  signal.throwIfAborted()
+  shuttingDown = false
+  return ensurePortableDaemon()
+}
+
 async function startPortableDaemon(): Promise<boolean> {
   // 已在运行（或外部 Daemon）：直接确认就绪
   if (await probeBusinessHealth()) {

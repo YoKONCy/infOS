@@ -1,0 +1,14 @@
+{
+  "云存档冲突": "Cloud save conflict",
+  "本机和云端都有不同的存档。": "The local and cloud saves differ.",
+  "恢复云端前会保留本机恢复点；保留本机时会保留上一代云存档。": "Restoring the cloud save preserves a local recovery point. Keeping the local save preserves the previous cloud save.",
+  "恢复云端": "Restore cloud save",
+  "保留本机": "Keep local save",
+  "暂不同步": "Not now",
+  "云存档恢复": "Cloud save recovery",
+  "最新云存档不完整，是否恢复上一份完整存档？": "The latest cloud save is incomplete. Restore the previous complete save?",
+  "恢复上一份": "Restore previous save",
+  "云存档尚未恢复，本机数据保持保留。": "The cloud save has not been restored. Local data is preserved.",
+  "本次暂停云端写入，请检查连接或重启应用后重试。": "Cloud writes are paused for this session. Check the connection or restart the application to retry.",
+  "继续": "Continue"
+}

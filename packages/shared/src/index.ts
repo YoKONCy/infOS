@@ -467,3 +467,4 @@ export type {
   IndexMaintenanceStatus,
 } from './types/indexMaintenance.types'
 export * from './achievements'
+export type { SteamCloudSaveStatus } from './types/steamCloud.types'

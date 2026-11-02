@@ -1,0 +1,223 @@
+/* 官网全局样式：主题色随选中角色过渡，特效在「减少动态效果」下全部收起 */
+
+@property --c {
+  syntax: '<color>';
+  inherits: true;
+  initial-value: #4f9cf0;
+}
+@property --c-soft {
+  syntax: '<color>';
+  inherits: true;
+  initial-value: #cfe6ff;
+}
+@property --c-deep {
+  syntax: '<color>';
+  inherits: true;
+  initial-value: #1f4f9c;
+}
+
+:root {
+  --ink: #23224a;
+  --ink-2: #57577e;
+  --paper: #fffaff;
+  --font:
+    'PingFang SC', 'HarmonyOS Sans SC', 'MiSans', 'Microsoft YaHei', 'Noto Sans SC', system-ui,
+    sans-serif;
+  color-scheme: light;
+}
+
+*,
+*::before,
+*::after {
+  box-sizing: border-box;
+}
+
+html {
+  scroll-behavior: smooth;
+  -webkit-text-size-adjust: 100%;
+}
+
+body {
+  margin: 0;
+  font-family: var(--font);
+  color: var(--ink);
+  background: #1a1640;
+  -webkit-font-smoothing: antialiased;
+  overflow-x: hidden;
+}
+
+img {
+  display: block;
+  max-width: 100%;
+}
+
+button {
+  font: inherit;
+  color: inherit;
+  background: none;
+  border: 0;
+  padding: 0;
+  cursor: pointer;
+}
+
+a {
+  color: inherit;
+}
+
+::selection {
+  color: #fff;
+  background: var(--c);
+}
+
+/* 糖果色滚动条 */
+html {
+  scrollbar-color: var(--c) #f3ecff;
+}
+
+::-webkit-scrollbar {
+  width: 12px;
+}
+
+::-webkit-scrollbar-track {
+  background: #f3ecff;
+}
+
+::-webkit-scrollbar-thumb {
+  border: 3px solid #f3ecff;
+  border-radius: 999px;
+  background: linear-gradient(180deg, var(--c), #ff9fd2);
+}
+
+:focus-visible {
+  outline: 3px solid var(--c);
+  outline-offset: 3px;
+  border-radius: 8px;
+}
+
+.sr-only {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  clip: rect(0 0 0 0);
+  white-space: nowrap;
+}
+
+/* 主按钮：糖果果冻感，按下有回弹 */
+.btn {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  height: 54px;
+  padding: 0 28px;
+  font-size: 17px;
+  font-weight: 800;
+  letter-spacing: 0.04em;
+  text-decoration: none;
+  color: #fff;
+  border-radius: 999px;
+  background: linear-gradient(180deg, color-mix(in srgb, var(--c) 72%, #fff), var(--c));
+  box-shadow:
+    0 6px 0 var(--c-deep),
+    0 14px 28px color-mix(in srgb, var(--c) 45%, transparent),
+    inset 0 2px 0 rgba(255, 255, 255, 0.55);
+  transition:
+    transform 0.18s cubic-bezier(0.3, 1.8, 0.5, 1),
+    box-shadow 0.18s;
+}
+
+.btn::after {
+  content: '';
+  position: absolute;
+  top: 6px;
+  left: 18%;
+  width: 34%;
+  height: 10px;
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.55);
+}
+
+.btn:hover {
+  transform: translateY(-3px) scale(1.03);
+}
+
+.btn:active {
+  transform: translateY(4px) scale(0.98);
+  box-shadow:
+    0 2px 0 var(--c-deep),
+    0 6px 14px color-mix(in srgb, var(--c) 40%, transparent);
+}
+
+.btn.ghost {
+  color: var(--c-deep);
+  background: rgba(255, 255, 255, 0.86);
+  box-shadow:
+    0 6px 0 color-mix(in srgb, var(--c) 40%, #fff),
+    0 12px 24px rgba(30, 20, 80, 0.16);
+}
+
+.btn.ghost::after {
+  display: none;
+}
+
+/* 入场：data-reveal 元素进入视口时由 useReveal 加上 data-shown */
+[data-reveal] {
+  opacity: 0;
+  transform: translateY(36px) scale(0.97);
+  transition:
+    opacity 0.7s ease,
+    transform 0.8s cubic-bezier(0.2, 1.4, 0.4, 1);
+  transition-delay: var(--d, 0s);
+}
+
+[data-reveal='left'] {
+  transform: translateX(-60px);
+}
+
+[data-reveal='right'] {
+  transform: translateX(60px);
+}
+
+[data-reveal][data-shown] {
+  opacity: 1;
+  transform: none;
+}
+
+@keyframes float-y {
+  0%,
+  100% {
+    transform: translateY(0);
+  }
+  50% {
+    transform: translateY(-12px);
+  }
+}
+
+@keyframes blink-soft {
+  0%,
+  100% {
+    opacity: 1;
+  }
+  50% {
+    opacity: 0.35;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  html {
+    scroll-behavior: auto;
+  }
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+  }
+  [data-reveal] {
+    opacity: 1;
+    transform: none;
+  }
+}

@@ -17,7 +17,8 @@ import { t as __t, initializeDesktopLanguage } from './utils/i18n'
  * @module electron/main
  */
 
-import { app, BrowserWindow, protocol, safeStorage } from 'electron'
+import { app, BrowserWindow, protocol, safeStorage, powerMonitor } from 'electron'
+import { steamCloudAutoSave } from './services/cloudAutoSave'
 import { release } from 'node:os'
 import { logger } from './utils/logger'
 import { windowManager } from './windows/manager'
@@ -71,10 +72,12 @@ configureClientConnection(
 // ─── 全局错误捕获 ─────────────────────────────────────
 process.on('uncaughtException', (error) => {
   reportMainError('exception', error)
+  void steamCloudAutoSave.saveNow('main-exception', 5000)
 })
 
 process.on('unhandledRejection', (reason) => {
   reportMainError('rejection', reason)
+  void steamCloudAutoSave.saveNow('main-rejection', 5000)
 })
 
 // ─── 协议注册 (必须在 app.ready 之前) ──────────────────
@@ -160,7 +163,7 @@ windowManager.setStartupVisibilityGate(() => startupSplash.focus())
 const startupFlow = new StartupFlow({
   phase: (phase) => startupSplash.setPhase(phase),
   open: () => startupSplash.open(),
-  prepare: async () => {
+  prepare: async (signal) => {
     // 重试选择服务器前销毁旧隐藏页面，旧请求不能携带新服务器的凭据。
     windowManager.launcherWin?.destroy()
     const selected = clientConnection().load()
@@ -172,6 +175,7 @@ const startupFlow = new StartupFlow({
         await showConnectionSetup(true, connectionErrorSource(error))
       }
     }
+    await steamCloudAutoSave.prepareStartup(signal)
     // 开屏已绘制后再扫描资源；外部模型映射仍先于 Launcher 初始化。
     const { registerAssetProtocol, scan3DModels } = await import('./services/assets')
     if (!assetProtocolRegistered) {
@@ -180,9 +184,15 @@ const startupFlow = new StartupFlow({
     }
     await scan3DModels()
   },
-  backend: async () => {
-    const { ensurePortableDaemon } = await import('./services/portableDaemon')
-    return ensureSelectedBackend(ensurePortableDaemon)
+  backend: async (signal) => {
+    const { ensurePortableDaemon, ownsPortableDaemon, restartPortableDaemon } =
+      await import('./services/portableDaemon')
+    if (!(await ensureSelectedBackend(ensurePortableDaemon))) return false
+    return steamCloudAutoSave.restoreAtStartup(
+      ownsPortableDaemon(),
+      () => restartPortableDaemon(signal),
+      signal,
+    )
   },
   launcher: async (signal) => {
     // 前一次失败的隐藏页面不能携带旧的首帧握手进入下一次重试。
@@ -231,6 +241,7 @@ async function startDesktop(): Promise<void> {
   if (!startupFlow.completed || isPreparingQuit || desktopServicesStarted) return
   desktopServicesStarted = true
   steamAchievements.start()
+  steamCloudAutoSave.start()
   try {
     // 后端就绪后连接 Daemon 并注册桌面能力；开发模式由外部 Daemon 提供业务服务。
     const { capabilityProvider } = await import('./services/capabilityProvider')
@@ -266,6 +277,15 @@ app
   .then(async () => {
     await initializeDesktopLanguage()
     installRemoteCertificateTrust()
+    powerMonitor.on('suspend', () => {
+      void steamCloudAutoSave.saveNow('suspend', 5000)
+    })
+    powerMonitor.on('lock-screen', () => {
+      void steamCloudAutoSave.saveNow('lock', 5000)
+    })
+    powerMonitor.on('resume', () => {
+      void steamCloudAutoSave.saveNow('resume')
+    })
     // 恢复托盘先于后端加载，首次启动失败时也必须保留原生恢复入口。
     const { createTray } = await import('./services/tray')
     createTray()
@@ -277,6 +297,25 @@ app
 app.on('window-all-closed', () => {
   // 保持托盘运行，不退出
   if (process.platform === 'darwin') return
+})
+
+app.on('browser-window-created', (_event, window) => {
+  window.on('close', () => {
+    void steamCloudAutoSave.saveNow('window-close', 15_000)
+  })
+  window.on('hide', () => {
+    void steamCloudAutoSave.saveNow('window-hide', 15_000)
+  })
+  // Windows 会话结束不经过 before-quit；提前保存但不无限阻止系统关机或注销。
+  window.on('query-session-end', () => {
+    void steamCloudAutoSave.saveNow('session-ending', 5000)
+  })
+  window.on('session-end', () => {
+    void steamCloudAutoSave.saveNow('session-end', 3000)
+  })
+  window.webContents.on('render-process-gone', () => {
+    void steamCloudAutoSave.saveNow('renderer-gone', 8000)
+  })
 })
 
 app.on('before-quit', async (event) => {
@@ -364,6 +403,15 @@ app.on('before-quit', async (event) => {
   } catch (e: unknown) {
     logger.error('Main', __t('electron.logs.index.ts', '退出清理失败: {0}', [e]))
   } finally {
+    // 子应用及能力先停止写入；本机后端保持可用，最后一次保存完成后才关闭 Daemon。
+    await steamCloudAutoSave
+      .stopAndSave()
+      .catch((error) =>
+        logger.warn(
+          'CloudSync',
+          __t('electron.logs.cloudSync', '退出云存档未完成：{0}', [String(error)]),
+        ),
+      )
     // 前面的清理失败时也必须等待本应用拉起的 Daemon 退出，避免重启时遗留进程。
     await import('./services/portableDaemon')
       .then(({ stopPortableDaemon }) => stopPortableDaemon())

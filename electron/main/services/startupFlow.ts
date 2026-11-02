@@ -3,8 +3,8 @@ import type { StartupFailureKind, StartupPhase } from '../../shared/startupSplas
 export interface StartupFlowSteps {
   phase: (phase: StartupPhase) => void
   open: () => Promise<void>
-  prepare: () => Promise<void>
-  backend: () => Promise<boolean>
+  prepare: (signal: AbortSignal) => Promise<void>
+  backend: (signal: AbortSignal) => Promise<boolean>
   launcher: (signal: AbortSignal) => Promise<void>
   verifyBackend: () => Promise<boolean>
   finish: (signal: AbortSignal) => Promise<void>
@@ -45,11 +45,11 @@ export class StartupFlow {
       this.steps.phase('opening')
       await this.steps.open()
       signal.throwIfAborted()
-      await this.steps.prepare()
+      await this.steps.prepare(signal)
       signal.throwIfAborted()
       failure = 'backend'
       this.steps.phase('backend')
-      if (!(await this.steps.backend())) throw new Error('startup-backend-not-ready')
+      if (!(await this.steps.backend(signal))) throw new Error('startup-backend-not-ready')
       signal.throwIfAborted()
       failure = 'launcher'
       this.steps.phase('launcher')
