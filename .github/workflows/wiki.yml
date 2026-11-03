@@ -36,7 +36,7 @@ jobs:
       - name: 构建文档站
         run: pnpm --filter @infos/wiki build
       - name: 上传 Pages 产物
-        uses: actions/upload-pages-artifact@v4
+        uses: actions/upload-pages-artifact@v5
         with:
           path: packages/wiki/.vitepress/dist
 
