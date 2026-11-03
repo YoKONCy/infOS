@@ -39,6 +39,7 @@
 
     <ParticleField ref="field" :kind="char.particle" :color="char.color" :reduced="reduced" />
     <PeekBuddy :char="char" :enabled="!reduced && started" />
+    <MusicPlayer :reduced="reduced" />
 
     <Transition name="party">
       <div v-if="party" class="party" aria-live="polite">
@@ -59,6 +60,7 @@ import HomeCall from './components/HomeCall.vue'
 import ParticleField from './components/ParticleField.vue'
 import PeekBuddy from './components/PeekBuddy.vue'
 import LanguageMenu from './components/LanguageMenu.vue'
+import MusicPlayer from './components/MusicPlayer.vue'
 import { byId, characters, useCharacters, type CharId } from './characters'
 import { LINKS, art, preload } from './assets'
 import { useReducedMotion } from './composables/motion'
