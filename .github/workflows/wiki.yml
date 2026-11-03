@@ -32,7 +32,7 @@ jobs:
       - name: 安装依赖
         run: pnpm install --frozen-lockfile
       - name: 配置 GitHub Pages
-        uses: actions/configure-pages@v5
+        uses: actions/configure-pages@v6
       - name: 构建文档站
         run: pnpm --filter @infos/wiki build
       - name: 上传 Pages 产物
