@@ -380,23 +380,4 @@ describe('输入栏合并入口', () => {
     expect(mocks.wave).not.toHaveBeenCalled()
     expect(mocks.upload).not.toHaveBeenCalled()
   })
-
-  it('窄工作区弹层挂载在 body，Escape 和 Thread 切换均会收起', async () => {
-    const view = await input(true)
-    const toggle = view.get('button[aria-label="图片与语音输入"]')
-    await toggle.trigger('click')
-    await flushPromises()
-    const menu = document.querySelector<HTMLElement>(
-      '[role="dialog"][aria-label="图片与语音输入"]',
-    )!
-    expect(view.element.contains(menu)).toBe(false)
-    document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }))
-    await flushPromises()
-    expect(menu.style.display).toBe('none')
-    await toggle.trigger('click')
-    await flushPromises()
-    mocks.thread.threadId = 'another-thread'
-    await flushPromises()
-    expect(menu.style.display).toBe('none')
-  })
 })

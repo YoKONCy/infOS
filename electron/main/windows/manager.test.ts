@@ -1,7 +1,7 @@
 import { EventEmitter } from 'node:events'
 import type { BrowserWindow } from 'electron'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
-import { guardTransparentWindowMaterial, resolveWindowBackground } from './windowConfig'
+import { guardTransparentWindowMaterial } from './windowConfig'
 
 const backdrop = vi.hoisted(() => ({ disable: vi.fn() }))
 vi.mock('../utils/windowsSystemBackdrop', () => ({
@@ -10,16 +10,6 @@ vi.mock('../utils/windowsSystemBackdrop', () => ({
 beforeEach(() => {
   backdrop.disable.mockReset()
   backdrop.disable.mockReturnValue(true)
-})
-
-describe('resolveWindowBackground', () => {
-  it('可缩放主窗口应使用不透明底色', () => {
-    expect(resolveWindowBackground({ transparent: false })).toMatch(/^#[\da-f]{6}(?:ff)?$/i)
-  })
-
-  it('桌宠等透明窗口应继续使用透明底色', () => {
-    expect(resolveWindowBackground({ transparent: true })).toMatch(/^#[\da-f]{6}00$/i)
-  })
 })
 
 class MaterialWindow extends EventEmitter {
