@@ -180,7 +180,7 @@ jobs:
             /packages/shared/src/i18n/locales/en-US/scripts/validate-release-artifact.json
           sparse-checkout-cone-mode: false
 
-      - uses: actions/download-artifact@v4
+      - uses: actions/download-artifact@v8
         with:
           name: electron-portable
           path: acceptance-artifacts/portable
@@ -343,12 +343,12 @@ jobs:
         with:
           fetch-depth: 0
 
-      - uses: actions/download-artifact@v4
+      - uses: actions/download-artifact@v8
         with:
           name: electron-standard
           path: release-assets/
 
-      - uses: actions/download-artifact@v4
+      - uses: actions/download-artifact@v8
         with:
           name: electron-portable
           path: release-assets/
