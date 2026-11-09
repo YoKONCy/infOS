@@ -18,13 +18,13 @@
   "dependencies": {
     "@infos/node-sdk": "workspace:*",
     "@infos/shared": "workspace:*",
-    "ws": "^8.20.0"
+    "ws": "^8.22.1"
   },
   "devDependencies": {
     "@types/node": "^22.15.0",
-    "@types/ws": "^8.18.1",
-    "rimraf": "^6.1.2",
-    "tsx": "^4.20.0",
+    "@types/ws": "^8.18.2",
+    "rimraf": "^6.1.4",
+    "tsx": "^4.23.15",
     "typescript": "^5.9.3"
   }
 }
