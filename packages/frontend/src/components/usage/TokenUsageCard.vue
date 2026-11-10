@@ -15,6 +15,7 @@ import { PCard, PSelect, PixelIcon } from '../pixel'
 import BrandIcon from '../brands/BrandIcon.vue'
 import { resolveModelBrand } from '../../lib/modelBrands'
 import { tokenUsageApi } from '../../api/modules/tokenUsageApi'
+import { threadDisplayName } from '../../utils/threadPresentation'
 import { useAgentStore } from '../../stores'
 
 const agentStore = useAgentStore()
@@ -47,7 +48,7 @@ const threadOptions = computed(() => [
   },
   ...filterOptions.value.threads.map((thread) => ({
     value: thread.id,
-    label: `${thread.title || __t('ui.usage', '会话')} · ${thread.id}`,
+    label: `${threadDisplayName(thread)} · ${thread.id}`,
   })),
 ])
 const modelOptions = computed(() => [

@@ -6,7 +6,8 @@ import { t as __t } from '../../i18n/index'
 import { computed, onActivated, onDeactivated, onMounted, onUnmounted, ref } from 'vue'
 import type { ProactiveMode, ProactiveSettings, ProactiveState } from '@infos/shared'
 import { schedulerApi } from '../../api/modules/schedulerApi'
-import { PButton, PCard, PInputNumber, PixelIcon } from '../pixel'
+import { getApiBaseUrl } from '../../api/transport'
+import { PButton, PCard, PInputNumber, PSelect, PixelIcon } from '../pixel'
 import { useAgentStore, useNotificationStore } from '../../stores'
 
 const notify = useNotificationStore()
@@ -17,7 +18,7 @@ const pendingMode = ref<ProactiveMode | null>(null)
 const checking = ref(false)
 const dirty = ref(false)
 const error = ref('')
-const draft = ref<Omit<ProactiveSettings, 'mode'>>({
+const draft = ref<Pick<ProactiveSettings, 'companionIntervalMinutes' | 'autonomousIntervalMinutes' | 'maxDailyRuns' | 'goal' | 'timeZone'>>({
   companionIntervalMinutes: 3,
   autonomousIntervalMinutes: 15,
   maxDailyRuns: 48,
@@ -76,6 +77,15 @@ const phaseText = computed(() => {
   }[state.value.phase]
 })
 const recent = computed(() => [...(state.value?.recent ?? [])].reverse())
+const modeOptions = computed(() => [
+  { value: 'inherit', label: __t('ui.settings', '跟随全局') },
+  ...modes.map((mode) => ({ value: mode.value, label: mode.label })),
+])
+const activityOptions = computed(() => [
+  { value: 'inherit', label: __t('ui.settings', '跟随全局') },
+  { value: 'on', label: __t('ui.settings', '开启') },
+  { value: 'off', label: __t('ui.settings', '关闭') },
+])
 let disposed = false
 let active = true
 let sequence = 0
@@ -136,9 +146,7 @@ async function selectMode(mode: ProactiveMode): Promise<void> {
     if (!dirty.value) syncDraft(response.data.settings)
     error.value = ''
     notify.toast(
-      mode === 'off'
-        ? __t('ui.settings', '已全局关闭主动行为')
-        : __t('ui.settings', '已全局开启{0}', [modes.find((item) => item.value === mode)!.label]),
+      __t('ui.settings', '已更新全局默认模式'),
       'success',
     )
   } catch (failure) {
@@ -168,6 +176,27 @@ async function saveSettings(): Promise<void> {
       failure instanceof Error ? failure.message : __t('ui.settings', '保存失败'),
       'error',
     )
+  } finally {
+    saving.value = false
+  }
+}
+async function setActivity(agentId: string | null, key: 'mode' | 'strongholdActivity', value: string | number): Promise<void> {
+  if (saving.value || !state.value) return
+  sequence++
+  saving.value = true
+  try {
+    const patch = key === 'mode'
+      ? { mode: value === 'inherit' ? null : value as ProactiveMode }
+      : { strongholdActivity: value === 'inherit' ? null : value === 'on' }
+    const response = agentId
+      ? await schedulerApi.configureAgentProactive(agentId, patch)
+      : await schedulerApi.configureProactive({ strongholdActivity: value === 'on' })
+    if (!disposed && response.data) {
+      state.value = response.data
+      error.value = ''
+    }
+  } catch (failure) {
+    notify.toast(failure instanceof Error ? failure.message : __t('ui.settings', '保存失败'), 'error')
   } finally {
     saving.value = false
   }
@@ -222,7 +251,7 @@ onUnmounted(() => {
       <span class="proactive-heading__icon"><PixelIcon name="clock" size="md" /></span>
       <div>
         <h3>{{ __t('ui.settings', '主动行为') }}</h3>
-        <p>{{ __t('ui.settings', '全局设置 · 所有已启用角色共用') }}</p>
+        <p>{{ __t('ui.settings', '全局默认 · 角色可单独配置') }}</p>
       </div>
       <span class="proactive-label" :class="{ 'proactive-label--on': currentMode !== 'off' }">
         {{ current.label }}
@@ -232,7 +261,7 @@ onUnmounted(() => {
     <div class="proactive-mode-row">
       <div class="proactive-mode-copy">
         <p>{{ current.description }}</p>
-        <small>{{ __t('ui.settings', '全局生效，不改变会话执行模式。') }}</small>
+        <small>{{ __t('ui.settings', '角色选择跟随全局时使用此设置。') }}</small>
       </div>
       <div
         class="proactive-segment"
@@ -258,13 +287,64 @@ onUnmounted(() => {
       </div>
     </div>
 
+    <div class="proactive-mode-row">
+      <div class="proactive-mode-copy">
+        <p>{{ __t('ui.settings', '据点自由活动') }}</p>
+        <small>{{ __t('ui.settings', '允许角色主动聊天、走动和邀请伙伴。') }}</small>
+      </div>
+      <PSelect
+        :model-value="state?.settings.strongholdActivity ? 'on' : 'off'"
+        :options="activityOptions.filter((option) => option.value !== 'inherit')"
+        :disabled="saving || !state"
+        size="sm"
+        @update:model-value="setActivity(null, 'strongholdActivity', $event)"
+      />
+    </div>
+
+    <details class="proactive-details">
+      <summary>
+        <PixelIcon name="users" size="xs" />
+        <span>{{ __t('ui.settings', '角色设置') }}</span>
+        <PixelIcon class="proactive-chevron" name="chevron-down" size="xs" />
+      </summary>
+      <div class="proactive-agent-list">
+        <div v-for="agent in agentStore.agents" :key="agent.id" class="proactive-agent">
+          <span class="proactive-agent__identity">
+            <img v-if="agent.avatarUrl" :src="`${getApiBaseUrl()}${agent.avatarUrl}`" alt="" />
+            <PixelIcon v-else name="paw" size="sm" />
+            <span>
+              {{ agent.name }}
+              <small v-if="state?.activities?.[agent.id] === 'wait_message'">{{ __t('ui.settings', '等待回答') }}</small>
+              <small v-else-if="state?.activities?.[agent.id] === 'wait_task'">{{ __t('ui.settings', '等待任务') }}</small>
+            </span>
+          </span>
+          <PSelect
+            :model-value="state?.settings.agents?.[agent.id]?.mode ?? 'inherit'"
+            :options="modeOptions"
+            :label="__t('ui.settings', '主动模式')"
+            :disabled="saving || !state"
+            size="sm"
+            @update:model-value="setActivity(agent.id, 'mode', $event)"
+          />
+          <PSelect
+            :model-value="state?.settings.agents?.[agent.id]?.strongholdActivity === undefined ? 'inherit' : state?.settings.agents?.[agent.id]?.strongholdActivity ? 'on' : 'off'"
+            :options="activityOptions"
+            :label="__t('ui.settings', '据点自由活动')"
+            :disabled="saving || !state"
+            size="sm"
+            @update:model-value="setActivity(agent.id, 'strongholdActivity', $event)"
+          />
+        </div>
+      </div>
+    </details>
+
     <div class="proactive-status" aria-live="polite">
       <span class="proactive-phase" :class="`proactive-phase--${state?.phase ?? 'off'}`">
         <i />
         {{ phaseText }}
         <template v-if="state?.agentId">· {{ agentName(state.agentId) }}</template>
       </span>
-      <template v-if="state && currentMode !== 'off'">
+      <template v-if="state && state.phase !== 'off'">
         <span>{{ __t('ui.settings', '下次') }} {{ time(state.nextRunAt) }}</span>
         <span>
           {{ __t('ui.settings', '今日') }} {{ state.dailyRuns }} / {{ state.settings.maxDailyRuns }}
@@ -272,7 +352,7 @@ onUnmounted(() => {
         </span>
       </template>
       <PButton
-        v-if="currentMode !== 'off'"
+        v-if="state && state.phase !== 'off'"
         size="sm"
         variant="ghost"
         :loading="checking"
@@ -388,6 +468,39 @@ onUnmounted(() => {
 </template>
 
 <style scoped>
+.proactive-agent-list {
+  display: grid;
+  gap: 16px;
+  padding: 12px 20px 20px;
+}
+.proactive-agent {
+  display: grid;
+  grid-template-columns: minmax(100px, 1fr) repeat(2, minmax(140px, 1fr));
+  align-items: center;
+  gap: 12px;
+}
+.proactive-agent__identity {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+}
+.proactive-agent__identity img {
+  width: 32px;
+  height: 32px;
+  border-radius: 50%;
+  object-fit: cover;
+}
+.proactive-agent__identity small {
+  display: block;
+  margin-top: 4px;
+  font-size: 11px;
+  color: var(--ui-text-tertiary);
+}
+@media (max-width: 600px) {
+  .proactive-agent { grid-template-columns: 1fr 1fr; }
+  .proactive-agent__identity { grid-column: 1 / -1; }
+}
 .proactive-panel {
   --proactive-accent: var(--ui-accent-sky);
 }

@@ -8,7 +8,8 @@ function createProjection() {
   const inputs = new AgentInputService()
   const service = new ConversationProjectionService(
     {
-      getThread: async () => ({ id: 'thread-1', agentId: 'pero' }),
+      getThread: async () => ({ id: 'thread-1', agentId: 'pero', threadKind: 'side', generation: 1 }),
+      assertGeneration: async () => {},
       listMessages: async () => ({ items: [], total: 0 }),
     } as never,
     { listForMessages: async () => new Map() } as never,
@@ -38,7 +39,8 @@ describe('Conversation交互Surface投影', () => {
     }
     const service = new ConversationProjectionService(
       {
-        getThread: async () => ({ id: 'thread-1', agentId: 'pero' }),
+        getThread: async () => ({ id: 'thread-1', agentId: 'pero', threadKind: 'side', generation: 1 }),
+        assertGeneration: async () => {},
         listMessages: async () => ({
           items: [
             {
@@ -80,7 +82,8 @@ describe('Conversation交互Surface投影', () => {
     }
     const service = new ConversationProjectionService(
       {
-        getThread: async () => ({ id: 'thread-1', agentId: 'pero' }),
+        getThread: async () => ({ id: 'thread-1', agentId: 'pero', threadKind: 'side', generation: 1 }),
+        assertGeneration: async () => {},
         listMessages: async () => ({
           items: [
             {
@@ -156,7 +159,8 @@ describe('Conversation交互Surface投影', () => {
     }
     const service = new ConversationProjectionService(
       {
-        getThread: async () => ({ id: 'thread-1', agentId: 'pero' }),
+        getThread: async () => ({ id: 'thread-1', agentId: 'pero', threadKind: 'side', generation: 1 }),
+        assertGeneration: async () => {},
         listMessages: async () => ({
           items: [legacy, { ...legacy, id: 1, role: 'user', metadataJson: '{}' }],
           total: 2,

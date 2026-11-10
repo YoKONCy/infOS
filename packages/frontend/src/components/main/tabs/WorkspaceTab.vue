@@ -56,7 +56,7 @@ import {
   useWorkspaceSearchNavigation,
   type WorkspaceSearchRequest,
 } from '../../../composables/workspace/useWorkspaceSearchNavigation'
-import { useMobileLayout } from '../../../composables/ui/useMobileLayout'
+import { useWorkspaceLayout } from '../../../composables/workspace/useWorkspaceLayout'
 import {
   buildConversationMarkdown,
   downloadMarkdown,
@@ -119,7 +119,8 @@ const selectedSnippet = ref<{
   startLine: number
   endLine: number
 } | null>(null)
-const { isMobile } = useMobileLayout()
+const workspaceRoot = ref<HTMLElement | null>(null)
+const { isCompact: isMobile } = useWorkspaceLayout(workspaceRoot)
 const isExplorerCollapsed = ref(isMobile.value)
 const isCopilotCollapsed = ref(isMobile.value)
 function dismissMobileWorkspacePanels() {
@@ -970,7 +971,12 @@ onBeforeUnmount(() => {
 </script>
 
 <template>
-  <div v-if="currentAgent" class="workspace-tab">
+  <div
+    v-if="currentAgent"
+    ref="workspaceRoot"
+    class="workspace-tab"
+    :class="{ 'workspace-tab--compact': isMobile }"
+  >
     <div
       class="workspace-panel"
       :class="{ 'workspace-panel--mobile-terminal': isMobile && !isTerminalCollapsed }"
@@ -1061,7 +1067,7 @@ onBeforeUnmount(() => {
         />
         <!-- 左侧资源栏。折叠后保留可恢复的图标轨道。 -->
         <aside
-          class="workspace-explorer"
+          class="workspace-explorer motion-enter-fade-children"
           :class="{ 'workspace-explorer--collapsed': isExplorerCollapsed }"
           :style="isExplorerCollapsed ? undefined : { width: `${explorerWidth}px` }"
         >
@@ -1331,7 +1337,7 @@ onBeforeUnmount(() => {
 
         <!-- 右侧 Agent Copilot：审批队列与聊天分层呈现，互不覆盖。 -->
         <aside
-          class="workspace-copilot"
+          class="workspace-copilot motion-enter-fade-children"
           :class="{ 'workspace-copilot--collapsed': isCopilotCollapsed }"
           :style="isCopilotCollapsed ? undefined : { width: `${copilotWidth}px` }"
         >
@@ -1724,6 +1730,13 @@ onBeforeUnmount(() => {
   border-left: 1px solid var(--ui-border-subtle);
   background: var(--ui-bg-surface);
 }
+/* 窄窗口（桌面端不进移动布局）：两侧栏按比例让出宽度，编辑区不被挤出或被协作栏压住。 */
+html:not([data-mobile]) .workspace-explorer:not(.workspace-explorer--collapsed) {
+  max-width: max(180px, 26%);
+}
+html:not([data-mobile]) .workspace-copilot:not(.workspace-copilot--collapsed) {
+  max-width: max(300px, 40%);
+}
 .workspace-copilot--collapsed {
   width: 52px;
   align-items: center;
@@ -1781,7 +1794,7 @@ onBeforeUnmount(() => {
 
 .workspace-center {
   display: flex;
-  min-width: 320px;
+  min-width: 200px;
   min-height: 0;
   flex: 1;
   flex-direction: column;
@@ -2019,7 +2032,9 @@ onBeforeUnmount(() => {
   caret-color: var(--ui-accent-sky);
   font: 12px/1.65 var(--ui-font-mono);
   tab-size: 2;
-  white-space: pre;
+  /* 长行按窗口宽度自动换行；没有空格的长串（URL、模板变量）也能断开。 */
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
 }
 .editor-surface textarea:focus {
   box-shadow: inset 2px 0 0 var(--ui-accent-sky);

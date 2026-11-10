@@ -33,6 +33,9 @@ import MainTabLoading from '../components/main/MainTabLoading.vue'
 import SurfaceTransition from '../components/motion/SurfaceTransition.vue'
 import { PixelIcon, PDialog } from '../components/pixel'
 import DesktopTabBar from '../components/layout/DesktopTabBar.vue'
+import DesktopHomeIndicator from '../components/desktop/DesktopHomeIndicator.vue'
+import PerceptionStatus from '../components/desktop/perception/PerceptionStatus.vue'
+import { revealPerceptionSettings } from '../composables/usePerception'
 import AppWallpaper from '../components/layout/AppWallpaper.vue'
 import DesktopNewTab from '../components/layout/DesktopNewTab.vue'
 import DesktopBrowserToolbar from '../components/layout/DesktopBrowserToolbar.vue'
@@ -50,7 +53,9 @@ import { useMainNav } from '../composables/main/useMainNav'
 import { useConversationNavigation } from '../composables/chat/useConversationNavigation'
 import { useTaskNavigation } from '../composables/main/useTaskNavigation'
 import { useRemoteNotifications } from '../composables/main/useRemoteNotifications'
+import { useProactiveMessageHandler } from '../composables/main/useProactiveMessages'
 import { useAppBackground } from '../composables/ui/useAppBackground'
+import { useCustomTheme } from '../composables/ui/useCustomTheme'
 import {
   useNotificationStore,
   useAgentStore,
@@ -147,7 +152,7 @@ async function openWebArca(): Promise<void> {
     openingWebArca.value = false
   }
 }
-const desktopShell = useDesktopTabs()
+const desktopShell = useDesktopTabs({ openHomeSection })
 const {
   enabled: desktopEnabled,
   state: desktopState,
@@ -213,6 +218,7 @@ const tabComponents: Record<string, Component> = Object.fromEntries(
     'stronghold',
     'agent_config',
     'user_settings',
+    'desktop_home',
     'model_config',
     'prompts',
     'voice_config',
@@ -222,6 +228,7 @@ const tabComponents: Record<string, Component> = Object.fromEntries(
     'social',
     'terminal',
     'system_reset',
+    'cards',
   ].map((id) => [id, createTabComponent(id)]),
 )
 
@@ -235,7 +242,7 @@ const cachedTabNames = ['ChatTab', 'WorkspaceTab', 'StrongholdTab', 'SocialTab']
 const isDashboardTab = computed(() => !STANDALONE_TABS.has(currentTab.value))
 
 /** 需要全屏 overflow:hidden 的 Tab */
-const FULL_HEIGHT_TABS = new Set(['chat', 'workspace', 'logs', 'terminal', 'social', 'stronghold'])
+const FULL_HEIGHT_TABS = new Set(['chat', 'workspace', 'logs', 'terminal', 'social', 'stronghold', 'desktop_home'])
 
 // ── 导航状态 ──
 
@@ -280,6 +287,10 @@ watch(
 async function openHomeSection(id: string): Promise<void> {
   await desktopShell.activate('home')
   await setTab(id)
+}
+function openPerceptionSettings(): void {
+  revealPerceptionSettings()
+  void openHomeSection('desktop_home')
 }
 const appBackground = useAppBackground()
 const backgroundReadyUrl = ref('')
@@ -468,7 +479,7 @@ taskCenterStore.bindGateway({ onPush, offPush })
 // 初始拉取一次进行中任务（之后由 Gateway 事件增量维护）
 void taskCenterStore.refreshActive()
 
-// 审批事件优先走 Gateway 即时同步，4 秒轮询仅用于断线或漏事件兜底。
+// 审批事件优先走 Gateway；全局兜底补齐其他席位/角色的事件，前台 4 秒、后台 60 秒。
 const handleApprovalRequested = (payload: Record<string, unknown>) => {
   const request = payload.request as ApprovalRequest | undefined
   if (request) approvalStore.receive(request)
@@ -514,6 +525,7 @@ async function refreshPendingAgentInputs(): Promise<void> {
 watch(
   mainSurfaceVisible,
   (visible) => {
+    approvalStore.setPollingPaused(!visible)
     if (agentInputPollTimer) clearInterval(agentInputPollTimer)
     agentInputPollTimer = null
     if (visible) {
@@ -528,19 +540,7 @@ onPush('tool_approval_resolved', handleApprovalResolved)
 onPush('agent_input_requested', handleAgentInputRequested)
 onPush('agent_input_resolved', handleAgentInputResolved)
 
-function handleProactiveMessage(payload: Record<string, unknown>): void {
-  if (payload.threadId !== threadStore.threadId || payload.agentId !== threadStore.agentId) return
-  if (!threadStore.isGenerating)
-    void threadStore
-      .refreshCurrentThread()
-      .catch((error) =>
-        logger.warn(
-          'MainView',
-          __t('logs.frontend.navigation', '主动消息已保存，刷新会话失败'),
-          error,
-        ),
-      )
-}
+const handleProactiveMessage = useProactiveMessageHandler()
 onPush('proactive_message', handleProactiveMessage)
 
 let recoveryRefresh: Promise<void> | null = null
@@ -712,6 +712,7 @@ onMounted(() => {
       !threadStore.isGenerating,
   )
   initParticles()
+  void useCustomTheme().start()
   void appBackground
     .load()
     .catch((error) =>
@@ -756,6 +757,7 @@ onMounted(() => {
     />
 
     <!-- 首页持续挂载，切换到子应用不会中断聊天与后台事件。 -->
+    <DesktopHomeIndicator style="position: relative; z-index: 20; flex-shrink: 0" />
     <div
       v-show="desktopIsHome"
       id="desktop-home-panel"
@@ -867,6 +869,7 @@ onMounted(() => {
           <span class="main-status-text">
             {{ agentStore.currentAgent?.name || __t('ui.navigation', '助手') }}
           </span>
+          <PerceptionStatus @settings="openPerceptionSettings" />
         </div>
 
         <div class="main-statusbar-right">

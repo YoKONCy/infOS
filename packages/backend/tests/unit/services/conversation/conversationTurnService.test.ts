@@ -19,7 +19,8 @@ describe('ConversationTurnService 准备失败保留消息', () => {
       })
       const service = new ConversationTurnService({
         threadService: {
-          getThread: vi.fn().mockResolvedValue({
+          assertGeneration: vi.fn().mockResolvedValue(undefined),
+          getThread: vi.fn().mockResolvedValue({ generation: 1, threadKind: 'side',
             id: 'thread',
             agentId: 'pero',
             channel: 'desktop',
@@ -29,7 +30,7 @@ describe('ConversationTurnService 准备失败保留消息', () => {
           appendAssistantMessage,
         },
         getThreadModelConfig,
-        contextCompiler: { compile: vi.fn().mockRejectedValue(new Error('上下文读取失败')) },
+        contextCompiler: { characterStateRevision: vi.fn().mockResolvedValue(0), compile: vi.fn().mockRejectedValue(new Error('上下文读取失败')) },
         attachmentService: {
           validateForBinding: vi.fn().mockResolvedValue([]),
           bindOutgoing: vi.fn(),
@@ -51,6 +52,9 @@ describe('ConversationTurnService 准备失败保留消息', () => {
         'thread',
         '请保留这条消息',
         'queue_submission',
+        undefined,
+        undefined,
+        1,
         undefined,
       )
       expect(appendAssistantMessage).toHaveBeenCalledTimes(1)
@@ -75,7 +79,8 @@ describe('ConversationTurnService 准备失败保留消息', () => {
     const appendAssistantMessage = vi.fn()
     const service = new ConversationTurnService({
       threadService: {
-        getThread: vi.fn().mockResolvedValue({ agentId: 'pero', channel: 'desktop' }),
+        assertGeneration: vi.fn().mockResolvedValue(undefined),
+        getThread: vi.fn().mockResolvedValue({ generation: 1, threadKind: 'side', agentId: 'pero', channel: 'desktop' }),
         appendUserMessage,
         appendAssistantMessage,
       },
@@ -109,7 +114,8 @@ describe('ConversationTurnService 初始提示词快照', () => {
     const readContent = vi.fn().mockResolvedValue({ bytes: Buffer.from('audio') })
     const service = new ConversationTurnService({
       threadService: {
-        getThread: vi.fn().mockResolvedValue({
+        assertGeneration: vi.fn().mockResolvedValue(undefined),
+        getThread: vi.fn().mockResolvedValue({ generation: 1, threadKind: 'side',
           id: 'thread',
           agentId: 'pero',
           channel: 'desktop',
@@ -120,7 +126,7 @@ describe('ConversationTurnService 初始提示词快照', () => {
       getThreadModelConfig: vi
         .fn()
         .mockResolvedValue({ provider, modelId: 'gemini', apiKey: '', enableAudioInput: enabled }),
-      contextCompiler: {
+      contextCompiler: { characterStateRevision: vi.fn().mockResolvedValue(0),
         compile: vi.fn().mockResolvedValue({
           messages: [{ role: 'user', content: '听音频' }],
           currentMessageIndex: 0,
@@ -151,7 +157,8 @@ describe('ConversationTurnService 初始提示词快照', () => {
     const run = vi.fn().mockResolvedValue('已接收结果，继续原任务')
     const service = new ConversationTurnService({
       threadService: {
-        getThread: vi.fn().mockResolvedValue({
+        assertGeneration: vi.fn().mockResolvedValue(undefined),
+        getThread: vi.fn().mockResolvedValue({ generation: 1, threadKind: 'side',
           id: 'origin',
           agentId: 'pero',
           channel: 'desktop',
@@ -161,7 +168,7 @@ describe('ConversationTurnService 初始提示词快照', () => {
         appendUserMessage,
         appendAssistantMessage,
       },
-      contextCompiler: {
+      contextCompiler: { characterStateRevision: vi.fn().mockResolvedValue(0),
         compile: vi.fn().mockResolvedValue({
           messages: [
             { role: 'system', content: '人格' },
@@ -207,7 +214,8 @@ describe('ConversationTurnService 初始提示词快照', () => {
     ]
     const service = new ConversationTurnService({
       threadService: {
-        getThread: vi.fn().mockResolvedValue({
+        assertGeneration: vi.fn().mockResolvedValue(undefined),
+        getThread: vi.fn().mockResolvedValue({ generation: 1, threadKind: 'side',
           id: 'thread',
           agentId: 'pero',
           channel: 'desktop',
@@ -223,6 +231,7 @@ describe('ConversationTurnService 初始提示词快照', () => {
           return '我先确认了结果。'
         }),
       },
+      contextCompiler: { characterStateRevision: vi.fn().mockResolvedValue(0) },
       attachmentService: { bindOutgoing: vi.fn() },
     } as never)
     await service.executeTurn({
@@ -249,7 +258,8 @@ describe('ConversationTurnService 初始提示词快照', () => {
     }
     const service = new ConversationTurnService({
       threadService: {
-        getThread: vi.fn().mockResolvedValue({
+        assertGeneration: vi.fn().mockResolvedValue(undefined),
+        getThread: vi.fn().mockResolvedValue({ generation: 1, threadKind: 'side',
           id: 'thread-1',
           agentId: 'pero',
           channel: 'desktop',
@@ -257,7 +267,7 @@ describe('ConversationTurnService 初始提示词快照', () => {
         }),
         appendUserMessage: vi.fn().mockResolvedValue({ id: 1 }),
       },
-      contextCompiler: {
+      contextCompiler: { characterStateRevision: vi.fn().mockResolvedValue(0),
         compile: vi.fn().mockResolvedValue({
           messages: [
             { role: 'system', content: '系统' },
@@ -301,7 +311,8 @@ describe('ConversationTurnService 初始提示词快照', () => {
     const run = vi.fn().mockResolvedValue('完成')
     const service = new ConversationTurnService({
       threadService: {
-        getThread: vi.fn().mockResolvedValue({
+        assertGeneration: vi.fn().mockResolvedValue(undefined),
+        getThread: vi.fn().mockResolvedValue({ generation: 1, threadKind: 'side',
           id: 'thread',
           agentId: 'pero',
           channel: 'desktop',
@@ -310,6 +321,7 @@ describe('ConversationTurnService 初始提示词快照', () => {
         }),
       },
       getThreadModelConfig,
+      contextCompiler: { characterStateRevision: vi.fn().mockResolvedValue(0) },
       agentService: { chatWithCompiledMessages: run },
     } as never)
     const result = await service.executeTurn({
@@ -347,7 +359,8 @@ describe('ConversationTurnService 初始提示词快照', () => {
       let fail = false
       const service = new ConversationTurnService({
         threadService: {
-          getThread: vi.fn().mockResolvedValue({
+          assertGeneration: vi.fn().mockResolvedValue(undefined),
+          getThread: vi.fn().mockResolvedValue({ generation: 1, threadKind: 'side',
             id: 'thread',
             agentId: 'pero',
             channel: 'desktop',
@@ -357,7 +370,7 @@ describe('ConversationTurnService 初始提示词快照', () => {
           appendUserMessage: vi.fn().mockResolvedValue({ id: 1 }),
           appendAssistantMessage,
         },
-        contextCompiler: {
+        contextCompiler: { characterStateRevision: vi.fn().mockResolvedValue(0),
           compile: vi.fn().mockResolvedValue({
             messages: [{ role: 'user', content: '任务' }],
             manifest: { disabledTools: [] },
@@ -407,7 +420,8 @@ describe('ConversationTurnService 初始提示词快照', () => {
       const onReplyReady = vi.fn()
       const service = new ConversationTurnService({
         threadService: {
-          getThread: vi.fn().mockResolvedValue({
+          assertGeneration: vi.fn().mockResolvedValue(undefined),
+          getThread: vi.fn().mockResolvedValue({ generation: 1, threadKind: 'side',
             id: 'thread',
             agentId: 'pero',
             channel: 'desktop',
@@ -416,7 +430,7 @@ describe('ConversationTurnService 初始提示词快照', () => {
           appendUserMessage: vi.fn().mockResolvedValue({ id: 1 }),
           appendAssistantMessage,
         },
-        contextCompiler: {
+        contextCompiler: { characterStateRevision: vi.fn().mockResolvedValue(0),
           compile: vi.fn().mockResolvedValue({
             messages: [{ role: 'user', content: '任务' }],
             manifest: { disabledTools: [] },
@@ -477,7 +491,8 @@ describe('ConversationTurnService 初始提示词快照', () => {
     let fail = true
     const service = new ConversationTurnService({
       threadService: {
-        getThread: vi.fn().mockResolvedValue({
+        assertGeneration: vi.fn().mockResolvedValue(undefined),
+        getThread: vi.fn().mockResolvedValue({ generation: 1, threadKind: 'side',
           id: 'thread',
           agentId: 'pero',
           channel: 'desktop',
@@ -489,7 +504,7 @@ describe('ConversationTurnService 初始提示词快照', () => {
           return { id: 2, status: 'active' }
         }),
       },
-      contextCompiler: {
+      contextCompiler: { characterStateRevision: vi.fn().mockResolvedValue(0),
         compile: vi.fn().mockResolvedValue({
           messages: [{ role: 'user', content: '问题' }],
           manifest: { disabledTools: [] },
@@ -539,7 +554,8 @@ describe('ConversationTurnService 初始提示词快照', () => {
     }
     const deps = {
       threadService: {
-        getThread: vi.fn().mockResolvedValue({
+        assertGeneration: vi.fn().mockResolvedValue(undefined),
+        getThread: vi.fn().mockResolvedValue({ generation: 1, threadKind: 'side',
           id: 'thread-1',
           agentId: 'pero',
           channel: 'desktop',
@@ -547,7 +563,7 @@ describe('ConversationTurnService 初始提示词快照', () => {
         }),
         appendUserMessage: vi.fn().mockResolvedValue({ id: 1 }),
       },
-      contextCompiler: { compile },
+      contextCompiler: { characterStateRevision: vi.fn().mockResolvedValue(0), compile },
       attachmentService: {
         validateForBinding: vi.fn().mockResolvedValue([attachment]),
         toDto: vi.fn().mockReturnValue(attachment),
@@ -595,7 +611,8 @@ describe('ConversationTurnService 初始提示词快照', () => {
     const deps = {
       onReplyReady,
       threadService: {
-        getThread: vi.fn().mockResolvedValue({
+        assertGeneration: vi.fn().mockResolvedValue(undefined),
+        getThread: vi.fn().mockResolvedValue({ generation: 1, threadKind: 'side',
           id: 'thread-1',
           agentId: 'nana',
           channel: 'desktop',
@@ -604,7 +621,7 @@ describe('ConversationTurnService 初始提示词快照', () => {
         appendUserMessage: vi.fn().mockResolvedValue({ id: 1 }),
         appendAssistantMessage,
       },
-      contextCompiler: {
+      contextCompiler: { characterStateRevision: vi.fn().mockResolvedValue(0),
         compile: vi.fn().mockResolvedValue({
           messages: initialMessages,
           manifest: { disabledTools: [] },
@@ -691,7 +708,8 @@ describe('ConversationTurnService 初始提示词快照', () => {
     const appendAssistantMessage = vi.fn().mockResolvedValue({ id: 2 })
     const service = new ConversationTurnService({
       threadService: {
-        getThread: vi.fn().mockResolvedValue({
+        assertGeneration: vi.fn().mockResolvedValue(undefined),
+        getThread: vi.fn().mockResolvedValue({ generation: 1, threadKind: 'side',
           id: 'thread-1',
           agentId: 'nana',
           channel: 'desktop',
@@ -700,7 +718,7 @@ describe('ConversationTurnService 初始提示词快照', () => {
         appendUserMessage: vi.fn().mockResolvedValue({ id: 1 }),
         appendAssistantMessage,
       },
-      contextCompiler: {
+      contextCompiler: { characterStateRevision: vi.fn().mockResolvedValue(0),
         compile: vi.fn().mockResolvedValue({
           messages: [{ role: 'user', content: '执行任务' }],
           manifest: { disabledTools: [] },
@@ -743,7 +761,8 @@ describe('ConversationTurnService 初始提示词快照', () => {
     const chatWithCompiledMessages = vi.fn().mockResolvedValue('Realm结果')
     const service = new ConversationTurnService({
       threadService: {
-        getThread: vi.fn().mockResolvedValue({
+        assertGeneration: vi.fn().mockResolvedValue(undefined),
+        getThread: vi.fn().mockResolvedValue({ generation: 1, threadKind: 'side',
           id: 'task-thread',
           agentId: 'pero',
           channel: 'desktop',
@@ -752,7 +771,7 @@ describe('ConversationTurnService 初始提示词快照', () => {
         appendUserMessage,
         appendAssistantMessage,
       },
-      contextCompiler: { compile },
+      contextCompiler: { characterStateRevision: vi.fn().mockResolvedValue(0), compile },
       agentService: { chatWithCompiledMessages },
       attachmentService: {
         bindOutgoing: vi.fn().mockResolvedValue(undefined),
@@ -788,7 +807,8 @@ describe('ConversationTurnService 初始提示词快照', () => {
     })
     const service = new ConversationTurnService({
       threadService: {
-        getThread: vi.fn().mockResolvedValue({
+        assertGeneration: vi.fn().mockResolvedValue(undefined),
+        getThread: vi.fn().mockResolvedValue({ generation: 1, threadKind: 'side',
           id: 'thread-1',
           agentId: 'nana',
           channel: 'desktop',
@@ -800,7 +820,7 @@ describe('ConversationTurnService 初始提示词快照', () => {
           return { id: 2, timestamp: '2026-08-27T12:00:00.000Z' }
         }),
       },
-      contextCompiler: {
+      contextCompiler: { characterStateRevision: vi.fn().mockResolvedValue(0),
         compile: vi.fn().mockResolvedValue({
           messages: [{ role: 'user', content: '记住这件事' }],
           manifest: { disabledTools: [] },
@@ -839,7 +859,8 @@ describe('ConversationTurnService 初始提示词快照', () => {
     const commit = vi.fn()
     const common = {
       threadService: {
-        getThread: vi.fn().mockResolvedValue({
+        assertGeneration: vi.fn().mockResolvedValue(undefined),
+        getThread: vi.fn().mockResolvedValue({ generation: 1, threadKind: 'side',
           id: 'thread-1',
           agentId: 'nana',
           channel: 'desktop',
@@ -848,7 +869,7 @@ describe('ConversationTurnService 初始提示词快照', () => {
         appendUserMessage: vi.fn().mockResolvedValue({ id: 1 }),
         appendAssistantMessage: vi.fn().mockRejectedValue(new Error('写入失败')),
       },
-      contextCompiler: {
+      contextCompiler: { characterStateRevision: vi.fn().mockResolvedValue(0),
         compile: vi.fn().mockResolvedValue({
           messages: [{ role: 'user', content: '内容' }],
           manifest: { disabledTools: [] },
@@ -885,7 +906,8 @@ describe('ConversationTurnService 初始提示词快照', () => {
     const feedback = vi.fn().mockRejectedValue(new Error('反馈训练失败'))
     const service = new ConversationTurnService({
       threadService: {
-        getThread: vi.fn().mockResolvedValue({
+        assertGeneration: vi.fn().mockResolvedValue(undefined),
+        getThread: vi.fn().mockResolvedValue({ generation: 1, threadKind: 'side',
           id: 'thread-1',
           agentId: 'nana',
           channel: 'desktop',
@@ -894,7 +916,7 @@ describe('ConversationTurnService 初始提示词快照', () => {
         appendUserMessage: vi.fn().mockResolvedValue({ id: 1 }),
         appendAssistantMessage: vi.fn().mockResolvedValue({ id: 2 }),
       },
-      contextCompiler: {
+      contextCompiler: { characterStateRevision: vi.fn().mockResolvedValue(0),
         compile: vi.fn().mockResolvedValue({
           messages: [{ role: 'user', content: '调用记忆' }],
           manifest: { disabledTools: [] },
@@ -923,7 +945,8 @@ describe('ConversationTurnService 初始提示词快照', () => {
     })
     const service = new ConversationTurnService({
       threadService: {
-        getThread: vi.fn().mockResolvedValue({
+        assertGeneration: vi.fn().mockResolvedValue(undefined),
+        getThread: vi.fn().mockResolvedValue({ generation: 1, threadKind: 'side',
           id: 'thread-1',
           agentId: 'pero',
           channel: 'desktop',
@@ -931,7 +954,7 @@ describe('ConversationTurnService 初始提示词快照', () => {
         }),
         appendUserMessage: vi.fn().mockResolvedValue({ id: 1 }),
       },
-      contextCompiler: {
+      contextCompiler: { characterStateRevision: vi.fn().mockResolvedValue(0),
         getMessageWindow: vi.fn().mockResolvedValue(40),
         compile,
       },
@@ -962,7 +985,8 @@ describe('ConversationTurnService 初始提示词快照', () => {
     const appendAssistantMessage = vi.fn().mockResolvedValue({ id: 2 })
     const service = new ConversationTurnService({
       threadService: {
-        getThread: vi.fn().mockResolvedValue({
+        assertGeneration: vi.fn().mockResolvedValue(undefined),
+        getThread: vi.fn().mockResolvedValue({ generation: 1, threadKind: 'side',
           id: 'thread-1',
           agentId: 'pero',
           channel: 'desktop',
@@ -971,7 +995,7 @@ describe('ConversationTurnService 初始提示词快照', () => {
         appendUserMessage: vi.fn().mockResolvedValue({ id: 1 }),
         appendAssistantMessage,
       },
-      contextCompiler: {
+      contextCompiler: { characterStateRevision: vi.fn().mockResolvedValue(0),
         compile: vi.fn().mockResolvedValue({
           messages: [{ role: 'user', content: '读取代码' }],
           manifest: { disabledTools: [] },
@@ -1024,14 +1048,15 @@ describe('ConversationTurnService 初始提示词快照', () => {
     const compile = vi.fn()
     const service = new ConversationTurnService({
       threadService: {
-        getThread: vi.fn().mockResolvedValue({
+        assertGeneration: vi.fn().mockResolvedValue(undefined),
+        getThread: vi.fn().mockResolvedValue({ generation: 1, threadKind: 'side',
           id: 'thread-tsukinaga',
           agentId: 'tsukinaga',
           channel: 'desktop',
           disabledTools: [],
         }),
       },
-      contextCompiler: { compile },
+      contextCompiler: { characterStateRevision: vi.fn().mockResolvedValue(0), compile },
       getAgentModelConfig: vi.fn().mockResolvedValue({
         modelId: 'model-without-window',
         maxTokens: 8_192,
@@ -1064,14 +1089,15 @@ describe('ConversationTurnService 初始提示词快照', () => {
     })
     const service = new ConversationTurnService({
       threadService: {
-        getThread: vi.fn().mockResolvedValue({
+        assertGeneration: vi.fn().mockResolvedValue(undefined),
+        getThread: vi.fn().mockResolvedValue({ generation: 1, threadKind: 'side',
           id: 'thread-pero',
           agentId: 'pero',
           channel: 'desktop',
           disabledTools: [],
         }),
       },
-      contextCompiler: { compile },
+      contextCompiler: { characterStateRevision: vi.fn().mockResolvedValue(0), compile },
       getAgentModelConfig,
     } as never)
 
@@ -1099,7 +1125,8 @@ describe('ConversationTurnService 初始提示词快照', () => {
     const appendUserMessage = vi.fn()
     const service = new ConversationTurnService({
       threadService: {
-        getThread: vi.fn().mockResolvedValue({
+        assertGeneration: vi.fn().mockResolvedValue(undefined),
+        getThread: vi.fn().mockResolvedValue({ generation: 1, threadKind: 'side',
           id: 'thread-pero',
           agentId: 'pero',
           channel: 'desktop',
@@ -1149,7 +1176,8 @@ describe('首次有效对话成就', () => {
     const service = new ConversationTurnService({
       isHandoffRequested: () => handoff,
       threadService: {
-        getThread: vi.fn().mockResolvedValue({
+        assertGeneration: vi.fn().mockResolvedValue(undefined),
+        getThread: vi.fn().mockResolvedValue({ generation: 1, threadKind: 'side',
           id: 'thread',
           agentId: 'pero',
           channel: 'desktop',
@@ -1159,7 +1187,7 @@ describe('首次有效对话成就', () => {
         appendUserMessage: vi.fn().mockResolvedValue({ id: 1 }),
         appendAssistantMessage,
       },
-      contextCompiler: {
+      contextCompiler: { characterStateRevision: vi.fn().mockResolvedValue(0),
         compile: vi.fn().mockResolvedValue({
           messages: [{ role: 'user', content: '你好' }],
           currentMessageIndex: 0,

@@ -23,6 +23,9 @@ import audioInputCn from '../locales/zh-CN/ui/audio-input.json'
 import knowledgeRecallCn from '../locales/zh-CN/ui/knowledge-recall.json'
 import knowledgeRecallTw from '../locales/zh-TW/ui/knowledge-recall.json'
 import knowledgeRecallEn from '../locales/en-US/ui/knowledge-recall.json'
+import desktopShellCn from '../locales/zh-CN/ui/desktop-shell.json'
+import desktopShellTw from '../locales/zh-TW/ui/desktop-shell.json'
+import desktopShellEn from '../locales/en-US/ui/desktop-shell.json'
 import audioInputTw from '../locales/zh-TW/ui/audio-input.json'
 import audioInputEn from '../locales/en-US/ui/audio-input.json'
 import tts0 from '../locales/zh-CN/ui/tts.json'
@@ -35,6 +38,9 @@ import promptPresetsEnUs from '../locales/en-US/ui/prompt-presets.json'
 import tts1 from '../locales/zh-TW/ui/tts.json'
 import tts2 from '../locales/en-US/ui/tts.json'
 import packagesZhCn from '../locales/zh-CN/ui/packages.json'
+import packageToolSettingsZhCn from '../locales/zh-CN/ui/package-tool-settings.json'
+import packageToolSettingsZhTw from '../locales/zh-TW/ui/package-tool-settings.json'
+import packageToolSettingsEnUs from '../locales/en-US/ui/package-tool-settings.json'
 import runtimeDebugZhCn from '../locales/zh-CN/ui/runtime-debug.json'
 import runtimeDebugZhTw from '../locales/zh-TW/ui/runtime-debug.json'
 import runtimeDebugEnUs from '../locales/en-US/ui/runtime-debug.json'
@@ -42,6 +48,18 @@ import packagesZhTw from '../locales/zh-TW/ui/packages.json'
 import packagesEnUs from '../locales/en-US/ui/packages.json'
 // 按模块、语言分别维护词库；此入口只装配当前运行端需要的资源。
 import { registerCatalog } from '../index'
+import homeShelfCn from '../locales/zh-CN/ui/home-shelf.json'
+import homeShelfTw from '../locales/zh-TW/ui/home-shelf.json'
+import homeShelfEn from '../locales/en-US/ui/home-shelf.json'
+import homeMapCn from '../locales/zh-CN/ui/home-map.json'
+import homeMapTw from '../locales/zh-TW/ui/home-map.json'
+import homeMapEn from '../locales/en-US/ui/home-map.json'
+registerCatalog('home.shelf', 'zh-CN', homeShelfCn)
+registerCatalog('home.shelf', 'zh-TW', homeShelfTw)
+registerCatalog('home.shelf', 'en-US', homeShelfEn)
+registerCatalog('home.map', 'zh-CN', homeMapCn)
+registerCatalog('home.map', 'zh-TW', homeMapTw)
+registerCatalog('home.map', 'en-US', homeMapEn)
 import backupCn from '../locales/zh-CN/ui/backup.json'
 import backupTw from '../locales/zh-TW/ui/backup.json'
 import backupEn from '../locales/en-US/ui/backup.json'
@@ -466,6 +484,9 @@ registerCatalog('ui.archive-edit', 'en-US', archiveEditEnUs)
 registerCatalog('ui.packages', 'zh-CN', packagesZhCn)
 registerCatalog('ui.packages', 'zh-TW', packagesZhTw)
 registerCatalog('ui.packages', 'en-US', packagesEnUs)
+registerCatalog('ui.package-tool-settings', 'zh-CN', packageToolSettingsZhCn)
+registerCatalog('ui.package-tool-settings', 'zh-TW', packageToolSettingsZhTw)
+registerCatalog('ui.package-tool-settings', 'en-US', packageToolSettingsEnUs)
 registerCatalog('ui.runtime-debug', 'zh-CN', runtimeDebugZhCn)
 registerCatalog('ui.runtime-debug', 'zh-TW', runtimeDebugZhTw)
 registerCatalog('ui.runtime-debug', 'en-US', runtimeDebugEnUs)
@@ -498,6 +519,10 @@ registerCatalog('ui.knowledge-recall', 'zh-TW', knowledgeRecallTw)
 registerCatalog('ui.knowledge-recall', 'en-US', knowledgeRecallEn)
 registerCatalog('ui.audio-input', 'zh-TW', audioInputTw)
 registerCatalog('ui.audio-input', 'en-US', audioInputEn)
+registerCatalog('ui.desktop-shell', 'zh-CN', desktopShellCn)
+registerCatalog('ui.desktop-shell', 'zh-TW', desktopShellTw)
+registerCatalog('ui.desktop-shell', 'en-US', desktopShellEn)
+
 import achievementsCn from '../locales/zh-CN/ui/achievements.json'
 import achievementsTw from '../locales/zh-TW/ui/achievements.json'
 import achievementsEn from '../locales/en-US/ui/achievements.json'

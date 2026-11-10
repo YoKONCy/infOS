@@ -3,7 +3,7 @@ import { requestSocialModel } from '@infos/social/runtime/socialModelRequest'
 import type { ChatMessage, ChatOptions, LlmService } from '@infos/backend/applicationHostAbi'
 
 const input: ChatMessage[] = [{ role: 'user', content: '你好' }]
-const model = { provider: 'openai', modelId: 'social-test', apiKey: 'test', stream: true }
+const model = { provider: 'openai', modelId: 'social-test', apiKey: 'test', stream: true, assistantPrefill: 'supported' as const }
 afterEach(() => vi.useRealTimers())
 
 describe('社交模型请求与流式草稿隔离', () => {

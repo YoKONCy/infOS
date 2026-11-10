@@ -43,6 +43,8 @@ asarUnpack:
 
 # 后端构建产物 + 运行时资源
 extraResources:
+  - from: THIRD_PARTY_NOTICES.md
+    to: THIRD_PARTY_NOTICES.md
   # 本地壳层开屏不依赖前端与后端；所有发行形态共用此资源清单。
   - from: electron/splash
     to: splash

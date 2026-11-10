@@ -75,7 +75,7 @@ const SCRIPT: { who: CharId; text: string }[] = [
   { who: 'pero', text: '锵锵！今天的据点也热热闹闹哒~ 大家都到齐了吗？' },
   { who: 'nana', text: '哼，Nana 早就到了，是你们太慢了。' },
   { who: 'tsukinaga', text: '小爱刚占卜过，今晚的运势是「派对」！要不要一起变个魔术？' },
-  { who: 'penora', text: '嘿嘿，诺菈带了小点心，大家边吃边聊吧。' },
+  { who: 'penora', text: '嘿嘿，佩诺菈带了小点心，大家边吃边聊吧。' },
   { who: 'nana', text: '……那、那 Nana 就勉强吃一块好了。' },
   { who: 'pero', text: '欢迎回来！你想先听谁说话呀？@ 一下就好~' },
 ]

@@ -21,11 +21,31 @@ import {
   threadSummaries,
   kernelOutboxEvents,
   achievements,
+  flowStates,
+  flowStateRevisions,
+  taskPlans,
+  taskPlanMutations,
+  configs,
+  agentExperiences,
+  groupChatMessages,
+  groupChatRooms,
+  agentCharacterStateEvents,
+  conversationExecutions,
+  conversationExpectations,
+  conversationMessageSources,
+  workContextClears,
+  messageAttachments,
 } from '../database/schema'
 import { editedMessageMetadata } from './messageEdit'
 import type { DrizzleDb } from '../database'
 import type { KernelOutboxRepository } from '../kernel/kernelOutboxRepository'
 import type { ExecutionMode } from '@infos/shared'
+import { AppError } from '../lib/appError'
+import { ConversationRepository } from './conversation.repo'
+import { WorkContextClearRepository } from './workContextClear.repo'
+import type { ConversationSource } from '@infos/shared'
+import { conversationSourceKey } from '@infos/shared'
+import { t } from '../lib/i18n'
 
 // ─────────────────────────────────────────────
 // 类型定义
@@ -53,6 +73,10 @@ export interface CreateThreadInput {
   /** M05: Thread 用途，默认 conversation；后台任务传 background_task 与聊天历史隔离 */
   purpose?: ThreadPurpose
   interactionMode?: InteractionMode
+  /** 以下会话设置用于新会话继承；未传时使用列默认值。 */
+  executionMode?: ExecutionMode
+  modelConfigId?: number | null
+  reasoningEffort?: import('@infos/shared').ReasoningEffort | null
 }
 
 /** Thread 消息创建输入 */
@@ -64,6 +88,10 @@ export interface CreateThreadMessageInput {
   content: string
   rawContent?: string
   pairId?: string
+  publicationId?: string
+  executionId?: string
+  sourceMessages?: ConversationSource[]
+  respondsTo?: string[]
   senderId?: string
   agentId?: string
   metadataJson?: string
@@ -71,11 +99,15 @@ export interface CreateThreadMessageInput {
   status?: 'active' | 'failed' | 'interrupted'
   /** 当前消息提交所属的 Kernel Execution；存在时在同一事务写入 Outbox。 */
   execution?: KernelExecutionDescriptor
+  expectedGeneration?: number
 }
 
 /** 查询活跃消息参数 */
 export interface QueryActiveMessagesParams {
   threadId: string
+  beforeMessageId?: number
+  orderById?: boolean
+  roles?: Array<'user' | 'assistant'>
   /** 返回最近 N 条（默认 20） */
   limit?: number
 }
@@ -91,6 +123,12 @@ export interface CreateSummaryInput {
 type ThreadRow = typeof threads.$inferSelect
 type ThreadMessageRow = typeof threadMessages.$inferSelect
 type ThreadSummaryRow = typeof threadSummaries.$inferSelect
+interface MemorySourceInfo {
+  available: boolean
+  withdrawn: boolean
+  revised: boolean
+  messages: Array<{ id: number; role: string; content: string; timestamp: string | null; pairId: string | null; roomId?: string }>
+}
 export type ContinuityMessageRow = ThreadMessageRow & {
   threadAgentId: string
   threadChannel: string
@@ -103,12 +141,166 @@ export type ContinuityMessageRow = ThreadMessageRow & {
 // ─────────────────────────────────────────────
 
 export class ThreadRepository {
+  readonly conversations: ConversationRepository
   constructor(
     private db: DrizzleDb,
     private outbox?: KernelOutboxRepository,
-  ) {}
+  ) {
+    this.conversations = new ConversationRepository(db, outbox)
+  }
 
   // ── Thread 操作 ──
+
+  /** 唯一索引处理并发创建，迁移只补建空主线。 */
+  ensureMainThread(agentId: string): ThreadRow {
+    this.db.insert(threads).values({
+      id: `main_${crypto.randomUUID()}`,
+      agentId,
+      channel: 'desktop',
+      purpose: 'conversation',
+      threadKind: 'main',
+      interactionMode: 'chat',
+    }).onConflictDoNothing().run()
+    const row = this.db.select().from(threads)
+      .where(and(eq(threads.agentId, agentId), eq(threads.threadKind, 'main'))).get()
+    if (!row || row.status !== 'active') throw new Error('MAIN_THREAD_UNAVAILABLE')
+    return row
+  }
+
+  workContextBoundary(threadId: string, generation: number) {
+    return new WorkContextClearRepository(this.db).latest(threadId, generation)
+  }
+
+  assertMainMemoryWrite(threadId: string, agentId: string, generation?: number): void {
+    const thread = this.db.select().from(threads).where(eq(threads.id, threadId)).get()
+    if (!thread || thread.status !== 'active' || thread.threadKind !== 'main' ||
+        thread.agentId !== agentId || generation === undefined || thread.generation !== generation)
+      throw new AppError('FORBIDDEN', { message: t('server.agent', '此记忆操作仅限有效的主会话执行') })
+  }
+
+  async assertGeneration(threadId: string, generation: number): Promise<void> {
+    const thread = await this.getThread(threadId)
+    if (!thread || thread.status !== 'active' || thread.generation !== generation)
+      throw new AppError('CONFLICT', { message: '会话已重置，本次执行已过期' })
+  }
+
+  async latestExperienceId(): Promise<number> {
+    return this.db.select({ id: sql<number>`coalesce(max(id), 0)` }).from(agentExperiences).get()!.id
+  }
+
+  async memoryDraftMessage(messageId: number, scene: boolean) {
+    if (scene) {
+      const row = this.db.select().from(groupChatMessages).where(eq(groupChatMessages.id, messageId)).get()
+      if (!row || row.status !== 'active' || row.role !== 'assistant' || !row.pairId) return undefined
+      const metadata = JSON.parse(row.metadataJson ?? '{}') as Record<string, unknown>
+      return { revision: 1, threadId: String(metadata.threadId ?? ''), agentId: row.senderId, pairId: row.pairId,
+        timestamp: row.timestamp, metadata, sceneRoomId: row.roomId }
+    }
+    const row = this.db.select().from(threadMessages).where(eq(threadMessages.id, messageId)).get()
+    if (!row || row.status !== 'active' || row.role !== 'assistant' || !row.pairId || !row.agentId) return undefined
+    const metadata = JSON.parse(row.metadataJson ?? '{}') as Record<string, unknown>
+    return { revision: row.revision ?? 1, threadId: row.threadId, agentId: row.agentId, pairId: row.pairId, timestamp: row.timestamp,
+      metadata, sceneRoomId: undefined }
+  }
+
+  async memorySource(origin: import('@infos/shared').EventNoteOrigin): Promise<MemorySourceInfo> {
+    const sourceIds = [...new Set([
+      ...(origin.messageIds ?? []).map(Number).filter((id) => Number.isSafeInteger(id) && id > 0),
+      ...origin.pairIds.flatMap((key) => {
+        const match = /^message:(\d+)@\d+$/.exec(key)
+        return match ? [Number(match[1])] : []
+      }),
+    ])]
+    const messages = origin.pairIds.length || sourceIds.length ? this.db.select().from(threadMessages)
+      .where(and(eq(threadMessages.threadId, origin.threadId), or(
+        inArray(threadMessages.pairId, origin.pairIds), inArray(threadMessages.id, sourceIds),
+      )))
+      .orderBy(asc(threadMessages.id)).all() : []
+    const experiences = origin.experienceIds?.length ? this.db.select({
+      id: agentExperiences.id, sourceId: groupChatMessages.id, role: groupChatMessages.role,
+      content: groupChatMessages.content, timestamp: agentExperiences.occurredAt,
+      roomId: groupChatMessages.roomId, senderId: groupChatMessages.senderId,
+      pairId: groupChatMessages.pairId, withdrawn: agentExperiences.withdrawn, status: groupChatMessages.status,
+    }).from(agentExperiences).innerJoin(groupChatMessages, eq(groupChatMessages.id, agentExperiences.sourceMessageId))
+      .where(and(eq(agentExperiences.threadId, origin.threadId), inArray(agentExperiences.id, origin.experienceIds.map(Number))))
+      .orderBy(asc(agentExperiences.id)).all() : []
+    const additional = await Promise.all((origin.sources ?? []).map((source) => this.memorySource(source)))
+    return {
+      available: messages.length > 0 || experiences.length > 0 || additional.some((source) => source.available),
+      withdrawn: sourceIds.some((id) => !messages.some((message) => message.id === id)) ||
+        messages.some((message) => message.status === 'deleted') || experiences.some((item) => item.withdrawn || item.status !== 'active') || additional.some((source) => source.withdrawn),
+      revised: messages.some((message) => origin.messageRevisions?.[String(message.id)] !== undefined && origin.messageRevisions[String(message.id)] !== message.revision) || additional.some((source) => source.revised),
+      messages: [
+        ...messages.map((message) => ({ id: message.id, role: message.role, content: message.content, timestamp: message.timestamp, pairId: message.pairId })),
+        ...experiences.map((item) => ({ id: -item.id, role: item.senderId, content: item.content, timestamp: item.timestamp, pairId: item.pairId, roomId: item.roomId })),
+        ...additional.flatMap((source) => source.messages),
+      ],
+    }
+  }
+
+  /** 亲历读取始终联结当前代次与来源有效性，正文由房间消息持有。 */
+  async queryExperiences(threadId: string, limit = 30, throughId?: number,
+    scene: { roomId?: string; pairId?: string; throughMessageId?: number; conversationOnly?: boolean } = {}) {
+    return this.db.select({
+      id: agentExperiences.id, roomId: agentExperiences.roomId,
+      roomName: groupChatRooms.name,
+      sourceMessageId: groupChatMessages.id, senderId: groupChatMessages.senderId,
+      content: groupChatMessages.content, role: groupChatMessages.role,
+      timestamp: agentExperiences.occurredAt, generation: agentExperiences.generation,
+      pairId: groupChatMessages.pairId,
+    }).from(agentExperiences)
+      .innerJoin(threads, and(eq(threads.id, agentExperiences.threadId), eq(threads.generation, agentExperiences.generation)))
+      .innerJoin(groupChatMessages, eq(groupChatMessages.id, agentExperiences.sourceMessageId))
+      .leftJoin(groupChatRooms, eq(groupChatRooms.id, agentExperiences.roomId))
+      .where(and(eq(agentExperiences.threadId, threadId), eq(agentExperiences.withdrawn, false),
+        eq(groupChatMessages.status, 'active'), throughId === undefined ? undefined : sql`${agentExperiences.id} <= ${throughId}`,
+        scene.conversationOnly ? inArray(groupChatMessages.role, ['user', 'assistant']) : undefined,
+        scene.roomId ? eq(groupChatMessages.roomId, scene.roomId) : undefined,
+        scene.pairId ? eq(groupChatMessages.pairId, scene.pairId) : undefined,
+        scene.throughMessageId === undefined ? undefined : sql`${groupChatMessages.id} <= ${scene.throughMessageId}`))
+      .orderBy(desc(agentExperiences.id)).limit(limit > 0 ? limit : -1).all().reverse()
+  }
+
+  async queryMemoryExperiencesThrough(threadId: string, throughId: number): Promise<ThreadMessageRow[]> {
+    const rows = await this.queryExperiences(threadId, 0, throughId)
+    return rows.map((row) => ({
+      id: -row.id, threadId, role: 'system',
+      content: JSON.stringify({ source: 'stronghold', roomId: row.roomId, senderId: row.senderId, content: row.content }),
+      rawContent: null, status: 'active', pairId: `experience:${row.id}`, senderId: row.senderId,
+      publicationId: null, executionId: null,
+      revision: 1, agentId: null, metadataJson: '{}', scorerStatus: 'pending',
+      timestamp: row.timestamp, deletedAt: null, deletedBy: null,
+    }))
+  }
+
+  /** 消息、局部现场和代次一起提交，来源记录继续用于追溯。 */
+  async resetMainThread(threadId: string, variables?: { key: string; value: string }): Promise<number> {
+    return this.db.transaction((tx) => {
+      const thread = tx.select().from(threads).where(eq(threads.id, threadId)).get()
+      if (!thread || thread.status !== 'active') throw new Error('THREAD_NOT_FOUND')
+      if (thread.threadKind !== 'main')
+        throw new AppError('FORBIDDEN', { message: '仅主会话支持清空重置' })
+      tx.update(threadMessages).set({
+        status: 'deleted', deletedBy: 'reset', deletedAt: new Date().toISOString(),
+      }).where(and(eq(threadMessages.threadId, threadId), ne(threadMessages.status, 'deleted'))).run()
+      tx.update(threads).set({
+        generation: thread.generation + 1,
+        messageCount: 0, pairCount: 0, lastMessageAt: null,
+        updatedAt: sql`datetime('now', 'localtime')`,
+      }).where(eq(threads.id, threadId)).run()
+      tx.delete(workContextClears).where(eq(workContextClears.threadId, threadId)).run()
+      tx.delete(flowStates).where(eq(flowStates.threadId, threadId)).run()
+      tx.delete(flowStateRevisions).where(eq(flowStateRevisions.threadId, threadId)).run()
+      tx.update(threadSummaries).set({ isStale: true }).where(eq(threadSummaries.threadId, threadId)).run()
+      tx.delete(taskPlans).where(eq(taskPlans.threadId, threadId)).run()
+      tx.delete(taskPlanMutations).where(eq(taskPlanMutations.threadId, threadId)).run()
+      tx.update(conversationExecutions).set({ status: 'reset' }).where(eq(conversationExecutions.threadId, threadId)).run()
+      tx.update(conversationExpectations).set({ status: 'cancelled' }).where(eq(conversationExpectations.threadId, threadId)).run()
+      if (variables) tx.insert(configs).values(variables)
+        .onConflictDoUpdate({ target: configs.key, set: { value: variables.value } }).run()
+      return thread.generation + 1
+    })
+  }
 
   async updateModelSettings(
     threadId: string,
@@ -142,9 +334,37 @@ export class ThreadRepository {
           (data.channel === 'desktop' && (!data.purpose || data.purpose === 'conversation')
             ? 'chat'
             : 'work'),
+        ...(data.executionMode
+          ? { executionMode: data.executionMode, autoExecuteTools: data.executionMode !== 'manual' }
+          : {}),
+        ...(data.modelConfigId !== undefined ? { modelConfigId: data.modelConfigId } : {}),
+        ...(data.reasoningEffort !== undefined ? { reasoningEffort: data.reasoningEffort } : {}),
       })
       .returning()
     return rows[0]!
+  }
+
+  /**
+   * 查询角色最近活跃的普通桌面对话，用于新会话继承会话设置。
+   *
+   * 数据库触发器为创建、设置、消息计数和标题等写入分配单调活动序号，
+   * 同一秒内的操作也按真实写入顺序排序，不依赖墙上时间。
+   */
+  async findLatestConversation(agentId: string): Promise<ThreadRow | undefined> {
+    const rows = await this.db
+      .select()
+      .from(threads)
+      .where(
+        and(
+          eq(threads.agentId, agentId),
+          eq(threads.channel, 'desktop'),
+          eq(threads.purpose, 'conversation'),
+          eq(threads.status, 'active'),
+        ),
+      )
+      .orderBy(desc(threads.activitySeq))
+      .limit(1)
+    return rows[0]
   }
 
   /** 根据 ID 查询 Thread */
@@ -166,6 +386,7 @@ export class ThreadRepository {
     excludeChannels?: string[]
     /** M05: 按用途过滤；不传时保持向后兼容（返回全部用途） */
     purpose?: ThreadPurpose
+    threadKind?: 'main' | 'side'
     page?: number
     pageSize?: number
   }): Promise<{ items: ThreadRow[]; total: number }> {
@@ -174,6 +395,7 @@ export class ThreadRepository {
     const offset = (page - 1) * pageSize
 
     const conditions = [eq(threads.status, 'active')]
+    if (params.threadKind) conditions.push(eq(threads.threadKind, params.threadKind))
     if (params.agentId) {
       conditions.push(eq(threads.agentId, params.agentId))
     } else if (params.agentIds) {
@@ -195,7 +417,7 @@ export class ThreadRepository {
       .select()
       .from(threads)
       .where(whereClause)
-      .orderBy(desc(threads.lastMessageAt), desc(threads.createdAt))
+      .orderBy(asc(threads.threadKind), desc(threads.lastMessageAt), desc(threads.createdAt))
       .limit(pageSize)
       .offset(offset)
 
@@ -214,6 +436,7 @@ export class ThreadRepository {
     channel: ThreadChannel,
     purpose: ThreadPurpose = 'conversation',
   ): Promise<ThreadRow> {
+    if (channel === 'desktop' && purpose === 'conversation') return this.ensureMainThread(agentId)
     // 查找最新的活跃 Thread
     const existing = await this.db
       .select()
@@ -256,7 +479,7 @@ export class ThreadRepository {
           eq(threadMessages.status, 'active'),
           inArray(
             threadMessages.threadId,
-            this.db.select({ id: threads.id }).from(threads).where(eq(threads.channel, channel)),
+            this.db.select({ id: threads.id }).from(threads).where(and(eq(threads.channel, channel), eq(threads.threadKind, 'side'))),
           ),
         ),
       )
@@ -266,7 +489,7 @@ export class ThreadRepository {
         status: 'deleted',
         updatedAt: sql`(datetime('now', 'localtime'))`,
       })
-      .where(and(eq(threads.channel, channel), eq(threads.status, 'active')))
+      .where(and(eq(threads.channel, channel), eq(threads.status, 'active'), eq(threads.threadKind, 'side')))
     return result.changes
   }
 
@@ -285,11 +508,13 @@ export class ThreadRepository {
   async softDeleteThread(threadId: string): Promise<{ deleted: boolean; messageIds: number[] }> {
     return this.db.transaction((tx) => {
       const activeThread = tx
-        .select({ id: threads.id })
+        .select({ id: threads.id, threadKind: threads.threadKind })
         .from(threads)
         .where(and(eq(threads.id, threadId), eq(threads.status, 'active')))
         .get()
       if (!activeThread) return { deleted: false, messageIds: [] }
+      if (activeThread.threadKind === 'main')
+        throw new AppError('FORBIDDEN', { message: '主会话只能清空重置' })
       const messageIds = tx
         .select({ id: threadMessages.id })
         .from(threadMessages)
@@ -374,6 +599,14 @@ export class ThreadRepository {
     return result.changes > 0
   }
 
+  async updateEnabledSkills(threadId: string, enabledSkillsJson: string): Promise<boolean> {
+    const result = await this.db
+      .update(threads)
+      .set({ enabledSkillsJson, updatedAt: sql`(datetime('now', 'localtime'))` })
+      .where(and(eq(threads.id, threadId), eq(threads.status, 'active')))
+    return result.changes > 0
+  }
+
   async updateAutoExecuteTools(threadId: string, autoExecuteTools: boolean): Promise<boolean> {
     return this.updateExecutionMode(threadId, autoExecuteTools ? 'auto' : 'manual')
   }
@@ -423,6 +656,46 @@ export class ThreadRepository {
   /** 追加一条消息，并在 Execution 存在时同事务追加 Durable Event。 */
   async appendMessage(data: CreateThreadMessageInput): Promise<ThreadMessageRow> {
     return this.db.transaction((tx) => {
+      const thread = tx.select().from(threads).where(eq(threads.id, data.threadId)).get()
+      if (!thread || thread.status !== 'active' ||
+          (data.expectedGeneration !== undefined && thread.generation !== data.expectedGeneration))
+        throw new AppError('CONFLICT', { message: '会话已重置，本次执行已过期' })
+      if (data.publicationId) {
+        const existing = tx.select().from(threadMessages).where(eq(threadMessages.publicationId, data.publicationId)).get()
+        if (existing) {
+          if (existing.threadId !== data.threadId || existing.content !== data.content || existing.status !== 'active' ||
+              existing.role !== data.role || existing.executionId !== (data.executionId ?? null) ||
+              existing.agentId !== (data.agentId ?? null))
+            throw new AppError('CONFLICT', { message: t('server.conversation', '消息发布标识已使用，请核对已发布内容') })
+          return existing
+        }
+      }
+      if (data.executionId && data.role === 'assistant') this.conversations.assertCurrent(data.executionId)
+      if (data.role === 'assistant' && data.pairId && data.expectedGeneration !== undefined) {
+        const retracted = tx.select({ id: agentCharacterStateEvents.id }).from(agentCharacterStateEvents)
+          .where(and(eq(agentCharacterStateEvents.threadId, data.threadId), eq(agentCharacterStateEvents.pairId, data.pairId), eq(agentCharacterStateEvents.kind, 'retract'))).get()
+        if (retracted) throw new AppError('CONFLICT', { message: '状态来源消息不存在或已撤回' })
+        const source = tx.select({ id: threadMessages.id }).from(threadMessages)
+          .where(and(eq(threadMessages.threadId, data.threadId), eq(threadMessages.pairId, data.pairId),
+            eq(threadMessages.role, 'user'), eq(threadMessages.status, 'deleted'))).get()
+        if (source) throw new AppError('CONFLICT', { message: '状态来源消息不存在或已撤回' })
+      }
+      let metadataJson = data.metadataJson ?? '{}'
+      if (data.role === 'assistant' && data.pairId) {
+        const metadata = JSON.parse(metadataJson)
+        if (Array.isArray(metadata?.toolCalls)) {
+          const sources = tx.select({ id: threadMessages.id, revision: threadMessages.revision })
+            .from(threadMessages).where(and(
+              eq(threadMessages.threadId, data.threadId), eq(threadMessages.pairId, data.pairId),
+              eq(threadMessages.status, 'active'),
+            )).all()
+          metadata.memorySourceRevisions = {
+            ...Object.fromEntries(sources.map((source) => [String(source.id), source.revision ?? 1])),
+            ...metadata.memorySourceRevisions,
+          }
+          metadataJson = JSON.stringify(metadata)
+        }
+      }
       const rows = tx
         .insert(threadMessages)
         .values({
@@ -431,15 +704,43 @@ export class ThreadRepository {
           content: data.content,
           rawContent: data.rawContent,
           pairId: data.pairId,
+          publicationId: data.publicationId,
+          executionId: data.executionId,
           senderId: data.senderId,
           agentId: data.agentId,
-          metadataJson: data.metadataJson ?? '{}',
-          scorerStatus: data.scorerStatus ?? 'pending',
+          metadataJson,
+          scorerStatus: thread.threadKind === 'main' ? (data.scorerStatus ?? 'pending') : 'skipped',
           status: data.status ?? 'active',
         })
         .returning()
         .all()
       const row = rows[0]!
+      for (const source of data.sourceMessages ?? []) {
+        const current = tx.select().from(threadMessages).where(eq(threadMessages.id, source.messageId)).get()
+        if (!current || current.threadId !== data.threadId || current.status !== 'active' ||
+            (current.revision ?? 1) !== source.revision)
+          throw new AppError('CONFLICT', { message: t('server.conversation', '交流执行已结束或来源已变化') })
+        tx.insert(conversationMessageSources).values({
+          threadId: data.threadId,
+          messageId: row.id, sourceMessageId: source.messageId, sourceRevision: source.revision,
+        }).run()
+      }
+      if (data.executionId && data.respondsTo?.length) this.conversations.resolve(data.executionId, data.respondsTo)
+      const replaced = data.executionId && data.role === 'assistant'
+        ? this.conversations.applyRegeneration(data.executionId) : []
+      if (replaced.length) {
+        const metadata = JSON.parse(row.metadataJson ?? '{}')
+        metadata.replacedMessageIds = replaced
+        row.metadataJson = JSON.stringify(metadata)
+        tx.update(threadMessages).set({ metadataJson: row.metadataJson }).where(eq(threadMessages.id, row.id)).run()
+        tx.update(messageAttachments).set({ status: 'deleted', deletedAt: new Date().toISOString() })
+          .where(inArray(messageAttachments.messageId, replaced)).run()
+      }
+      tx.update(threads).set({
+        messageCount: sql`coalesce(${threads.messageCount}, 0) + 1 - ${replaced.length}`,
+        pairCount: sql`coalesce(${threads.pairCount}, 0) + ${data.role === 'assistant' ? 1 : 0} - ${replaced.length}`,
+        lastMessageAt: row.timestamp, updatedAt: sql`datetime('now', 'localtime')`,
+      }).where(eq(threads.id, data.threadId)).run()
       if (
         data.achievement &&
         data.role === 'assistant' &&
@@ -511,7 +812,6 @@ export class ThreadRepository {
     })
 
     // 更新 Thread 计数：本对写入 2 条消息（user + assistant），对话对增加 1
-    await this.updateMessageCount(params.threadId, 1, 2)
 
     return { userMessage, assistantMessage }
   }
@@ -528,8 +828,10 @@ export class ThreadRepository {
     const recent = await this.db
       .select()
       .from(threadMessages)
-      .where(and(eq(threadMessages.threadId, params.threadId), eq(threadMessages.status, 'active')))
-      .orderBy(desc(threadMessages.timestamp), desc(threadMessages.id))
+      .where(and(eq(threadMessages.threadId, params.threadId), eq(threadMessages.status, 'active'),
+        params.roles ? inArray(threadMessages.role, params.roles) : undefined,
+        params.beforeMessageId === undefined ? undefined : sql`${threadMessages.id} < ${params.beforeMessageId}`))
+      .orderBy(...(params.orderById ? [desc(threadMessages.id)] : [desc(threadMessages.timestamp), desc(threadMessages.id)]))
       .limit(limit)
 
     // 反转为时间正序（供 LLM 消费）
@@ -557,17 +859,24 @@ export class ThreadRepository {
 
   async findMessagesByPairIds(threadId: string, pairIds: string[]): Promise<ThreadMessageRow[]> {
     if (pairIds.length === 0) return []
-    return this.db
+    const sources = pairIds.flatMap((key) => {
+      const match = /^message:(\d+)@(\d+)$/.exec(key)
+      return match ? [{ id: Number(match[1]), revision: Number(match[2]) }] : []
+    })
+    const rows = await this.db
       .select()
       .from(threadMessages)
       .where(
         and(
           eq(threadMessages.threadId, threadId),
-          inArray(threadMessages.pairId, pairIds),
+          or(inArray(threadMessages.pairId, pairIds),
+            ...sources.map((source) => and(eq(threadMessages.id, source.id), eq(threadMessages.revision, source.revision)))),
           eq(threadMessages.status, 'active'),
         ),
       )
       .orderBy(asc(threadMessages.timestamp), asc(threadMessages.id))
+    return rows.map((row) => pairIds.includes(conversationSourceKey(row))
+      ? { ...row, pairId: conversationSourceKey(row) } : row)
   }
 
   async findPair(threadId: string, pairId: string): Promise<ThreadMessageRow[]> {
@@ -587,7 +896,7 @@ export class ThreadRepository {
     threadId: string,
     throughMessageId: number,
   ): Promise<ThreadMessageRow[]> {
-    return this.db
+    const rows = await this.db
       .select()
       .from(threadMessages)
       .where(
@@ -595,9 +904,16 @@ export class ThreadRepository {
           eq(threadMessages.threadId, threadId),
           eq(threadMessages.status, 'active'),
           sql`${threadMessages.id} <= ${throughMessageId}`,
+          // 分支历史沿用同一角色的记忆，新增轮次继续正常提炼。
+          sql`json_extract(CASE WHEN json_valid(${threadMessages.metadataJson})
+            THEN ${threadMessages.metadataJson} ELSE '{}' END, '$.forkOrigin') IS NULL`,
         ),
       )
       .orderBy(asc(threadMessages.timestamp), asc(threadMessages.id))
+    const thread = await this.getThread(threadId)
+    return thread?.threadKind === 'main'
+      ? rows.map((row) => ({ ...row, pairId: conversationSourceKey(row) }))
+      : rows
   }
 
   /** 查询最近 N 个完整对话轮次，旧消息缺少 pairId 时按单条独立轮次处理。 */
@@ -797,10 +1113,23 @@ export class ThreadRepository {
     }
   }
 
+  deletedMessageIds(threadId: string): number[] {
+    return this.db.select({ id: threadMessages.id }).from(threadMessages).where(and(
+      eq(threadMessages.threadId, threadId), eq(threadMessages.status, 'deleted'),
+      or(isNull(threadMessages.deletedBy), ne(threadMessages.deletedBy, 'reset')),
+    )).all().map((message) => message.id)
+  }
+
+  getMessage(messageId: number) {
+    return this.db.select().from(threadMessages).where(eq(threadMessages.id, messageId)).get()
+  }
+
   async getMessageCoverageContext(messageId: number): Promise<
     | {
         threadId: string
         pairId: string | null
+        executionId: string | null
+        revision: number | null
         status: string | null
         role: string
       }
@@ -810,6 +1139,8 @@ export class ThreadRepository {
       .select({
         threadId: threadMessages.threadId,
         pairId: threadMessages.pairId,
+        executionId: threadMessages.executionId,
+        revision: threadMessages.revision,
         status: threadMessages.status,
         role: threadMessages.role,
       })
@@ -1106,6 +1437,8 @@ export class ThreadRepository {
   > {
     // AIOS(Phase5): 按 threadId 过滤，避免跨 Thread 混批
     const assistantConditions = [
+      inArray(threadMessages.threadId, this.db.select({ id: threads.id }).from(threads)
+        .where(and(eq(threads.threadKind, 'main'), eq(threads.status, 'active')))),
       eq(threadMessages.agentId, agentId),
       eq(threadMessages.role, 'assistant'),
       eq(threadMessages.scorerStatus, 'pending'),

@@ -1,4 +1,5 @@
 import { t as __t } from './i18n'
+import { perceptionReadOnly, redactPerception } from '../services/conversation/perceptionContext'
 /**
  * 日志工具
  *
@@ -170,7 +171,15 @@ export function createLogger(module: string) {
   // 追加 SSE 广播 reporter（Dashboard 终端实时日志）
   instance.addReporter(sseReporter)
 
-  return instance
+  // 感知调用链不输出正文或供应商异常；调度器在链外记录类别、次数和结果。
+  return new Proxy(instance, {
+    get(target, key, receiver) {
+      const value = Reflect.get(target, key, receiver)
+      if (typeof key === 'string' && ['log', 'info', 'debug', 'trace', 'warn', 'error', 'fatal', 'success', 'verbose'].includes(key) && typeof value === 'function')
+        return (...args: unknown[]) => { if (!perceptionReadOnly()) return value.apply(target, redactPerception(args)) }
+      return value
+    },
+  })
 }
 
 /** 根 logger（不带模块标签） */

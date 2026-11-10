@@ -5,7 +5,7 @@ import { onBeforeUnmount, onDeactivated, ref } from 'vue'
 import { useDesktopControl } from '../../composables/useDesktopControl'
 import { invoke } from '../../utils/ipcAdapter'
 import { recordPetShortcut } from '../../utils/petShortcuts'
-import { PCard, PSwitch, PButton, PixelIcon } from '../pixel'
+import { PSwitch, PButton } from '../pixel'
 import DesktopControlStatus from './DesktopControlStatus.vue'
 import { useSystemSettingsPage } from '../../composables/ui/useSystemSettingsPage'
 import type { DesktopControlSettings } from '@infos/shared'
@@ -38,7 +38,7 @@ async function beginCapture() {
     capturing.value = true
     captureError.value = ''
   } catch (cause) {
-    captureError.value = cause instanceof Error ? cause.message : '快捷键录入失败'
+    captureError.value = cause instanceof Error ? cause.message : __t('ui.desktop', '快捷键录入失败')
   }
 }
 async function capture(event: KeyboardEvent) {
@@ -52,7 +52,7 @@ async function capture(event: KeyboardEvent) {
   if (event.repeat || event.isComposing) return
   const binding = recordPetShortcut(event, false)
   if (!binding) {
-    captureError.value = '请按下一个按键或组合键'
+    captureError.value = __t('ui.desktop', '请按下一个按键或组合键')
     return
   }
   await endCapture()
@@ -67,11 +67,7 @@ onDeactivated(() => {
 </script>
 
 <template>
-  <PCard v-if="supported" pixel padding="lg" overflow-visible>
-    <h3 class="desktop-settings-title">
-      <PixelIcon name="monitor" size="sm" />
-      {{ __t('ui.desktop', '桌面操作') }}
-    </h3>
+  <section v-if="supported" class="desktop-settings">
     <div class="desktop-settings-row">
       <div>
         <strong>{{ __t('ui.desktop', '允许桌面操作') }}</strong>
@@ -79,6 +75,7 @@ onDeactivated(() => {
       </div>
       <PSwitch
         :model-value="settings.enabled"
+        :aria-label="__t('ui.desktop', '允许桌面操作')"
         :disabled="page?.disabled.value"
         @update:model-value="savePatch({ enabled: $event })"
       />
@@ -97,30 +94,23 @@ onDeactivated(() => {
     </div>
     <p v-if="error || captureError" role="alert">{{ error || captureError }}</p>
     <DesktopControlStatus />
-  </PCard>
+  </section>
 </template>
 
 <style scoped>
-.desktop-settings-title {
-  display: flex;
-  gap: 8px;
-  align-items: center;
-  margin-bottom: 20px;
-  font-family: var(--font-pixel);
-  color: var(--ui-text-primary);
-}
 .desktop-settings-row {
   display: flex;
   align-items: center;
   justify-content: space-between;
   gap: 16px;
-  margin-top: 16px;
+  padding: 16px 0;
+  border-bottom: 1px solid var(--ui-border-subtle);
   flex-wrap: wrap;
   color: var(--ui-text-primary);
 }
 .desktop-settings-row p {
-  margin-top: 6px;
-  color: var(--ui-text-secondary);
-  font-size: 12px;
+  margin-top: 4px;
+  color: var(--ui-text-tertiary);
+  font-size: 11px;
 }
 </style>

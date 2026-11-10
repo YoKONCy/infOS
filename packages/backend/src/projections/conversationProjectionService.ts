@@ -3,6 +3,7 @@ import type {
   ConversationMessageProjection,
   ConversationProjectionSnapshot,
   KernelEventEnvelope,
+  SurfaceDescriptor,
 } from '@infos/shared'
 import type { ThreadService } from '../services/thread/threadService'
 import type { ApprovalService } from '../services/execution/approvalService'
@@ -16,6 +17,8 @@ import { parseAutomaticApproval } from '@infos/shared'
 interface CachedProjection {
   snapshot: ConversationProjectionSnapshot
   dirty: boolean
+  /** 构建时 Thread 的消息计数与最后消息时间；用户消息落盘不发提交事件，靠它发现缓存过期。 */
+  stamp: string
 }
 
 /**
@@ -40,7 +43,7 @@ export class ConversationProjectionService {
     this.processedEvents.add(event.eventId)
     if (this.processedEvents.size > 10_000)
       this.processedEvents.delete(this.processedEvents.values().next().value!)
-    if (event.type !== 'conversation.message.committed') return
+    if (event.type !== 'conversation.message.committed' && event.type !== 'conversation.execution.settled') return
     const payload = event.payload as { threadId?: string }
     if (!payload.threadId) return
     const cached = this.cache.get(payload.threadId)
@@ -55,20 +58,48 @@ export class ConversationProjectionService {
     const beforeMessageId = options.beforeCursor ? Number(options.beforeCursor) : undefined
     const useCache = beforeMessageId === undefined && pageSize === 60
     const cached = useCache ? this.cache.get(threadId) : undefined
-    if (cached && !cached.dirty) return cached.snapshot
 
     const thread = await this.threadService.getThread(threadId)
     if (!thread) throw new Error(`Conversation Projection 找不到 Thread: ${threadId}`)
+    // 用户消息在回合开始时就已落盘，但只有回复提交才会发失效事件；
+    // 计数或最后消息时间变化说明缓存已落后，否则第二轮起快照会缺少刚发出的消息。
+    const stamp = `${thread.messageCount}:${thread.lastMessageAt ?? ''}`
+    if (cached && !cached.dirty && cached.stamp === stamp && cached.snapshot.threadGeneration === thread.generation) return cached.snapshot
     const result = await this.threadService.listMessages({
       threadId,
       beforeMessageId: Number.isSafeInteger(beforeMessageId) ? beforeMessageId : undefined,
       pageSize,
     })
     const ordered = [...result.items].reverse()
+    const executions = thread.threadKind === 'main'
+      ? this.threadService.conversations.forProjection(threadId, thread.generation,
+          ordered.flatMap((message) => message.executionId ? [message.executionId] : []),
+          ordered[0]?.timestamp ? new Date(ordered[0].timestamp).toISOString() : undefined,
+          beforeMessageId && ordered.at(-1)?.timestamp ? new Date(ordered.at(-1)!.timestamp).toISOString() : undefined)
+      : []
+    const traces = new Map<number, Record<string, unknown>>()
+    const publications = new Map(executions.map((execution) =>
+      [execution.id, this.threadService.conversations.publications(execution.id)]))
+    const processPositions = new Map<string, number>()
+    const separateProcess = (status: string) => ['failed', 'interrupted', 'paused'].includes(status)
+    for (const execution of executions) {
+      const last = publications.get(execution.id)?.at(-1)
+      if (last && !separateProcess(execution.status)) traces.set(last.id, { ...JSON.parse(execution.metadataJson),
+        kernelExecutionId: execution.kernelExecutionId, settled: execution.completedAt !== null })
+    }
     const attachments = await this.attachmentService.listForMessages(
       ordered.map((message) => message.id),
     )
     const messages = ordered.map<ConversationMessageProjection>((message) => {
+      const trace = traces.get(message.id)
+      if (trace) {
+        const publication = JSON.parse(message.metadataJson)
+        const metadata = { ...publication, ...trace, spokenReply: publication.spokenReply }
+        if (Array.isArray(metadata.contentBlocks)) metadata.contentBlocks = metadata.contentBlocks.filter(
+          (block: import('@infos/shared').ConversationContentBlock) => block.kind !== 'narration' || block.phase !== 'final',
+        )
+        message = { ...message, rawContent: String(trace.rawContent ?? ''), metadataJson: JSON.stringify(metadata) }
+      }
       const parsed = message.role === 'assistant' ? splitSpokenReply(message.content) : undefined
       return {
         messageId: String(message.id),
@@ -79,6 +110,9 @@ export class ConversationProjectionService {
           this.parseSpokenReply(message.metadataJson) || parsed?.spokenReply || undefined,
         rawContent: message.rawContent,
         pairId: message.pairId,
+        publicationId: message.publicationId,
+        executionId: message.executionId,
+        sourceMessages: this.parseSourceMessages(message.metadataJson),
         senderId: message.senderId,
         agentId: message.agentId,
         revision: message.revision,
@@ -102,9 +136,38 @@ export class ConversationProjectionService {
         })),
       }
     })
-    const surfaces = messages.map((message) =>
-      this.surfaceProjector.projectMessage(message, message.agentId ?? thread.agentId),
-    )
+    for (const execution of executions) {
+      const last = publications.get(execution.id)?.at(-1)
+      if (last && !separateProcess(execution.status)) continue
+      const metadata = execution.metadataJson
+      const details = JSON.parse(metadata)
+      if (!separateProcess(execution.status) && !details.contentBlocks?.length && !details.toolCalls?.length) continue
+      const sources = JSON.parse(execution.inputSourcesJson) as import('@infos/shared').ConversationSource[]
+      const previous = ordered.filter((message) => new Date(message.timestamp).getTime() <= new Date(execution.startedAt).getTime()).at(-1)?.id ?? 0
+      processPositions.set(`execution:${execution.id}`, (last?.id ?? Math.max(previous, ...sources.map((source) => source.messageId))) + 0.5)
+      messages.push({
+        messageId: `execution:${execution.id}`, threadId, role: 'assistant', content: '',
+        executionRecord: true, executionId: execution.id, agentId: thread.agentId,
+        sourceMessages: JSON.parse(execution.inputSourcesJson), revision: 1, imageTranscription: false,
+        status: execution.status, timestamp: execution.completedAt ?? execution.startedAt,
+        rawContent: JSON.parse(metadata).rawContent,
+        failureMessage: this.parseFailureMessage(metadata),
+        executionPause: this.parseExecutionPause(metadata),
+        generationStats: this.parseGenerationStats(metadata),
+        contentBlocks: this.parseContentBlocks(metadata).map((block) => block.kind === 'narration'
+          ? { ...block, phase: 'progress' as const } : block),
+        toolCalls: this.parseToolCalls(metadata), attachments: [],
+      })
+    }
+    messages.sort((left, right) => (processPositions.get(left.messageId) ?? Number(left.messageId)) -
+      (processPositions.get(right.messageId) ?? Number(right.messageId)))
+    const surfaces: SurfaceDescriptor[] = messages.map((message) => ({
+      ...this.surfaceProjector.projectMessage(message, message.agentId ?? thread.agentId),
+      processCollapsed: thread.threadKind === 'main' && message.role === 'assistant',
+      threadGeneration: thread.generation,
+      executionId: executions.find((execution) => execution.id === message.executionId)?.kernelExecutionId ?? undefined,
+      revision: message.revision + (traces.get(Number(message.messageId))?.settled ? 1 : 0),
+    }))
     const approvals = (this.approvalService?.list({ status: 'pending' }) ?? []).filter(
       (approval) => approval.threadId === threadId && !approval.taskId,
     )
@@ -189,22 +252,25 @@ export class ConversationProjectionService {
       })
     }
     const snapshot: ConversationProjectionSnapshot = {
+      threadGeneration: thread.generation,
       protocolVersion: 1,
       threadId,
       principalId: thread.agentId,
-      revision: messages.reduce(
-        (revision, message) => revision + Number(message.messageId || 0),
-        result.total,
+      revision: ordered.reduce(
+        (revision, message) => revision + message.id,
+        result.total + executions.filter((execution) => execution.completedAt !== null).length,
       ),
       generatedAt: new Date().toISOString(),
       messages,
       surfaces,
       totalMessages: result.total,
+      deletedMessageIds: thread.threadKind === 'main' ? this.threadService.getDeletedMessageIds(threadId).map(String) : undefined,
       pageSize,
       hasMoreBefore: result.hasMoreBefore,
-      beforeCursor: messages[0]?.messageId,
+      beforeCursor: ordered[0] ? String(ordered[0].id) : undefined,
     }
-    if (useCache) this.cache.set(threadId, { snapshot, dirty: false })
+    await this.threadService.assertGeneration(threadId, thread.generation)
+    if (useCache) this.cache.set(threadId, { snapshot, dirty: false, stamp })
     return snapshot
   }
 
@@ -255,10 +321,21 @@ export class ConversationProjectionService {
     }
   }
 
+  private parseSourceMessages(metadataJson: string): import('@infos/shared').ConversationSource[] | undefined {
+    try {
+      const value = JSON.parse(metadataJson).sourceMessages
+      return Array.isArray(value) ? value.filter((source) => source &&
+        Number.isSafeInteger(source.messageId) && source.messageId > 0 &&
+        Number.isSafeInteger(source.revision) && source.revision > 0) : undefined
+    } catch {
+      return undefined
+    }
+  }
+
   private parseFailureMessage(metadataJson: string): string | undefined {
     try {
-      const parsed = JSON.parse(metadataJson) as { failure?: { message?: unknown } }
-      return typeof parsed.failure?.message === 'string' ? parsed.failure.message : undefined
+        const parsed = JSON.parse(metadataJson) as { failure?: { message?: unknown }; failureMessage?: string }
+        return typeof parsed.failure?.message === 'string' ? parsed.failure.message : parsed.failureMessage
     } catch {
       return undefined
     }

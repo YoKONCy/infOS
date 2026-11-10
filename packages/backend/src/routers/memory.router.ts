@@ -110,23 +110,11 @@ export function createMemoryRouter(ctx: AppContext) {
     const detail = await ctx.eventMemoryService.detail(c.req.param('id'))
     if (!detail)
       return c.json({ code: 'NOT_FOUND', message: __t('server.routers', '事件记忆不存在') }, 404)
-    const messages = await ctx.threadRepo.findMessagesByPairIds(
-      detail.origin.threadId,
-      detail.origin.pairIds,
-    )
+    const source = await ctx.threadRepo.memorySource(detail.origin)
     return c.json({
       code: 'OK',
       message: __t('server.routers', '获取成功'),
-      data: {
-        available: messages.length > 0,
-        messages: messages.map((message) => ({
-          id: message.id,
-          role: message.role,
-          content: message.content,
-          timestamp: message.timestamp,
-          pairId: message.pairId,
-        })),
-      },
+      data: source,
     })
   })
 

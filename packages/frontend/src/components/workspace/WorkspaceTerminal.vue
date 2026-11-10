@@ -4,6 +4,8 @@ import { t as __t } from '../../i18n/index'
 /** 多终端工作视窗：轮询增量输出，支持输入、中断、强杀与关闭。 */
 import { computed, ref, watch, nextTick, onActivated, onDeactivated, onUnmounted } from 'vue'
 import { PixelIcon } from '../pixel'
+import { useEventListener } from '../../composables'
+import { computeDropdownPlacement } from '../../lib/floatingPlacement'
 import WorkspaceTerminalScreen from './WorkspaceTerminalScreen.vue'
 import { terminalsApi, type TerminalInfo } from '../../api/modules/approvalsApi'
 import { useNotificationStore } from '../../stores'
@@ -36,6 +38,34 @@ let visible = true
 let disposed = false
 let inputQueue: Promise<unknown> = Promise.resolve()
 const resizeVersions = new Map<string, number>()
+
+/** 菜单用 fixed 定位：终端区很矮时不会被自身的 overflow: hidden 裁掉，放不下就向上翻。 */
+function placeMenu(details: HTMLDetailsElement): void {
+  const summary = details.querySelector('summary')
+  const panel = details.querySelector<HTMLElement>('.terminal-menu__panel')
+  if (!details.open || !summary || !panel) return
+  const rect = summary.getBoundingClientRect()
+  const width = panel.offsetWidth
+  const placed = computeDropdownPlacement({
+    // 菜单和触发器右对齐。
+    anchor: { top: rect.top, bottom: rect.bottom, left: rect.right - width, right: rect.right },
+    contentHeight: panel.scrollHeight + panel.offsetHeight - panel.clientHeight,
+    width,
+    viewportWidth: window.innerWidth,
+    viewportHeight: window.innerHeight,
+    gap: 0,
+  })
+  panel.style.left = `${placed.left}px`
+  panel.style.maxHeight = `${placed.maxHeight}px`
+  panel.style.top = placed.top === null ? 'auto' : `${placed.top}px`
+  panel.style.bottom = placed.bottom === null ? 'auto' : `${placed.bottom}px`
+}
+
+useEventListener(window, 'resize', () => {
+  document
+    .querySelectorAll<HTMLDetailsElement>('.work-terminal .terminal-menu[open]')
+    .forEach(placeMenu)
+})
 
 function session() {
   return { agentId: props.agentId, threadId: props.threadId }
@@ -400,7 +430,10 @@ onUnmounted(() => {
         >
           <PixelIcon name="plus" size="xs" />
         </button>
-        <details class="terminal-menu">
+        <details
+          class="terminal-menu"
+          @toggle="placeMenu($event.currentTarget as HTMLDetailsElement)"
+        >
           <summary :title="__t('ui.workspace', '终端历史')">
             {{ __t('ui.workspace', '历史') }}
             <small>{{ history.length }}</small>
@@ -429,7 +462,10 @@ onUnmounted(() => {
             </button>
           </div>
         </details>
-        <details class="terminal-menu">
+        <details
+          class="terminal-menu"
+          @toggle="placeMenu($event.currentTarget as HTMLDetailsElement)"
+        >
           <summary
             :aria-label="__t('ui.workspace', '终端管理')"
             :title="__t('ui.workspace', '终端管理')"
@@ -667,10 +703,8 @@ onUnmounted(() => {
   display: none;
 }
 .terminal-menu__panel {
-  position: absolute;
-  top: 100%;
-  right: 0;
-  z-index: 20;
+  position: fixed;
+  z-index: 50;
   min-width: 160px;
   max-width: min(360px, 80vw);
   max-height: 240px;

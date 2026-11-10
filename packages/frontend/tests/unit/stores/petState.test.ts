@@ -1,6 +1,7 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { createPinia, setActivePinia } from 'pinia'
 import type { ApiResponse, CharacterState } from '@infos/shared'
+import { DEFAULT_CHARACTER_STATE } from '@infos/shared'
 import type { PetStateResponse } from '@infos/frontend/api/modules/agentApi'
 import { usePetStateStore } from '@infos/frontend/stores/usePetStateStore'
 
@@ -35,22 +36,20 @@ beforeEach(() => {
 })
 
 describe('角色状态按身份读取', () => {
-  it('同一角色按会话隔离，切换期间迟到的旧快照不会污染当前状态', async () => {
+  it('同一角色跨会话共享状态，并发读取合并为同一份快照', async () => {
     const store = usePetStateStore()
     const first = deferred<ApiResponse<PetStateResponse>>()
     const stateA = { mood: '期待', vibe: '安静', mind: '会话甲' }
-    const stateB = { mood: '专注', vibe: '认真', mind: '会话乙' }
     api.getPetState.mockReturnValueOnce(first.promise)
     const loading = store.load('pero', 'a')
-    api.getPetState.mockResolvedValueOnce(response('pero', stateB))
-    await store.load('pero', 'b')
+    const switching = store.load('pero', 'b')
     first.resolve(response('pero', stateA))
-    await loading
-    expect(store.activeState).toEqual(stateB)
-    expect(store.stateFor('pero', 'a')).toEqual(stateA)
-    expect(store.stateFor('pero', 'b')).toEqual(stateB)
+    await Promise.all([loading, switching])
+    expect(store.threadFor('pero')).toBe('b')
+    expect(store.activeState).toMatchObject(stateA)
+    expect(store.stateFor('pero', 'a')).toBe(store.stateFor('pero', 'b'))
+    expect(api.getPetState).toHaveBeenCalledTimes(1)
     expect(api.getPetState).toHaveBeenCalledWith('pero', 'a')
-    expect(api.getPetState).toHaveBeenCalledWith('pero', 'b')
   })
 
   it('撤回后的高修订状态不被旧推送覆盖，也不接受缺少会话的全局推送', () => {
@@ -60,7 +59,7 @@ describe('角色状态按身份读取', () => {
     store.applyPush({ agentId: 'pero', threadId: 'a', revision: 2, mood: '紧张' })
     store.applyPush({ agentId: 'pero', threadId: 'b', revision: 4, mood: '专注' })
     store.applyPush({ agentId: 'pero', revision: 100, mood: '不应接收' })
-    expect(store.stateFor('pero', 'a')).toMatchObject({ mood: '期待', mind: '已撤回' })
+    expect(store.stateFor('pero', 'a')).toMatchObject({ mood: '专注', mind: '已撤回' })
     expect(store.stateFor('pero', 'b').mood).toBe('专注')
   })
 
@@ -72,7 +71,7 @@ describe('角色状态按身份读取', () => {
     api.getPetState.mockResolvedValueOnce(response('nana', nana))
     await store.refresh('nana')
     expect(store.activeAgentId).toBe('pero')
-    expect(store.stateFor('nana')).toEqual(nana)
+    expect(store.stateFor('nana')).toEqual({ ...DEFAULT_CHARACTER_STATE, ...nana })
     expect(store.stateFor('pero').mind).toBe('正在陪伴主人')
   })
 
@@ -90,7 +89,7 @@ describe('角色状态按身份读取', () => {
     await store.refresh('pero')
     expect(api.getPetState).toHaveBeenCalledTimes(1)
     expect(store.loading[store.scopeKey('pero')]).toBe(false)
-    expect(store.stateFor('pero')).toEqual(state)
+    expect(store.stateFor('pero')).toEqual({ ...DEFAULT_CHARACTER_STATE, ...state })
     api.getPetState.mockResolvedValueOnce(response('pero', { ...state, mood: '期待' }))
     await store.refresh('pero', true)
     expect(api.getPetState).toHaveBeenCalledTimes(2)
@@ -106,7 +105,7 @@ describe('角色状态按身份读取', () => {
     expect(store.hasState('nana')).toBe(false)
     pending.resolve(response('nana', { mood: '平静', vibe: '温柔', mind: '等主人回来' }))
     await loading
-    expect(store.stateFor('nana')).toEqual({ mood: '兴奋', vibe: '温柔', mind: '等主人回来' })
+    expect(store.stateFor('nana')).toEqual({ ...DEFAULT_CHARACTER_STATE, mood: '兴奋', vibe: '温柔', mind: '等主人回来' })
     expect(store.hasState('nana')).toBe(true)
   })
 
@@ -116,7 +115,7 @@ describe('角色状态按身份读取', () => {
     store.apply('pero', cached)
     api.getPetState.mockRejectedValueOnce(new Error('连接失败'))
     await store.refresh('pero', true)
-    expect(store.stateFor('pero')).toEqual(cached)
+    expect(store.stateFor('pero')).toEqual({ ...DEFAULT_CHARACTER_STATE, ...cached })
     expect(store.errors[store.scopeKey('pero')]).toContain('暂时无法读取')
     api.getPetState.mockResolvedValueOnce(response('pero', { ...cached, mind: '准备出门' }))
     await store.refresh('pero', true)

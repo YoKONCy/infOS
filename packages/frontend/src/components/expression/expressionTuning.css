@@ -1,0 +1,210 @@
+/*
+ * 表达调教页的版式。提示词页的样式是 scoped 的，子组件用不到，
+ * 所以这里沿用它同样的变量和数值（.surface、.status-chip、.code-editor、.error-banner、
+ * .section-tabs、.preview-results），不引入新的颜色、字体、阴影或圆角。
+ */
+.expr-tune {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+  min-width: 0;
+}
+.expr-tune .expr-panel {
+  flex: none;
+  overflow: visible;
+}
+.expr-tune__row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 12px;
+  min-width: 0;
+}
+.expr-tune__row--apart {
+  justify-content: space-between;
+}
+.expr-tune__agent {
+  flex: 0 1 240px;
+  min-width: 140px;
+}
+.expr-tune__flow,
+.expr-tune__tabs {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+  border-bottom: 1px solid var(--ui-border-default);
+}
+.expr-tune__step {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px 8px;
+  padding: 10px 12px;
+  border-bottom: 3px solid transparent;
+  color: var(--ui-text-secondary);
+  text-align: left;
+  transition:
+    background 0.18s,
+    color 0.18s,
+    border-color 0.18s;
+}
+.expr-tune__step:hover,
+.expr-tune__step.active {
+  color: var(--ui-accent-sky);
+  background: color-mix(in srgb, var(--ui-accent-sky) 8%, transparent);
+  border-bottom-color: var(--ui-accent-sky);
+}
+.expr-tune__step small {
+  color: var(--ui-text-tertiary);
+  font-size: 11px;
+}
+.expr-tune__step:focus-visible,
+.expr-tune summary:focus-visible {
+  outline: 2px solid var(--ui-accent-sky);
+  outline-offset: 2px;
+}
+.expr-tune__arrow {
+  color: var(--ui-text-tertiary);
+}
+.expr-tune__surface {
+  display: flex;
+  flex-direction: column;
+  gap: 18px;
+  min-width: 0;
+  padding: 20px;
+  background: var(--dash-panel-bg, var(--ui-bg-surface));
+  border: 2px solid var(--ui-border-default);
+  box-shadow: 4px 4px 0 color-mix(in srgb, var(--ui-border-default) 55%, transparent);
+  border-radius: 0;
+}
+.expr-tune__title {
+  margin: 0;
+  font-family: var(--ui-font-pixel);
+  font-size: 17px;
+}
+.expr-tune__hint {
+  margin: 0;
+  color: var(--ui-text-secondary);
+  font-size: 13px;
+  line-height: 1.8;
+  overflow-wrap: anywhere;
+}
+.expr-tune__chip {
+  border: 1px solid var(--ui-border-default);
+  color: var(--ui-text-tertiary);
+  font: 700 11px/1.5 var(--ui-font-pixel);
+  padding: 3px 8px;
+}
+.expr-tune__chip.changed {
+  color: var(--ui-accent-primary);
+  border-color: currentColor;
+}
+.expr-tune__editor {
+  width: 100%;
+  box-sizing: border-box;
+  min-height: 400px;
+  background: var(--dash-input-bg);
+  color: var(--ui-text-primary);
+  border: 1px solid var(--ui-border-default);
+  border-radius: 0;
+  outline: none;
+  padding: 14px;
+  font:
+    14px/1.8 ui-monospace,
+    Consolas,
+    monospace;
+  tab-size: 2;
+  resize: vertical;
+}
+.expr-tune__editor:focus {
+  border-color: var(--ui-accent-sky);
+  box-shadow: 0 0 0 1px var(--ui-accent-sky);
+}
+.expr-tune__banner {
+  margin: 0;
+  border-left: 3px solid var(--ui-accent-primary);
+  padding: 12px 16px;
+  background: color-mix(in srgb, var(--ui-accent-primary) 7%, transparent);
+  overflow-wrap: anywhere;
+}
+.expr-tune__list {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+.expr-tune__item {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  min-width: 0;
+  padding: 12px;
+  border: 1px solid var(--ui-border-default);
+}
+.expr-tune__item p {
+  margin: 0;
+  overflow-wrap: anywhere;
+}
+.expr-tune__meta {
+  margin: 0;
+  color: var(--ui-text-tertiary);
+  font-size: 12px;
+  line-height: 1.6;
+  overflow-wrap: anywhere;
+}
+.expr-tune__actions {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: 8px;
+}
+.expr-tune__results {
+  max-height: 55vh;
+  overflow: auto;
+}
+.expr-tune__results details {
+  border: 1px solid var(--ui-border-default);
+  margin: 12px 0;
+}
+.expr-tune details > summary {
+  cursor: pointer;
+  list-style: none;
+}
+.expr-tune details > summary::before {
+  content: '›';
+  display: inline-block;
+  margin-right: 8px;
+  color: var(--ui-accent-purple);
+  transition: transform 0.18s;
+}
+.expr-tune details[open] > summary::before {
+  transform: rotate(90deg);
+}
+.expr-tune__results summary {
+  padding: 12px;
+  overflow-wrap: anywhere;
+}
+.expr-tune__results pre {
+  margin: 0;
+  padding: 14px;
+  border-top: 1px solid var(--ui-border-default);
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+.expr-tune__field {
+  flex: 1 1 220px;
+  min-width: 0;
+}
+.expr-tune__number {
+  max-width: 220px;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .expr-tune__step,
+  .expr-tune details > summary::before {
+    transition: none;
+  }
+}

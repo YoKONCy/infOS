@@ -17,6 +17,8 @@ type DesktopOperation =
   | 'mousePosition'
   | 'mouseAction'
   | 'keyboardAction'
+  | 'desktopDirect'
+  | 'homeRecycle'
 
 const REQUIREMENT: KernelCapabilityRequirement = {
   requirementId: 'kernel.desktop-tools',

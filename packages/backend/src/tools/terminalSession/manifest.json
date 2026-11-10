@@ -7,9 +7,16 @@
   "type": "tool",
   "entry": "index.ts",
   "category": "terminal",
-  "platforms": ["windows", "linux", "darwin", "docker"],
+  "platforms": [
+    "windows",
+    "linux",
+    "darwin",
+    "docker"
+  ],
   "registration": "static",
-  "permissions": ["process:spawn"],
+  "permissions": [
+    "process:spawn"
+  ],
   "userCopy": {
     "terminal_create": {
       "label": "新建终端",
@@ -55,7 +62,7 @@
   "tools": [
     {
       "name": "terminal_create",
-      "description": "创建受当前会话或任务托管的终端，返回 ID。确定性只读查询可免审，完成后保留输出；其余命令按会话模式审批。可跨 ReAct 轮次读取；等待超时不会杀进程。用户停止会话、取消任务或退出应用时统一回收。NIT 内创建的终端随该脚本结束回收；需要跨脚本托管时请直接调用本工具。",
+      "description": "创建受当前会话或任务托管的终端，返回 ID。确定性只读查询可免审，完成后保留输出；其余命令按会话模式审批。可跨 ReAct 轮次读取；等待超时不会杀进程。用户停止会话、取消任务或退出应用时统一回收。NIT 内创建的终端随该脚本结束回收；需要跨脚本托管时请直接调用本工具。高危操作：除可识别的只读查询外，执行命令在任何执行模式（包括自动审批、完整权限）下都要用户本人逐次确认，审批模型不能代替；调用前先向用户说明要做什么、为什么。",
       "display": {
         "label": "创建终端",
         "icon": "terminal",
@@ -84,7 +91,9 @@
             "type": "string"
           }
         },
-        "required": ["command"]
+        "required": [
+          "command"
+        ]
       }
     },
     {
@@ -122,7 +131,9 @@
             "type": "string"
           }
         },
-        "required": ["terminal_id"]
+        "required": [
+          "terminal_id"
+        ]
       }
     },
     {
@@ -147,7 +158,9 @@
             "type": "number"
           }
         },
-        "required": ["terminal_id"]
+        "required": [
+          "terminal_id"
+        ]
       }
     },
     {
@@ -179,16 +192,21 @@
           },
           "until": {
             "type": "string",
-            "enum": ["output", "exit"],
+            "enum": [
+              "output",
+              "exit"
+            ],
             "description": "默认 output；exit 只等进程退出。设置 pattern 时默认等待该文本。"
           }
         },
-        "required": ["terminal_id"]
+        "required": [
+          "terminal_id"
+        ]
       }
     },
     {
       "name": "terminal_write",
-      "description": "向运行中的终端标准输入写入文本",
+      "description": "向运行中的终端标准输入写入文本高危操作：除可识别的只读查询外，执行命令在任何执行模式（包括自动审批、完整权限）下都要用户本人逐次确认，审批模型不能代替；调用前先向用户说明要做什么、为什么。",
       "display": {
         "label": "写入输入",
         "icon": "pencil",
@@ -205,7 +223,10 @@
             "type": "string"
           }
         },
-        "required": ["terminal_id", "data"]
+        "required": [
+          "terminal_id",
+          "data"
+        ]
       }
     },
     {
@@ -230,7 +251,11 @@
             "type": "number"
           }
         },
-        "required": ["terminal_id", "cols", "rows"]
+        "required": [
+          "terminal_id",
+          "cols",
+          "rows"
+        ]
       }
     },
     {
@@ -249,7 +274,9 @@
             "type": "string"
           }
         },
-        "required": ["terminal_id"]
+        "required": [
+          "terminal_id"
+        ]
       }
     },
     {
@@ -268,7 +295,9 @@
             "type": "string"
           }
         },
-        "required": ["terminal_id"]
+        "required": [
+          "terminal_id"
+        ]
       }
     },
     {
@@ -287,11 +316,18 @@
             "type": "string"
           }
         },
-        "required": ["terminal_id"]
+        "required": [
+          "terminal_id"
+        ]
       }
     }
   ],
   "compatibility": {
-    "platforms": ["windows", "linux", "darwin", "docker"]
+    "platforms": [
+      "windows",
+      "linux",
+      "darwin",
+      "docker"
+    ]
   }
 }

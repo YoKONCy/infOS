@@ -37,6 +37,7 @@ export interface CreateModelInput {
   returnNativeReasoning?: boolean
   wireApi?: import('../services/llm/types').LlmWireApi
   reasoningDialect?: import('../services/llm/types').ReasoningDialect
+  assistantPrefill?: import('@infos/shared').AssistantPrefillSupport
   stream?: boolean
   providerType?: string
   enableVision?: boolean
@@ -63,6 +64,7 @@ export interface UpdateModelInput {
   returnNativeReasoning?: boolean
   wireApi?: import('../services/llm/types').LlmWireApi
   reasoningDialect?: import('../services/llm/types').ReasoningDialect
+  assistantPrefill?: import('@infos/shared').AssistantPrefillSupport
   stream?: boolean
   providerType?: string
   enableVision?: boolean
@@ -124,6 +126,7 @@ export class ModelRepository {
           returnNativeReasoning: data.returnNativeReasoning ?? false,
           wireApi: data.wireApi ?? 'chat_completions',
           reasoningDialect: data.reasoningDialect ?? 'auto',
+          assistantPrefill: data.assistantPrefill ?? 'auto',
           stream: data.stream ?? true,
           providerType: data.providerType ?? 'global',
           enableVision: data.enableVision ?? false,
@@ -171,6 +174,7 @@ export class ModelRepository {
       updates.returnNativeReasoning = data.returnNativeReasoning
     if (data.wireApi !== undefined) updates.wireApi = data.wireApi
     if (data.reasoningDialect !== undefined) updates.reasoningDialect = data.reasoningDialect
+    if (data.assistantPrefill !== undefined) updates.assistantPrefill = data.assistantPrefill
     if (data.stream !== undefined) updates.stream = data.stream
     if (data.providerType !== undefined) updates.providerType = data.providerType
     if (data.providerConnectionId !== undefined)

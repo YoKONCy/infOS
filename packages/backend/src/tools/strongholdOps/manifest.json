@@ -25,7 +25,7 @@
     "stronghold_call_butler": { "label": "呼叫管家", "description": "呼叫据点管家协助处理事务。" },
     "stronghold_summon_agents": {
       "label": "传唤据点成员",
-      "description": "邀请当前房间内的其他角色在本轮依次接话。"
+      "description": "向当前房间的伙伴提出需要回应的问题或邀请。"
     }
   },
   "tools": [
@@ -98,7 +98,7 @@
     },
     {
       "name": "stronghold_summon_agents",
-      "description": "邀请当前房间的角色依次接话；每轮仅首位自然回复者可调用一次，被邀请者不能继续传唤。",
+      "description": "向当前房间的伙伴提出需要回应的问题或邀请。请求在本次发言保存后派发；接收者按据点自由活动设置参与，普通分享直接表达即可。",
       "display": {
         "label": "传唤成员",
         "icon": "users",

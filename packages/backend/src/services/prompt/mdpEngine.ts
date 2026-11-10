@@ -117,6 +117,8 @@ export interface PromptPreset {
 
 /** 渲染后的消息 */
 export interface RenderedMessage {
+  /** 显式引用本轮上下文组件，区块改名后仍保留动态资料语义。 */
+  dynamicContext?: boolean
   currentMessage?: boolean
   historyMessage?: boolean
   historyCache?: import('../llm/types').ChatMessage['cacheControl']

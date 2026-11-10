@@ -17,11 +17,11 @@ import type {
 } from '@infos/shared'
 import { logger } from '../utils/logger'
 import { windowManager } from '../windows/manager'
-import { launchApplication } from './applicationLauncher'
 import { listWindows, mousePosition } from './desktopAutomation'
 import { browserRuntime } from './browserRuntime'
 import { renderStatusCard } from './statusCard'
 import { captureScreen, getActiveWindow, readClipboard, writeClipboard } from './desktopAwareness'
+import { desktopVisionSettings } from './desktopVisionSettings'
 import { desktopControl, type DesktopCaller } from './desktopControl'
 import { mapScreenshotRegion, screenshotMaxWidth, type ScreenshotRect } from './screenshotGeometry'
 import { windowsDesktop } from './windowsDesktop'
@@ -29,6 +29,24 @@ import { completionAlerts } from './completionAlerts'
 import { isApplicationFocused } from './notificationVisibility'
 import { renderDocumentPdf } from './documentPdf'
 import { getCapabilityEndpoint, isRemoteConnection, clientConnection } from './clientConnection'
+import { shellCapability } from './shellHost'
+import { DESKTOP_SHELL_OPERATIONS } from '../../../packages/shared/src/desktopShell'
+import { desktopOperationNeedsSwitch } from '../../../packages/shared/src/desktopSafety'
+import { desktopActionGuard } from './desktopGuard'
+import {
+  activateDesktopWindow,
+  filterDesktopEnvironmentOutput,
+  handleDesktopGuardControl,
+  launchDesktopApplication,
+  listWindowsWithInfosIds,
+  observeWindowsScreen,
+} from './capabilityDesktopOps'
+import { buildObservationResult } from './desktopObservationResult'
+import { finishHandsResult, prepareHandsInput } from './desktopHands'
+import { waitForDesktop } from './desktopWaitFor'
+import { handleDesktopDirect } from './desktopDirect'
+import { directDeps } from './desktopDirectDeps'
+import { recycleForBackend } from '../home/homeNativeTrash'
 import { pinnedTlsOptions, trustedCertificateFor } from './remoteCertificates'
 import { localizedConnectionError } from './remoteCertificateUi'
 
@@ -93,6 +111,9 @@ const DESKTOP_OPERATIONS = [
   'mousePosition',
   'mouseAction',
   'keyboardAction',
+  'desktopDirect',
+  // 她删除用户文件时放进 Windows 回收站（不受「桌面操作」总开关约束，见 homeNativeTrash）。
+  'homeRecycle',
 ] as const
 const AUDIO_OUTPUT_OPERATIONS = ['play', 'stop', 'status'] as const
 
@@ -133,6 +154,8 @@ class ElectronCapabilityProvider {
   async start(): Promise<void> {
     this.stopped = false
     desktopControl.initialize()
+    // 阶段 2：执行类桌面动作前按目标程序分区与审批。
+    desktopControl.setGuard(desktopActionGuard())
     this.nodeId = this.getNodeId()
     void this.connect()
   }
@@ -297,6 +320,11 @@ class ElectronCapabilityProvider {
         'clipboard',
         'active-window',
       ]),
+      // 阶段 3：infOS 自身窗口与主题，不占用键盘鼠标（requiresInputSeat 为 false）。
+      this.offer('electron.desktop-shell', 'desktop.shell', DESKTOP_SHELL_OPERATIONS, [
+        'infos-window',
+        'infos-theme',
+      ]),
       this.offer('electron.audio-output', 'audio.output', AUDIO_OUTPUT_OPERATIONS, [
         'speaker',
         'audio-playback',
@@ -389,6 +417,9 @@ class ElectronCapabilityProvider {
                   controller.signal,
                 )
         }
+      } else if (envelope.operation.startsWith('desktop.shell/')) {
+        controller.signal.throwIfAborted()
+        output = await shellCapability.invoke(operation, envelope.payload.input)
       } else if (envelope.operation.startsWith('audio.output/')) {
         output = await this.invokeAudioOutput(
           operation,
@@ -403,6 +434,8 @@ class ElectronCapabilityProvider {
       } else {
         throw new Error(`CAPABILITY_TYPE_UNSUPPORTED: ${envelope.operation}`)
       }
+      if (envelope.operation.startsWith('desktop.environment/'))
+        output = await filterDesktopEnvironmentOutput(output)
       this.send({ type: 'capability_result', invocationId, success: true, output })
       logger.info(
         'CapabilityProvider',
@@ -463,6 +496,7 @@ class ElectronCapabilityProvider {
       windowManager.chatWin ??
       windowManager.dashboardWin ??
       windowManager.launcherWin
+    const playbackReceipt=this.waitForPlaybackReceipt(playbackId, signal)
     targetWindow?.webContents.send('audio-output:play', {
       playbackId,
       assetUrl,
@@ -474,7 +508,7 @@ class ElectronCapabilityProvider {
           ? input.caption
           : undefined,
     })
-    const state = await this.waitForPlaybackReceipt(playbackId, signal)
+    const state = await playbackReceipt
     return { playbackId, state }
   }
 
@@ -533,19 +567,31 @@ class ElectronCapabilityProvider {
       agentId: identity?.agentId,
       threadId: identity?.threadId,
       taskId: identity?.taskId,
+      homeTaskId: identity?.homeTaskId,
+      // 执行模式只认后端附带的身份（__desktopCaller 由后端在模型参数之后覆盖）。
+      executionMode:
+        typeof identity?.executionMode === 'string' ? identity.executionMode : undefined,
       signal,
     }
     signal.throwIfAborted()
+    // 阶段 2：「桌面操作」总开关关闭时，截图、剪贴板、窗口与键鼠操作一律拒绝（外壳、主题、卡片是另一类能力）。
+    if (
+      desktopOperationNeedsSwitch('desktop.environment', operation) &&
+      !desktopControl.configuration().enabled
+    )
+      throw new Error('DESKTOP_DISABLED: 桌面操作未开启')
     if (operation === 'control') {
-      if (input.action === 'status') return desktopControl.snapshot()
+      // 附带总开关状态：后端据此决定操作工具是否常驻工具清单。
+      if (input.action === 'status')
+        return { ...desktopControl.snapshot(), enabled: desktopControl.configuration().enabled }
       if (input.action === 'resume')
         return desktopControl.snapshot().phase === 'idle'
           ? desktopControl.snapshot()
           : desktopControl.resume()
-      throw new Error('DESKTOP_CONTROL_DENIED: 不支持的桌面控制操作')
+      return handleDesktopGuardControl(input, caller)
     }
     if (operation === 'screenCapture' && process.platform === 'win32')
-      return desktopControl.observe(input, caller)
+      return observeWindowsScreen(input, caller)
     if (operation === 'screenCapture') {
       const maxWidth = screenshotMaxWidth(input.maxWidth)
       const owner = JSON.stringify([caller.agentId, caller.taskId ?? caller.threadId])
@@ -564,7 +610,7 @@ class ElectronCapabilityProvider {
         input.region !== undefined &&
         (!reference ||
           reference.owner !== owner ||
-          Date.now() - reference.createdAt > 120_000 ||
+          Date.now() - reference.createdAt > desktopVisionSettings.get().observationTtlSec * 1000 ||
           reference.geometry !== layout ||
           (input.displayId !== undefined && String(input.displayId) !== reference.displayId))
       )
@@ -581,8 +627,13 @@ class ElectronCapabilityProvider {
       })
       if (!raw) throw new Error('SCREEN_CAPTURE_UNAVAILABLE: 无法获取屏幕内容')
       signal.throwIfAborted()
+      // 只读截图期间显示器布局变化时照常返回画面并标注 stale，不登记为可引用的观察。
       if (geometry() !== layout)
-        throw new Error('DESKTOP_OBSERVATION_STALE: 观察期间控制权发生变化，请重新观察')
+        return buildObservationResult({
+          drift: 'geometry',
+          raw,
+          referenceObservationId: reference ? String(input.observationId) : undefined,
+        })
       const observationId = randomUUID()
       this.screenObservations.set(observationId, {
         owner,
@@ -633,41 +684,20 @@ class ElectronCapabilityProvider {
     }
     if (operation === 'activeWindow')
       return process.platform === 'win32' ? windowsDesktop.active() : getActiveWindow()
-    if (operation === 'listWindows') return listWindows()
-    if (operation === 'activateWindow')
-      return desktopControl.mutate(caller, async (actionSignal) => {
-        const target = String(input.target ?? '')
-        const windows = await windowsDesktop.windows()
-        const exact = windows.filter(
-          (window) => window.windowId === target || window.title === target,
-        )
-        const matches = exact.length
-          ? exact
-          : windows.filter((window) => window.title.toLowerCase().includes(target.toLowerCase()))
-        if (!target || matches.length !== 1)
-          throw new Error('WINDOW_AMBIGUOUS: 请使用窗口列表中的 windowId 指定唯一窗口')
-        const result = await windowsDesktop.request<{ title: string }>(
-          'activate',
-          { windowId: matches[0]!.windowId },
-          actionSignal,
-        )
-        return result.title
-      })
+    if (operation === 'listWindows') return listWindowsWithInfosIds(listWindows)
+    if (operation === 'activateWindow') return activateDesktopWindow(input, caller)
     if (operation === 'applicationLaunch') {
-      return desktopControl.mutate(caller, async (actionSignal) => {
-        actionSignal.throwIfAborted()
-        const result = await launchApplication(
-          String(input.appName ?? input.app_name ?? ''),
-          undefined,
-          actionSignal,
-        )
-        actionSignal.throwIfAborted()
-        return result
-      })
+      return launchDesktopApplication(input, caller, signal)
     }
     if (operation === 'mousePosition') return mousePosition()
+    // 「手」的直通通道：剪贴板、媒体键、默认浏览器打开网址（desktopDirect.ts），同样过护栏。
+    if (operation === 'desktopDirect') return handleDesktopDirect(input, caller, directDeps())
+    if (operation === 'homeRecycle') {
+      const { homeNativeTrash } = await import('../home/homeNativeTrashRuntime')
+      return recycleForBackend(homeNativeTrash, input)
+    }
     if (operation === 'mouseAction' || operation === 'keyboardAction') {
-      const action = String(input.action ?? '')
+      let action = String(input.action ?? '')
       if (action === 'notification') {
         if (isApplicationFocused()) return { success: true, suppressed: true }
         const { Notification } = await import('electron')
@@ -677,12 +707,19 @@ class ElectronCapabilityProvider {
         }).show()
         return { success: true }
       }
+      // 「手」：带 until 的等待——等窗口或文字出现（desktopWaitFor.ts），不占动作队列、不发出输入。
+      if (action === 'wait' && input.until !== undefined)
+        return waitForDesktop(input, caller, (signal) => desktopControl.assertAvailable(signal))
+      // 「手」：元素编号换成控件或坐标，并核对点击点下方的窗口（desktopHands.ts）。
+      const hands = await prepareHandsInput(input, caller)
+      input = hands.input
       const elements = ['invoke', 'set_value', 'toggle', 'select', 'expand', 'collapse']
       const mouse = [
         'wait',
         'move',
         'click',
         'double_click',
+        'triple_click',
         'right_click',
         'drag',
         'scroll',
@@ -690,6 +727,7 @@ class ElectronCapabilityProvider {
         'mouse_up',
       ]
       const keyboard = ['type', 'hotkey', 'key_down', 'key_up']
+      action = String(input.action ?? '')
       if (![...elements, ...mouse, ...keyboard].includes(action))
         throw new Error('DESKTOP_ACTION_UNSUPPORTED: 不支持的桌面操作')
       if (elements.includes(action) && !input.elementId)
@@ -698,15 +736,19 @@ class ElectronCapabilityProvider {
         throw new Error('DESKTOP_ACTION_UNSUPPORTED: 该动作不能通过控件执行')
       if (typeof input.text === 'string' && input.text.length > 10_000)
         throw new Error('DESKTOP_TEXT_TOO_LONG: 单次输入最多一万字符，请分段处理')
-      return desktopControl.execute(
-        action === 'wait'
-          ? 'wait'
-          : input.elementId
-            ? 'element'
-            : keyboard.includes(action)
-              ? 'keyboard'
-              : 'mouse',
-        input,
+      return finishHandsResult(
+        hands,
+        await desktopControl.execute(
+          action === 'wait'
+            ? 'wait'
+            : input.elementId
+              ? 'element'
+              : keyboard.includes(action)
+                ? 'keyboard'
+                : 'mouse',
+          input,
+          caller,
+        ),
         caller,
       )
     }

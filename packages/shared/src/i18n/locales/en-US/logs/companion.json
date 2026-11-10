@@ -12,5 +12,8 @@
   "保存主动行为活动时间失败": "Failed to save active behavior activity time",
   "主动行为调度失败": "Active behavior scheduling failed",
   "全局主动行为本轮结束": "Global active behavior ends this round",
-  "主动状态推送失败": "Active status push failed"
+  "主动状态推送失败": "Active status push failed",
+  "陪看插话失败: {0}": "Watch-along remark failed: {0}",
+  "预读没写出台词: {0}，回复 {1} 字": "Pre-read wrote no lines: {0}, reply {1} chars",
+  "预读备台词失败: {0}": "Pre-read script failed: {0}"
 }

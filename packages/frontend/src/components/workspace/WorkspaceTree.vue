@@ -368,21 +368,23 @@ watch(
 
     <!-- 文件与文件夹右键菜单：Teleport 避免被资源栏滚动容器裁切。 -->
     <Teleport to="body">
-      <div
-        v-if="contextMenu"
-        class="workspace-context-menu"
-        :style="{ left: `${contextMenu.x}px`, top: `${contextMenu.y}px` }"
-        @click.stop
-      >
-        <button @click.stop="renameSelected">
-          <PixelIcon name="edit" size="xs" />
-          {{ __t('ui.workspace', '重命名') }}
-        </button>
-        <button class="danger" @click.stop="deleteSelected">
-          <PixelIcon name="trash" size="xs" />
-          {{ __t('ui.workspace', '删除') }}
-        </button>
-      </div>
+      <Transition name="motion-pop">
+        <div
+          v-if="contextMenu"
+          class="workspace-context-menu"
+          :style="{ left: `${contextMenu.x}px`, top: `${contextMenu.y}px` }"
+          @click.stop
+        >
+          <button @click.stop="renameSelected">
+            <PixelIcon name="edit" size="xs" />
+            {{ __t('ui.workspace', '重命名') }}
+          </button>
+          <button class="danger" @click.stop="deleteSelected">
+            <PixelIcon name="trash" size="xs" />
+            {{ __t('ui.workspace', '删除') }}
+          </button>
+        </div>
+      </Transition>
     </Teleport>
   </div>
 </template>
@@ -695,6 +697,7 @@ watch(
 }
 
 .workspace-context-menu {
+  --motion-origin: top left;
   position: fixed;
   z-index: 10050;
   display: flex;

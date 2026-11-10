@@ -1,0 +1,23 @@
+/* ChatContainer 的历史骨架、新消息提示点与入场动画限制。 */
+
+/* 首次同步历史时的骨架占位，宽度与消息列一致 */
+.chat-history-skeleton {
+  width: min(100%, 760px);
+  margin: 12px auto;
+}
+/* 用户上翻期间有新消息：按钮右上角亮一个小点 */
+.chat-scroll-down__dot {
+  position: absolute;
+  top: 6px;
+  right: 6px;
+  width: 8px;
+  height: 8px;
+  border: 2px solid var(--ui-bg-surface);
+  border-radius: 50%;
+  background: var(--ui-accent-primary);
+  animation: motion-rise-in var(--motion-duration-medium) var(--motion-ease-spring) backwards;
+}
+/* 长消息流只让最后两条播放入场：切换会话、加载更早消息时不整页一起动 */
+.chat-messages > :deep(.msg-row:not(:nth-last-child(-n + 2))) {
+  animation: none;
+}

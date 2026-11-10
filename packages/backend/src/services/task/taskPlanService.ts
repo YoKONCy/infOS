@@ -29,6 +29,7 @@ export interface PlanScope {
   taskId?: string
   pairId?: string
   toolCallId?: string
+  generation?: number
 }
 
 /** 清单保存公开步骤，任务与定时计划的执行状态只作实时投影。 */

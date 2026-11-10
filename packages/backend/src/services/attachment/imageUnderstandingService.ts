@@ -125,6 +125,7 @@ export class ImageUnderstandingService {
       returnNativeReasoning: row.returnNativeReasoning ?? false,
       wireApi: (row.wireApi as ModelConfig['wireApi']) ?? 'chat_completions',
       reasoningDialect: (row.reasoningDialect as ModelConfig['reasoningDialect']) ?? 'auto',
+      assistantPrefill: (row.assistantPrefill as ModelConfig['assistantPrefill']) ?? 'auto',
       enableVision: true,
     }
   }

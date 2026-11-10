@@ -147,7 +147,7 @@ export function registerExtensionActivators(input: {
   input.runtime.registerActivator('presenter', async (context) => {
     const module = await loadPackageModule<{
       panel: Omit<PackagePanel, 'id' | 'packageId'>
-      onAction?: (id: string) => Promise<unknown>
+      onAction?: (id: string, payload?: Record<string, unknown>) => Promise<unknown>
     }>(context)
     const panel = module.panel
     if (!panel || typeof panel.title !== 'string') throw new Error('PACKAGE_PANEL_INVALID')

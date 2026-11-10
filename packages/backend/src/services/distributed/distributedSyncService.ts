@@ -1,10 +1,13 @@
 import { createCipheriv, createDecipheriv, createHash, randomBytes, randomUUID } from 'node:crypto'
 import { existsSync } from 'node:fs'
-import { mkdir, readFile, readdir, rm, writeFile, copyFile, cp } from 'node:fs/promises'
+import { isSnapshotProgramPath, isSnapshotTransientPath } from '@infos/shared'
+import { AppError } from '../../lib/appError'
+import { mkdir, readFile, readdir, rm, writeFile, copyFile, cp, stat } from 'node:fs/promises'
 import path from 'node:path'
 import { BACKUP_STATE, installBackupTree, snapshotOfflineTree } from '../backup/backupStorage'
 import { BackupService } from '../backup/backupService'
-import { safeBackupPath } from '../backup/backupArchive'
+import { fileDigest, safeBackupPath } from '../backup/backupArchive'
+import { isSyncArchive, readSyncArchive, writeSyncArchive } from './syncArchive'
 import { prepareRestoredDatabase } from '../backup/backupRecords'
 import type { DrizzleDb } from '../../database'
 import type { MemoryStoreRegistry } from '../../repositories/storeRegistry'
@@ -16,8 +19,8 @@ import {
 } from '../../repositories/triviumFiles'
 
 const APP_VERSION = '0.9.12'
-const BUNDLE_VERSION = 2
-const SCHEMA_VERSION = 1
+const BUNDLE_VERSION = 3
+const SCHEMA_VERSION = 2
 const MAX_FILE_COUNT = 100_000
 const MAX_FILE_BYTES = 2 * 1024 * 1024 * 1024
 const MAX_TOTAL_BYTES = 20 * 1024 * 1024 * 1024
@@ -35,6 +38,13 @@ const MACHINE_PATHS = new Set([
   'distributed/last-sync.json',
   'electron-node-id.txt',
 ])
+/** 机器私有文件，或它的原子写入临时文件（`名字.tmp`、`名字.<随机>.tmp`）。 */
+function isMachinePath(relative: string): boolean {
+  if (MACHINE_PATHS.has(relative)) return true
+  if (!relative.endsWith('.tmp')) return false
+  for (const file of MACHINE_PATHS) if (relative.startsWith(`${file}.`)) return true
+  return false
+}
 const EXCLUDED_ROOTS = new Set([
   BACKUP_STATE,
   'resource-versions',
@@ -48,12 +58,12 @@ const EXCLUDED_ROOTS = new Set([
 
 function validateStorageVersion(manifest: FullSyncManifest): void {
   if (!manifest) throw new Error('SYNC_BUNDLE_INVALID')
-  if (![1, BUNDLE_VERSION].includes(manifest.bundleVersion))
+  if (![1, 2, BUNDLE_VERSION].includes(manifest.bundleVersion))
     throw new Error('SYNC_BUNDLE_VERSION_UNSUPPORTED')
   if (!/^[a-f0-9-]{36}$/i.test(manifest.snapshotId)) throw new Error('SYNC_SNAPSHOT_ID_INVALID')
   const format = manifest.triviumFormat
   if (
-    manifest.bundleVersion === 2 &&
+    manifest.bundleVersion >= 2 &&
     (typeof format !== 'number' || !Number.isInteger(format) || format < 5)
   )
     throw new Error('同步快照缺少有效的数据库格式版本')
@@ -100,6 +110,7 @@ export interface PublicServerRecord {
 
 /** 多 Server 手动全量快照、远程 Server 列表与重启边界原子导入。 */
 export class DistributedSyncService {
+  private exporting = false
   private readonly syncRoot: string
   private readonly serversFile: string
   private readonly keyFile: string
@@ -109,7 +120,7 @@ export class DistributedSyncService {
     private readonly db: DrizzleDb,
     private readonly localServerId: string,
     private readonly stores?: Pick<MemoryStoreRegistry, 'captureSnapshot'>,
-    private readonly capture?: (destination: string) => void,
+    private readonly capture?: (destination: string, signal?: AbortSignal) => void | Promise<void>,
   ) {
     this.syncRoot = path.join(dataDir, BACKUP_STATE, 'sync')
     this.serversFile = path.join(dataDir, 'distributed', 'servers.json')
@@ -207,11 +218,19 @@ export class DistributedSyncService {
     return true
   }
 
-  async createEncryptedSnapshot(transferKeyBase64: string): Promise<Buffer> {
+  async createEncryptedSnapshot(transferKeyBase64: string, signal?: AbortSignal): Promise<Buffer> {
     const transferKey = Buffer.from(transferKeyBase64, 'base64')
     if (transferKey.length !== 32) throw new Error('SYNC_TRANSFER_KEY_INVALID')
-    const bundle = await this.createBundle()
-    return this.encrypt(Buffer.from(JSON.stringify(bundle)), transferKey)
+    signal?.throwIfAborted()
+    if (this.exporting) throw new AppError('RESOURCE_BUSY')
+    this.exporting = true
+    try {
+      const bundle = await this.createBundle(signal)
+      signal?.throwIfAborted()
+      return this.encrypt(bundle, transferKey)
+    } finally {
+      this.exporting = false
+    }
   }
 
   async stageEncryptedSnapshot(
@@ -227,26 +246,24 @@ export class DistributedSyncService {
       throw new Error('BACKUP_PENDING_IMPORT')
     const transferKey = Buffer.from(transferKeyBase64, 'base64')
     if (transferKey.length !== 32) throw new Error('SYNC_TRANSFER_KEY_INVALID')
-    const bundle = JSON.parse(
-      this.decrypt(encrypted, transferKey).toString('utf8'),
-    ) as FullSyncBundle
-    this.validateBundle(bundle, expectedSourceServerId ?? bundle.manifest.sourceServerId)
+    const bundle = this.decrypt(encrypted, transferKey)
+    const manifest = await DistributedSyncService.readBundle(bundle, expectedSourceServerId)
     await mkdir(this.syncRoot, { recursive: true })
     const localKey = await this.getLocalKey()
     await writeFile(
       path.join(this.syncRoot, 'pending.bundle'),
-      this.encrypt(Buffer.from(JSON.stringify(bundle)), localKey),
+      this.encrypt(bundle, localKey),
       { mode: 0o600 },
     )
     await writeFile(
       path.join(this.syncRoot, 'pending.json'),
       JSON.stringify({
-        snapshotId: bundle.manifest.snapshotId,
-        sourceServerId: bundle.manifest.sourceServerId,
+        snapshotId: manifest.snapshotId,
+        sourceServerId: manifest.sourceServerId,
       }),
       'utf8',
     )
-    return bundle.manifest
+    return manifest
   }
 
   async stageFromServer(serverId: string): Promise<FullSyncManifest> {
@@ -315,7 +332,8 @@ export class DistributedSyncService {
     return true
   }
 
-  private async createBundle(): Promise<FullSyncBundle> {
+  private async createBundle(signal?: AbortSignal): Promise<Buffer> {
+    signal?.throwIfAborted()
     const snapshotId = randomUUID()
     const snapshotRoot = path.join(this.dataDir, BACKUP_STATE, 'work', `export-${snapshotId}`)
     const databaseSnapshot = path.join(snapshotRoot, 'infos.db')
@@ -329,7 +347,7 @@ export class DistributedSyncService {
           }
         }
       ).$client
-      if (this.capture) this.capture(snapshotRoot)
+      if (this.capture) await this.capture(snapshotRoot, signal)
       else if (this.stores) {
         const prepare = client?.prepare?.bind(client)
         if (!prepare) throw new Error('同步快照缺少同步数据库备份入口')
@@ -341,25 +359,26 @@ export class DistributedSyncService {
         await client.backup(databaseSnapshot)
       }
 
-      const files: Record<string, string> = {}
+      const files = new Map<string, string>()
       const descriptors: FullSyncManifest['files'] = []
       let totalBytes = 0
       const add = async (relativePath: string, physicalPath: string) => {
+        signal?.throwIfAborted()
         if (descriptors.length >= MAX_FILE_COUNT) throw new Error('SYNC_FILE_COUNT_LIMIT_EXCEEDED')
-        const bytes = await readFile(physicalPath)
-        if (bytes.length > MAX_FILE_BYTES)
+        const { size } = await stat(physicalPath)
+        if (size > MAX_FILE_BYTES)
           throw new Error(`SYNC_FILE_SIZE_LIMIT_EXCEEDED: ${relativePath}`)
-        if (totalBytes + bytes.length > MAX_TOTAL_BYTES)
+        if (totalBytes + size > MAX_TOTAL_BYTES)
           throw new Error('SYNC_TOTAL_SIZE_LIMIT_EXCEEDED')
-        files[relativePath] = bytes.toString('base64')
+        files.set(relativePath, physicalPath)
         descriptors.push({
           path: relativePath,
-          sizeBytes: bytes.length,
-          sha256: createHash('sha256').update(bytes).digest('hex'),
+          sizeBytes: size,
+          sha256: await fileDigest(physicalPath, signal),
         })
-        totalBytes += bytes.length
+        totalBytes += size
       }
-      await this.walkData(snapshotRoot, '', add)
+      await this.walkData(snapshotRoot, '', add, signal)
       if (!this.capture)
         await this.walkData(this.dataDir, '', async (relativePath, physicalPath) => {
           if (relativePath === 'infos.db') return
@@ -368,9 +387,9 @@ export class DistributedSyncService {
             return
           }
           await add(relativePath, physicalPath)
-        })
-      return {
-        manifest: {
+        }, signal)
+      return await writeSyncArchive(
+        {
           bundleVersion: BUNDLE_VERSION,
           schemaVersion: SCHEMA_VERSION,
           snapshotId,
@@ -383,7 +402,8 @@ export class DistributedSyncService {
           totalBytes,
         },
         files,
-      }
+        signal,
+      )
     } finally {
       await rm(snapshotRoot, { recursive: true, force: true })
     }
@@ -393,11 +413,14 @@ export class DistributedSyncService {
     root: string,
     relative: string,
     visit: (relativePath: string, physicalPath: string) => Promise<void>,
+    signal?: AbortSignal,
   ): Promise<void> {
     for (const entry of await readdir(path.join(root, relative), { withFileTypes: true })) {
       const next = relative ? `${relative}/${entry.name}` : entry.name
       const normalized = next.replaceAll('\\', '/')
-      if (MACHINE_PATHS.has(normalized)) continue
+      signal?.throwIfAborted()
+      if (isSnapshotProgramPath(normalized) || isSnapshotTransientPath(normalized)) continue
+      if (isMachinePath(normalized)) continue
       if (!relative && EXCLUDED_ROOTS.has(entry.name)) continue
       if (!relative && entry.name.startsWith('.resource-')) continue
       // 重建暂存区不是业务数据，不能将回滚用的旧正文带进同步快照。
@@ -408,37 +431,68 @@ export class DistributedSyncService {
         continue
       if (entry.name.endsWith('-wal') || entry.name.endsWith('-shm') || entry.isSymbolicLink())
         continue
-      if (entry.isDirectory()) await this.walkData(root, normalized, visit)
+      if (entry.isDirectory()) await this.walkData(root, normalized, visit, signal)
       else if (entry.isFile()) await visit(normalized, path.join(root, normalized))
     }
   }
 
-  private validateBundle(bundle: FullSyncBundle, sourceServerId: string): void {
-    if (!bundle?.manifest || !bundle.files || typeof bundle.files !== 'object') {
-      throw new Error('SYNC_BUNDLE_INVALID')
-    }
-    validateStorageVersion(bundle.manifest)
-    if (bundle.manifest.schemaVersion !== SCHEMA_VERSION)
+  private static validateManifest(manifest: FullSyncManifest, sourceServerId: string): void {
+    validateStorageVersion(manifest)
+    if (manifest.schemaVersion !== 1 && manifest.schemaVersion !== SCHEMA_VERSION)
       throw new Error('SYNC_SCHEMA_VERSION_UNSUPPORTED')
-    if (bundle.manifest.files.length > MAX_FILE_COUNT)
+    if (!Array.isArray(manifest.files)) throw new Error('SYNC_BUNDLE_INVALID')
+    if (manifest.files.length > MAX_FILE_COUNT)
       throw new Error('SYNC_FILE_COUNT_LIMIT_EXCEEDED')
-    if (bundle.manifest.totalBytes > MAX_TOTAL_BYTES)
+    if (!Number.isSafeInteger(manifest.totalBytes) || manifest.totalBytes < 0)
+      throw new Error('SYNC_TOTAL_SIZE_MISMATCH')
+    if (manifest.totalBytes > MAX_TOTAL_BYTES)
       throw new Error('SYNC_TOTAL_SIZE_LIMIT_EXCEEDED')
-    if (bundle.manifest.sourceServerId !== sourceServerId)
+    if (
+      typeof manifest.sourceServerId !== 'string' ||
+      !manifest.sourceServerId ||
+      manifest.sourceServerId !== sourceServerId
+    )
       throw new Error('SYNC_SOURCE_ID_MISMATCH')
     const uniquePaths = new Set<string>()
     let totalBytes = 0
-    for (const descriptor of bundle.manifest.files) {
+    for (const descriptor of manifest.files) {
+      if (
+        !descriptor ||
+        typeof descriptor.path !== 'string' ||
+        !Number.isSafeInteger(descriptor.sizeBytes) ||
+        descriptor.sizeBytes < 0 ||
+        typeof descriptor.sha256 !== 'string' ||
+        !/^[a-f0-9]{64}$/.test(descriptor.sha256)
+      )
+        throw new Error('SYNC_BUNDLE_INVALID')
       const safePath = this.safeRelative(descriptor.path)
-      if (MACHINE_PATHS.has(safePath)) throw new Error('同步快照不能包含本机凭据')
+      if (isMachinePath(safePath)) throw new Error('同步快照不能包含本机凭据')
       if (uniquePaths.has(safePath)) throw new Error(`SYNC_FILE_DUPLICATED: ${safePath}`)
       uniquePaths.add(safePath)
       if (descriptor.sizeBytes > MAX_FILE_BYTES)
         throw new Error(`SYNC_FILE_SIZE_LIMIT_EXCEEDED: ${safePath}`)
       totalBytes += descriptor.sizeBytes
       if (totalBytes > MAX_TOTAL_BYTES) throw new Error('SYNC_TOTAL_SIZE_LIMIT_EXCEEDED')
+    }
+    if (totalBytes !== manifest.totalBytes) throw new Error('SYNC_TOTAL_SIZE_MISMATCH')
+  }
+
+  private static validateBundle(bundle: FullSyncBundle, sourceServerId: string): void {
+    if (
+      !bundle?.manifest ||
+      !bundle.files ||
+      typeof bundle.files !== 'object' ||
+      Array.isArray(bundle.files) ||
+      ![1, 2].includes(bundle.manifest.bundleVersion)
+    ) {
+      throw new Error('SYNC_BUNDLE_INVALID')
+    }
+    this.validateManifest(bundle.manifest, sourceServerId)
+    for (const descriptor of bundle.manifest.files) {
+      const safePath = this.safeRelative(descriptor.path)
       const encoded = bundle.files[safePath]
-      if (!encoded) throw new Error(`SYNC_FILE_MISSING: ${safePath}`)
+      if (!Object.hasOwn(bundle.files, safePath) || typeof encoded !== 'string')
+        throw new Error(`SYNC_FILE_MISSING: ${safePath}`)
       const bytes = Buffer.from(encoded, 'base64')
       if (bytes.length !== descriptor.sizeBytes)
         throw new Error(`SYNC_FILE_SIZE_MISMATCH: ${safePath}`)
@@ -446,10 +500,42 @@ export class DistributedSyncService {
         throw new Error(`SYNC_FILE_CHECKSUM_MISMATCH: ${safePath}`)
       }
     }
-    if (totalBytes !== bundle.manifest.totalBytes) throw new Error('SYNC_TOTAL_SIZE_MISMATCH')
   }
 
-  private safeRelative(value: string): string {
+  private static async readBundle(
+    bytes: Buffer,
+    sourceServerId?: string,
+    output?: string,
+  ): Promise<FullSyncManifest> {
+    if (isSyncArchive(bytes))
+      return readSyncArchive(
+        bytes,
+        (manifest) => {
+          this.validateManifest(manifest, sourceServerId ?? manifest.sourceServerId)
+        },
+        output,
+      )
+    // 旧版 JSON 快照继续可读；新快照的文件正文始终走分块二进制路径。
+    const bundle = JSON.parse(bytes.toString('utf8')) as FullSyncBundle
+    this.validateBundle(bundle, sourceServerId ?? bundle?.manifest?.sourceServerId)
+    if (output)
+      for (const descriptor of bundle.manifest.files) {
+        const normalized = this.safeRelative(descriptor.path)
+        if (
+          normalized.split('/')[0] === 'resource-versions' ||
+          normalized.split('/')[0]?.startsWith('.resource-')
+        ) continue
+        const target = path.join(output, normalized)
+        await mkdir(path.dirname(target), { recursive: true, mode: 0o700 })
+        await writeFile(target, Buffer.from(bundle.files[normalized]!, 'base64'), {
+          mode: 0o600,
+          flag: 'wx',
+        })
+      }
+    return bundle.manifest
+  }
+
+  private static safeRelative(value: string): string {
     try {
       return safeBackupPath(value.replaceAll('\\', '/'))
     } catch {
@@ -561,40 +647,21 @@ export class DistributedSyncService {
     const iv = encrypted.subarray(0, 12)
     const decipher = createDecipheriv('aes-256-gcm', key, iv)
     decipher.setAuthTag(encrypted.subarray(12, 28))
-    const bundle = JSON.parse(
-      Buffer.concat([decipher.update(encrypted.subarray(28)), decipher.final()]).toString('utf8'),
-    ) as FullSyncBundle
-
-    validateStorageVersion(bundle.manifest)
-
-    const incoming = path.join(currentRoot, `incoming-${bundle.manifest.snapshotId}`)
+    const bundle = Buffer.concat([decipher.update(encrypted.subarray(28)), decipher.final()])
+    const incoming = path.join(currentRoot, `incoming-${randomUUID()}`)
     const backup = path.join(currentRoot, `backup-${randomUUID()}`)
-    await rm(incoming, { recursive: true, force: true })
-    await mkdir(incoming, { recursive: true })
-    for (const descriptor of bundle.manifest.files) {
-      const normalized = safeBackupPath(descriptor.path.replaceAll('\\', '/'))
-      // 资源恢复记录属于本机，不能导入远端的启动标记、锁或待执行操作。
-      if (
-        normalized.split('/')[0] === 'resource-versions' ||
-        normalized.split('/')[0]?.startsWith('.resource-')
-      )
-        continue
-      if (MACHINE_PATHS.has(normalized)) throw new Error('同步快照不能包含本机凭据')
-      if (
-        !normalized ||
-        normalized.startsWith('/') ||
-        normalized.includes('../') ||
-        path.isAbsolute(normalized)
-      ) {
-        throw new Error(`SYNC_PATH_INVALID: ${descriptor.path}`)
-      }
-      const bytes = Buffer.from(bundle.files[normalized] ?? '', 'base64')
-      if (createHash('sha256').update(bytes).digest('hex') !== descriptor.sha256) {
-        throw new Error(`SYNC_FILE_CHECKSUM_MISMATCH: ${normalized}`)
-      }
-      const target = path.join(incoming, normalized)
-      await mkdir(path.dirname(target), { recursive: true })
-      await writeFile(target, bytes)
+    const pending = JSON.parse(await readFile(pendingInfo, 'utf8')) as {
+      snapshotId: string
+      sourceServerId: string
+    }
+    let manifest: FullSyncManifest
+    await mkdir(incoming, { recursive: true, mode: 0o700 })
+    try {
+      manifest = await DistributedSyncService.readBundle(bundle, pending.sourceServerId, incoming)
+      if (manifest.snapshotId !== pending.snapshotId) throw new Error('SYNC_SNAPSHOT_ID_MISMATCH')
+    } catch (error) {
+      await rm(incoming, { recursive: true, force: true })
+      throw error
     }
     for (const machinePath of MACHINE_PATHS) {
       const source = path.join(dataDir, machinePath)
@@ -621,7 +688,7 @@ export class DistributedSyncService {
       await mkdir(path.join(dataDir, 'distributed'), { recursive: true })
       await writeFile(
         path.join(dataDir, 'distributed', 'last-sync.json'),
-        JSON.stringify({ ...bundle.manifest, backupPath: backup }, null, 2),
+        JSON.stringify({ ...manifest, backupPath: backup }, null, 2),
         'utf8',
       )
       return true

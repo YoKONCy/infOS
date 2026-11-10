@@ -34,6 +34,8 @@ export class ConversationSurfaceSession {
     readonly principalId: string,
     readonly executionId?: string,
     private readonly retainLiveSnapshot = false,
+    private readonly processCollapsed = false,
+    private readonly threadGeneration?: number,
   ) {
     this.surfaceId = `conversation:${threadId}:${executionId ?? this.generation}` as SurfaceId
   }
@@ -42,6 +44,8 @@ export class ConversationSurfaceSession {
   liveSnapshot(): import('@infos/shared').SurfaceDescriptor {
     return {
       surfaceId: this.surfaceId,
+      processCollapsed: this.processCollapsed,
+      threadGeneration: this.threadGeneration,
       generation: this.generation,
       threadId: this.threadId,
       principalId: this.principalId,
@@ -56,6 +60,7 @@ export class ConversationSurfaceSession {
   open(): SurfaceFrame {
     return this.frame({
       type: 'surface.open',
+      processCollapsed: this.processCollapsed,
       threadId: this.threadId,
       principalId: this.principalId,
       nodes: [this.statusNode('thinking')],
@@ -136,10 +141,10 @@ export class ConversationSurfaceSession {
     return this.frame({ type: 'surface.append-text', nodeId, delta })
   }
 
-  completeNarration(blockId: string): SurfaceFrame {
+  completeNarration(blockId: string, final = false): SurfaceFrame {
     const nodeId = this.markdownNodeIds.get(blockId)
     if (!nodeId) throw new Error(`正文块尚未开始: ${blockId}`)
-    return this.frame({ type: 'surface.patch-node', nodeId, patch: { phase: 'committed' } })
+    return this.frame({ type: 'surface.patch-node', nodeId, patch: { phase: 'committed', final } })
   }
 
   contextBudget(budget: LiveContextBudget): SurfaceFrame {
@@ -362,6 +367,14 @@ export class ConversationSurfaceSession {
     ]
   }
 
+  publish(snapshot: import('@infos/shared').ConversationProjectionSnapshot): SurfaceFrame {
+    return this.frame({ type: 'surface.publish', snapshot })
+  }
+
+  settle(snapshot: import('@infos/shared').ConversationProjectionSnapshot): SurfaceFrame {
+    return this.frame({ type: 'surface.settled', snapshot })
+  }
+
   commit(
     snapshot: import('@infos/shared').ConversationProjectionSnapshot,
     message: import('@infos/shared').ConversationMessageProjection,
@@ -482,11 +495,13 @@ export class ConversationSurfaceSession {
           }
           this.liveNodes.set(node.nodeId, { ...node, props, revision: this.revision + 1 })
         }
-      } else if (operation.type === 'surface.commit') this.liveState = 'committed'
+      } else if (operation.type === 'surface.commit' || operation.type === 'surface.settled') this.liveState = 'committed'
       else if (operation.type === 'surface.fail') this.liveState = 'failed'
       else if (operation.type === 'surface.dispose') this.liveState = 'disposed'
     }
     const frame: SurfaceFrame = {
+      threadId: this.threadId,
+      threadGeneration: this.threadGeneration,
       protocolVersion: 1,
       surfaceId: this.surfaceId,
       generation: this.generation,

@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import ThreadExperiences from './ThreadExperiences.vue'
 import PackageSlot from '../integrations/PackageSlot.vue'
 import { t as __t } from '../../i18n/index'
 
@@ -25,12 +26,16 @@ import {
 } from 'vue'
 import ConversationSurface from '../compositor/ConversationSurface.vue'
 import SurfaceTransition from '../motion/SurfaceTransition.vue'
+import MotionSkeleton from '../motion/MotionSkeleton.vue'
 import MessageBubble from './MessageBubble.vue'
 import { isLocalOwnerMessage } from '../../lib/userMessageIdentity'
 import InputBar from './InputBar.vue'
 import ConversationQueue from './ConversationQueue.vue'
 import { useConversationQueue } from '../../composables/chat/useConversationQueue'
 import { queueErrorMessage } from '../../composables/chat/queueFeedback'
+import { takeEnvironmentEvents } from '../../composables/useEnvironmentEvents'
+import { useUnseenMessages } from '../../composables/chat/useUnseenMessages'
+import { ensureUsableModel } from '../../composables/chat/sendModelGuard'
 import ThreadTodo from './ThreadTodo.vue'
 import DesktopControlStatus from '../desktop/DesktopControlStatus.vue'
 import BrowserObserver from './BrowserObserver.vue'
@@ -52,6 +57,7 @@ import {
 } from '../../stores'
 import { logger } from '../../lib/logger'
 import { chatApi } from '../../api/modules/chatApi'
+import { threadsApi } from '../../api/modules/threadsApi'
 import type { ChatWorkspaceContext } from '../../api/modules/chatApi'
 import { voiceApi } from '../../api/modules/voiceApi'
 import type { AttachmentInfo } from '../../api/modules/attachmentsApi'
@@ -228,6 +234,37 @@ const rewind = useConversationRewind()
 const approvalStore = useApprovalStore()
 const playingMsgId = ref<string | null>(null)
 const isLoadingAudio = ref(false)
+const forkingMessageId = ref<string | null>(null)
+
+async function handleFork(id: string): Promise<void> {
+  if (forkingMessageId.value || isGenerating.value || props.switching ||
+    threadStore.navigationTarget || !threadStore.threadId || !/^\d+$/.test(id)) return
+  const sourceThreadId = threadStore.threadId
+  const agentId = props.agentId
+  forkingMessageId.value = id
+  try {
+    const response = await threadsApi.fork(sourceThreadId, Number(id))
+    const thread = response.data?.thread
+    if (!thread) throw new Error(__t('ui.chat', '新建分支失败，请稍后重试'))
+    emit('completed')
+    // 用户已切换会话时只保留新分支，避免迟到响应抢走当前页面。
+    if (!disposed && props.agentId === agentId && threadStore.threadId === sourceThreadId &&
+      !threadStore.navigationTarget && !props.switching) {
+      const result = await threadStore.loadThreadMessages(thread.id, agentId)
+      if (result.status === 'failed') {
+        notif.toast(__t('ui.chat', '分支已创建，请从会话列表打开'), { type: 'warning' })
+        return
+      }
+    }
+    notif.toast(__t('ui.chat', '分支会话已创建'), { type: 'success' })
+  } catch (error) {
+    notif.toast(error instanceof Error ? error.message : __t('ui.chat', '新建分支失败，请稍后重试'), {
+      type: 'error',
+    })
+  } finally {
+    forkingMessageId.value = null
+  }
+}
 const excludedContext = ref({ file: false, terminal: false, selection: false })
 const includedContext = computed<ChatWorkspaceContext | undefined>(() => {
   const source = returnedWorkspaceContext.value ?? props.workspaceContext
@@ -276,7 +313,7 @@ watch(
 function extractThinking(rawContent?: string | null): string | undefined {
   if (!rawContent) return undefined
   const blocks: string[] = []
-  const pattern = /<(selfMinding|think|thinking|thought)(?:\s[^>]*)?>\s*([\s\S]*?)\s*<\/\1>/gi
+  const pattern = /<(innerVoice|selfMinding|think|thinking|thought)(?:\s[^>]*)?>\s*([\s\S]*?)\s*<\/\1>/gi
   let match: RegExpExecArray | null
   while ((match = pattern.exec(rawContent)) !== null) {
     const content = match[2]?.trim()
@@ -305,6 +342,7 @@ const messages = computed<BubbleMessage[]>(() => {
     const hasThinkingSurface = surface?.nodes.some((node) => node.kind === 'thinking') ?? false
     const mapped: BubbleMessage = {
       id: m.id,
+      executionRecord: m.executionRecord,
       role: m.role as 'user' | 'assistant' | 'system',
       content: m.content ?? '',
       thinkingContent:
@@ -334,6 +372,7 @@ const { showScrollDown, scrollToBottom, isAtBottom, observeContent, unobserveCon
       !props.focusRequest ||
       focusedRequest === props.focusRequest.revision + ':' + props.focusRequest.messageId,
   )
+const hasUnseenMessages = useUnseenMessages(messages, isAtBottom)
 let focusingMessage = false
 let focusedRequest = ''
 let disposed = false
@@ -456,7 +495,7 @@ async function handleSend(
   text: string,
   _mentions: string[],
   attachmentIds: string[],
-  _attachments: AttachmentInfo[],
+  attachments: AttachmentInfo[],
   imageMode: 'auto' | 'native' | 'relay',
   complete: (success: boolean) => void,
 ) {
@@ -486,14 +525,29 @@ async function handleSend(
     return
   }
   const requestThreadId = threadStore.threadId
-  const success = await queue.enqueue({
-    threadId: requestThreadId,
-    agentId: requestAgentId,
-    content: text,
-    attachmentIds,
-    imageMode,
-    workspaceContext,
-  })
+  // 没有可用模型时直接提示并把文字留在输入框；检查期间切走会话也不再发送。
+  if (
+    !(await ensureUsableModel(requestThreadId)) ||
+    threadStore.threadId !== requestThreadId ||
+    props.agentId !== requestAgentId
+  ) {
+    complete(false)
+    return
+  }
+  // 环境事件（默认关闭）：取走自上次以来记下的变化，随这条消息附带给她。
+  const environmentEvents = await takeEnvironmentEvents(requestAgentId)
+  const success = await queue.enqueue(
+    {
+      threadId: requestThreadId,
+      agentId: requestAgentId,
+      content: text,
+      attachmentIds,
+      imageMode,
+      workspaceContext,
+      ...(environmentEvents ? { environmentEvents } : {}),
+    },
+    { attachments },
+  )
   if (success && threadStore.threadId === requestThreadId && props.agentId === requestAgentId) {
     returnedWorkspaceContext.value = undefined
     excludedContext.value = { file: false, terminal: false, selection: false }
@@ -588,6 +642,10 @@ async function saveEdit(regenerate = false) {
     notif.toast(__t('ui.chat', '消息已保存'), { type: 'success' })
     if (regenerate) {
       if (!stillCurrent()) throw new Error('消息已保存，会话已切换，未重新生成')
+      if (threadStore.threadKind === 'main') {
+        await chatApi.regenerate(context.threadId, Number(response.message.id), response.message.revision ?? 1)
+        return
+      }
       const list = response.projection.messages
       const index = list.findIndex((message) => message.messageId === response.message.id)
       const input =
@@ -599,7 +657,9 @@ async function saveEdit(regenerate = false) {
               .find(
                 (message) =>
                   message.role === 'user' &&
-                  (!response.message.pairId || message.pairId === response.message.pairId),
+                  (response.projection.messages[index]?.sourceMessages?.length
+                    ? response.projection.messages[index]!.sourceMessages!.some((source) => String(source.messageId) === message.messageId)
+                    : !response.message.pairId || message.pairId === response.message.pairId),
               )
       if (!input || input.role !== 'user') throw new Error('消息已保存，未找到本轮用户消息')
       await rewind.open({
@@ -748,7 +808,7 @@ async function handleDeletePair(id: string) {
             },
           }),
         )
-        notif.toast(__t('ui.chat', '已回滚 {0} 轮对话', [result.preview.pairCount]), {
+        notif.toast(__t('ui.chat', result.preview.scope ? '已撤回 {0} 条消息' : '已回滚 {0} 轮对话', [result.preview.pairCount]), {
           type: 'success',
         })
       },
@@ -969,13 +1029,13 @@ onUnmounted(() => {
       :label="__t('ui.chat', '正在切换会话')"
     >
       <div ref="containerRef" class="chat-messages" @scroll.passive="handleMessageScroll">
-        <div
+        <MotionSkeleton
           v-if="isLoadingHistory && !threadStore.navigationTarget && !messages.length"
-          class="chat-history-state"
-        >
-          <PixelIcon name="refresh" size="sm" animation="spin" />
-          <span>{{ __t('ui.chat', '正在同步历史聊天记录...') }}</span>
-        </div>
+          class="chat-history-skeleton"
+          variant="list"
+          :rows="3"
+          :label="__t('ui.chat', '正在同步历史聊天记录...')"
+        />
 
         <div v-else-if="historyError" class="chat-history-state chat-history-error">
           <PixelIcon name="alert" size="sm" />
@@ -989,13 +1049,16 @@ onUnmounted(() => {
 
         <MessageBubble
           v-for="msg in messages"
-          :key="msg.id"
+          :key="threadStore.renderKey(msg.id)"
           v-memo="[
             msg,
             msg.surface?.revision,
             playingMsgId === msg.id,
             isLoadingAudio,
             isGenerating,
+            forkingMessageId,
+            switching,
+            threadStore.navigationTarget,
             threadStore.ragProgressMessage,
             threadStore.ragFailureTrace,
           ]"
@@ -1004,7 +1067,9 @@ onUnmounted(() => {
           :agent-id="agentId"
           :agent-name="agentName"
           :agent-avatar-url="agentAvatarUrl"
-          :allow-mutations="!isGenerating"
+          :allow-mutations="!isGenerating && !msg.executionRecord"
+          :delete-action-label="threadStore.threadKind === 'main' ? __t('ui.chat', '删除消息') : __t('ui.chat', '删除对话对')"
+          :allow-fork="threadStore.canFork && !isGenerating && !forkingMessageId && !switching && !threadStore.navigationTarget"
           :progress-label="threadStore.ragProgressMessage ?? ''"
           :rag-failure="
             msg.ragFailureTrace ??
@@ -1017,6 +1082,7 @@ onUnmounted(() => {
           "
           @edit="handleEdit"
           @delete-pair="handleDeletePair"
+          @fork="handleFork"
           @copy="handleCopy"
           @tts-play="handleTtsPlay"
           @vue:mounted="onBubbleMounted"
@@ -1034,6 +1100,7 @@ onUnmounted(() => {
           @click="scrollToBottom()"
         >
           <PixelIcon name="chevron-down" size="sm" />
+          <i v-if="hasUnseenMessages" class="chat-scroll-down__dot" aria-hidden="true" />
         </button>
       </Transition>
     </SurfaceTransition>
@@ -1127,7 +1194,22 @@ onUnmounted(() => {
         @stop="handleStop"
         @new-thread="handleNewThread"
         @draft-consumed="emit('draftConsumed')"
-      />
+      >
+        <template #session-tools="{ compact, disabled, dismiss }">
+          <ThreadExperiences
+            v-if="threadStore.threadKind === 'main'"
+            :key="threadStore.threadId"
+            :thread-id="threadStore.threadId"
+            :generation="threadStore.threadGeneration"
+            :agent-id="agentId"
+            :agent-name="agentName"
+            :agent-avatar-url="agentAvatarUrl"
+            :compact="compact"
+            :disabled="disabled"
+            @open="dismiss"
+          />
+        </template>
+      </InputBar>
     </div>
 
     <!-- 编辑对话框 -->
@@ -1418,18 +1500,18 @@ onUnmounted(() => {
 
 .scroll-down-enter-active {
   transition:
-    opacity 0.2s ease-out,
-    transform 0.2s ease-out;
+    opacity var(--motion-duration-medium) var(--motion-ease-out),
+    transform var(--motion-duration-slow) var(--motion-ease-spring);
 }
 .scroll-down-leave-active {
   transition:
-    opacity 0.15s ease-in,
-    transform 0.15s ease-in;
+    opacity var(--motion-duration-fast) var(--motion-ease-in),
+    transform var(--motion-duration-fast) var(--motion-ease-in);
 }
 .scroll-down-enter-from,
 .scroll-down-leave-to {
   opacity: 0;
-  transform: translateY(12px);
+  transform: translate3d(0, var(--motion-distance-md), 0) scale(0.8);
 }
 @media (prefers-reduced-motion: reduce) {
   .chat-scroll-down,
@@ -1676,3 +1758,5 @@ onUnmounted(() => {
   }
 }
 </style>
+
+<style scoped src="./chat-container-motion.css"></style>

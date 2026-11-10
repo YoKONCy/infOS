@@ -12,7 +12,7 @@
  * 不以思考标签结尾的普通文本预填充没有吞答风险，保持旧行为：首段正文到达时直接拼回。
  */
 
-const THINKING_TAG = /<(selfMinding|think|thinking|thought)(?:\s[^>]*)?>/gi
+const THINKING_TAG = /<(innerVoice|selfMinding|think|thinking|thought)(?:\s[^>]*)?>/gi
 
 /** 预填充末尾仍未闭合的思考标签名（小写）；没有则返回 undefined。 */
 export function unclosedThinkingTag(prefill: string): string | undefined {
@@ -58,16 +58,6 @@ export class PrefillContinuationGate {
     return this.release(true)
   }
 
-  /**
-   * 工具参数开始生成时调用。尚无暂存正文时沿用原行为拼回预填充，使工具调用消息与请求一致；
-   * 已有暂存正文的交给 finish() 按未续写发布。
-   */
-  startToolCall(): string {
-    if (this.state !== 'pending' || this.buffer) return ''
-    this.state = 'plain'
-    return this.prefill
-  }
-
   /** 流结束、转入工具调用或中断时调用；未见关闭标签即按“未续写”发布暂存正文。 */
   finish(): string {
     if (this.state !== 'pending' || !this.buffer) return ''
@@ -78,7 +68,7 @@ export class PrefillContinuationGate {
     const text = this.buffer
     this.buffer = ''
     // 上游从思考开标签重新开头，说明它没有把预填充当成自己的开头。
-    if (/^\s*<(selfMinding|think|thinking|thought)(?:\s[^>]*)?>/i.test(text)) {
+    if (/^\s*<(innerVoice|selfMinding|think|thinking|thought)(?:\s[^>]*)?>/i.test(text)) {
       this.state = 'restarted'
       return text
     }
@@ -87,13 +77,8 @@ export class PrefillContinuationGate {
   }
 }
 
-/** 非流式整段回复的同一判定；纯工具调用沿用原行为拼回预填充，空回复不拼回。 */
-export function completePrefilledContent(
-  prefill: string,
-  content: string,
-  hasToolCalls = false,
-): string {
+/** 非流式整段回复的同一判定；没有正文（纯工具调用或空回复）时不拼回预填充。 */
+export function completePrefilledContent(prefill: string, content: string): string {
   const gate = new PrefillContinuationGate(prefill)
-  const text = gate.push(content)
-  return text + (hasToolCalls ? gate.startToolCall() : '') + gate.finish()
+  return gate.push(content) + gate.finish()
 }

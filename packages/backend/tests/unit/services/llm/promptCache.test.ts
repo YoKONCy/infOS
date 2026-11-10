@@ -5,13 +5,17 @@ import {
   appendPromptSnapshot,
   historyKey,
   invalidatePromptReplay,
+  clearPromptReplay,
+  promptReplayGeneration,
   preparePromptReplay,
+  promptReplayHistoryStart,
   promptFingerprint,
   stableHistoryWindow,
   trimOldestPromptRound,
 } from '../../../../src/services/llm/promptCache'
 import { OpenAiProvider } from '../../../../src/services/llm/providers/openaiProvider'
 import { desktopCheckpointMessages } from '../../../../src/services/agent/reactLoop'
+import { bindDynamicContext, compileModelRequest } from '../../../../src/services/prompt/requestCompiler'
 
 afterEach(() => {
   invalidatePromptReplay()
@@ -30,6 +34,200 @@ function history(message: ChatMessage): ChatMessage {
 function snapshot(content: string): ChatMessage {
   return { role: 'user', content }
 }
+
+function stored(id: number, role: 'user' | 'assistant', content = `正文${id}`): ChatMessage {
+  return {
+    role,
+    content,
+    cacheControl: { kind: 'history', key: `${id}:${content}`, historyMessageId: id },
+  }
+}
+
+function persistedCurrent(id: number): ChatMessage {
+  const key = `${id}:正文${id}`
+  return {
+    role: 'user',
+    content: `正文${id}`,
+    cacheControl: {
+      kind: 'current',
+      currentKeys: [key],
+      replayAnchor: { key, messageId: id },
+    },
+  }
+}
+
+function wire(messages: ChatMessage[]): ChatMessage[] {
+  return messages.map(({ cacheControl: _cache, ...message }) => message)
+}
+
+describe('工作窗口跨轮续接', () => {
+  it('阶段清理阻止当前会话的旧缓存提交，持久执行的隐私代次独立计数', () => {
+    const scope = 'desktop:pero:clear-context'
+    const generation = promptReplayGeneration()
+    const input = [system, current('第一条输入')]
+    const first = preparePromptReplay(scope, input, { model: '模型' })
+    clearPromptReplay(scope)
+    first.commit([...first.messages, { role: 'assistant', content: '旧执行回复' }], '旧执行回复')
+    expect(promptReplayGeneration()).toBe(generation)
+    const next = preparePromptReplay(scope, [system, history(input[1]!),
+      history({ role: 'assistant', content: '旧执行回复' }), current('新输入')], { model: '模型' })
+    expect(next.reused).toBe(false)
+    expect(next.messages.map((message) => message.content)).toEqual(['固定人格与协议', '第一条输入', '旧执行回复', '新输入'])
+  })
+
+  it('前移动态资料时继续复用规范轨迹，已发送的更早前缀保持一致', () => {
+    const scope = 'desktop:pero:dynamic-depth-replay'
+    const fixed: ChatMessage = { ...system, promptPlan: { dynamicContextDepth: 1 } }
+    const dynamic = (content: string): ChatMessage => ({
+      role: 'user', content,
+      cacheControl: { kind: 'snapshot', key: 'prompt-slot:turn_context' },
+    })
+    const firstInput = [fixed, stored(1, 'user'), stored(2, 'assistant'), dynamic('状态一'), persistedCurrent(3)]
+    bindDynamicContext(firstInput, 1, '1:正文1')
+    const first = preparePromptReplay(scope, firstInput, { model: '模型', depth: 1 })
+    const trace: ChatMessage[] = [...first.messages, { role: 'assistant', content: '正文4' }]
+    const firstWire = compileModelRequest(trace, 0).messages
+    first.commit(trace, '正文4')
+    const nextInput = [
+      fixed, stored(1, 'user'), stored(2, 'assistant'), stored(3, 'user'),
+      stored(4, 'assistant'), dynamic('状态二'), persistedCurrent(5),
+    ]
+    bindDynamicContext(nextInput, 1, '3:正文3')
+    const next = preparePromptReplay(scope, nextInput, { model: '模型', depth: 1 })
+    expect(next.reused).toBe(true)
+    const nextWire = compileModelRequest(next.messages, 0).messages
+    expect(wire(nextWire.slice(0, 4))).toEqual(wire(firstWire.slice(0, 4)))
+    expect(nextWire[4]?.content).toContain('状态二')
+    expect(nextWire[5]?.content).toBe('正文3')
+    expect(nextWire[6]?.content).toBe('正文4')
+    expect(nextWire.at(-1)?.content).toBe('正文5')
+    expect(next.messages.slice(0, trace.length).map((message) => message.content)).toEqual(
+      trace.map((message) => message.content),
+    )
+  })
+
+  it('裁剪后固定起点，连续追加保持已发送前缀，再次裁剪才前移且不补回旧材料', () => {
+    const scope = 'desktop:pero:stable-work-window'
+    const rows = Array.from({ length: 10 }, (_, index) =>
+      stored(index + 1, index % 2 === 0 ? 'user' : 'assistant'),
+    )
+    const first = preparePromptReplay(
+      scope,
+      [system, ...rows.slice(0, 4), snapshot('旧执行状态'), persistedCurrent(5)],
+      '模型',
+    )
+    // 模拟逐请求滑窗已移除第一个完整对话对，提交实际保留的投影。
+    const trimmed: ChatMessage[] = [
+      system,
+      ...first.messages.slice(3),
+      { role: 'assistant', content: '正文6' },
+    ]
+    first.commit(trimmed, '正文6')
+    expect(promptReplayHistoryStart(scope)).toBe(3)
+
+    const second = preparePromptReplay(
+      scope,
+      [system, ...rows.slice(0, 6), persistedCurrent(7)],
+      '模型',
+    )
+    expect(second.reused).toBe(true)
+    expect(wire(second.messages.slice(0, trimmed.length))).toEqual(wire(trimmed))
+    expect(second.messages.some((message) => message.content === '正文1')).toBe(false)
+    second.commit([...second.messages, { role: 'assistant', content: '正文8' }], '正文8')
+    expect(promptReplayHistoryStart(scope)).toBe(3)
+
+    const third = preparePromptReplay(
+      scope,
+      [system, ...rows.slice(2, 8), persistedCurrent(9)],
+      '模型',
+    )
+    expect(third.reused).toBe(true)
+    const moved = third.messages.filter(
+      (message) => !['3:正文3', '4:正文4'].includes(message.cacheControl?.replayAnchor?.key ?? ''),
+    )
+    third.commit([...moved, { role: 'assistant', content: '正文10' }], '正文10')
+    expect(promptReplayHistoryStart(scope)).toBe(5)
+    const fourth = preparePromptReplay(scope, [system, ...rows.slice(2), persistedCurrent(11)], '模型')
+    expect(fourth.reused).toBe(true)
+    expect(wire(fourth.messages.slice(0, moved.length))).toEqual(wire(moved))
+    expect(fourth.messages.some((message) => message.content === '正文3')).toBe(false)
+  })
+
+  it('输入滑出后仍校验保留回复的来源', () => {
+    const scope = 'desktop:pero:reply-anchor'
+    const first = preparePromptReplay(scope, [system, persistedCurrent(1)], '模型')
+    first.commit([...first.messages, { role: 'assistant', content: '正文2' }], '正文2')
+    const second = preparePromptReplay(
+      scope,
+      [system, stored(1, 'user'), stored(2, 'assistant'), persistedCurrent(3)],
+      '模型',
+    )
+    expect(second.reused).toBe(true)
+    second.commit(
+      [
+        ...second.messages.filter((message) => message.content !== '正文1'),
+        { role: 'assistant', content: '正文4' },
+      ],
+      '正文4',
+    )
+    expect(promptReplayHistoryStart(scope)).toBe(1)
+    const next = preparePromptReplay(
+      scope,
+      [
+        system,
+        stored(1, 'user', '编辑后的输入'),
+        stored(2, 'assistant'),
+        stored(3, 'user'),
+        stored(4, 'assistant'),
+        persistedCurrent(5),
+      ],
+      '模型',
+    )
+    expect(next.reused).toBe(false)
+    expect(next.messages.some((message) => message.content === '编辑后的输入')).toBe(true)
+  })
+
+  it.each(['编辑', '撤回', '模型', '权限', '失效'])('固定窗口遇到%s时重新编译', (change) => {
+    const scope = 'desktop:pero:changed-window'
+    const rows = [stored(1, 'user'), stored(2, 'assistant'), stored(3, 'user'), stored(4, 'assistant')]
+    const identity = { model: '一', tools: ['read_file'] }
+    const first = preparePromptReplay(
+      scope,
+      [system, ...rows, snapshot('旧执行细节'), persistedCurrent(5)],
+      identity,
+    )
+    first.commit([system, ...first.messages.slice(3), { role: 'assistant', content: '正文6' }], '正文6')
+    if (change === '失效') {
+      invalidatePromptReplay('changed-window')
+      expect(promptReplayHistoryStart(scope)).toBeUndefined()
+    }
+    const retained = [
+      stored(3, 'user'),
+      stored(4, 'assistant'),
+      stored(5, 'user'),
+      stored(6, 'assistant'),
+    ]
+    if (change === '编辑') retained[0] = stored(3, 'user', '修改后的正文')
+    if (change === '撤回') retained.splice(1, 1)
+    const next = preparePromptReplay(scope, [system, ...retained, persistedCurrent(7)], {
+      model: change === '模型' ? '二' : '一',
+      tools: change === '权限' ? [] : ['read_file'],
+    })
+    expect(next.reused).toBe(false)
+    expect(next.messages.some((message) => message.content === '旧执行细节')).toBe(false)
+  })
+
+  it('读取起点不消费缓存，过期后恢复冷窗口', () => {
+    vi.useFakeTimers()
+    const scope = 'desktop:pero:window-expiry'
+    const replay = preparePromptReplay(scope, [system, persistedCurrent(42)], '模型')
+    replay.commit([...replay.messages, { role: 'assistant', content: '完成' }], '完成')
+    expect(promptReplayHistoryStart(scope)).toBe(42)
+    expect(promptReplayHistoryStart(scope)).toBe(42)
+    vi.advanceTimersByTime(31 * 60_000)
+    expect(promptReplayHistoryStart(scope)).toBeUndefined()
+  })
+})
 
 describe('跨轮提示词前缀', () => {
   it('多条已送达文字与表情作为完整消息组续接，不与第一条回复错误比较', () => {

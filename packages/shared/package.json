@@ -8,6 +8,7 @@
   "exports": {
     ".": "./src/index.ts",
     "./i18n": "./src/i18n/index.ts",
+    "./i18n/catalogLoaders": "./src/i18n/catalogLoaders.ts",
     "./i18n/client": "./src/i18n/client.ts",
     "./resource-versions": "./src/node/resourceVersions.ts",
     "./i18n/catalogs/*": "./src/i18n/catalogs/*.ts"

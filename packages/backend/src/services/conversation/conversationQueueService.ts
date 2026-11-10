@@ -18,7 +18,7 @@ export interface QueuedTurnOutcome {
 
 /** 服务端独立驱动队列，客户端只提交和观察；浏览器断线不会改变派发权。 */
 export class ConversationQueueService {
-  private running = new Set<string>()
+  private running = new Map<string, symbol>()
   private historyChanging = new Set<string>()
   private live = new Map<string, ConversationSurfaceSession>()
   private timer?: ReturnType<typeof setInterval>
@@ -31,6 +31,7 @@ export class ConversationQueueService {
     private readonly threads: ThreadService,
     private readonly attachments: AttachmentRepository,
     private readonly isOtherWorkBusy: (threadId: string) => boolean | Promise<boolean>,
+    private readonly onUserInput?: (agentId: string, threadId: string) => Promise<void>,
   ) {}
 
   setRunner(runner: NonNullable<ConversationQueueService['runner']>): void {
@@ -64,6 +65,7 @@ export class ConversationQueueService {
   }
   historyChanged(threadId: string, deleted = false, discardPending = false): void {
     this.repo.historyChanged(threadId, deleted, discardPending)
+    if (discardPending || deleted) this.running.delete(threadId)
   }
   setLive(threadId: string, surface?: ConversationSurfaceSession): void {
     if (surface) this.live.set(threadId, surface)
@@ -87,6 +89,9 @@ export class ConversationQueueService {
     if (this.historyChanging.has(threadId))
       throw new AppError('CONFLICT', { message: '历史正在更新，请稍后操作' })
   }
+  assertHistoryStable(threadId: string): void {
+    this.assertQueueMutable(threadId)
+  }
 
   async enqueue(id: string, input: QueuedConversationInput): Promise<ConversationQueueSnapshot> {
     this.assertQueueMutable(input.threadId)
@@ -108,9 +113,36 @@ export class ConversationQueueService {
         throw new AppError('CONFLICT', { message: '附件尚未就绪、已经发送或属于其他会话' })
     }
     this.assertQueueMutable(input.threadId)
-    this.repo.enqueue(id, { ...input, agentId: thread.agentId })
+    if (input.expectedGeneration !== undefined && input.expectedGeneration !== thread.generation)
+      throw new AppError('CONFLICT', { message: '会话已重置，本次执行已过期' })
+    this.repo.enqueue(id, { ...input, agentId: thread.agentId, expectedGeneration: thread.generation })
+    if (!existing && !input.taskResultEvent && this.onUserInput) {
+      await this.onUserInput(thread.agentId, thread.id).catch((error) =>
+        logger.warn(__t('logs.companion', '保存主动行为活动时间失败'), { error }))
+    }
     this.kick(thread.id)
     return this.snapshot(thread.id)
+  }
+
+  async regenerate(id: string, threadId: string, messageId: number, revision: number): Promise<ConversationQueueSnapshot> {
+    this.assertQueueMutable(threadId)
+    const existing = this.repo.get(id)
+    if (existing) {
+      const original = existing.input.regeneration
+      if (existing.input.threadId !== threadId || !original || original.messageId !== messageId || original.revision !== revision)
+        throw new AppError('CONFLICT', { message: __t('server.conversation', '消息已变化，请重新选择后再生成') })
+      return this.snapshot(threadId)
+    }
+    const source = await this.threads.getRegenerationSource(threadId, messageId, revision)
+    const thread = await this.threads.getThread(threadId)
+    if (!thread) throw new AppError('NOT_FOUND', { message: '会话不存在' })
+    this.pause(threadId, true)
+    await this.enqueue(id, {
+      threadId, agentId: thread.agentId, expectedGeneration: thread.generation,
+      content: source.message.content, regeneration: { messageId, revision },
+    })
+    const queued = this.repo.get(id)!
+    return this.change(threadId, id, queued.revision, { immediate: true })
   }
 
   async change(
@@ -120,6 +152,8 @@ export class ConversationQueueService {
     change: { content?: string; cancel?: boolean; immediate?: boolean; draft?: boolean },
   ): Promise<ConversationQueueSnapshot> {
     this.assertQueueMutable(threadId)
+    if (this.repo.get(id)?.input.regeneration && (change.content !== undefined || change.draft))
+      throw new AppError('INVALID_PARAMETER', { message: __t('server.conversation', '重新生成动作可取消后重新发起') })
     this.repo.mutate(threadId, id, revision, change)
     if (change.immediate) {
       // 先确认交接消息已经落盘，之后才中断在飞模型；工具使用的父信号不受影响。
@@ -170,9 +204,11 @@ export class ConversationQueueService {
       this.runtime.getTaskInfo(threadId)
     )
       return
-    this.running.add(threadId)
-    void this.drainOne(threadId)
+    const owner = Symbol(threadId)
+    this.running.set(threadId, owner)
+    void this.drainOne(threadId, owner)
       .catch((error) => {
+        if (this.running.get(threadId) !== owner) return
         logger.error(__t('logs.conversation', '消息队列派发失败，已保留持久记录'), {
           threadId,
           error: String(error),
@@ -189,10 +225,10 @@ export class ConversationQueueService {
           this.stop()
         }
       })
-      .finally(() => this.running.delete(threadId))
+      .finally(() => { if (this.running.get(threadId) === owner) this.running.delete(threadId) })
   }
 
-  private async drainOne(threadId: string): Promise<void> {
+  private async drainOne(threadId: string, owner: symbol): Promise<void> {
     if (await this.isOtherWorkBusy(threadId)) return
     const thread = await this.threads.getThread(threadId)
     if (!thread || thread.status !== 'active') {
@@ -200,9 +236,13 @@ export class ConversationQueueService {
       return
     }
     // 异步查询后重新检查并同步注册，避免多客户端或普通发送插队到同一 Thread。
-    if (this.runtime.getTaskInfo(threadId) || this.historyChanging.has(threadId)) return
+    if (this.running.get(threadId) !== owner || this.runtime.getTaskInfo(threadId) || this.historyChanging.has(threadId)) return
     const entry = this.repo.claim(threadId)
     if (!entry) return
+    if (entry.input.expectedGeneration !== undefined && entry.input.expectedGeneration !== thread.generation) {
+      this.repo.settle(entry.id, 'cancelled')
+      return
+    }
     this.runtime.registerTask(threadId, entry.input.agentId)
     const ownedSignal = this.runtime.getAbortSignal(threadId)
     logger.info(__t('logs.conversation', '开始派发队列消息'), {
@@ -212,16 +252,18 @@ export class ConversationQueueService {
     })
     try {
       const outcome = await this.runner!({ ...entry.input, queueMessageId: entry.id })
+      if (this.running.get(threadId) !== owner) return
       if (!outcome.success || outcome.paused) this.afterTurn(threadId, outcome)
       this.repo.settle(entry.id, outcome.success ? 'completed' : 'interrupted', outcome.error)
     } catch (error) {
+      if (this.running.get(threadId) !== owner) return
       this.repo.settle(entry.id, 'failed', String(error))
       this.repo.pause(threadId, true, '执行失败，后续消息已暂停')
       throw error
     } finally {
       // Runner 正常负责注销；启动前失败也必须释放本次占用。
       if (this.runtime.getAbortSignal(threadId) === ownedSignal)
-        this.runtime.unregisterTask(threadId)
+        this.runtime.unregisterTask(threadId, ownedSignal)
     }
   }
 }

@@ -2,6 +2,7 @@
 import { getDisplayLocale } from '../../../i18n/index'
 
 import { t as __t } from '../../../i18n/index'
+import { threadDisplayName } from '../../../utils/threadPresentation'
 
 import { copyClientText } from '../../../lib/clientPlatform'
 
@@ -68,6 +69,8 @@ interface InitialPromptMessage {
 }
 
 interface LogEntry {
+  canDelete?: boolean
+  threadKind?: 'main' | 'side'
   id: string
   threadId: string
   /** group 日志以 roomId 聚合；普通日志保留 null。 */
@@ -194,7 +197,7 @@ const filteredLogs = computed(() => {
   }
   if (searchQuery.value.trim()) {
     const q = searchQuery.value.toLowerCase()
-    list = list.filter((l) => l.summary.toLowerCase().includes(q))
+    list = list.filter((log) => threadDisplayName({ threadKind: log.threadKind, title: log.summary }).toLowerCase().includes(q))
   }
   // 排序
   if (selectedSort.value === 'asc') {
@@ -202,7 +205,7 @@ const filteredLogs = computed(() => {
       (a, b) => new Date(a.createdAt).getTime() - new Date(b.createdAt).getTime(),
     )
   }
-  return list
+  return [...list].sort((a, b) => Number(b.threadKind === 'main') - Number(a.threadKind === 'main'))
 })
 
 // ── API 操作 ──
@@ -312,7 +315,7 @@ async function toggleExpand(id: string): Promise<void> {
         return
       }
 
-      const res = await threadsApi.get(log.threadId, { pageSize: 30 })
+      const res = await threadsApi.get(log.threadId, { pageSize: 30, debug: true })
       const data = res.data
       if (data) {
         const threadMessages = [...data.messages].reverse().map((message: ThreadMessageInfo) => ({
@@ -366,11 +369,13 @@ function isOwnerMessage(log: LogEntry, message: LogMessage): boolean {
 
 function toLogEntry(t: ThreadInfo): LogEntry {
   return {
+    canDelete: t.canDelete,
+    threadKind: t.threadKind,
     id: t.id,
     threadId: t.id,
     agentId: t.agentId,
     agentName: getAgentName(t.agentId),
-    summary: t.title || __t('ui.settings', '未命名会话'),
+    summary: t.title,
     // 后端列表已返回真实计数，无需展开即可展示
     messageCount: t.messageCount ?? 0,
     channel: t.channel || 'desktop',
@@ -427,7 +432,7 @@ async function handleCopy(content: string) {
 /** 修改日志中的会话标题，并立即同步当前列表。 */
 async function confirmRenameThread(value?: string) {
   const target = threadPendingRename.value
-  if (!target) return
+  if (!target || target.threadKind === 'main') return
   const title = value?.trim() ?? ''
   try {
     await threadsApi.rename(target.threadId, title)
@@ -460,7 +465,7 @@ async function requestDeleteThread(log: LogEntry) {
     await rewind.open({
       threadId: log.threadId,
       wholeThread: true,
-      title: log.summary || __t('ui.settings', '未命名会话'),
+      title: threadDisplayName({ threadKind: log.threadKind, title: log.summary }),
       onSuccess: () => {
         logs.value = logs.value.filter((item) => item.id !== log.id)
         totalCount.value = Math.max(0, totalCount.value - 1)
@@ -510,7 +515,9 @@ async function handleDeletePair(log: LogEntry, id: string) {
             },
           }),
         )
-        notif.toast(__t('ui.settings', '已回滚 {0} 轮对话', [result.preview.pairCount]), {
+        notif.toast(result.preview.scope
+          ? __t('ui.chat', '已撤回 {0} 条消息', [result.preview.pairCount])
+          : __t('ui.settings', '已回滚 {0} 轮对话', [result.preview.pairCount]), {
           type: 'success',
           get title() {
             return __t('ui.settings', '对话日志')
@@ -829,7 +836,7 @@ onUnmounted(() => {
                 </div>
                 <div class="min-w-0">
                   <h4 class="text-[13px] font-bold text-ui-text-primary truncate">
-                    {{ log.summary }}
+                    {{ threadDisplayName({ threadKind: log.threadKind, title: log.summary }) }}
                   </h4>
                   <div class="flex gap-3 mt-1 flex-wrap">
                     <span class="text-[10px] text-ui-text-secondary flex items-center gap-1">
@@ -850,6 +857,7 @@ onUnmounted(() => {
               <!-- 会话操作 -->
               <div class="flex items-center gap-1 relative z-20">
                 <button
+                  v-if="log.threadKind !== 'main'"
                   class="p-1.5 text-ui-text-secondary hover:text-ui-accent-sky hover:bg-ui-accent-sky-soft transition-colors"
                   :title="__t('ui.settings', '修改会话标题')"
                   :aria-label="__t('ui.settings', '修改会话标题')"
@@ -859,6 +867,7 @@ onUnmounted(() => {
                 </button>
                 <button
                   class="p-1.5 text-ui-text-secondary hover:text-ui-danger hover:bg-ui-danger-soft transition-colors"
+                  v-if="log.canDelete !== false"
                   :title="__t('ui.settings', '删除整条会话')"
                   :aria-label="__t('ui.settings', '删除整条会话')"
                   @click.stop="requestDeleteThread(log)"
@@ -1071,11 +1080,12 @@ onUnmounted(() => {
 
   <!-- ═══ 调试日志弹窗 ═══ -->
   <PDialog
-    :model-value="Boolean(threadPendingRename)"
+    :model-value="Boolean(threadPendingRename && threadPendingRename.threadKind !== 'main')"
     :title="__t('ui.settings', '修改会话标题')"
     mode="prompt"
     :default-value="
-      threadPendingRename?.summary === '未命名会话' ? '' : threadPendingRename?.summary || ''
+      threadPendingRename?.threadKind === 'main' || threadPendingRename?.summary === '未命名会话'
+        ? '' : threadPendingRename?.summary || ''
     "
     :placeholder="__t('ui.settings', '未命名会话')"
     :confirm-text="__t('ui.settings', '保存标题')"

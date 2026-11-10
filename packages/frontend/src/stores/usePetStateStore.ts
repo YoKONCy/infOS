@@ -5,7 +5,7 @@ import { DEFAULT_CHARACTER_STATE, type CharacterState } from '@infos/shared'
 
 export type PetStatusState = CharacterState
 
-/** 角色状态按会话隔离；切换会话立即显示该会话的投影，不借用其他会话快照。 */
+/** 共享状态按角色缓存，会话选择仅决定请求来源。 */
 export const usePetStateStore = defineStore('petState', () => {
   const states = ref<Record<string, PetStatusState>>({})
   const activeAgentId = ref('pero')
@@ -22,8 +22,8 @@ export const usePetStateStore = defineStore('petState', () => {
   function threadFor(agentId: string): string {
     return selectedThreads.value[agentId] ?? ''
   }
-  function scopeKey(agentId: string, threadId = threadFor(agentId)): string {
-    return JSON.stringify([agentId, threadId])
+  function scopeKey(agentId: string, _threadId = threadFor(agentId)): string {
+    return agentId
   }
   function stateFor(agentId: string, threadId = threadFor(agentId)): PetStatusState {
     return states.value[scopeKey(agentId, threadId)] ?? DEFAULT_CHARACTER_STATE

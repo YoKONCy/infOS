@@ -1,3 +1,9 @@
+import themeServerZhCn from '../locales/zh-CN/server/theme.json'
+import themeServerZhTw from '../locales/zh-TW/server/theme.json'
+import themeServerEnUs from '../locales/en-US/server/theme.json'
+import themeLogsZhCn from '../locales/zh-CN/logs/theme.json'
+import themeLogsZhTw from '../locales/zh-TW/logs/theme.json'
+import themeLogsEnUs from '../locales/en-US/logs/theme.json'
 import indexMaintenanceCn from '../locales/zh-CN/server/index-maintenance.json'
 import resourcesCn from '../locales/zh-CN/server/resources.json'
 import resourcesTw from '../locales/zh-TW/server/resources.json'
@@ -499,6 +505,12 @@ registerCatalog('server.packages', 'en-US', packagesEnUs)
 registerCatalog('server.runtime-debug', 'zh-CN', runtimeDebugZhCn)
 registerCatalog('server.runtime-debug', 'zh-TW', runtimeDebugZhTw)
 registerCatalog('server.runtime-debug', 'en-US', runtimeDebugEnUs)
+registerCatalog('server.theme', 'zh-CN', themeServerZhCn)
+registerCatalog('server.theme', 'zh-TW', themeServerZhTw)
+registerCatalog('server.theme', 'en-US', themeServerEnUs)
+registerCatalog('logs.theme', 'zh-CN', themeLogsZhCn)
+registerCatalog('logs.theme', 'zh-TW', themeLogsZhTw)
+registerCatalog('logs.theme', 'en-US', themeLogsEnUs)
 
 registerCatalog('server.tts', 'zh-CN', tts0)
 registerCatalog('server.tts', 'zh-TW', tts1)
@@ -516,3 +528,9 @@ registerCatalog('logs.knowledge-recall', 'zh-TW', knowledgeRecallTw)
 registerCatalog('logs.knowledge-recall', 'en-US', knowledgeRecallEn)
 registerCatalog('server.audio-input', 'zh-TW', audioInputTw)
 registerCatalog('server.audio-input', 'en-US', audioInputEn)
+import desktopShellServerZhCn from '../locales/zh-CN/server/desktop-shell.json'
+import desktopShellServerZhTw from '../locales/zh-TW/server/desktop-shell.json'
+import desktopShellServerEnUs from '../locales/en-US/server/desktop-shell.json'
+registerCatalog('server.desktopShell', 'zh-CN', desktopShellServerZhCn)
+registerCatalog('server.desktopShell', 'zh-TW', desktopShellServerZhTw)
+registerCatalog('server.desktopShell', 'en-US', desktopShellServerEnUs)

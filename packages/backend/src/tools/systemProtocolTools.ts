@@ -1,10 +1,11 @@
 import { ADVANCED_TOOL_NAMES, isAdvancedTool } from './advancedTools'
+import { NOTEBOOK_FILE_TOOLS } from '../services/memory/notebook'
 
 /** Agent执行协议的固定工具；逐项开关不可关闭，仍受 Thread 模式与作用域限制。 */
 export const SYSTEM_PROTOCOL_TOOLS = new Set([
+  'conversation',
   'finish_task',
   'run_script',
-  'load_skill',
   'update_flow_state',
   'ask_user',
   'update_state',
@@ -26,8 +27,16 @@ export function isTaskCoordinationTool(name: string): boolean {
   )
 }
 
-/** 据点group通道除固定执行协议外，仅开放据点空间状态机工具。 */
+/** 据点通道开放空间状态、记忆及目录受限的个人记事本工具。 */
 export const STRONGHOLD_CHANNEL_TOOLS = new Set([
+  ...NOTEBOOK_FILE_TOOLS,
+  'query_event_notes',
+  'query_facts',
+  'write_fact',
+  'supersede_fact',
+  'delete_fact',
+  'add_fact_object_alias',
+  'remove_fact_object_alias',
   'stronghold_move_to_room',
   'stronghold_list_rooms',
   'stronghold_get_room_info',

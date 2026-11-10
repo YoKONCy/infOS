@@ -1,6 +1,7 @@
 import type { BuiltinTool } from '../index'
 import { toolFailure, toolSuccess } from '../../services/execution/toolResult'
 import { applyCharacterStateUpdate } from '../finishTask'
+import { AppError } from '../../lib/appError'
 
 /** 独立更新角色状态与动态台词，不结束ReAct，也不承担用户最终回复。 */
 export const updateStateTool: BuiltinTool = {
@@ -19,7 +20,9 @@ export const updateStateTool: BuiltinTool = {
     } catch (error) {
       return toolFailure(
         'UPDATE_STATE_FAILED',
-        error instanceof Error ? error.message : String(error),
+        error instanceof AppError && error.code === 'CONFLICT'
+          ? JSON.stringify({ message: error.message, ...error.data as object })
+          : error instanceof Error ? error.message : String(error),
       )
     }
   },

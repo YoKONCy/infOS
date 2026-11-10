@@ -2,6 +2,7 @@
 import { computed, onMounted, onUnmounted, ref, watch } from 'vue'
 import { t } from '../../../i18n'
 import { PixelIcon, PButton } from '../../pixel'
+import MotionSkeleton from '../../motion/MotionSkeleton.vue'
 import { useAgentStore } from '../../../stores'
 import {
   socialApi,
@@ -177,9 +178,7 @@ onUnmounted(() => {
           {{ t('ui.social', '重新加载') }}
         </PButton>
       </div>
-      <div v-if="loading" class="sp-page-loading" role="status">
-        {{ t('ui.social', '加载中…') }}
-      </div>
+      <MotionSkeleton v-if="loading" variant="card" :rows="3" :label="t('ui.social', '加载中…')" />
       <SocialCommonSettings
         v-else-if="selectedPlatform === 'shared'"
         :agent-id="agentId"

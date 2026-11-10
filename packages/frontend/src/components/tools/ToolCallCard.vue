@@ -402,15 +402,17 @@ watch(drawerOpen, (value) => {
       />
     </div>
     <Teleport to="body">
-      <ToolTechnicalDrawer
-        v-if="drawerOpen"
-        :name="tool.name"
-        :args="tool.args"
-        :result="tool.result"
-        :is-error="tool.isError"
-        :duration-ms="tool.durationMs"
-        @close="drawerOpen = false"
-      />
+      <Transition name="motion-drawer">
+        <ToolTechnicalDrawer
+          v-if="drawerOpen"
+          :name="tool.name"
+          :args="tool.args"
+          :result="tool.result"
+          :is-error="tool.isError"
+          :duration-ms="tool.durationMs"
+          @close="drawerOpen = false"
+        />
+      </Transition>
     </Teleport>
   </details>
 </template>

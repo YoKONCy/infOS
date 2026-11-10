@@ -1,0 +1,16 @@
+{
+  "frontend.ts 语法错误: {0}": "frontend.ts syntax error: {0}",
+  "frontend.ts 重复引入标识符: {0}": "frontend.ts imports a duplicate identifier: {0}",
+  "frontend.ts 含有不支持的 import 写法": "frontend.ts contains an unsupported import form",
+  "frontend.ts 只允许具名引入 registerCatalog": "frontend.ts may only import registerCatalog as a named import",
+  "frontend.ts 未引入 registerCatalog": "frontend.ts does not import registerCatalog",
+  "frontend.ts 引入了无法识别的 i18n 成员: {0}": "frontend.ts imports an unrecognized i18n member: {0}",
+  "frontend.ts 只允许默认引入支持语言的 JSON 词库": "frontend.ts may only default-import JSON catalogs of supported languages",
+  "frontend.ts 含有拆分插件不支持的语句": "frontend.ts contains a statement the split plugin does not support",
+  "frontend.ts 含有拆分插件不支持的语句；只允许直接调用 registerCatalog": "frontend.ts contains a statement the split plugin does not support; only direct registerCatalog calls are allowed",
+  "frontend.ts 注册参数必须为两个字符串字面量和一个词库标识符": "frontend.ts registration arguments must be two string literals and one catalog identifier",
+  "frontend.ts 注册了未知词库: {0}": "frontend.ts registers an unknown catalog: {0}",
+  "frontend.ts 词库语言不一致: {0} {1} ← {2}": "frontend.ts catalog language mismatch: {0} {1} ← {2}",
+  "frontend.ts 有未注册的词库: {0}": "frontend.ts has an unregistered catalog: {0}",
+  "未知的前端词库分块: {0}": "Unknown frontend catalog chunk: {0}"
+}

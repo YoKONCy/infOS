@@ -10,6 +10,8 @@ import { apiClient } from '../client'
 
 export interface EventMemorySource {
   available: boolean
+  withdrawn?: boolean
+  revised?: boolean
   messages: Array<{
     id: number
     role: string

@@ -3,6 +3,7 @@ import { validate as zValidator } from '../lib/validation'
 import { z } from 'zod'
 import type { AppContext } from '../container'
 import { AppError } from '../lib/appError'
+import { HOME_CHAT_CONFIRM_TOOL } from '../services/home/homeConfirmWait'
 
 const resolveSchema = z.object({
   decision: z.enum(['allow_once', 'allow_session', 'deny_once']),
@@ -45,6 +46,13 @@ export function createApprovalRouter(ctx: AppContext) {
 
   router.post('/:id/resolve', zValidator('json', resolveSchema), (c) => {
     const input = c.req.valid('json')
+    // 家的确认只有管理身份能答，普通配对设备不能替用户应答。
+    if (
+      ctx.approvalService.get(c.req.param('id'))?.toolName === HOME_CHAT_CONFIRM_TOOL &&
+      ctx.clientAccess &&
+      !ctx.clientAccess.authenticate(c.req.raw)?.admin
+    )
+      throw new AppError('FORBIDDEN')
     const request = ctx.approvalService.resolve(c.req.param('id'), input.decision, input.message)
     return c.json({ code: 'OK', data: request })
   })

@@ -27,6 +27,31 @@
 
 `agentId` 可省略。响应包含区间总计、小时／日期桶、模型分布、用途分布、首条记录时间和生成时间。查询先由数据库按 UTC 分钟与模型／用途聚合，再映射到请求时区；前端不遍历聊天历史或逐条调用记录。
 
+### 缓存命中自查
+
+此 SQL 适合在缓存用量上报方式相同的模型之间比较；其分母包含所有已上报输入，与界面仅统计有效缓存上报请求的命中率口径不完全相同。
+
+命中率偏低时，可只读打开数据目录下的 `infos.db` 执行以下查询。`tool_changes` 大于 0 表示同一次执行中工具定义发生变化，前缀在工具处整段失效；`hit_rate` 为缓存读取占输入的比例，服务商未上报缓存时为空。`started_at` 为 UTC 毫秒。
+
+```sql
+SELECT execution_id,
+       COUNT(DISTINCT tools_hash) - 1 AS tool_changes,
+       COUNT(DISTINCT prefix_hash) - 1 AS system_changes,
+       COUNT(*) AS requests,
+       SUM(cached_read_tokens) * 1.0 / NULLIF(SUM(input_tokens), 0) AS hit_rate
+FROM llm_usage_records
+WHERE execution_id IS NOT NULL
+  AND started_at > (strftime('%s', 'now', '-7 day') * 1000)
+GROUP BY execution_id
+HAVING requests > 1
+ORDER BY tool_changes DESC, system_changes DESC
+LIMIT 30;
+```
+
+缓存优化边界见 [A02 §6.1](./A02_BACKEND_ARCHITECTURE.md#61-上游提示词缓存)。不发送缓存控制字段不代表上游不会自动缓存；统计只读取实际响应，不为获取缓存数字另发模型请求。
+
+OpenAI Chat / Responses 保留标准明细 `cached_tokens`、`cache_write_tokens`，兼容中转的顶层 `cached_tokens`、`cache_read_input_tokens`、`cache_creation_input_tokens`、`prompt_cache_hit_tokens`，以及 NewAPI 的 `cached_creation_tokens` 和明确上报的 TTL 写入分项。同义字段只取一个；优先协议标准字段，明确的零不会被其他别名覆盖。`prompt_cache_miss_tokens` 是未命中输入，不是缓存写入；仅在总输入缺失且 hit/miss 均上报时以两者之和补全输入。OpenAI 输入已包含缓存明细，不再次相加；Anthropic 原生输入按其协议合并读取与写入。来源不明中转若改变计数语义，不能仅凭字段名证明账单正确。
+
 协议口径参考：[Claude 缓存用量](https://platform.claude.com/docs/en/build-with-claude/prompt-caching)、[Gemini Token 与思考计数](https://ai.google.dev/gemini-api/docs/generate-content/tokens)。
 
 ## 维护入口与统计边界

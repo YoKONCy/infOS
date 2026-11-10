@@ -4,10 +4,15 @@ import { AppError } from '@infos/backend/lib/appError'
 import { runChatStream } from '@infos/backend/services/conversation/chatStreamRunner'
 
 describe('队列准备失败的实时反馈', () => {
-  it('Execution 尚未创建时也打开失败 Surface，使仅订阅 Surface 的客户端收到原因', async () => {
+  it.each(['模型准备', '会话读取'] as const)('%s 失败时也发出失败帧并释放队列占用', async (failure) => {
     const afterTurn = vi.fn()
     const unregisterTask = vi.fn()
     const frames: SurfaceFrame[] = []
+    const error = new AppError('CONFIG_ERROR', { message: '请选择可用模型' })
+    const getThread = vi.fn(async () => {
+      if (failure === '会话读取') throw error
+      return { id: 'thread', threadKind: 'side', generation: 1 }
+    })
     const outcome = await runChatStream(
       {
         runtimeStateService: {
@@ -15,9 +20,10 @@ describe('队列准备失败的实时反馈', () => {
           unregisterTask,
         },
         conversationQueue: { afterTurn, setLive: vi.fn() },
+        threadService: { getThread },
         conversationTurnService: {
           async *streamTurn() {
-            yield await Promise.reject(new AppError('CONFIG_ERROR', { message: '请选择可用模型' }))
+            yield await Promise.reject(error)
           },
         },
       } as never,
@@ -41,6 +47,6 @@ describe('队列准备失败的实时反馈', () => {
     })
     expect(frames[1]!.surfaceId).toBe(frames[0]!.surfaceId)
     expect(afterTurn).toHaveBeenCalledWith('thread', outcome)
-    expect(unregisterTask).toHaveBeenCalledWith('thread')
+    expect(unregisterTask).toHaveBeenCalledWith('thread', undefined)
   })
 })

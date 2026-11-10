@@ -6,6 +6,8 @@ import { useNotificationStore } from '../../../stores/useNotificationStore'
 import { logger } from '../../../lib/logger'
 import { PButton, PDialog, PixelIcon, PSwitch } from '../../pixel'
 import RagNumberControl from './RagNumberControl.vue'
+import RagChannelFields from './RagChannelFields.vue'
+import RagBasicRelevanceFields from './RagBasicRelevanceFields.vue'
 
 const emit = defineEmits<{ back: [] }>()
 type Section = 'desktop' | 'group' | 'advanced'
@@ -32,12 +34,12 @@ const activeChannel = computed(() => (section.value === 'group' ? 'group' : 'des
 const sections = computed(() => [
   { id: 'desktop' as const, icon: 'desktop', label: t('ui.rag', '桌面对话') },
   { id: 'group' as const, icon: 'chat', label: t('ui.rag', '据点群聊') },
-  { id: 'advanced' as const, icon: 'link', label: t('ui.rag', '高级检索') },
+  { id: 'advanced' as const, icon: 'link', label: t('ui.rag', '检索策略') },
 ])
 const currentLabel = computed(() => sections.value.find((item) => item.id === section.value)?.label)
 const currentDescription = computed(() =>
   section.value === 'advanced'
-    ? t('ui.rag', '高级检索参数由两个场景共用')
+    ? t('ui.rag', '基础与高级检索参数由两个场景共用')
     : section.value === 'group'
       ? t('ui.rag', '仅影响据点群聊')
       : t('ui.rag', '桌面对话与轻量陪伴共用'),
@@ -247,41 +249,17 @@ onBeforeUnmount(() => {
             {{ t('ui.rag', '保存失败，请重试') }}
           </p>
           <fieldset class="rag-fields" :disabled="saving" :aria-busy="saving">
-            <template v-if="section !== 'advanced'">
-              <div class="rag-switch-row rag-switch-row--featured">
-                <span class="rag-feature-icon"><PixelIcon name="search" size="md" /></span>
-                <div class="rag-row-copy">
-                  <label :id="`rag-auto-${activeChannel}`">{{ t('ui.rag', '自动召回') }}</label>
-                  <p>{{ t('ui.rag', '对话时查找相关长期记忆') }}</p>
-                </div>
-                <PSwitch
-                  v-model="config.channels[activeChannel].enableAutoRag"
-                  :aria-labelledby="`rag-auto-${activeChannel}`"
-                />
-              </div>
-              <div class="rag-number-grid">
-                <RagNumberControl
-                  :id="`rag-context-${activeChannel}`"
-                  v-model="config.channels[activeChannel].contextPairs"
-                  :label="t('ui.rag', '最近对话轮数')"
-                  :description="t('ui.rag', '保留在上下文中的完整对话轮数')"
-                  :min="1"
-                  :max="100"
-                  :unit="t('ui.rag', '轮')"
-                />
-                <RagNumberControl
-                  :id="`rag-limit-${activeChannel}`"
-                  v-model="config.channels[activeChannel].retrievalLimit"
-                  :label="t('ui.rag', '召回事件数')"
-                  :description="t('ui.rag', '每次检索带回的相关记忆数量')"
-                  :min="1"
-                  :max="30"
-                  :unit="t('ui.rag', '条')"
-                  :disabled="!config.channels[activeChannel].enableAutoRag"
-                />
-              </div>
-            </template>
+            <RagChannelFields
+              v-if="section !== 'advanced'"
+              :key="activeChannel"
+              v-model:channel="config.channels[activeChannel]"
+              :channel-id="activeChannel"
+            />
             <template v-else>
+              <RagBasicRelevanceFields
+                v-model:basic="config.basic"
+                :advanced-enabled="config.advanced.enableSaPpr"
+              />
               <div class="rag-switch-row rag-switch-row--featured">
                 <span class="rag-feature-icon"><PixelIcon name="link" size="md" /></span>
                 <div class="rag-row-copy">

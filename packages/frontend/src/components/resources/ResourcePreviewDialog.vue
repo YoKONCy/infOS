@@ -33,6 +33,7 @@ const truncated = ref(false),
   loading = ref(false)
 const camera = ref(createPreviewState())
 let revision = 0
+let stopMathReady: (() => void) | undefined
 let controller: AbortController | undefined
 function openSource() {
   const item = resourcePreview.value
@@ -43,6 +44,8 @@ watch(
   resourcePreview,
   async (item) => {
     const version = ++revision
+    stopMathReady?.()
+    stopMathReady = undefined
     controller?.abort()
     text.value = ''
     html.value = ''
@@ -68,8 +71,19 @@ watch(
         text.value = result.text
         truncated.value = result.truncated
         if (kind.value === 'office' || kind.value === 'markdown') {
-          const { renderChatRichText } = await import('../../lib/chatRichRenderer')
-          if (version === revision) html.value = renderChatRichText(text.value, { cache: false })
+          const { prepareChatRichText, renderChatRichTextResult, onChatMathReady } =
+            await import('../../lib/chatRichRenderer')
+          await prepareChatRichText(text.value)
+          if (version !== revision) return
+          const rendered = renderChatRichTextResult(text.value, { cache: false })
+          html.value = rendered.html
+          if (!rendered.mathReady)
+            stopMathReady = onChatMathReady(() => {
+              if (version !== revision) return
+              html.value = renderChatRichTextResult(text.value, { cache: false }).html
+              stopMathReady?.()
+              stopMathReady = undefined
+            })
         }
       }
     } catch {
@@ -83,6 +97,7 @@ watch(
 )
 onBeforeUnmount(() => {
   ++revision
+  stopMathReady?.()
   controller?.abort()
 })
 </script>

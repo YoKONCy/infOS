@@ -92,9 +92,9 @@ export interface SkillManifest {
   id: string
   /** Skill 名称 */
   name: string
-  /** Skill 描述 (L1 菜单用) */
+  /** Skill 描述，供选择器及技能说明展示。 */
   description: string
-  /** 依赖的工具 ID 列表 (load_skill 时临时解锁) */
+  /** 依赖的工具 ID 列表，只作能力需求声明。 */
   requiredTools: string[]
   /** 分类标签 (如 "productivity", "creative") */
   category: string
@@ -112,19 +112,19 @@ export interface SkillManifest {
 }
 
 /** 请求级能力作用域；只能在 Channel 权限基础上继续收窄，不能扩权。 */
-export type CapabilityScope = 'default' | 'ambient' | 'follow_up'
+export type CapabilityScope = 'default' | 'ambient' | 'follow_up' | 'perception'
 
 /** 解析后的完整能力上下文 (Gate 输出) */
 export interface ResolvedCapability {
   /** Dispatcher 白名单 */
   allowedTools: Set<string>
-  /** Skill 菜单清单 */
+  /** 省略会话选择时为候选清单，否则为当前会话已选技能。 */
   enabledSkills: SkillManifest[]
   /** 需要渲染的 prompt 片段路径 */
   promptFragments: string[]
   /** 已过滤的工具描述文本 */
   toolsDescription: string
-  /** Skill 菜单文本 (L1, ~50 tokens) */
+  /** 会话已选技能的完整指引；仅查询可选清单时为空。 */
   skillMenuText: string
   /**
    * 工具权限表（第六阶段 #6: Resource Scope）

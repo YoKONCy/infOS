@@ -385,7 +385,10 @@ export class TtsService {
       if (controller.signal.aborted)
         throw new AppError('EXTERNAL_ERROR', { message: t('server.tts', '语音合成已取消或超时') })
       if (error instanceof AppError) throw error
-      this.logger.warn(t('server.tts', '语音合成失败，请检查服务配置'))
+      // 带上真实原因：这句话以前把 Edge 的 403 也说成配置问题。
+      this.logger.warn(t('server.tts', '语音合成失败，请检查服务配置'), {
+        error: error instanceof Error ? error.message : String(error),
+      })
       throw new AppError('EXTERNAL_ERROR', {
         message: t('server.tts', '语音合成失败，请检查服务配置'),
       })

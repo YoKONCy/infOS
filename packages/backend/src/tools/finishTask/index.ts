@@ -7,7 +7,7 @@ import { t as __t } from '../../lib/i18n'
  * 并可选地更新角色的情绪/动作/文案状态。
  *
  * - finish_task + update_character_status 合并
- * - mood/vibe/mind 与动态台词 → 当前 Thread 的角色状态变更日志
+ * - 表达、持续状态与动态台词写入角色共享事件流，Thread 标注变更来源
  * - 每次写入关联当前消息轮次，删除或撤回时重放剩余有效状态
  * - Gateway 广播 state_update → 前端看板娘实时同步
  *
@@ -15,10 +15,12 @@ import { t as __t } from '../../lib/i18n'
  */
 
 import type { BuiltinTool } from '../index'
-import { normalizeCharacterState } from '@infos/shared'
+import { normalizeCharacterState, type NextAgentActivity } from '@infos/shared'
+import type { ToolContext } from '../../services/agent/toolRegistry'
 import { toolFailure, toolSuccess } from '../../services/execution/toolResult'
 import { createLogger } from '../../lib/logger'
 import type { PetStateData, PetStateScope } from '../../services/agent/petStateService'
+import { AppError } from '../../lib/appError'
 
 const logger = createLogger('FinishTask')
 
@@ -35,6 +37,9 @@ interface PetStateUpdateData {
   mood?: string
   vibe?: string
   mind?: string
+  ongoingGoals?: string
+  commitments?: string
+  relationships?: string
   clickMessages?: Record<string, string[]>
   idleMessages?: string[]
   backMessages?: string[]
@@ -45,14 +50,17 @@ let _petStateUpdater: PetStateUpdater | null = null
 let _gatewayBroadcast:
   | ((action: string, payload: Record<string, unknown>) => Promise<void>)
   | null = null
+let _nextActivity: ((activity: NextAgentActivity, context: ToolContext, publishingReply: boolean) => Promise<void>) | undefined
 
 /** 设置 finishTask 依赖 */
 export function setFinishTaskDeps(deps: {
   petStateUpdater: PetStateUpdater
   gatewayBroadcast?: (action: string, payload: Record<string, unknown>) => Promise<void>
+  nextActivity?: (activity: NextAgentActivity, context: ToolContext, publishingReply: boolean) => Promise<void>
 }) {
   _petStateUpdater = deps.petStateUpdater
   _gatewayBroadcast = deps.gatewayBroadcast ?? null
+  _nextActivity = deps.nextActivity
 }
 
 // ─────────────────────────────────────────────
@@ -94,6 +102,9 @@ export async function applyCharacterStateUpdate(
     mood: args.mood as string | undefined,
     vibe: args.vibe as string | undefined,
     mind: args.mind as string | undefined,
+    ongoingGoals: args.ongoing_goals as string | undefined,
+    commitments: args.commitments as string | undefined,
+    relationships: args.relationships as string | undefined,
   })
   const clickMessages: Record<string, string[]> = {}
   const touchReactions = args.touch_reactions
@@ -128,22 +139,26 @@ export async function applyCharacterStateUpdate(
   // 显式重复设置也保留来源，撤回前一轮时不能误删后一轮仍有效的同值状态。
   const { mood, vibe, mind } = stateUpdate
   const hasStateUpdate = Boolean(
-    mood || vibe || mind || Object.keys(clickMessages).length || idleMsgs || backMsgs,
+    Object.keys(stateUpdate).length || Object.keys(clickMessages).length || idleMsgs || backMsgs,
   )
   if (!hasStateUpdate) return { updated: false }
   const textExpiresAt = await _petStateUpdater.update(
     agentId,
     {
-      mood,
-      vibe,
-      mind,
+      ...stateUpdate,
       clickMessages: Object.keys(clickMessages).length ? clickMessages : undefined,
       idleMessages: idleMsgs,
       backMessages: backMsgs,
     },
     scope,
-  )
-  const payload: Record<string, unknown> = { agentId, threadId: scope?.threadId }
+  ).catch(async (error: unknown) => {
+    if (error instanceof AppError && error.code === 'CONFLICT' && scope?.characterStateVersion) {
+      const current = await _petStateUpdater?.get?.(agentId, scope.threadId)
+      throw new AppError('CONFLICT', { message: error.message, data: { currentState: current } })
+    }
+    throw error
+  })
+  const payload: Record<string, unknown> = { agentId, threadId: scope?.threadId, scope: 'agent' }
   if (mood) payload.mood = mood
   if (vibe) payload.vibe = vibe
   if (mind) payload.mind = mind
@@ -174,10 +189,9 @@ export const finishTaskTool: BuiltinTool = {
   name: 'finish_task',
 
   async execute(args, ctx) {
-    // reply 是「完成任务后交给用户的最终回复正文」，必填。
-    // 缺失时返回失败并提示模型补全，ReAct 会把它作为工具错误反馈给模型重试。
+    // 主线可以先独立发表消息，再结算执行；侧线和任务继续校验交付正文。
     const reply = typeof args.reply === 'string' ? args.reply.trim() : ''
-    if (!reply) {
+    if (!reply && !ctx.conversation && ctx.channel !== 'group') {
       logger.warn(__t('logs.tools', 'finish_task 缺少必填参数 reply (agent={0})', [ctx.agentId]))
       return toolFailure(
         'FINISH_TASK_NO_REPLY',
@@ -195,6 +209,28 @@ export const finishTaskTool: BuiltinTool = {
         ctx.executionId,
         parseTaskSegment(args.task_result),
       )
+    }
+    if (args.next_activity !== undefined) {
+      const activity = args.next_activity as NextAgentActivity
+      if (!activity || !['rest', 'wait_message', 'wait_task'].includes(activity.kind) ||
+        (activity.kind === 'wait_message' && typeof activity.senderId !== 'string') ||
+        (activity.kind === 'wait_task' && typeof activity.taskId !== 'string'))
+        return toolFailure('ACTIVITY_INVALID', __t('server.tools', '请提供有效的休息、等待发言者或等待任务设置。'))
+      if (!_nextActivity) return toolFailure('ACTIVITY_UNAVAILABLE', __t('server.tools', '主动行为服务尚未初始化'))
+      try {
+        await _nextActivity(activity, ctx, Boolean(reply))
+      } catch (error) {
+        const messages: Record<string, string> = {
+          ACTIVITY_MAIN_THREAD_REQUIRED: '请在角色主会话或据点设置等待，后台任务使用 task_result。',
+          ACTIVITY_SENDER_INVALID: '请选择当前场景中的其他角色或用户。',
+          ACTIVITY_SENDER_PAUSED: '这位伙伴已关闭据点自由活动。',
+          ACTIVITY_MESSAGE_REQUIRED: '请提供本次发言，作为等待的来源。',
+          ACTIVITY_TASK_INVALID: '请选择当前角色的已有任务。',
+        }
+        if (error instanceof Error && messages[error.message])
+          return toolFailure(error.message, __t('server.tools', messages[error.message]!))
+        throw error
+      }
     }
     const summary = (args.summary as string) ?? reply
     const status = (args.status as string) ?? 'done'

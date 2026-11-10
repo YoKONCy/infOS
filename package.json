@@ -65,7 +65,9 @@
   "dependencies": {
     "@infos/avatar-assets": "workspace:*",
     "@nut-tree-fork/nut-js": "^4.2.6",
-    "koffi": "3.3.2"
+    "koffi": "3.3.2",
+    "pixelmatch": "8.0.0",
+    "sherpa-onnx-node": "2.0.1"
   },
   "devDependencies": {
     "@changesets/changelog-github": "^0.6.0",

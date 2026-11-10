@@ -25,6 +25,11 @@ export interface ThreadInfo {
   id: string
   agentId: string
   channel: ThreadChannel
+  threadKind: 'main' | 'side'
+  generation: number
+  canDelete: boolean
+  canFork: boolean
+  canReset: boolean
   platform?: string
   platformIdentifier?: string
   title: string
@@ -43,6 +48,7 @@ export interface ThreadInfo {
   contextPolicy: string | null
   /** 本会话明确禁用的工具名。 */
   disabledTools: string[]
+  enabledSkills: string[]
   interactionMode: InteractionMode
   /** 本会话开启后，普通工具调用不再逐次请求审批。 */
   executionMode?: ExecutionMode
@@ -128,6 +134,12 @@ export interface ThreadToolsData {
   interactionMode: InteractionMode
 }
 
+export interface ThreadSkillsData {
+  threadId: string
+  enabledSkills: string[]
+  skills: Array<{ id: string; name: string; description: string; enabled: boolean }>
+}
+
 export interface FlowStateInfo {
   threadId: string
   agentId: string
@@ -161,6 +173,12 @@ export interface GetLatestThreadRequest {
 }
 
 export const threadsApi = {
+  reset: (threadId: string) => apiClient.post<{ thread: ThreadInfo }>(`/chat/threads/${encodeURIComponent(threadId)}/reset`, {}),
+  experiences: (threadId: string) => apiClient.get<{ items: AgentExperience[] }>(`/chat/threads/${encodeURIComponent(threadId)}/experiences`),
+  fork: (threadId: string, messageId: number) =>
+    apiClient.post<{ thread: ThreadInfo }>(`/chat/threads/${encodeURIComponent(threadId)}/fork`, {
+      messageId,
+    }),
   getModelSettings: (threadId: string) =>
     apiClient.get<ThreadModelSettings>(
       `/chat/threads/${encodeURIComponent(threadId)}/model-settings`,
@@ -192,10 +210,12 @@ export const threadsApi = {
   },
 
   /** 获取 Thread 详情（含消息列表） */
-  get: (threadId: string, params?: { page?: number; pageSize?: number }) => {
+  get: (threadId: string, params?: { page?: number; pageSize?: number; debug?: boolean }) => {
     const query = new URLSearchParams()
     if (params?.page) query.set('page', String(params.page))
     if (params?.pageSize) query.set('pageSize', String(params.pageSize))
+    // 对话日志需要模型请求副本；普通聊天列表不请求这些调试字段。
+    if (params?.debug) query.set('debug', '1')
     const qs = query.toString()
     return apiClient.get<ThreadDetailData>(`/chat/threads/${threadId}${qs ? `?${qs}` : ''}`)
   },
@@ -249,6 +269,14 @@ export const threadsApi = {
   getTools: (threadId: string) =>
     apiClient.get<ThreadToolsData>(`/chat/threads/${encodeURIComponent(threadId)}/tools`),
 
+  getSkills: (threadId: string) =>
+    apiClient.get<ThreadSkillsData>(`/chat/threads/${encodeURIComponent(threadId)}/skills`),
+
+  updateSkills: (threadId: string, enabledSkills: string[]) =>
+    apiClient.put<ThreadSkillsData>(`/chat/threads/${encodeURIComponent(threadId)}/skills`, {
+      enabledSkills,
+    }),
+
   /** 持久化本会话禁用工具集合；后端会再次校验 Channel 白名单。 */
   updateTools: (threadId: string, disabledTools: string[]) =>
     apiClient.put<ThreadToolsData>(`/chat/threads/${encodeURIComponent(threadId)}/tools`, {
@@ -270,4 +298,14 @@ export const threadsApi = {
   /** 获取指定 Agent/Channel 的最新 Thread */
   getLatest: (data: GetLatestThreadRequest) =>
     apiClient.post<{ thread: ThreadInfo }>('/chat/threads/latest', data),
+}
+
+export interface AgentExperience {
+  id: number
+  sourceMessageId: number
+  roomId: string
+  roomName: string | null
+  senderId: string
+  content: string
+  timestamp: string
 }

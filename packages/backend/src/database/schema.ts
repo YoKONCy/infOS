@@ -317,6 +317,9 @@ export const threads = sqliteTable(
     /** 归属的主 Agent */
     agentId: text('agent_id').notNull(),
     /** 对话场景：desktop / social / group */
+    threadKind: text('thread_kind', { enum: ['main', 'side'] }).notNull().default('side'),
+    /** 保留会话身份的重置代次，旧执行只能提交到自己读取的代次。 */
+    generation: integer('generation').notNull().default(1),
     channel: text('channel').notNull().default('desktop'),
     /** 外部平台标识（social/group 专用）：qq / discord / webhook */
     platform: text('platform'),
@@ -326,7 +329,7 @@ export const threads = sqliteTable(
     title: text('title').default(''),
     /** 消息数量（冗余计数，加速查询） */
     messageCount: integer('message_count').default(0),
-    /** 聊天对数量（pairCount，用于 Dashboard 统计） */
+      /** 历史兼容计数，按有效 Assistant 消息累计。 */
     pairCount: integer('pair_count').default(0),
     /** 最后一条消息时间 */
     lastMessageAt: text('last_message_at'),
@@ -340,6 +343,8 @@ export const threads = sqliteTable(
     contextPolicy: text('context_policy'),
     /** Thread 级禁用工具列表（JSON 字符串）；只能屏蔽 Channel 已允许工具，不能扩权。 */
     disabledToolsJson: text('disabled_tools_json').default('[]').notNull(),
+    /** 当前会话选用的 Skill ID；缺省为空，导入技能不会自动加入会话。 */
+    enabledSkillsJson: text('enabled_skills_json').default('[]').notNull(),
     interactionMode: text('interaction_mode')
       .$type<'minimal' | 'chat' | 'work'>()
       .default('chat')
@@ -361,6 +366,8 @@ export const threads = sqliteTable(
     createdAt: text('created_at').default(sql`(datetime('now', 'localtime'))`),
     /** 更新时间 */
     updatedAt: text('updated_at').default(sql`(datetime('now', 'localtime'))`),
+    /** 由数据库触发器分配的活动序号；用于新会话继承，不依赖时间精度。 */
+    activitySeq: integer('activity_seq').default(0).notNull(),
   },
   (table) => [
     index('idx_threads_agent_id').on(table.agentId),
@@ -368,6 +375,7 @@ export const threads = sqliteTable(
     index('idx_threads_platform').on(table.platform),
     index('idx_threads_status').on(table.status),
     index('idx_threads_purpose').on(table.purpose),
+    uniqueIndex('idx_threads_main_agent').on(table.agentId).where(sql`${table.threadKind} = 'main'`),
   ],
 )
 
@@ -402,6 +410,7 @@ export const flowStateRevisions = sqliteTable(
     beforePrivateFacts: text('before_private_facts').default('').notNull(),
     afterCurrentGoal: text('after_current_goal').default('').notNull(),
     afterPrivateFacts: text('after_private_facts').default('').notNull(),
+    patchFieldsJson: text('patch_fields_json'),
     createdAt: text('created_at')
       .default(sql`(datetime('now', 'localtime'))`)
       .notNull(),
@@ -545,7 +554,7 @@ export const applicationCalls = sqliteTable(
  *
  * 消息一旦写入，内容不可修改。编辑通过新增 revision 实现。
  * 删除通过软删除（status=deleted）实现，不物理删除。
- * pairId 把"用户提问 + Agent回复"绑成一个可操作单元。
+ * 主线按独立消息记录交流；旧侧会话保留 pairId 配对语义。
  */
 export const threadMessages = sqliteTable(
   'thread_messages',
@@ -561,8 +570,11 @@ export const threadMessages = sqliteTable(
     rawContent: text('raw_content'),
     /** 消息状态：active / deleted */
     status: text('status').default('active'),
-    /** pairId：用户消息和对应回复共享同一 pairId */
+    /** 侧会话保留配对身份，主线使用独立发布与来源关系。 */
     pairId: text('pair_id'),
+    /** 正式发布的幂等身份，与执行及回复关系分别保存。 */
+    publicationId: text('publication_id'),
+    executionId: text('execution_id'),
     /** 发送者 ID（群聊场景：谁说的） */
     senderId: text('sender_id'),
     /** 消息 revision（编辑时递增，默认 1） */
@@ -577,7 +589,7 @@ export const threadMessages = sqliteTable(
      * - analyzed: 已提炼为记忆
      * - failed: 提炼失败
      * - skipped: 跳过（如纯工具调用消息）
-     * 仅 assistant 消息会有此状态，user 消息通过 pairId 关联
+     * 保留旧 Scorer 合同，主线后台加工按独立来源修订计算覆盖。
      */
     scorerStatus: text('scorer_status').default('pending'),
     /** 消息时间 */
@@ -590,12 +602,68 @@ export const threadMessages = sqliteTable(
   (table) => [
     index('idx_thread_messages_thread_id').on(table.threadId),
     index('idx_thread_messages_pair_id').on(table.pairId),
+    uniqueIndex('idx_thread_message_publication').on(table.publicationId),
+    index('idx_thread_message_execution').on(table.executionId),
     index('idx_thread_messages_status').on(table.status),
     index('idx_thread_messages_agent_id').on(table.agentId),
     // AIOS: Scorer 查询待处理对话对的索引
     index('idx_thread_messages_scorer_status').on(table.scorerStatus),
   ],
 )
+
+/** 一次执行消费固定来源，可发布零条或多条交流消息。 */
+/** 工作轨迹清理回执保存来源身份，原始消息及执行资料继续用于追溯。 */
+export const workContextClears = sqliteTable('work_context_clears', {
+  id: integer('id').primaryKey({ autoIncrement: true }),
+  threadId: text('thread_id').notNull().references(() => threads.id, { onDelete: 'cascade' }),
+  agentId: text('agent_id').notNull(),
+  generation: integer('generation').notNull(),
+  pairId: text('pair_id').notNull(),
+  toolCallId: text('tool_call_id').notNull(),
+  messageIdsJson: text('message_ids_json').notNull(),
+  executionIdsJson: text('execution_ids_json').notNull(),
+  createdAt: text('created_at').notNull(),
+}, (table) => [
+  index('idx_work_context_clear_thread').on(table.threadId, table.generation),
+  uniqueIndex('idx_work_context_clear_call').on(table.threadId, table.generation, table.pairId, table.toolCallId),
+])
+
+export const conversationExecutions = sqliteTable('conversation_executions', {
+  id: text('id').primaryKey(),
+  threadId: text('thread_id').notNull(),
+  agentId: text('agent_id').notNull(),
+  generation: integer('generation').notNull(),
+  kernelExecutionId: text('kernel_execution_id'),
+  inputSourcesJson: text('input_sources_json').notNull().default('[]'),
+  status: text('status').notNull().default('running'),
+  metadataJson: text('metadata_json').notNull().default('{}'),
+  startedAt: text('started_at').notNull(),
+  completedAt: text('completed_at'),
+}, (table) => [index('idx_conversation_execution_thread').on(table.threadId, table.generation)])
+
+/** 一条发言可回应多条来源，各关系核验来源的具体修订。 */
+export const conversationMessageSources = sqliteTable('conversation_message_sources', {
+  threadId: text('thread_id').notNull(),
+  messageId: integer('message_id').notNull(),
+  sourceMessageId: integer('source_message_id').notNull(),
+  sourceRevision: integer('source_revision').notNull(),
+}, (table) => [primaryKey({ columns: [table.messageId, table.sourceMessageId] })])
+
+/** 等待现场随执行结算保存，后续输入通过新执行回应。 */
+export const conversationExpectations = sqliteTable('conversation_expectations', {
+  id: text('id').primaryKey(),
+  threadId: text('thread_id').notNull(),
+  agentId: text('agent_id').notNull(),
+  generation: integer('generation').notNull(),
+  executionId: text('execution_id').notNull(),
+  question: text('question').notNull(),
+  continuation: text('continuation').notNull(),
+  sourceMessagesJson: text('source_messages_json').notNull().default('[]'),
+  status: text('status').notNull().default('open'),
+  responseSourcesJson: text('response_sources_json').notNull().default('[]'),
+  createdAt: text('created_at').notNull(),
+  expiresAt: text('expires_at'),
+}, (table) => [index('idx_conversation_expectation_thread').on(table.threadId, table.generation, table.status)])
 
 /**
  * 文件变更快照表
@@ -765,6 +833,45 @@ export const threadCharacterStateEvents = sqliteTable(
   ],
 )
 
+/** 角色共享状态从空事件流开始，旧会话状态继续保存在原表。 */
+export const agentCharacterStateEvents = sqliteTable(
+  'agent_character_state_events',
+  {
+    id: integer('id').primaryKey({ autoIncrement: true }),
+    agentId: text('agent_id').notNull(),
+    threadId: text('thread_id').notNull(),
+    generation: integer('generation').notNull(),
+    kind: text('kind', { enum: ['update', 'retract'] }).notNull(),
+    pairId: text('pair_id').notNull(),
+    toolCallId: text('tool_call_id'),
+    patchJson: text('patch_json').notNull().default('{}'),
+    createdAt: text('created_at').notNull(),
+  },
+  (table) => [
+    index('idx_agent_character_state_order').on(table.agentId, table.id),
+    uniqueIndex('idx_agent_character_state_call').on(table.agentId, table.threadId, table.generation, table.pairId, table.toolCallId),
+  ],
+)
+
+/** 亲历仅保存来源引用，在场关系在场景消息提交事务内确定。 */
+export const agentExperiences = sqliteTable(
+  'agent_experiences',
+  {
+    id: integer('id').primaryKey({ autoIncrement: true }),
+    agentId: text('agent_id').notNull(),
+    threadId: text('thread_id').notNull(),
+    generation: integer('generation').notNull(),
+    sourceMessageId: integer('source_message_id').notNull(),
+    roomId: text('room_id').notNull(),
+    occurredAt: text('occurred_at').notNull(),
+    withdrawn: integer('withdrawn', { mode: 'boolean' }).notNull().default(false),
+  },
+  (table) => [
+    uniqueIndex('idx_agent_experience_source').on(table.agentId, table.sourceMessageId),
+    index('idx_agent_experience_main').on(table.threadId, table.generation, table.id),
+  ],
+)
+
 /** 旧全局宠物状态表，仅保留兼容数据，不作为新会话状态来源。 */
 export const petStates = sqliteTable(
   'pet_states',
@@ -828,6 +935,8 @@ export const aiModelConfigs = sqliteTable(
     returnNativeReasoning: integer('return_native_reasoning', { mode: 'boolean' }).default(false),
     wireApi: text('wire_api').default('chat_completions'),
     reasoningDialect: text('reasoning_dialect').default('auto'),
+    /** 回答预填充能力声明：auto | supported | unsupported */
+    assistantPrefill: text('assistant_prefill').default('auto'),
     stream: integer('stream', { mode: 'boolean' }).default(true),
     enableVision: integer('enable_vision', { mode: 'boolean' }).default(false),
     enableAudioInput: integer('enable_audio_input', { mode: 'boolean' }).default(false),
@@ -878,6 +987,8 @@ export const groupChatMessages = sqliteTable(
     roomId: text('room_id').notNull(),
     senderId: text('sender_id').notNull(),
     content: text('content').notNull(),
+    status: text('status').notNull().default('active'),
+    metadataJson: text('metadata_json').notNull().default('{}'),
     role: text('role').notNull(),
     timestamp: text('timestamp').default(sql`(datetime('now', 'localtime'))`),
     mentionsJson: text('mentions_json').default('[]'),
@@ -889,6 +1000,7 @@ export const groupChatMessages = sqliteTable(
     index('idx_group_chat_messages_room_id').on(table.roomId),
     index('idx_group_chat_messages_sender_id').on(table.senderId),
     index('idx_group_chat_messages_pair_id').on(table.pairId),
+    index('idx_group_chat_reply_pending').on(table.id).where(sql`${table.status} = 'active' AND json_extract(${table.metadataJson}, '$.replyIntent.status') = 'pending'`),
   ],
 )
 
@@ -1744,3 +1856,4 @@ export const conversationQueueItems = sqliteTable(
     index('idx_conversation_queue_thread').on(table.threadId, table.state, table.position),
   ],
 )
+export { homeRecords } from './homeSchema'

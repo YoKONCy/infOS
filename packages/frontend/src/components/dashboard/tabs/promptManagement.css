@@ -468,7 +468,8 @@ details[open] > summary::before {
 .override-row,
 .scope-row {
   display: grid;
-  grid-template-columns: minmax(180px, 1fr) 24px minmax(180px, 1fr) 30px;
+  /* 两侧列最小值放到 0：窄窗口时内容区比窗口窄 240px，固定 180px 会把删除按钮挤出可视区。 */
+  grid-template-columns: minmax(0, 1fr) 24px minmax(0, 1fr) 30px;
   gap: 12px;
   align-items: center;
   border-bottom: 1px solid var(--ui-border-default);

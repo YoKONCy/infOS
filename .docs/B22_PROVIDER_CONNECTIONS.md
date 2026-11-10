@@ -62,6 +62,25 @@
 
 当前使用内联音频，每轮原音合计最多 12 MiB，整个 Gemini 请求最多 20 MiB；超限单文件保存为引用。暂未接入 Gemini Files API、实时语音或原生音频输出。模型是否实际支持音频仍以所选服务的响应为准。
 
+## 回答预填充能力
+
+模型卡片的「回答预填充能力」保存在 `ai_model_configs.assistant_prefill`（迁移 `0027_model_assistant_prefill`），取值 `auto`（默认）/ `supported` / `unsupported`，只影响本地请求计划，不发送给 Provider。全局「预填充模式」关闭时此项不起作用。规则实现位于 `packages/shared/src/assistantPrefill.ts`，后端执行计划与模型编辑页的“当前设置下是否发送”提示共用。
+
+| 声明 / 组合                                                                                                         | 结果                                                                                     |
+| ------------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------- |
+| `unsupported`                                                                                                       | 永不发送                                                                                 |
+| `supported`                                                                                                         | 始终发送；OpenAI Chat 且识别为 DeepSeek 方言时用 `prefix:true`，其他接口用末尾 assistant |
+| `auto` + Anthropic 协议，模型为 Claude 4.6 及之后（含 Opus/Sonnet/Haiku 5 系列、Fable、Mythos）                     | 不发送：官方对末尾 assistant 预填充返回 400，与是否思考无关                              |
+| `auto` + Anthropic 协议，卡片设置了非 `off` 的思考强度                                                              | 不发送：开启思考时不能预填充                                                             |
+| `auto` + Anthropic 协议，其余旧型号                                                                                 | 末尾 assistant 发送                                                                      |
+| `auto` + Gemini 协议                                                                                                | 不发送：没有可依赖的续写约定                                                             |
+| `auto` + OpenAI Responses                                                                                           | 不发送：assistant 输入只是历史消息                                                       |
+| `auto` + OpenAI Chat，DeepSeek 方言（品牌为 deepseek 或按地址/显式方言识别）且地址含 `/beta`，未开思考、非 reasoner | 发送，带 `prefix:true`                                                                   |
+| `auto` + DeepSeek 其他情况                                                                                          | 不发送：普通地址或思考模式                                                               |
+| `auto` + 其他 OpenAI Chat（官方或任何中转）                                                                         | 不发送：不保证续写                                                                       |
+
+模型名称只用于识别官方已禁用预填充的 Claude 型号，不用于推断“支持”。经中转访问时宿主无法确认上游真实协议，默认按协议格式保守跳过；确认中转把末尾 assistant 当作续写时再改为 `supported`。思考状态取卡片上的思考强度（会话快捷配置覆盖后的值）。
+
 ## 维护入口与排障
 
 连接解析与迁移由 `packages/backend/src/services/model/providerConnectionService.ts` 负责，持久化入口为 `packages/backend/src/repositories/providerConnection.repo.ts`，前端管理入口为 `components/dashboard/ProviderConnectionsDialog.vue`。继承共享连接的卡片保存稳定引用；独立配置或显式开启完整覆盖时保存自身连接配置，不能把字段继承与完整覆盖混合解析。

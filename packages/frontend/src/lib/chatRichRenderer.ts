@@ -9,7 +9,7 @@ import DOMPurify from 'dompurify'
 import { decorateChatParentheses } from './chatParentheses'
 import { isResourceLink, isFileReference } from './resourceLinks'
 import { Marked, Renderer } from 'marked'
-import katex from 'katex'
+import { katex, loadMathRenderer } from './chatMathLoader'
 import hljs from 'highlight.js/lib/core'
 import bash from 'highlight.js/lib/languages/bash'
 import css from 'highlight.js/lib/languages/css'
@@ -40,6 +40,36 @@ hljs.registerLanguage('ts', typescript)
 hljs.registerLanguage('html', xml)
 hljs.registerLanguage('xml', xml)
 
+// KaTeX 按需加载见 chatMathLoader；调用方先 await prepareChatRichText 再同步渲染。
+export { onChatMathReady } from './chatMathLoader'
+// 本次渲染遇到公式但 KaTeX 尚未就绪时置位，结果不写入缓存，避免缓存回退为源码的公式。
+let mathDeferred = false
+
+function codeLanguage(lang?: string): string {
+  return (lang || 'text').trim().split(/\s+/)[0]?.toLowerCase() || 'text'
+}
+
+/** 公式围栏使用同一解析器的词法规则，包含引用/列表内的围栏与大小写变体。 */
+function mayContainMath(source: string): boolean {
+  if (source.includes('$')) return true
+  if (!/peromath/i.test(source)) return false
+  let found = false
+  marked.walkTokens(marked.lexer(normalizeRichTextSource(source)), (token) => {
+    if (token.type === 'code' && codeLanguage(token.lang) === 'peromath') found = true
+  })
+  return found
+}
+
+/** 渲染前准备按需依赖；加载失败时公式回退为源码显示，不阻断正文渲染。 */
+export async function prepareChatRichText(source: string): Promise<void> {
+  if (katex || !mayContainMath(source)) return
+  try {
+    await loadMathRenderer()
+  } catch {
+    /* 公式以源码形式显示 */
+  }
+}
+
 const renderer = new Renderer()
 
 function escapeHtml(value: string): string {
@@ -52,7 +82,7 @@ function escapeHtml(value: string): string {
 }
 
 renderer.code = ({ text, lang }) => {
-  const language = (lang || 'text').trim().split(/\s+/)[0]?.toLowerCase() || 'text'
+  const language = codeLanguage(lang)
   if (language === 'peromath') return renderMath(text.trim(), true)
   const highlighted =
     text.length <= 32_000 && hljs.getLanguage(language)
@@ -155,23 +185,32 @@ interface ProtectedMath {
   html: string
 }
 
-/** 渲染聊天富文本，并在最终进入 v-html 前执行白名单净化。 */
+export interface ChatRichRenderResult {
+  html: string
+  /** 当前结果所需的公式依赖是否就绪；无公式的正文也可安全缓存。 */
+  mathReady: boolean
+}
+
+/** 保留既有同步 HTML 接口；需要缓存/重试的组件使用带就绪状态的结果接口。 */
 export function renderChatRichText(source: string, options: ChatRichRenderOptions = {}): string {
-  if (!source.trim()) return ''
+  return renderChatRichTextResult(source, options).html
+}
+
+/** 渲染并净化富文本，同时报告降级状态，供所有缓存层判断是否可以复用。 */
+export function renderChatRichTextResult(
+  source: string,
+  options: ChatRichRenderOptions = {},
+): ChatRichRenderResult {
+  if (!source.trim()) return { html: '', mathReady: true }
   const cacheEnabled = options.cache !== false && source.length <= RICH_TEXT_CACHE_MAX_SOURCE_LENGTH
   const cacheKey = `${getDisplayLocale()}\u0000${source}`
   const cached = cacheEnabled ? readRichTextCache(cacheKey) : undefined
-  if (cached !== undefined) return cached
+  if (cached !== undefined) return { html: cached, mathReady: true }
   const inlineMath: ProtectedMath[] = []
+  mathDeferred = false
   // 兼容清理模型偶发复述的旧版内部历史标签。该标签在名称后使用逗号，
   // 不是合法 HTML 语法，因此精确移除不会影响 span、details 等正常 HTML 渲染。
-  const visibleSource = stripLeakedConversationMetadata(source)
-  // 有些模型会把整份回复包进 ```markdown 围栏；这表示需要渲染的文档而非代码示例。
-  // 仅当该围栏覆盖整个回复时解包，嵌入正文的 markdown 代码示例仍按源码展示。
-  const markdownSource = unwrapWholeMarkdownFence(visibleSource)
-  // 模型流式输出常会为整段 Markdown 追加缩进；标题行有四个空格时会被 CommonMark 误判为代码。
-  // 仅在 fenced code block 外归一化标题行，保留真实代码的原始缩进。
-  const normalizedSource = normalizeMarkdownHeadings(markdownSource)
+  const normalizedSource = normalizeRichTextSource(source)
   // 块公式先转换为独立 fenced token，让 Marked 按块级节点处理，避免 <p><div> 非法嵌套。
   const blockProtected = normalizedSource.replace(
     /(^|\n)[ \t]*\$\$[ \t]*(?:\n|$)([\s\S]*?)(?:\n|^)[ \t]*\$\$[ \t]*(?=\n|$)/g,
@@ -188,8 +227,15 @@ export function renderChatRichText(source: string, options: ChatRichRenderOption
     ADD_TAGS: ['annotation', 'math', 'semantics'],
   })
   const rendered = decorateTextNodes(sanitized)
-  if (cacheEnabled) writeRichTextCache(cacheKey, rendered)
-  return rendered
+  if (cacheEnabled && !mathDeferred) writeRichTextCache(cacheKey, rendered)
+  return { html: rendered, mathReady: !mathDeferred }
+}
+
+/** 准备与渲染使用相同的正文归一化，避免公式围栏的识别规则分叉。 */
+function normalizeRichTextSource(source: string): string {
+  return normalizeMarkdownHeadings(
+    unwrapWholeMarkdownFence(stripLeakedConversationMetadata(source)),
+  )
 }
 
 function stripLeakedConversationMetadata(source: string): string {
@@ -232,6 +278,12 @@ function protectInlineMath(source: string, output: ProtectedMath[]): string {
 function renderMath(formula: string, displayMode: boolean): string {
   let rendered: string
   try {
+    if (!katex) {
+      // 未经 prepareChatRichText 准备时先显示源码，同时预热 KaTeX 供下次渲染使用。
+      mathDeferred = true
+      void loadMathRenderer().catch(() => undefined)
+      throw new Error('katex-unavailable')
+    }
     rendered = katex.renderToString(formula, { displayMode, throwOnError: false, strict: false })
   } catch {
     rendered = `<code>${escapeHtml(formula)}</code>`

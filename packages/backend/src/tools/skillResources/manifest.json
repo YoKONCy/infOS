@@ -19,7 +19,7 @@
       },
       "parameters": {
         "type": "object",
-        "properties": { "skill_id": { "type": "string", "description": "已加载Skill ID" } },
+        "properties": { "skill_id": { "type": "string", "description": "本会话已启用的 Skill ID" } },
         "required": ["skill_id"]
       }
     },

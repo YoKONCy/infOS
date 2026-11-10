@@ -123,7 +123,7 @@ export class NitStreamFilter {
 /**
  * Thinking 块流式过滤器
  *
- * 解析 `<selfMinding>...</selfMinding>` 碎碎念块，兼容旧 think / thinking / thought 标签。
+ * 解析 `<innerVoice>...</innerVoice>` 碎碎念块，兼容 selfMinding（用户预填充常用）和旧 think / thinking / thought 标签。
  *
  * 流式处理要点：
  * - 标签可能跨 chunk 拆分，保留可能尚未完整的开始标签
@@ -136,14 +136,14 @@ export type ThinkingStreamEvent =
   | { type: 'delta'; delta: string }
   | { type: 'end' }
 
-type ThinkingTag = 'selfminding' | 'think' | 'thinking' | 'thought'
+type ThinkingTag = 'innervoice' | 'selfminding' | 'think' | 'thinking' | 'thought'
 
 export class ThinkingStreamFilter {
   private buffer = ''
   private activeTag: ThinkingTag | null = null
   private events: ThinkingStreamEvent[] = []
   private pendingDelta = ''
-  private readonly START_TAG = /<(selfMinding|think|thinking|thought)(?:\s[^>]*)?>/i
+  private readonly START_TAG = /<(innerVoice|selfMinding|think|thinking|thought)(?:\s[^>]*)?>/i
   private readonly PARTIAL_TAG_RESERVE = '<selfMinding>'.length - 1
 
   private pushDelta(delta: string, force = false): void {
@@ -174,7 +174,7 @@ export class ThinkingStreamFilter {
           const tagStart = this.buffer.lastIndexOf('<')
           if (
             tagStart >= 0 &&
-            /^<(selfMinding|think|thinking|thought)\s[^>]*$/i.test(this.buffer.slice(tagStart))
+            /^<(innerVoice|selfMinding|think|thinking|thought)\s[^>]*$/i.test(this.buffer.slice(tagStart))
           )
             safeLen = Math.min(safeLen, tagStart)
           if (safeLen > 0) {

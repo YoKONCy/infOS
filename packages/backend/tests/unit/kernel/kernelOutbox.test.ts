@@ -1,5 +1,5 @@
+import { createDrizzleConnection, closeDrizzleConnection } from '@infos/backend/database'
 import Database from 'better-sqlite3'
-import { drizzle } from 'drizzle-orm/better-sqlite3'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import type { KernelExecutionDescriptor, KernelExecutionId, KernelProcessId } from '@infos/shared'
 import { kernelOutboxEvents, threadMessages, threads } from '@infos/backend/database/schema'
@@ -10,35 +10,13 @@ import {
 } from '@infos/backend/kernel'
 import { ThreadRepository } from '@infos/backend/repositories/thread.repo'
 
+let connection: ReturnType<typeof createDrizzleConnection> | undefined
 let sqlite: Database.Database | undefined
 
 function createDb() {
-  sqlite = new Database(':memory:')
-  sqlite.exec(`
-    CREATE TABLE threads (
-      id TEXT PRIMARY KEY, agent_id TEXT NOT NULL, channel TEXT NOT NULL,
-      title TEXT DEFAULT '', message_count INTEGER DEFAULT 0, pair_count INTEGER DEFAULT 0,
-      status TEXT DEFAULT 'active', disabled_tools_json TEXT DEFAULT '[]',
-      auto_execute_tools INTEGER DEFAULT false NOT NULL, execution_mode TEXT DEFAULT 'manual' NOT NULL, purpose TEXT DEFAULT 'conversation'
-    );
-    CREATE TABLE thread_messages (
-      id INTEGER PRIMARY KEY AUTOINCREMENT, thread_id TEXT NOT NULL, role TEXT NOT NULL,
-      content TEXT NOT NULL, raw_content TEXT, pair_id TEXT, sender_id TEXT, agent_id TEXT,
-      revision INTEGER DEFAULT 1, status TEXT DEFAULT 'active', metadata_json TEXT DEFAULT '{}',
-      scorer_status TEXT DEFAULT 'pending', timestamp TEXT DEFAULT CURRENT_TIMESTAMP,
-      deleted_at TEXT, deleted_by TEXT
-    );
-    CREATE TABLE kernel_outbox_events (
-      event_id TEXT PRIMARY KEY, event_type TEXT NOT NULL, durability TEXT NOT NULL,
-      principal_id TEXT NOT NULL, process_id TEXT, execution_id TEXT, correlation_id TEXT,
-      causation_id TEXT, object_type TEXT, object_id TEXT, object_generation INTEGER,
-      payload_json TEXT NOT NULL, occurred_at TEXT NOT NULL, status TEXT DEFAULT 'pending',
-      attempts INTEGER DEFAULT 0, last_error TEXT, next_attempt_at TEXT,
-      created_at TEXT DEFAULT CURRENT_TIMESTAMP,
-      published_at TEXT
-    );
-  `)
-  return drizzle(sqlite, { schema: { threads, threadMessages, kernelOutboxEvents } }) as never
+  connection = createDrizzleConnection(':memory:')
+  sqlite = connection.$client
+  return connection
 }
 
 function execution(): KernelExecutionDescriptor {
@@ -55,7 +33,8 @@ function execution(): KernelExecutionDescriptor {
 }
 
 afterEach(() => {
-  sqlite?.close()
+  if (connection) closeDrizzleConnection(connection)
+  connection = undefined
   sqlite = undefined
 })
 

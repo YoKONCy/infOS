@@ -88,7 +88,11 @@ export function slidePromptWindow(
           (item) =>
             item === current ||
             item.cacheControl?.key === WINDOW_KEY ||
-            item.cacheControl?.key?.startsWith('prompt-slot:'),
+            // 本轮框架槽位保持完整；旧轮快照可随窗口退出，释放对应来源锚点。
+            (item.cacheControl?.key?.startsWith('prompt-slot:') &&
+              (!current?.cacheControl?.replayAnchor ||
+                !item.cacheControl.replayAnchor ||
+                item.cacheControl.replayAnchor.key === current.cacheControl.replayAnchor.key)),
         )
       )
     })
@@ -133,6 +137,14 @@ export function slidePromptWindow(
           '【已完成工具组的容量交接：数据】\n以下是已记录的执行结果；引用正文可用 read_file_range 继续查看。不要因历史滑出而重复执行有副作用的操作。\n' +
           observation,
         fileObservations: items.flatMap((item) => item.fileObservations ?? []),
+        ...(items[0]!.cacheControl?.replayAnchor
+          ? {
+              cacheControl: {
+                kind: 'snapshot' as const,
+                replayAnchor: items[0]!.cacheControl.replayAnchor,
+              },
+            }
+          : {}),
       }
       messages.splice(latest.start, latest.end - latest.start, replacement)
       discarded.push(...items)
@@ -161,6 +173,13 @@ export function slidePromptWindow(
       (ref
         ? `\n原始记录：${ref}。需要细节时用 read_file_range 的 path=该引用、offset、limit 分段查看；previousRef 可追溯更早材料。`
         : '')
+    // 交接引用随本次滑窗更新，避免旧通知永久固定已经退出的历史起点。
+    if (current?.cacheControl?.replayAnchor)
+      notice.cacheControl = {
+        ...notice.cacheControl,
+        kind: 'snapshot',
+        replayAnchor: current.cacheControl.replayAnchor,
+      }
     if (!previous) {
       const at = messages.findIndex((message) => message.role !== 'system')
       messages.splice(at < 0 ? messages.length : at, 0, notice)

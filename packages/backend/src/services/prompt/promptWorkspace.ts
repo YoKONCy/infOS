@@ -15,7 +15,9 @@ import {
   ST_UTILITY_FIELDS,
   WHOLESOME_MODE_KEY,
   ASSISTANT_PREFILL_KEY,
+  DYNAMIC_CONTEXT_DEPTH_KEY,
   parseAssistantPrefillConfig,
+  parseDynamicContextDepth,
 } from '@infos/shared'
 import { compilePromptPlan } from './requestCompiler'
 import type { ConfigRepository } from '../../repositories/config.repo'
@@ -26,6 +28,15 @@ import type { ChatMessage, ChatOptions } from '../llm/types'
 import type { MdpEngine, RenderedMessage } from './mdpEngine'
 import { TASK_PROMPTS } from './taskPrompts'
 import { builtinBodyHash, synchronizeBuiltinDocument } from './builtinPromptMigration'
+import {
+  isExpressionBlock,
+  MY_FRAMEWORK_ID,
+  MY_VARIABLES,
+  myVariableValues,
+  withExpressionBlocks,
+  myDefaultFramework,
+  migrateExpressionLayout,
+} from './expressionFramework'
 import { createLogger } from '../../lib/logger'
 import { assembleSillyTavern, sillyTavernIssues } from './sillyTavernFramework'
 import { SillyTavernVariableStore } from './sillyTavernVariables'
@@ -123,6 +134,7 @@ export const promptBundleSchema = z.object({
         name: z.string().min(1).max(100),
         builtin: z.boolean().optional(),
         format: z.enum(['infos', 'sillytavern', 'custom']).optional(),
+        perceptionImage: z.boolean().optional(),
         overrides: overrides.optional(),
         sillyTavern: z
           .object({
@@ -275,6 +287,7 @@ export const PROMPT_VARIABLES = [
   ['owner_appellation', '用户称呼'],
   ['current_time', '当前时间'],
   ['memory_context', '记忆'],
+  ['speech_handbook', '说话手册'],
   ['knowledge_context', '文档知识召回'],
   ['facts_context', '事实召回'],
   ['conversation_history', '历史文本'],
@@ -291,6 +304,10 @@ export const PROMPT_VARIABLES = [
   ['mood', '心情'],
   ['vibe', '状态'],
   ['mind', '心声'],
+  ['character_state_revision', '角色状态版本'],
+  ['ongoing_goals', '持续目标'],
+  ['commitments', '持续承诺'],
+  ['relationships', '关系状态'],
   ['realm_execution', '据点执行'],
   ['wholesome_mode_enabled', '健全模式启用'],
   ['weather_location', '天气地点'],
@@ -305,7 +322,9 @@ export const PROMPT_VARIABLES = [
   ['current_message', '本次用户消息'],
   ['generation_type', '生成类型'],
   ['prompt_seed', '预览随机种子'],
-].map(([name, label]) => ({ name: name!, label: label! }))
+]
+  .map(([name, label]) => ({ name: name!, label: label! }))
+  .concat(MY_VARIABLES.map(({ name, label }) => ({ name, label })))
 
 function copy<T>(value: T): T {
   return structuredClone(value)
@@ -479,6 +498,8 @@ export class PromptWorkspace {
         },
       ],
     }
+    // 表达层区块插在输出格式两侧。
+    main.blocks = withExpressionBlocks(main.blocks)
     const social: PromptFramework = {
       id: 'builtin.social',
       name: '社交默认',
@@ -527,9 +548,10 @@ export class PromptWorkspace {
         },
       ],
     }
+    const mine = myDefaultFramework(main)
     return {
       documents,
-      frameworks: [main, social],
+      frameworks: [main, social, mine],
       assignments: [
         { agentId: '', channel: '', frameworkId: main.id, overrides: {} },
         { agentId: '', channel: 'social', frameworkId: social.id, overrides: {} },
@@ -617,10 +639,12 @@ export class PromptWorkspace {
         )
       // 只升级原样内置布局；自定义框架、正文和发布版本继续由用户管理。
       if (standard && (unchangedMain || unchangedSocial)) {
-        framework.blocks = copy(standard.blocks).map((block) => ({
-          ...block,
-          enabled: framework.blocks.find((old) => old.id === block.id)?.enabled ?? block.enabled,
-        }))
+        framework.blocks = copy(standard.blocks)
+          .filter((block) => !isExpressionBlock(block))
+          .map((block) => ({
+            ...block,
+            enabled: framework.blocks.find((old) => old.id === block.id)?.enabled ?? block.enabled,
+          }))
       }
     }
     // 只迁移旧的自动名称，保留用户改名、正文及历史发布记录。
@@ -647,6 +671,7 @@ export class PromptWorkspace {
     }
     const known = new Set(result.documents.map((d) => d.id))
     result.documents.push(...defaults.documents.filter((d) => !known.has(d.id)))
+    migrateExpressionLayout(result, defaults)
     return result
   }
 
@@ -812,11 +837,23 @@ export class PromptWorkspace {
     snapshot: PromptSnapshot,
     vars: Record<string, unknown>,
   ): T {
+    const framework = snapshot.bundle.frameworks.find(
+      (item) => item.id === result.preview.frameworkId,
+    )
+    const dynamicSlots = new Set(
+      framework?.blocks.filter((block) => block.source === 'components/state/turn_context')
+        .map((block) => block.id),
+    )
+    for (const message of result.messages)
+      if (dynamicSlots.has(message.slotId)) message.dynamicContext = true
     const plan = compilePromptPlan(
       parseAssistantPrefillConfig(
         typeof vars.assistant_prefill_config === 'string'
           ? vars.assistant_prefill_config
           : undefined,
+      ),
+      parseDynamicContextDepth(
+        typeof vars.dynamic_context_depth === 'string' ? vars.dynamic_context_depth : undefined,
       ),
     )
     result.preview.requestPlan = plan
@@ -898,6 +935,7 @@ export class PromptWorkspace {
         ...input,
         wholesome_mode_enabled: (await this.repo.get(WHOLESOME_MODE_KEY)) !== 'false',
         assistant_prefill_config: await this.repo.get(ASSISTANT_PREFILL_KEY),
+        dynamic_context_depth: await this.repo.get(DYNAMIC_CONTEXT_DEPTH_KEY),
       },
       undefined,
       state,
@@ -907,7 +945,7 @@ export class PromptWorkspace {
       ...result,
       variableCommit:
         sessionId && effects && [...effects.local, ...effects.global].some((item) => item.write)
-          ? { id: randomUUID(), scope: sessionId, epoch: state?.epoch, effects }
+          ? { id: randomUUID(), scope: sessionId, epoch: state?.epoch, scopeEpoch: state?.scopeEpoch, effects }
           : undefined,
     }
   }
@@ -947,6 +985,7 @@ export class PromptWorkspace {
     const vars: Record<string, unknown> = {
       owner_name: '用户',
       owner_appellation: '主人',
+      ...myVariableValues(),
       ...input,
       channel,
       agent_id: agentId,
@@ -1035,7 +1074,7 @@ export class PromptWorkspace {
         const blockVars =
           vars.append_turn_context &&
           framework.builtin &&
-          ['builtin.main', 'builtin.social'].includes(framework.id) &&
+          ['builtin.main', MY_FRAMEWORK_ID, 'builtin.social'].includes(framework.id) &&
           block.role === 'system'
             ? { ...vars, flow_state: vars.flow_state ? {} : undefined, task_plan: null }
             : vars

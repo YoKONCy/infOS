@@ -32,5 +32,12 @@
   "已请求{0}在当前角色发言后依次接话。": "has requested {0} to answer the call after the current character speaks.",
   "已切换到正在运行的应用: {0}": "has switched to the running application: {0}",
   "已启动应用: {0}": "Started application: {0}",
-  "已切换到窗口: {0}": "has switched to window: {0}"
+  "已切换到窗口: {0}": "has switched to window: {0}",
+  "请提供有效的休息、等待发言者或等待任务设置。": "Choose a valid rest, message wait, or task wait setting.",
+  "主动行为服务尚未初始化": "The proactive behavior service is not initialized.",
+  "请在角色主会话或据点设置等待，后台任务使用 task_result。": "Set activity waits in the character’s main conversation or stronghold. Background tasks use task_result.",
+  "请选择当前场景中的其他角色或用户。": "Choose another character or the user in the current scene.",
+  "请选择当前角色的已有任务。": "Choose an existing task owned by this character.",
+  "这位伙伴已关闭据点自由活动。": "This companion has stronghold free activity turned off.",
+  "请提供本次发言，作为等待的来源。": "Include the message that establishes this wait."
 }

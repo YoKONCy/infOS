@@ -10,6 +10,7 @@ import { validate as zValidator } from '../lib/validation'
 import { z } from 'zod'
 import type { AppContext } from '../container'
 import { AppError } from '../lib/appError'
+import { HOME_CHAT_CONFIRM_TOOL } from '../services/home/homeConfirmWait'
 import { formatAgentInputAnswers } from '@infos/shared'
 import { createLogger } from '../lib/logger'
 
@@ -74,6 +75,13 @@ export function createSurfaceRouter(ctx: AppContext) {
       const request = ctx.approvalService.get(approvalId)
       if (!request) throw new AppError('NOT_FOUND', { message: '审批请求不存在' })
       validateSeat(request.agentId)
+      // 家的确认只有管理身份能答，普通配对设备不能替用户应答。
+      if (
+        request.toolName === HOME_CHAT_CONFIRM_TOOL &&
+        ctx.clientAccess &&
+        !ctx.clientAccess.authenticate(c.req.raw)?.admin
+      )
+        throw new AppError('FORBIDDEN')
       const expectedSurfaceId = request.taskId
         ? `background-task:${request.taskId}`
         : `conversation:${request.threadId}:${request.sessionId}`
@@ -122,6 +130,8 @@ export function createSurfaceRouter(ctx: AppContext) {
       }
       const resumeConversation =
         !request.taskId && request.required && !ctx.agentInputService.hasActiveWaiter(inputId)
+      const conversation = resumeConversation ? await ctx.threadService.getThread(request.threadId) : null
+      if (resumeConversation) ctx.conversationQueue.assertHistoryStable(request.threadId)
       if (
         resumeConversation &&
         ctx.runtimeStateService.listActiveTasks().some((task) => task.threadId === request.threadId)
@@ -143,9 +153,11 @@ export function createSurfaceRouter(ctx: AppContext) {
         // 原等待已在超时或重启时释放，沿原 Thread 和当前权限继续，不派生后台任务。
         const answer = formatAgentInputAnswers(resolved)
         ctx.runtimeStateService.registerTask(resolved.threadId, resolved.agentId)
+        const ownedSignal = ctx.runtimeStateService.getAbortSignal(resolved.threadId)
         void ctx.conversationTurnService
           .executeTurn({
             threadId: resolved.threadId,
+            expectedGeneration: conversation?.generation,
             agentId: resolved.agentId,
             content: `针对刚才的问题，我的回答是：\n${answer}\n请结合原会话继续。`,
             signal: ctx.runtimeStateService.getAbortSignal(resolved.threadId),
@@ -157,7 +169,7 @@ export function createSurfaceRouter(ctx: AppContext) {
             })
           })
           .finally(() => {
-            ctx.runtimeStateService.unregisterTask(resolved.threadId)
+            ctx.runtimeStateService.unregisterTask(resolved.threadId, ownedSignal)
             ctx.conversationProjection.invalidate(resolved.threadId)
           })
       }

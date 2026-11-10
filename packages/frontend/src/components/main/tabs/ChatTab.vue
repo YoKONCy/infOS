@@ -20,7 +20,10 @@ import { ChatContainer } from '../../chat'
 import AgentStateHover from '../../agent/AgentStateHover.vue'
 import HistoryExportDialog from '../../chat/HistoryExportDialog.vue'
 import ConversationRewindDialog from '../../chat/ConversationRewindDialog.vue'
+import MainThreadCard from '../../chat/MainThreadCard.vue'
 import { PixelIcon, PButton, PEmpty, PDialog } from '../../pixel'
+import MotionList from '../../motion/MotionList.vue'
+import MotionSkeleton from '../../motion/MotionSkeleton.vue'
 import { useAgentStore, useThreadStore } from '../../../stores'
 import { useTaskCenterStore } from '../../../stores/taskCenterStore'
 import { useNotificationStore } from '../../../stores/useNotificationStore'
@@ -29,6 +32,7 @@ import { threadsApi } from '../../../api/modules/threadsApi'
 import type { ThreadInfo } from '../../../api/modules/threadsApi'
 import { getApiBaseUrl } from '../../../api/transport'
 import { logger } from '../../../lib/logger'
+import { threadDisplayName } from '../../../utils/threadPresentation'
 import {
   buildConversationMarkdown,
   downloadMarkdown,
@@ -176,7 +180,6 @@ function closeMobileSidebar(event: KeyboardEvent) {
 }
 onMounted(() => window.addEventListener('keydown', closeMobileSidebar))
 onBeforeUnmount(() => window.removeEventListener('keydown', closeMobileSidebar))
-const currentThreadTitle = ref('')
 
 function toggleSidebar() {
   isSidebarCollapsed.value = !isSidebarCollapsed.value
@@ -184,6 +187,13 @@ function toggleSidebar() {
 
 // ── Thread 历史列表 ──
 const threadHistory = ref<ThreadInfo[]>([])
+const mainThread = computed(() => threadHistory.value.find((thread) => thread.threadKind === 'main'))
+const sideThreads = computed(() => threadHistory.value.filter((thread) => thread.threadKind !== 'main'))
+const currentThreadTitle = computed(() => {
+  if (threadStore.threadKind === 'main') return __t('ui.chat', '主会话')
+  const current = threadHistory.value.find((thread) => thread.id === threadStore.threadId)
+  return current ? threadDisplayName(current) : __t('ui.navigation', '当前会话')
+})
 const isLoadingThreads = ref(false)
 const isSwitchingAgent = ref(false)
 const pendingAgentId = ref('')
@@ -191,6 +201,29 @@ const conversationSelectionLocked = computed(() => isSwitchingAgent.value || nav
 let historyGeneration = 0
 const threadPendingDelete = ref<ThreadInfo | null>(null)
 const threadPendingRename = ref<ThreadInfo | null>(null)
+const threadPendingReset = ref<ThreadInfo | null>(null)
+const resetting = ref(false)
+
+async function confirmResetThread() {
+  const target = threadPendingReset.value
+  if (!target || resetting.value) return
+  resetting.value = true
+  try {
+    await threadsApi.reset(target.id)
+    if (threadStore.threadId === target.id) {
+      await threadStore.loadThreadMessages(target.id, target.agentId)
+      threadStore.inputText = ''
+    }
+    await loadThreadHistory(target.agentId)
+    threadPendingReset.value = null
+    window.dispatchEvent(new CustomEvent('infos:conversation-rewound', { detail: { threadId: target.id } }))
+    notify.toast(__t('ui.chat', '主会话已重置'), { type: 'success' })
+  } catch (error) {
+    notify.toast(error instanceof Error ? error.message : __t('ui.chat', '重置失败，请重试'), { type: 'error' })
+  } finally {
+    resetting.value = false
+  }
+}
 
 async function loadThreadHistory(agentId: string) {
   if (!agentId) return
@@ -227,7 +260,7 @@ async function requestDeleteThread(thread: ThreadInfo) {
     await rewind.open({
       threadId: thread.id,
       wholeThread: true,
-      title: thread.title || __t('ui.navigation', '未命名会话'),
+      title: threadDisplayName(thread),
       onSuccess: async () => {
         threadHistory.value = threadHistory.value.filter((item) => item.id !== thread.id)
         if (threadStore.threadId === thread.id) {
@@ -257,14 +290,13 @@ async function requestDeleteThread(thread: ThreadInfo) {
 /** 保存会话改名，并同步侧栏及当前标题。 */
 async function confirmRenameThread(value?: string) {
   const target = threadPendingRename.value
-  if (!target) return
+  if (!target || target.threadKind === 'main') return
   const title = value?.trim() ?? ''
   try {
     await threadsApi.rename(target.id, title)
     threadHistory.value = threadHistory.value.map((thread) =>
       thread.id === target.id ? { ...thread, title } : thread,
     )
-    if (threadStore.threadId === target.id) currentThreadTitle.value = title || '未命名会话'
     notify.toast(__t('ui.navigation', '会话标题已更新'), {
       type: 'success',
       get title() {
@@ -296,7 +328,6 @@ async function switchThread(thread: ThreadInfo) {
   }
   const result = await threadStore.loadThreadMessages(thread.id, thread.agentId)
   if (result.status !== 'loaded' || threadStore.threadId !== thread.id) return
-  currentThreadTitle.value = thread.title || '未命名会话'
   if (isMobile.value) isSidebarCollapsed.value = true
 }
 
@@ -378,12 +409,6 @@ async function createNewChatSession() {
   try {
     await threadStore.createNewThread(agentId, 'desktop')
     if (isMobile.value) isSidebarCollapsed.value = true
-    notify.toast(__t('ui.navigation', '新会话已创建'), {
-      type: 'success',
-      get title() {
-        return __t('ui.navigation', '聊天会话')
-      },
-    })
     if (activeAgent.value?.id === agentId) void loadThreadHistory(agentId)
   } catch (err) {
     const message = err instanceof Error ? err.message : '新建会话失败'
@@ -426,15 +451,9 @@ watch(
   () => activeAgent.value?.id,
   (id) => {
     threadHistory.value = []
-    currentThreadTitle.value = '当前会话'
     if (id) void loadThreadHistory(id)
   },
 )
-
-watch([() => threadStore.threadId, threadHistory], () => {
-  const active = threadHistory.value.find((t) => t.id === threadStore.threadId)
-  if (active) currentThreadTitle.value = active.title || '未命名会话'
-})
 </script>
 
 <template>
@@ -448,7 +467,10 @@ watch([() => threadStore.threadId, threadHistory], () => {
         @click="isSidebarCollapsed = true"
       />
       <!-- 侧边栏 -->
-      <aside class="chat-sidebar" :class="{ 'chat-sidebar--collapsed': isSidebarCollapsed }">
+      <aside
+        class="chat-sidebar motion-enter-fade-children"
+        :class="{ 'chat-sidebar--collapsed': isSidebarCollapsed }"
+      >
         <!-- 收起/展开按钮 -->
         <button
           class="chat-sidebar-toggle"
@@ -491,9 +513,10 @@ watch([() => threadStore.threadId, threadHistory], () => {
               </button>
             </div>
 
-            <div class="chat-agent-list chat-scrollbar">
+            <MotionList class="chat-agent-list chat-scrollbar">
               <PEmpty
                 v-if="filteredAgents.length === 0 && !isLoading"
+                key="empty"
                 :message="__t('ui.navigation', '暂无助手')"
               />
 
@@ -549,35 +572,48 @@ watch([() => threadStore.threadId, threadHistory], () => {
                   </span>
                 </div>
               </div>
-            </div>
+            </MotionList>
           </div>
 
           <!-- Thread 历史 -->
           <div class="chat-thread-section">
+            <div v-if="mainThread" class="chat-main-thread-slot" :inert="conversationSelectionLocked || undefined">
+              <MainThreadCard
+                :active="threadStore.threadId === mainThread.id"
+                :pending="threadStore.navigationTarget?.threadId === mainThread.id"
+                :disabled="conversationSelectionLocked"
+                :can-reset="mainThread.canReset"
+                @select="mainThread && switchThread(mainThread)"
+                @reset="threadPendingReset = mainThread ?? null"
+              />
+            </div>
             <div class="chat-section-title">
               <div class="chat-section-title-main">
                 <PixelIcon name="chat" size="xs" />
-                <span class="chat-history-title-text">{{ __t('ui.navigation', '历史会话') }}</span>
+                <span class="chat-history-title-text">{{ __t('ui.chat', '侧会话') }}</span>
               </div>
               <span class="chat-section-title-en">HISTORY</span>
             </div>
 
-            <div
+            <MotionList
               class="chat-thread-list chat-scrollbar"
               :inert="conversationSelectionLocked || undefined"
               :aria-busy="isLoadingThreads || conversationSelectionLocked"
             >
-              <div v-if="isLoadingThreads && !threadHistory.length" class="chat-thread-loading">
-                <PixelIcon name="refresh" size="xs" animation="spin" />
-                <span>{{ __t('ui.navigation', '加载中...') }}</span>
-              </div>
+              <MotionSkeleton
+                v-if="isLoadingThreads && !threadHistory.length"
+                key="loading"
+                variant="card"
+                :rows="3"
+                :label="__t('ui.navigation', '加载中...')"
+              />
 
-              <div v-else-if="threadHistory.length === 0" class="chat-thread-empty">
-                {{ __t('ui.navigation', '暂无历史会话') }}
+              <div v-else-if="!isLoadingThreads && sideThreads.length === 0" key="empty" class="chat-thread-empty">
+                {{ __t('ui.chat', '暂无侧会话') }}
               </div>
 
               <div
-                v-for="thread in threadHistory"
+                v-for="thread in sideThreads"
                 :key="thread.id"
                 :class="[
                   'chat-thread-item',
@@ -596,7 +632,7 @@ watch([() => threadStore.threadId, threadHistory], () => {
                   @click.stop="switchThread(thread)"
                 >
                   <span class="chat-thread-title">
-                    {{ thread.title || __t('ui.navigation', '未命名会话') }}
+                    {{ threadDisplayName(thread) }}
                   </span>
                   <span class="chat-thread-meta">
                     <span class="chat-thread-count">
@@ -616,6 +652,7 @@ watch([() => threadStore.threadId, threadHistory], () => {
                   <PixelIcon name="pencil" size="xs" />
                 </button>
                 <button
+                  v-if="thread.canDelete"
                   class="chat-thread-delete"
                   :title="__t('ui.navigation', '删除整条会话')"
                   :aria-label="__t('ui.navigation', '删除整条会话')"
@@ -624,7 +661,7 @@ watch([() => threadStore.threadId, threadHistory], () => {
                   <PixelIcon name="trash" size="xs" />
                 </button>
               </div>
-            </div>
+            </MotionList>
           </div>
 
           <!-- 新建会话按钮 -->
@@ -703,9 +740,10 @@ watch([() => threadStore.threadId, threadHistory], () => {
               <Transition name="identity-swap">
                 <div :key="`${activeAgent?.id}:${threadStore.threadId}`" class="chat-main-info">
                   <span class="chat-main-name">{{ activeAgent?.name ?? 'Pero' }}</span>
-                  <span class="chat-main-channel">
-                    {{ currentThreadTitle || __t('ui.navigation', '当前会话') }}
-                    {{ __t('ui.navigation', '· desktop 频道') }}
+                  <span class="chat-main-channel" :class="{ 'chat-main-channel--main': threadStore.threadKind === 'main' }">
+                    <PixelIcon v-if="threadStore.threadKind === 'main'" name="home" size="xs" />
+                    {{ currentThreadTitle }}
+                    <template v-if="threadStore.threadKind !== 'main'">{{ __t('ui.navigation', '· desktop 频道') }}</template>
                   </span>
                 </div>
               </Transition>
@@ -762,10 +800,10 @@ watch([() => threadStore.threadId, threadHistory], () => {
     </div>
 
     <PDialog
-      :model-value="Boolean(threadPendingRename)"
+      :model-value="threadPendingRename?.threadKind === 'side'"
       :title="__t('ui.navigation', '修改会话标题')"
       mode="prompt"
-      :default-value="threadPendingRename?.title || ''"
+      :default-value="threadPendingRename?.threadKind === 'side' ? threadPendingRename.title : ''"
       :placeholder="__t('ui.navigation', '未命名会话')"
       :confirm-text="__t('ui.navigation', '保存标题')"
       @update:model-value="
@@ -774,6 +812,18 @@ watch([() => threadStore.threadId, threadHistory], () => {
         }
       "
       @confirm="confirmRenameThread"
+    />
+
+    <PDialog
+      :model-value="Boolean(threadPendingReset)"
+      :title="__t('ui.chat', '清空主会话')"
+      :message="__t('ui.chat', '清空聊天、心流、计划和局部变量。角色记忆、共享状态、文件与设置会保留。')"
+      :confirm-text="__t('ui.chat', '清空重置')"
+      confirm-variant="danger"
+      :loading="resetting"
+      :auto-close="false"
+      @update:model-value="(visible) => { if (!visible && !resetting) threadPendingReset = null }"
+      @confirm="confirmResetThread"
     />
 
     <HistoryExportDialog
@@ -1229,6 +1279,22 @@ watch([() => threadStore.threadId, threadHistory], () => {
   font-size: 11px;
 }
 
+.chat-main-thread-slot {
+  flex: 0 0 auto;
+  padding: 8px 10px;
+}
+
+.chat-main-channel.chat-main-channel--main {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  width: fit-content;
+  padding: 3px 8px;
+  border-radius: 6px;
+  background: color-mix(in srgb, var(--ui-accent-primary) 9%, transparent);
+  color: var(--ui-accent-primary);
+}
+
 .chat-thread-item {
   position: relative;
   display: flex;
@@ -1582,6 +1648,7 @@ watch([() => threadStore.threadId, threadHistory], () => {
   display: flex;
   align-items: center;
   justify-content: space-between;
+  gap: 12px;
   padding: 14px 20px;
   border-bottom: 1px solid var(--ui-border-subtle);
   background: var(--ui-bg-surface-soft);
@@ -1595,13 +1662,24 @@ watch([() => threadStore.threadId, threadHistory], () => {
 
 .chat-main-agent {
   display: flex;
+  flex: 1 1 auto;
   align-items: center;
   gap: 12px;
+  min-width: 0;
 }
 
 .chat-main-info {
   display: flex;
   flex-direction: column;
+  min-width: 0;
+}
+
+/* 窄窗口时长会话标题截断，不把右侧操作区挤成多行。 */
+.chat-main-name,
+.chat-main-channel {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .chat-main-name {
@@ -1619,6 +1697,8 @@ watch([() => threadStore.threadId, threadHistory], () => {
 /* 像素化会话操作区 */
 .chat-main-status {
   position: relative;
+  flex-shrink: 0;
+  white-space: nowrap;
   display: inline-flex;
   align-items: center;
   gap: 7px;
@@ -1783,6 +1863,10 @@ watch([() => threadStore.threadId, threadHistory], () => {
 .chat-avatar-slot > *,
 .chat-identity-slot > * {
   grid-area: 1 / 1;
+}
+.chat-identity-slot {
+  min-width: 0;
+  grid-template-columns: minmax(0, 1fr);
 }
 .identity-swap-enter-active {
   transition:

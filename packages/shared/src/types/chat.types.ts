@@ -39,6 +39,8 @@ export interface AiModelConfigDto {
   returnNativeReasoning: boolean
   wireApi: 'chat_completions' | 'responses'
   reasoningDialect: 'auto' | 'openai' | 'deepseek' | 'openrouter' | 'generic'
+  /** 回答预填充能力声明；auto 由本地规则判断。 */
+  assistantPrefill?: 'auto' | 'supported' | 'unsupported'
   stream: boolean
   enableVision: boolean
   enableAudioInput: boolean

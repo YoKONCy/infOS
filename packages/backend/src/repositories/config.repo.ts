@@ -20,6 +20,24 @@ type ConfigRow = typeof configs.$inferSelect
 export class ConfigRepository {
   constructor(private db: DrizzleDb) {}
 
+  /** 同步安全判断也使用同一 configs 表，避免持有可失效的配置副本。 */
+  getSync(key: string): string | undefined {
+    return this.db.select().from(configs).where(eq(configs.key, key)).get()?.value
+  }
+  setJsonSync(key: string, value: unknown): void {
+    this.db
+      .insert(configs)
+      .values({ key, value: JSON.stringify(value) })
+      .onConflictDoUpdate({
+        target: configs.key,
+        set: { value: JSON.stringify(value), updatedAt: new Date().toISOString() },
+      })
+      .run()
+  }
+  deleteSync(key: string): void {
+    this.db.delete(configs).where(eq(configs.key, key)).run()
+  }
+
   /** 获取单个配置值 */
   async get(key: string): Promise<string | undefined> {
     const row = await this.db.select().from(configs).where(eq(configs.key, key)).get()

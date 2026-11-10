@@ -46,6 +46,12 @@ export interface IssueFileHandleInput {
 
 /** 文件资产元数据与限次 Handle 的进程内权威。 */
 export class AssetFileAuthority {
+  forgetTemporary(ref: KernelObjectRef): void {
+    const record = this.assets.get(this.key(ref))
+    if (record?.asset.retention !== 'temporary') return
+    this.assets.delete(this.key(ref))
+    for (const [id, handle] of this.handles) if (handle.assetRef.objectId === ref.objectId) this.revoke(id)
+  }
   private readonly assets = new Map<string, AssetRecord>()
   private readonly handles = new Map<KernelFileHandleId, KernelFileHandle>()
 

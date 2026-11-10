@@ -1,45 +1,18 @@
-import Database from 'better-sqlite3'
-import { drizzle } from 'drizzle-orm/better-sqlite3'
+import { createDrizzleConnection, closeDrizzleConnection } from '@infos/backend/database'
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 import { flowStateRevisions, flowStates } from '@infos/backend/database/schema'
 import { FlowStateRepository } from '@infos/backend/repositories/flowState.repo'
 
-let sqlite: Database.Database
+let db: ReturnType<typeof createDrizzleConnection>
 
 describe('FlowStateRepository 对话检查点回退', () => {
   beforeEach(() => {
-    sqlite = new Database(':memory:')
-    sqlite.exec(`
-      CREATE TABLE flow_states (
-        thread_id TEXT NOT NULL,
-        agent_id TEXT NOT NULL,
-        current_goal TEXT DEFAULT '' NOT NULL,
-        private_facts TEXT DEFAULT '' NOT NULL,
-        revision INTEGER DEFAULT 1 NOT NULL,
-        updated_by_pair_id TEXT,
-        updated_at TEXT DEFAULT (datetime('now', 'localtime')) NOT NULL
-      );
-      CREATE UNIQUE INDEX idx_flow_states_thread_agent ON flow_states(thread_id, agent_id);
-      CREATE TABLE flow_state_revisions (
-        id INTEGER PRIMARY KEY AUTOINCREMENT,
-        thread_id TEXT NOT NULL,
-        agent_id TEXT NOT NULL,
-        pair_id TEXT,
-        before_current_goal TEXT DEFAULT '' NOT NULL,
-        before_private_facts TEXT DEFAULT '' NOT NULL,
-        after_current_goal TEXT DEFAULT '' NOT NULL,
-        after_private_facts TEXT DEFAULT '' NOT NULL,
-        created_at TEXT DEFAULT (datetime('now', 'localtime')) NOT NULL
-      );
-    `)
+    db = createDrizzleConnection(':memory:')
   })
 
-  afterEach(() => sqlite.close())
+  afterEach(() => closeDrizzleConnection(db))
 
   it('A 与 D 更新心流时，撤销 D 后恢复到 A 完成后的状态', async () => {
-    const db = drizzle(sqlite, {
-      schema: { flowStates, flowStateRevisions },
-    })
     const repo = new FlowStateRepository(db as never)
 
     await repo.save({
@@ -66,7 +39,6 @@ describe('FlowStateRepository 对话检查点回退', () => {
   })
 
   it('清空写入真实修订，并可按该轮次回退', async () => {
-    const db = drizzle(sqlite, { schema: { flowStates, flowStateRevisions } })
     const repo = new FlowStateRepository(db as never)
     await repo.save({
       threadId: 'thread-1',
@@ -96,9 +68,6 @@ describe('FlowStateRepository 对话检查点回退', () => {
   })
 
   it('同一待撤销轮次多次更新时恢复到该轮开始前的状态', async () => {
-    const db = drizzle(sqlite, {
-      schema: { flowStates, flowStateRevisions },
-    })
     const repo = new FlowStateRepository(db as never)
     await repo.save({
       threadId: 'thread-1',
@@ -128,5 +97,16 @@ describe('FlowStateRepository 对话检查点回退', () => {
       currentGoal: 'A 目标',
       privateFacts: 'A 事实',
     })
+  })
+
+  it('撤回据点贡献时重放后续私聊补丁，保留显式重复设置', async () => {
+    const repo = new FlowStateRepository(db)
+    await repo.save({ threadId: 'main-1', agentId: 'pero', pairId: 'initial', currentGoal: '准备出门', privateFacts: '先看天气' })
+    await repo.save({ threadId: 'main-1', agentId: 'pero', pairId: 'room-1', currentGoal: '和 Nana 商量出游', privateFacts: '可能下雨' })
+    await repo.save({ threadId: 'main-1', agentId: 'pero', pairId: 'private-1', currentGoal: '和 Nana 商量出游' })
+    await repo.rollbackPairs('main-1', ['room-1'])
+    expect(await repo.get('main-1', 'pero')).toMatchObject({ currentGoal: '和 Nana 商量出游', privateFacts: '先看天气' })
+    await repo.rollbackPairs('main-1', ['private-1'])
+    expect(await repo.get('main-1', 'pero')).toMatchObject({ currentGoal: '准备出门', privateFacts: '先看天气' })
   })
 })

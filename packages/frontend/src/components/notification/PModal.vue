@@ -89,16 +89,23 @@ const store = useNotificationStore()
 
 /* 动画 */
 .modal-enter-active {
-  transition: all 0.2s ease-out;
+  transition: opacity var(--motion-duration-slow) var(--motion-ease-out);
 }
 .modal-leave-active {
-  transition: all 0.15s ease-in;
+  transition: opacity var(--motion-duration-medium) var(--motion-ease-in);
+}
+.modal-enter-active .modal-dialog {
+  transition: transform var(--motion-duration-slow) var(--motion-ease-emphasized);
+}
+.modal-leave-active .modal-dialog {
+  transition: transform var(--motion-duration-medium) var(--motion-ease-in);
 }
 .modal-enter-from,
 .modal-leave-to {
   opacity: 0;
 }
-.modal-enter-from .modal-dialog {
-  transform: scale(0.9);
+.modal-enter-from .modal-dialog,
+.modal-leave-to .modal-dialog {
+  transform: translate3d(0, var(--motion-distance-md), 0) scale(var(--motion-scale-in));
 }
 </style>

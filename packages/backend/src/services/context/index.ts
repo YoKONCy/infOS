@@ -5,6 +5,5 @@
  */
 
 export { ContextRegionRegistry, ContextRegionSelector } from './contextRegionRuntime'
-export { ContinuityRegionProvider } from './continuityRegionProvider'
 export { ContextCompiler, DEFAULT_POLICIES } from './contextCompiler'
 export type { LlmMessage, ChannelPolicy, CompiledContext, ContextManifest } from './contextCompiler'

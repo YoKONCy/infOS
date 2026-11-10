@@ -1,0 +1,14 @@
+{
+  "id": "work-context",
+  "name": "工作上下文",
+  "version": "1.0.0",
+  "type": "tool",
+  "entry": "index.ts",
+  "category": "memory",
+  "tools": [{
+    "name": "clear_work_context",
+    "description": "工作告一段落、准备继续日常交流时，清理当前私聊会话的历史工作轨迹及本次执行的较早工具过程。先将需要留存的简短要点写入 notes/MEMORY.md。清理在本批工具完整返回后生效，后续工作过程重新积累。请在脚本外直接调用。",
+    "display": { "label": "清理工作上下文", "description": "结束一个工作阶段，清理过程上下文。", "icon": "book", "color": "orange", "style": "edit" },
+    "parameters": { "type": "object", "properties": {}, "additionalProperties": false }
+  }]
+}

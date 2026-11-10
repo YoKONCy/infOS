@@ -9,5 +9,6 @@
   "查找范围较大，请使用完整工作区路径": "The search area is too large; use a full workspace path",
   "任务资源引用无效": "Invalid task resource reference",
   "资源会话与角色不匹配": "The resource conversation does not belong to this character",
-  "请在本机桌面客户端打开文件，远程文件可预览或下载": "Open files in the local desktop client; remote files can be previewed or downloaded"
+  "请在本机桌面客户端打开文件，远程文件可预览或下载": "Open files in the local desktop client; remote files can be previewed or downloaded",
+  "找不到文件：{0}。已在当前工作区（含子目录）中查找，文件可能已被删除、改名或不在工作区内": "File not found: {0}. Searched the current workspace (including subfolders); the file may have been deleted, renamed or be outside the workspace"
 }

@@ -38,8 +38,47 @@ export function createResetRouter(ctx: AppContext) {
     if (confirm.trim() !== CONFIRM_PHRASES['clear-logs']) {
       throw new AppError('INVALID_PARAMETER', { message: '确认短语不匹配，操作已取消' })
     }
-    const result = await ctx.resetService.clearLogs()
-    return c.json({ code: 'OK', message: __t('server.routers', '对话记录已清空'), data: result })
+    const mainThreads = await Promise.all(ctx.agentManager.listAgents().map((agent) => ctx.threadService.getMainThread(agent.id)))
+    const releases: Array<() => void> = []
+    try {
+      for (const main of mainThreads) releases.push(ctx.conversationQueue.beginHistoryChange(main.id))
+      for (const task of ctx.runtimeStateService.listActiveTasks()) ctx.runtimeStateService.cancelTask(task.threadId)
+      for (const execution of ctx.kernelScheduler.list()) {
+        if (execution.descriptor.threadId) await ctx.kernelScheduler.cancel(execution.descriptor.executionId)
+      }
+      const cancellation = __t('errors.backend', '会话已重置，本次执行已过期')
+      const affected = new Set([
+        ...mainThreads.map((thread) => thread.id),
+        ...ctx.runtimeStateService.listActiveTasks().map((task) => task.threadId),
+        ...ctx.approvalService.list().map((request) => request.threadId),
+        ...ctx.agentInputService.list().map((request) => request.threadId),
+      ])
+      for (const threadId of affected) {
+        ctx.approvalService.cancelThread(threadId, cancellation)
+        ctx.agentInputService.cancelThread(threadId, cancellation)
+      }
+      const result = await ctx.promptWorkspace.variableStore.clearConversationScopes((configuration) =>
+        ctx.resetService.clearLogs(configuration),
+      )
+      ctx.home.closeAllSessions()
+      for (const threadId of affected) {
+        ctx.runtimeStateService.unregisterTask(threadId)
+        ctx.conversationQueue.historyChanged(threadId, false, true)
+        ctx.conversationQueue.setLive(threadId)
+        ctx.toolContextService.deleteThread(threadId)
+        ctx.conversationProjection.invalidate(threadId)
+      }
+      for (const main of mainThreads) {
+        await ctx.companionSchedulerService.discardThreadActivity(main.id)
+        const current = await ctx.threadService.getThread(main.id)
+        if (current) await ctx.gatewayHub.pushBusiness('thread_reset', {
+          threadId: current.id, agentId: current.agentId, generation: current.generation,
+        }, { type: 'all_principal_clients', principalId: current.agentId }).catch(() => {})
+      }
+      return c.json({ code: 'OK', message: __t('server.routers', '对话记录已清空'), data: result })
+    } finally {
+      for (const release of releases) release()
+    }
   })
 
   router.post('/memories', zValidator('json', confirmSchema), async (c) => {
@@ -58,8 +97,10 @@ export function createResetRouter(ctx: AppContext) {
       throw new AppError('INVALID_PARAMETER', { message: '确认短语不匹配，操作已取消' })
     }
     const knowledge = await ctx.knowledgeService.clear()
+    ctx.home.closeAllSessions()
     await ctx.privacyDeletionService.resetMemories()
     const result = await ctx.resetService.factoryReset()
+    for (const agent of ctx.agentManager.listAgents()) await ctx.threadService.getMainThread(agent.id)
     result.cleared.knowledge_documents = knowledge.documentCount
     result.cleared.knowledge_parts = knowledge.partCount
     return c.json({ code: 'OK', message: __t('server.routers', '已恢复出厂设置'), data: result })

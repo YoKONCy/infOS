@@ -15,22 +15,15 @@ import { t as __t } from '../../i18n/index'
 import { ref, computed } from 'vue'
 import { systemApi } from '../../api/modules/systemApi'
 import { configApi } from '../../api/modules/configApi'
-import { modelApi } from '../../api/modules/modelApi'
-import { memoryApi } from '../../api/modules/memoryApi'
-import { agentApi } from '../../api/modules/agentApi'
 import { invoke, isElectron } from '../../utils/ipcAdapter'
 import { logger } from '../../lib/logger'
 import { completeOnboarding, loadOnboardingFlow, queueDesktopOnboarding } from './onboardingFlow'
 import { createLaunchDiagnostic, type LaunchDiagnostic } from '../../lib/launcherDiagnostics'
+import { runLauncherCheck, type CheckItem } from './launcherChecks'
 
 export type LaunchPhase = 'connecting' | 'checking' | 'ready' | 'entering' | 'done'
 
-export interface CheckItem {
-  id: string
-  label: string
-  status: 'pending' | 'running' | 'ok' | 'warn' | 'error'
-  message?: string
-}
+export type { CheckItem } from './launcherChecks'
 
 export function useLauncher() {
   const phase = ref<LaunchPhase>('connecting')
@@ -194,98 +187,6 @@ export function useLauncher() {
     }
   }
 
-  // ── 各项检查的具体实现 ──
-
-  /** 检查后端服务是否可达 */
-  async function checkBackend(item: CheckItem): Promise<void> {
-    try {
-      const res = await systemApi.health()
-      if (res.data?.status === 'ok') {
-        item.status = 'ok'
-        item.message = '正常'
-      } else {
-        item.status = 'ok'
-        item.message = '已连接'
-      }
-    } catch {
-      item.status = 'error'
-      item.message = '无法连接后端服务'
-    }
-  }
-
-  /** 检查数据库连接（通过 batch 接口探测，避免 404 WARN 日志） */
-  async function checkDatabase(item: CheckItem): Promise<void> {
-    try {
-      // 用 batch 接口：即使 key 不存在也返回 200，不会触发后端 WARN
-      await configApi.batch(['system.initialized'])
-      item.status = 'ok'
-      item.message = '正常'
-    } catch {
-      item.status = 'error'
-      item.message = '数据库连接失败'
-    }
-  }
-
-  /** 检查是否至少有一个模型配置 */
-  async function checkModel(item: CheckItem): Promise<void> {
-    try {
-      const res = await modelApi.list()
-      const count = res.data?.length ?? 0
-      if (count > 0) {
-        item.status = 'ok'
-        item.message = `${count} 个模型`
-      } else {
-        // 新用户未配置模型是正常的，不需要警告
-        item.status = 'ok'
-        item.message = '待配置'
-      }
-    } catch {
-      item.status = 'ok'
-      item.message = '待配置'
-    }
-  }
-
-  /** 检查记忆系统（通过尝试查询） */
-  async function checkMemory(item: CheckItem): Promise<void> {
-    try {
-      await memoryApi.archive({ pageSize: 1 })
-      item.status = 'ok'
-      item.message = '正常'
-    } catch {
-      item.status = 'warn'
-      item.message = '记忆系统未就绪'
-    }
-  }
-
-  /** 检查 Agent 系统 */
-  async function checkAgents(item: CheckItem): Promise<void> {
-    try {
-      const res = await agentApi.list()
-      const count = res.data?.length ?? 0
-      if (count > 0) {
-        item.status = 'ok'
-        item.message = `${count} 个 Agent`
-      } else {
-        // 新用户无 Agent 是正常的
-        item.status = 'ok'
-        item.message = '待初始化'
-      }
-    } catch {
-      item.status = 'ok'
-      item.message = '待初始化'
-    }
-  }
-
-  // ── 检查执行器映射 ──
-
-  const CHECK_HANDLERS: Record<string, (item: CheckItem) => Promise<void>> = {
-    backend: checkBackend,
-    database: checkDatabase,
-    model: checkModel,
-    memory: checkMemory,
-    extension: checkAgents,
-  }
-
   /** 逐项执行检查 */
   async function runChecks(): Promise<void> {
     phase.value = 'checking'
@@ -294,13 +195,7 @@ export function useLauncher() {
       const item = checks.value[i]!
       item.status = 'running'
 
-      const handler = CHECK_HANDLERS[item.id]
-      if (handler) {
-        await handler(item)
-      } else {
-        item.status = 'ok'
-        item.message = '跳过'
-      }
+      await runLauncherCheck(item)
 
       progress.value = Math.round(((i + 1) / checks.value.length) * 100)
     }

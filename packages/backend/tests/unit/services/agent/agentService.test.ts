@@ -40,6 +40,57 @@ describe('AgentService', () => {
     vi.unstubAllEnvs()
   })
 
+  it('据点执行共用角色身份时，每次请求只使用当前场景输入', async () => {
+    const requests: ChatMessage[][] = []
+    const deps = createDeps({ llmService: {
+      chatStream: vi.fn((_config, messages) => {
+        requests.push(structuredClone(messages))
+        return streamFrom([{ choices: [{ delta: { content: '场景回复' } }] }])
+      }),
+    } as never })
+    const service = new AgentService(deps)
+    for (const room of ['客厅', '书房']) await service.chatWithCompiledMessages({
+      agentId: 'pero', threadId: 'shared-main-scene', channel: 'group', interactionMode: 'work',
+      messages: [
+        { role: 'system', content: '据点规则' },
+        { role: 'user', content: `${room}当前输入`, cacheControl: { kind: 'current', currentKeys: [room] } },
+      ],
+    })
+    expect(requests[0]?.filter((message) => message.role === 'user').map((message) => message.content))
+      .toEqual(['客厅当前输入'])
+    expect(requests[1]?.filter((message) => message.role === 'user').map((message) => message.content))
+      .toEqual(['书房当前输入'])
+    expect(requests[1]?.filter((message) => message.role === 'assistant')).toEqual([])
+  })
+
+  it('运行时补充视觉状态前保留编译计划，空系统框架的动态深度仍生效', async () => {
+    const deps = createDeps({
+      imageUnderstandingService: { getConfig: async () => ({ available: false }) } as never,
+    })
+    const service = new AgentService(deps)
+    await service.chatWithCompiledMessages({
+      agentId: 'pero', threadId: 'dynamic-without-system', interactionMode: 'work',
+      messages: [
+        {
+          role: 'user', content: '上轮输入', promptPlan: { dynamicContextDepth: 1 },
+          cacheControl: { kind: 'history', key: 'old-input' },
+        },
+        { role: 'assistant', content: '上轮回复', cacheControl: { kind: 'history', key: 'old-reply' } },
+        {
+          role: 'user', content: '本轮最新状态',
+          cacheControl: { kind: 'snapshot', key: 'prompt-slot:turn_context', dynamicContextBefore: 'old-input' },
+        },
+        { role: 'user', content: '本轮输入', cacheControl: { kind: 'current', currentKeys: ['new-input'] } },
+      ],
+    })
+    const sent = vi.mocked(deps.llmService.chatStream).mock.calls[0]![1]
+    expect(sent[0]?.role).toBe('system')
+    expect(sent[1]?.content).toContain('本轮最新状态')
+    expect(sent[2]?.content).toBe('上轮输入')
+    expect(sent[3]?.content).toBe('上轮回复')
+    expect(sent.find((message) => message.cacheControl?.kind === 'current')?.content).toBe('本轮输入')
+  })
+
   it('工作历史展开后仍续接原请求，不因落盘媒体占位破坏热前缀', async () => {
     const observed: ChatMessage[][] = []
     const chatStream = vi.fn((_config, messages) => {
@@ -119,7 +170,7 @@ describe('AgentService', () => {
         expect.objectContaining({ role: 'system', content: '系统' }),
         expect.objectContaining({ role: 'user', content: '你好' }),
       ]),
-      expect.objectContaining({ tools: [] }),
+      expect.objectContaining({ tools: [{ type: 'function', function: { name: 'finish_task', description: '结束', parameters: {} } }] }),
     )
   })
 
@@ -164,9 +215,12 @@ describe('AgentService', () => {
     )
   })
 
-  it('流式运行结束后应回收Execution级动态权限', async () => {
-    const clearDynamicCapabilities = vi.fn()
-    const service = new AgentService(createDeps({ clearDynamicCapabilities }))
+  it('工具定义解析收到当前会话明确选用的 Skills', async () => {
+    const getToolDefinitions = vi.fn(() => [])
+    const service = new AgentService(createDeps({
+      getToolDefinitions,
+      threadService: { getThread: vi.fn(async () => ({ interactionMode: 'work', enabledSkills: ['writing'] })) } as never,
+    }))
 
     for await (const event of service.chatStreamWithCompiledMessages({
       agentId: 'pero',
@@ -177,7 +231,9 @@ describe('AgentService', () => {
       expect(event).toBeDefined()
     }
 
-    expect(clearDynamicCapabilities).toHaveBeenCalledWith('execution-1')
+    expect(getToolDefinitions).toHaveBeenCalledWith(
+      'pero', 'desktop', expect.any(Array), undefined, undefined, 'execution-1', 'work', ['writing'],
+    )
   })
 
   it('主模型和转述模型都无视觉时应禁用全部截图与自动化工具', async () => {
@@ -226,11 +282,12 @@ describe('AgentService', () => {
       undefined,
       'vision-gate',
       'work',
+      [],
     )
     expect(deps.llmService.chatStream).toHaveBeenCalledWith(
       expect.any(Object),
       expect.any(Array),
-      expect.objectContaining({ tools: [] }),
+      expect.objectContaining({ tools: [{ type: 'function', function: { name: 'finish_task', description: '结束', parameters: {} } }] }),
     )
   })
 
@@ -356,6 +413,7 @@ describe('AgentService', () => {
       undefined,
       'native-vision',
       'work',
+      [],
     )
     expect(deps.llmService.chatStream).toHaveBeenCalledWith(
       expect.any(Object),
@@ -389,6 +447,7 @@ describe('AgentService', () => {
       undefined,
       'stronghold_room_nana',
       'work',
+      [],
     )
   })
 
@@ -501,6 +560,7 @@ describe('AgentService', () => {
       undefined,
       'thread-1',
       'work',
+      [],
     )
     expect(streamDeps.getToolDefinitions).toHaveBeenCalledWith(
       'nana',
@@ -510,6 +570,7 @@ describe('AgentService', () => {
       undefined,
       'thread-1',
       'work',
+      [],
     )
     expect(nonStreamDeps.llmService.chatStream).toHaveBeenCalledWith(
       modelConfig,

@@ -1,3 +1,11 @@
+import type { ExpressionService } from '../expression/service'
+import {
+  expressionPackageMessage,
+  expressionPreviewThread,
+  previewExpressionContext,
+  recordExpressionTurn,
+} from './expressionContext'
+import { keepRecentWatchLines } from './watchLineWindow'
 import { t as __t } from '../../lib/i18n'
 /**
  * Context Compiler — 上下文编译器 (AIOS 版)
@@ -33,7 +41,13 @@ import { t as __t } from '../../lib/i18n'
  */
 
 import { createHash, randomUUID } from 'node:crypto'
-import { DEFAULT_CHARACTER_STATE, resourceFromToolResult } from '@infos/shared'
+import {
+  DEFAULT_CHARACTER_STATE,
+  resourceFromToolResult,
+  DYNAMIC_CONTEXT_DEPTH_KEY,
+  parseDynamicContextDepth,
+  type CompiledPromptPlan,
+} from '@infos/shared'
 import type { PetStateService } from '../agent/petStateService'
 import { readFileSync } from 'node:fs'
 import type {
@@ -56,19 +70,22 @@ import { loadMemoryRuntimeConfig, shouldRunAutoRag } from '../memory/memoryRunti
 import type { ThreadChannel } from '../../repositories/thread.repo'
 import type { CapabilityScope } from '../../capabilities/types'
 import { isAdvancedTool } from '../../tools/advancedTools'
+import { isMemoryToolAllowed } from '../../tools/memoryPolicy'
 import { SYSTEM_PROTOCOL_TOOLS, isSystemProtocolTool } from '../../tools/systemProtocolTools'
 import type { MdpEngine, RenderedMessage } from '../prompt/mdpEngine'
 import type { PromptWorkspace } from '../prompt/promptWorkspace'
 import type { CapabilityGate } from '../../capabilities/capabilityGate'
 import type { ChatMessage } from '../llm/types'
-import { historyKey } from '../llm/promptCache'
+import { historyKey, promptReplayHistoryStart } from '../llm/promptCache'
+import { bindDynamicContext } from '../prompt/requestCompiler'
+import { MY_FRAMEWORK_ID } from '../prompt/expressionFramework'
 import { taskResultContext } from './taskResultContext'
 import { createLogger } from '../../lib/logger'
 import { AppError } from '../../lib/appError'
 import { tokenCounter } from '../tokenizer/tokenCounter'
 import type { ToolContextService } from './toolContextService'
-import { projectWorkHistory } from './workContext'
-import { formatEventTime } from '../memory/eventMemoryTime'
+import { projectWorkHistory, projectConversationExecutions, workSourceMessages } from './workContext'
+import { buildVisibleMemorySource, formatMemoryContext } from '../memory/automaticRagSelection'
 import { splitSpokenReply } from '../../nit/spokenReplyFilter'
 import type { KnowledgeRecallService } from '../knowledge/knowledgeRecallService'
 
@@ -113,17 +130,24 @@ export type ContextPolicy = ChannelPolicy
 
 /** 编译结果 */
 export interface CompiledContext {
+  workContextBase?: LlmMessage[]
   promptVariableCommit?: import('@infos/shared').PromptVariableCommit
   /** 发送给 LLM 的消息列表 */
   messages: LlmMessage[]
   /** 当前输入的位置；框架可在它之后继续插入指令。 */
   currentMessageIndex?: number
+  /** 当前输入的历史时间标记；调用方替换当前消息正文（如附件）时需保留。 */
+  currentTimeAnchor?: string
   /** 编译清单 */
   manifest: ContextManifest
 }
 
 /** 上下文清单 */
 export interface ContextManifest {
+  workContextClearCallId?: string
+  historyTokenBudget?: number
+  characterStateRevision?: number
+  perceptionImage?: boolean
   documentRecallHitCount?: number
   factRecallHitCount?: number
   promptRevision?: string
@@ -176,7 +200,7 @@ export const DEFAULT_POLICIES: Record<ThreadChannel, ChannelPolicy> = {
     enableStateInjection: true,
     tokenBudget: 0,
     enableObserver: false,
-    enableContinuity: true,
+    enableContinuity: false,
     continuityMessages: 12,
     continuityHours: 72,
   },
@@ -188,7 +212,7 @@ export const DEFAULT_POLICIES: Record<ThreadChannel, ChannelPolicy> = {
     enableStateInjection: true,
     tokenBudget: 0,
     enableObserver: false,
-    enableContinuity: true,
+    enableContinuity: false,
     continuityMessages: 12,
     continuityHours: 72,
   },
@@ -258,6 +282,12 @@ const STATIC_ENV_INFO = collectEnvironmentInfo()
 
 /** 群聊等外部历史源可覆盖检索查询，并选择不重复追加空壳 Thread 消息。 */
 export interface ContextCompileOptions {
+  /** 仅主应用据点编排器使用，场景权限独立于主线聊天设置。 */
+  internalScene?: boolean
+  /** 场景适配器实际选入的正式聊天消息数，用于跨场景消息条数分配。 */
+  sceneMessageCount?: number
+  /** 表达调教的只读场景，复用完整编译链且不持久化轮次。 */
+  expressionPreview?: { mode: InteractionMode }
   signal?: AbortSignal
   /** 预算预览不触发文档与事实的自动召回，与事件记忆开关独立。 */
   disableReferenceRetrieval?: boolean
@@ -277,6 +307,9 @@ export interface ContextCompileOptions {
   maxInputTokens?: number
   /** 当前触发轮次；该pair只保留user原生API消息，不进入XML历史。 */
   currentPairId?: string
+  currentMessageId?: number
+  excludeMessageIds?: number[]
+  retrievalTraceId?: string
   /** 请求级关闭跨Thread连续性；用于已有独立视角状态机的场景。 */
   disableContinuity?: boolean
   /** 预算预览只统计本地上下文，不请求 Embedding 或 Reranker。 */
@@ -294,6 +327,13 @@ export interface ContextCompileOptions {
 }
 
 export class ContextCompiler {
+  async previewExpression(input: { agentId: string; mode: InteractionMode; message: string }) {
+    return previewExpressionContext(this, this.agentManager, () => this.expression, input)
+  }
+  private expression?: ExpressionService
+  setExpressionService(service: ExpressionService): void {
+    this.expression = service
+  }
   private isPetVisible: (agentId: string) => boolean = () => false
 
   setPetVisibilityProvider(provider: (agentId: string) => boolean): void {
@@ -307,6 +347,9 @@ export class ContextCompiler {
 
   setPetStateService(service: Pick<PetStateService, 'get'>): void {
     this.petStateService = service
+  }
+  async characterStateRevision(agentId: string, threadId: string): Promise<number | undefined> {
+    return (await this.petStateService?.get(agentId, threadId))?.revision
   }
   private weatherService?: import('../weather/weatherService').WeatherService
 
@@ -388,7 +431,12 @@ export class ContextCompiler {
   ): Promise<CompiledContext> {
     const promptSnapshot = this.promptWorkspace?.snapshot()
     // ── 1. 获取 Thread 信息 + Channel 策略 ──
-    const thread = await this.threadService.getThread(threadId)
+    const storedThread = options.expressionPreview
+      ? expressionPreviewThread(threadId, agentId, options.expressionPreview.mode)
+      : await this.threadService.getThread(threadId)
+    const thread = storedThread && options.internalScene
+      ? { ...storedThread, channel: 'group' as const, interactionMode: 'work' as const, contextPolicy: null }
+      : storedThread
     if (!thread) {
       throw new AppError('NOT_FOUND', { message: `Thread 不存在: ${threadId}` })
     }
@@ -425,30 +473,50 @@ export class ContextCompiler {
       : this.resolvePolicy(thread.contextPolicy, fallbackPolicy)
 
     // ── 2. 加载活跃消息（短上下文窗口） ──
-    // 按完整 pair 读取最近对话轮次，避免消息行 limit 截断用户/助手半轮。
+    // 主线按独立消息预算读取，侧线保留完整配对的历史合同。
     const detailedWorkContext =
       channel === 'desktop' &&
+      thread.threadKind !== 'main' &&
       thread.interactionMode === 'work' &&
       !options.realmExecution &&
       !options.disableWorkContext
-    const messages =
-      detailedWorkContext && this.threadService.getWorkingMessagePairs
-        ? await this.threadService.getWorkingMessagePairs(threadId, options.maxInputTokens ?? 0)
+    const isolatedScene = Boolean(options.internalScene || options.realmExecution || options.expressionPreview)
+    const workBoundary = isolatedScene ? undefined : this.threadService.workContextBoundary?.(threadId, thread.generation)
+    const continuousHistory = thread.threadKind === 'main' && !isolatedScene
+    // 场景适配器提供自己的历史，宿主 Thread 在此仅关联角色与生命周期。
+    const loadedMessages = isolatedScene ? [] : continuousHistory
+      ? await this.threadService.getConversationHistory(threadId,
+          Math.min(channelMemoryConfig?.historyTokenBudget ?? 16384, options.maxInputTokens || Infinity),
+          options.currentMessageId)
+      : detailedWorkContext && this.threadService.getWorkingMessagePairs
+        ? await this.threadService.getWorkingMessagePairs(
+            threadId,
+            options.maxInputTokens ?? 0,
+            promptReplayHistoryStart(`${channel}:${agentId}:${threadId}`),
+            workBoundary,
+          )
         : await this.threadService.getActiveMessagePairs(threadId, policy.messageWindow, true)
+    const excluded = new Set(options.excludeMessageIds ?? [])
+    const filteredMessages = loadedMessages.filter((message) => !excluded.has(message.id))
+    const messages = continuousHistory ? filteredMessages : keepRecentWatchLines(filteredMessages)
     const currentMessage = options.currentInput
       ? undefined
-      : this.resolveCurrentUserMessage(messages, options.currentPairId)
+      : options.currentMessageId === undefined
+        ? this.resolveCurrentUserMessage(messages, options.currentPairId)
+        : messages.find((message) => message.id === options.currentMessageId)
     const historyMessages = currentMessage
       ? messages.filter((message) => message.id !== currentMessage.id)
       : messages
-    // 只对已入库的历史用户消息注入时间。当前输入沿用动态状态中的当前时间。
+    // 已入库的当前输入与历史使用同一套时间标记：消息从当前输入转为历史时正文不变，
+    // 下一次请求的前缀保持一致。临时输入不入库，不加标记。
+    const anchoredMessages = currentMessage ? [...historyMessages, currentMessage] : historyMessages
     const historyTimeAnchors =
       options.appendThreadMessages === false ||
-      !historyMessages.some((message) => message.role === 'user')
+      !anchoredMessages.some((message) => message.role === 'user')
         ? new Map<number, string>()
         : await this.threadService.getConversationTimeAnchors(
             threadId,
-            historyMessages.reduce((latest, message) => Math.max(latest, message.id), 0),
+            anchoredMessages.reduce((latest, message) => Math.max(latest, message.id), 0),
           )
     const ownerName = (await this.configRepo.get('owner.name')) ?? '用户'
     const conversationHistory = this.formatConversationHistory(
@@ -462,6 +530,7 @@ export class ContextCompiler {
     const lastUserMessage = options.retrievalQuery?.trim() || this.extractLastUserMessage(messages)
 
     // ── 4. [可选] RAG 记忆检索 → memory_context 字符串 ──
+    let expressionNotes: EventNote[] = []
     let memoryContext = ''
     let memoryHitCount = 0
     const enableAutoRag =
@@ -476,10 +545,24 @@ export class ContextCompiler {
               lastUserMessage,
               channelMemoryConfig?.retrievalLimit ?? 10,
               channel,
-              options.currentPairId,
+              options.retrievalTraceId ?? options.currentPairId,
               options.onRagProgress,
+              {
+                tokenBudget: channelMemoryConfig?.memoryTokenBudget ?? 0,
+                preview: Boolean(options.expressionPreview),
+                // 只有本轮真正装配进上下文的消息才算“可见”；预览不追加历史时不做来源去重。
+                visibleSource:
+                  options.appendThreadMessages === false
+                    ? undefined
+                    : buildVisibleMemorySource(
+                        threadId,
+                        currentMessage ? [...historyMessages, currentMessage] : historyMessages,
+                        options.currentPairId ?? currentMessage?.pairId ?? undefined,
+                      ),
+              },
             )
           : []
+        expressionNotes = eventNotes
         if (eventNotes.length) {
           memoryContext = this.formatEventNotes(eventNotes)
           memoryHitCount = eventNotes.length
@@ -524,6 +607,7 @@ export class ContextCompiler {
       channel,
       undefined,
       options.capabilityScope,
+      thread.interactionMode === 'minimal' || options.realmExecution ? [] : (thread.enabledSkills ?? []),
     )
     const disabledTools = new Set(
       (thread.disabledTools ?? []).filter((name) => !isSystemProtocolTool(name)),
@@ -536,9 +620,14 @@ export class ContextCompiler {
       [...capability.allowedTools, ...protocolTools].filter(
         (name) =>
           !disabledTools.has(name) &&
+          isMemoryToolAllowed(name, thread.threadKind) &&
           this.capabilityGate.isToolAllowedInMode(name, thread.interactionMode),
       ),
     )
+    if (!capability.enabledSkills?.length) {
+      enabledTools.delete('skill_list_resources')
+      enabledTools.delete('skill_read_resource')
+    }
 
     // 工具描述：改用 CapabilityGate 已按 channel 过滤白名单的版本（替代原 toolRegistry 直取逻辑）
     // 仅当 Channel 策略启用时才注入工具描述；请求级 ambient 会进一步收窄工具集。
@@ -571,13 +660,18 @@ export class ContextCompiler {
     // 模板内部构造由框架声明，编译器只提供数据。
     const systemCore = ''
 
-    const flowState = await this.flowStateService.get(threadId, agentId)
+    const flowState = options.realmExecution || options.expressionPreview
+      ? { currentGoal: '', privateFacts: '' }
+      : await this.flowStateService.get(threadId, agentId)
     const taskPlanEnabled =
       channel === 'desktop' &&
       !options.realmExecution &&
       options.capabilityScope !== 'ambient' &&
       enabledTools.has('update_plan')
-    const plan = taskPlanEnabled ? this.planService?.get(threadId, agentId) : null
+    const plan =
+      taskPlanEnabled && !options.expressionPreview
+        ? this.planService?.get(threadId, agentId)
+        : null
 
     // ── 9. 组装 vars 对象，调用 MdpEngine 渲染 slots 模板 ──
     const vars: Record<string, unknown> = {
@@ -603,7 +697,11 @@ export class ContextCompiler {
         options.currentInput ??
         (options.appendThreadMessages === false || !currentMessage
           ? undefined
-          : this.assembleMessages({ slotMessages: [], messages: [currentMessage] })[0]),
+          : this.assembleMessages({
+              slotMessages: [],
+              messages: [currentMessage],
+              timeAnchors: historyTimeAnchors,
+            })[0]),
       generation_type: options.generationType ?? (options.realmExecution ? 'quiet' : 'normal'),
       prompt_seed: `${threadId}:${currentMessage?.id ?? randomUUID()}:${promptSnapshot?.id ?? 'default'}`,
       model: options.modelName ?? '',
@@ -639,9 +737,13 @@ export class ContextCompiler {
       tools_description: toolsDescription,
       // 能力片段（先留空，vars 组装完成后渲染，因为片段内可能引用 owner_name 等变量）
       ability_fragments: '',
-      // 技能菜单（来自 CapabilityGate，L1 摘要）
-      skill_menu: enabledTools.has('load_skill') ? capability.skillMenuText : '',
+      // 沿用变量名以兼容现有框架；内容为本会话已选技能的完整指引。
+      skill_menu: capability.skillMenuText,
       interaction_mode: thread.interactionMode,
+      speech_handbook:
+        !options.realmExecution && ['desktop', 'group'].includes(channel)
+          ? (this.expression?.store.handbook.render(agentId) ?? '')
+          : '',
       owner_name: stateVars.owner_name ?? (await this.configRepo.get('owner.name')) ?? '用户',
       // Channel 补丁（第六阶段 #1: 按 channel 从 AgentProfile.channelPatches 取补丁注入）
       channel_patch: this.resolveChannelPatch(agentId, channel),
@@ -683,7 +785,7 @@ export class ContextCompiler {
       thread.interactionMode === 'work' &&
       !options.realmExecution &&
       !options.disableToolContext
-        ? await this.toolContextService.regions(threadId, agentId, messages)
+        ? await this.toolContextService.regions(threadId, agentId, workSourceMessages(messages, workBoundary))
         : []
     // ── 11 + 12. 将既有来源与动态 Provider 收敛为 Region，再组装最终消息 ──
     const builtInRegions = this.createBuiltInRegions({
@@ -700,11 +802,26 @@ export class ContextCompiler {
         options.appendThreadMessages === false ? [] : currentMessage ? [currentMessage] : [],
       currentInput: options.currentInput,
     })
+    const currentSceneMessageCount = options.sceneMessageCount ??
+      messages.filter((message) => message.role === 'user' || message.role === 'assistant').length
+    const sceneHistoryMessageLimit = Math.ceil(
+      (currentSceneMessageCount || DEFAULT_POLICIES[channel].messageWindow) / 2,
+    )
+    const sceneHistoryRegions = storedThread?.threadKind === 'main' &&
+      !options.realmExecution && !options.expressionPreview && !options.workContextTaskId &&
+      (channel === 'desktop' || options.internalScene)
+      ? await this.sceneHistoryRegions(threadId, agentId, Boolean(options.internalScene),
+          sceneHistoryMessageLimit)
+      : []
     const providedRegions = this.regionRegistry
       ? await this.regionRegistry.collect({
           agentId,
           threadId,
           channel,
+          interactionMode: thread.interactionMode,
+          background: Boolean(options.workContextTaskId),
+          realmExecution: Boolean(options.realmExecution),
+          taskId: options.workContextTaskId,
           tokenBudget: contextBudget,
           retrievalQuery: lastUserMessage,
           enabledKinds: [
@@ -721,7 +838,7 @@ export class ContextCompiler {
         })
       : []
     const regionCompilation = await this.regionSelector.compileAsync(
-      [...builtInRegions, ...providedRegions, ...toolRegions],
+      [...builtInRegions, ...providedRegions, ...toolRegions, ...sceneHistoryRegions],
       // 工作请求最终由包含工具定义及推理协议的统一窗口计费，不能在 Region 阶段提前拒绝。
       detailedWorkContext ? 0 : contextBudget,
     )
@@ -744,7 +861,8 @@ export class ContextCompiler {
         role:
           assembly?.format === 'sillytavern' && region.delivery === 'system' ? 'system' : 'user',
         content: region.content,
-        cacheControl: { kind: 'snapshot' },
+        cacheControl: { kind: 'snapshot', key: `context-region:${region.regionId}`,
+          ...(region.providerId === 'infos.context.tools' ? { workContext: true } : {}) },
         ...(region.regionId === 'file-working-state'
           ? {
               fileObservations: region.provenance
@@ -776,7 +894,11 @@ export class ContextCompiler {
                 ? [options.currentInput]
                 : options.appendThreadMessages === false || !currentMessage
                   ? []
-                  : this.assembleMessages({ slotMessages: [], messages: [currentMessage] })),
+                  : this.assembleMessages({
+                      slotMessages: [],
+                      messages: [currentMessage],
+                      timeAnchors: historyTimeAnchors,
+                    })),
           ]
         : [
             ...this.assembleMessages({
@@ -800,10 +922,18 @@ export class ContextCompiler {
               ? [options.currentInput]
               : options.appendThreadMessages === false || !currentMessage
                 ? []
-                : this.assembleMessages({ slotMessages: [], messages: [currentMessage] })),
+                : this.assembleMessages({
+                    slotMessages: [],
+                    messages: [currentMessage],
+                    timeAnchors: historyTimeAnchors,
+                  })),
           ]
 
-    if (assembly?.preview.frameworkId === 'builtin.main' && !options.realmExecution) {
+    if (
+      (assembly?.preview.frameworkId === 'builtin.main' ||
+        assembly?.preview.frameworkId === MY_FRAMEWORK_ID) &&
+      !options.realmExecution
+    ) {
       const current = llmMessages.at(-1)
       if (current?.role === 'user' && (currentMessage || options.currentInput)) {
         current.cacheControl = { kind: 'current', currentKeys: [historyKey(current)] }
@@ -812,6 +942,10 @@ export class ContextCompiler {
 
     // ── 13. 生成清单 ──
     const manifest: ContextManifest = {
+      workContextClearCallId: workBoundary?.toolCallId,
+      historyTokenBudget: continuousHistory ? channelMemoryConfig?.historyTokenBudget ?? 16384 : undefined,
+      characterStateRevision: stateVars.character_state_revision === undefined ? undefined : Number(stateVars.character_state_revision),
+      perceptionImage: channel === 'desktop' && promptSnapshot?.bundle.frameworks.find(item => item.id === assembly?.preview.frameworkId)?.perceptionImage === true,
       promptRevision: promptSnapshot?.id,
       promptFrameworkId: assembly?.preview.frameworkId,
       promptSegments: assembly?.preview.segments.map(
@@ -855,6 +989,28 @@ export class ContextCompiler {
         : options.currentInput || (options.appendThreadMessages !== false && currentMessage)
           ? llmMessages.length - 1
           : undefined
+    const expressionMessage = expressionPackageMessage(this.expression, options, {
+      agentId,
+      threadId,
+      channel,
+      purpose: thread.purpose,
+      generation: thread.generation,
+      query: lastUserMessage,
+      notes: expressionNotes,
+      pairId: currentMessage?.pairId,
+    })
+    if (expressionMessage) packageMessages.push(expressionMessage)
+    const selectedSceneIds = new Set(regionCompilation.selected
+      .filter((region) => region.providerId === 'infos.context.scene-history')
+      .map((region) => region.regionId))
+    const sceneMessages: LlmMessage[] = sceneHistoryRegions
+      .filter((region) => selectedSceneIds.has(region.regionId))
+      .map((region) => ({ role: 'user', content: region.content,
+        cacheControl: { kind: 'snapshot', key: region.regionId } }))
+    if (sceneMessages.length) {
+      llmMessages.splice(currentMessageIndex ?? llmMessages.length, 0, ...sceneMessages)
+      if (currentMessageIndex !== undefined) currentMessageIndex += sceneMessages.length
+    }
     if (packageMessages.length) {
       const insertionIndex = currentMessageIndex ?? llmMessages.length
       const packageContent = `<package_context>\n${packageMessages.map((message) => message.content).join('\n\n')}\n</package_context>`
@@ -892,6 +1048,7 @@ export class ContextCompiler {
         if (currentMessageIndex !== undefined) currentMessageIndex += dynamicMessages.length
       }
     }
+    const workContextBase = llmMessages.filter((message) => !message.cacheControl?.workContext)
     const currentInputMessage =
       currentMessageIndex === undefined ? undefined : llmMessages[currentMessageIndex]
     if (detailedWorkContext) {
@@ -904,35 +1061,96 @@ export class ContextCompiler {
           channel,
           taskId: options.workContextTaskId,
           modelKey: options.workContextModelKey,
+          boundary: workBoundary,
         },
         historyTimeAnchors,
       )
       if (currentInputMessage) currentMessageIndex = llmMessages.indexOf(currentInputMessage)
     }
     if (currentInputMessage && !options.realmExecution) {
+      const currentKey = currentMessage
+        ? `${currentMessage.id}:${currentMessage.revision}:${historyKey({
+            role: currentMessage.role as LlmMessage['role'],
+            content: this.historicalConversationContent(currentMessage, historyTimeAnchors),
+          })}`
+        : historyKey(currentInputMessage)
       currentInputMessage.cacheControl = {
         ...currentInputMessage.cacheControl,
         kind: 'current',
-        currentKeys: [
-          currentMessage
-            ? `${currentMessage.id}:${currentMessage.revision}:${historyKey({
-                role: currentMessage.role as LlmMessage['role'],
-                content: this.conversationContent(currentMessage),
-              })}`
-            : historyKey(currentInputMessage),
-        ],
+        currentKeys: [currentKey],
+        ...(detailedWorkContext && currentMessage
+          ? { replayAnchor: { key: currentKey, messageId: currentMessage.id } }
+          : {}),
       }
+    }
+    if (continuousHistory) {
+      if (thread.interactionMode === 'work' && !options.disableWorkContext) {
+        llmMessages = projectConversationExecutions(llmMessages, historyMessages,
+          this.threadService.conversations.forProjection(threadId, thread.generation,
+            historyMessages.flatMap((message) => message.executionId ? [message.executionId] : [])),
+          channelMemoryConfig?.historyTokenBudget ?? 16384, options.workContextModelKey, workBoundary)
+        if (currentInputMessage) currentMessageIndex = llmMessages.indexOf(currentInputMessage)
+      }
+      const pending = this.threadService.conversations.open(threadId, thread.generation).filter((item) =>
+        !(JSON.parse(item.sourceMessagesJson) as import('@infos/shared').ConversationSource[]).some((source) => excluded.has(source.messageId)))
+      const context: LlmMessage = {
+        role: 'user',
+        content: '【主线交流现场】\n每条正式消息独立保存。可使用 conversation 连续发表多条消息。提问后使用 wait 保存接续现场并释放当前执行，后续输入由新执行接续。根据实际回答使用 resolve 结束已解决事项，一条输入可以回应多个事项。\n' +
+          JSON.stringify(pending.map((item) => ({ id: item.id, question: item.question,
+            continuation: item.continuation, sources: JSON.parse(item.sourceMessagesJson), expiresAt: item.expiresAt }))),
+        cacheControl: { kind: 'snapshot', key: 'conversation-pending', dynamicContext: true },
+      }
+      const baseCurrent = currentInputMessage ? workContextBase.indexOf(currentInputMessage) : -1
+      workContextBase.splice(baseCurrent < 0 ? workContextBase.length : baseCurrent, 0, context)
+      llmMessages.splice(currentMessageIndex ?? llmMessages.length, 0, context)
+      if (currentMessageIndex !== undefined) currentMessageIndex++
+    }
+    const requestPlan: CompiledPromptPlan = assembly?.preview.requestPlan ?? {}
+    if (
+      !assembly?.preview.requestPlan &&
+      parseDynamicContextDepth(await this.configRepo.get(DYNAMIC_CONTEXT_DEPTH_KEY)) === 1
+    )
+      requestPlan.dynamicContextDepth = 1
+    if (currentMessageIndex !== undefined && !options.realmExecution) {
+      const userIds = new Set(
+        historyMessages.filter((message) => message.role === 'user').map((message) => message.id),
+      )
+      const previousUser = llmMessages
+        .slice(0, currentMessageIndex)
+        .reverse()
+        .find(
+          (message) =>
+            message.role === 'user' &&
+            message.cacheControl?.kind === 'history' &&
+            userIds.has(message.cacheControl.historyMessageId!),
+        )
+      bindDynamicContext(
+        llmMessages,
+        requestPlan.dynamicContextDepth ?? 0,
+        previousUser?.cacheControl?.historySourceKey ?? previousUser?.cacheControl?.key,
+      )
     }
     // 请求策略属于编译结果；检查点恢复时沿用，不重新读取全局设置。
     if (
       llmMessages[0] &&
-      (assembly?.preview.requestPlan?.assistantPrefill || llmMessages[0].promptPlan)
+      (requestPlan.assistantPrefill || requestPlan.dynamicContextDepth || llmMessages[0].promptPlan)
     )
-      llmMessages[0] = { ...llmMessages[0], promptPlan: assembly?.preview.requestPlan ?? {} }
+      llmMessages[0] = { ...llmMessages[0], promptPlan: requestPlan }
+    recordExpressionTurn(this.expression, options, {
+      agentId,
+      threadId,
+      pairId: currentMessage?.pairId,
+      promptRevision: promptSnapshot?.id,
+    })
     return {
       messages: llmMessages,
+      workContextBase,
       manifest,
       currentMessageIndex,
+      currentTimeAnchor:
+        currentMessage && !options.currentInput
+          ? historyTimeAnchors.get(currentMessage.id)
+          : undefined,
       promptVariableCommit: assembly?.variableCommit,
     }
   }
@@ -993,17 +1211,7 @@ export class ContextCompiler {
   }
 
   private formatEventNotes(notes: EventNote[]): string {
-    if (!notes.length) return ''
-    const lines = ['<memory_context kind="event_notes">']
-    for (const note of notes) {
-      lines.push(
-        `<event_note id="${note.id}" event_at="${formatEventTime(note.eventAt)}">` +
-          note.narrative +
-          '</event_note>',
-      )
-    }
-    lines.push('</memory_context>')
-    return lines.join('\n')
+    return formatMemoryContext(notes)
   }
 
   // ─────────────────────────────────────────
@@ -1044,7 +1252,7 @@ export class ContextCompiler {
       `${now.getFullYear()}年${now.getMonth() + 1}月${now.getDate()}日 ` +
       `星期${weekday} ${now.getHours().toString().padStart(2, '0')}:${now.getMinutes().toString().padStart(2, '0')}`
 
-    // 状态严格取当前会话，不继承其他会话或旧全局状态。
+    // 人格持续状态归角色共享，任务心流由当前会话独立提供。
     const characterState = await this.petStateService?.get(agentId, threadId)
     const mood = characterState?.mood ?? DEFAULT_CHARACTER_STATE.mood
     const vibe = characterState?.vibe ?? DEFAULT_CHARACTER_STATE.vibe
@@ -1064,8 +1272,12 @@ export class ContextCompiler {
       current_time: currentTime,
       ...this.weatherService?.promptFields(),
       mood,
+      character_state_revision: String(characterState?.revision ?? 0),
       vibe,
       mind,
+      ongoing_goals: characterState?.ongoingGoals ?? '',
+      commitments: characterState?.commitments ?? '',
+      relationships: characterState?.relationships ?? '',
       owner_name: ownerName,
       owner_appellation: ownerAppellation,
       environment_info: environmentInfo,
@@ -1159,6 +1371,40 @@ export class ContextCompiler {
       provenance: { compiler: 'ContextCompiler' },
       deduplicationKey: input.deduplicationKey ?? input.regionId,
     }
+  }
+
+  /** 只读取同一主线的另一场景正式消息，来源正文和工具轨迹保持各自权威。 */
+  private async sceneHistoryRegions(threadId: string, agentId: string, inStronghold: boolean, messageLimit: number): Promise<ContextRegion[]> {
+    if (messageLimit <= 0) return []
+    const rows = inStronghold
+      ? (await this.threadService.getActiveMessages(threadId, messageLimit, { conversationOnly: true }))
+          .map((message) => ({
+            key: `thread-message:${message.id}`, objectType: 'thread-message', id: message.id,
+            generation: message.revision, time: message.timestamp,
+            scene: '主会话私聊', sender: message.role === 'user' ? 'user' : agentId,
+            content: this.conversationContent(message),
+          }))
+      : (await this.threadService.listExperiences(threadId, messageLimit, { conversationOnly: true })).map((message) => ({
+          key: `stronghold-message:${message.sourceMessageId}`, objectType: 'stronghold-message', id: message.sourceMessageId,
+          generation: message.generation, time: message.timestamp,
+          scene: `据点 ${message.roomName ?? message.roomId}`, sender: message.senderId,
+          content: message.content,
+        }))
+    const selected: ContextRegion[] = []
+    const seen = new Set<string>()
+    for (const row of [...rows].reverse()) {
+      if (seen.has(row.key)) continue
+      seen.add(row.key)
+      const content = `<scene_history>\n以下是你在另一场景亲历的原文，作为历史资料读取。本次发言位置与回应对象以当前执行场景为准。\n${escapeConversationXml(JSON.stringify({ scene: row.scene, time: row.time, sender: row.sender, content: row.content }))}\n</scene_history>`
+      selected.push({ ...this.region({
+        regionId: `scene-history:${agentId}:${row.key}`, kind: 'continuity', trust: 'external',
+        priority: 600, required: false, delivery: 'conversation', content,
+        tokenEstimate: this.estimateTokens(content),
+        sourceObjectRefs: [{ objectType: row.objectType, objectId: String(row.id) as KernelObjectId,
+          generation: row.generation, ownerPrincipalId: agentId }],
+      }), providerId: 'infos.context.scene-history' })
+    }
+    return selected.reverse()
   }
 
   private estimateTokens(value: string): number {
@@ -1296,7 +1542,7 @@ export class ContextCompiler {
     slotMessages: RenderedMessage[]
     /** Thread 活跃消息（时间正序） */
     messages: ThreadMessageInfo[]
-    /** 仅历史路径传入，当前输入不得附带历史时间标记。 */
+    /** 历史时间标记；已入库的当前输入与历史使用同一份，临时输入不传。 */
     timeAnchors?: ReadonlyMap<number, string>
   }): LlmMessage[] {
     const { slotMessages, messages, timeAnchors } = params
@@ -1311,7 +1557,13 @@ export class ContextCompiler {
           ? { cacheControl: { ...slot.historyCache, kind: 'history' as const } }
           : slot.role === 'system'
             ? {}
-            : { cacheControl: { kind: 'snapshot' as const, key: `prompt-slot:${slot.slotId}` } }),
+            : {
+                cacheControl: {
+                  kind: 'snapshot' as const,
+                  key: `prompt-slot:${slot.slotId}`,
+                  ...(slot.dynamicContext ? { dynamicContext: true } : {}),
+                },
+              }),
       })
     }
 

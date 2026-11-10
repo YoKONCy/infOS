@@ -188,7 +188,7 @@ export async function applyFileEdits(
       written: { oldHash?: string; newHash: string },
     ) => Promise<void>
   },
-  beforeWrite?: () => Promise<unknown>,
+  beforeWrite?: (filePath: string, next: Buffer) => Promise<unknown>,
 ) {
   const args = prepareFileEditArguments(raw, options.owner)
   return workspace.withFileMutation(
@@ -329,7 +329,7 @@ export async function applyFileEdits(
       for (const edit of [...edits].reverse())
         next = next.slice(0, edit.start) + edit.content + next.slice(edit.end)
       if (next === text) throw new WorkspaceError(WS_ERROR.EDIT_NO_CHANGES, '编辑没有产生实际变化')
-      const captured = await beforeWrite?.()
+      const captured = await beforeWrite?.(filePath, Buffer.from(bom + next))
       options.signal?.throwIfAborted()
       if (
         createHash('sha256')

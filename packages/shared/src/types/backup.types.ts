@@ -43,6 +43,8 @@ export interface BackupRecord {
   encrypted: boolean
   protection: 'none' | 'password' | 'local'
   reason: 'manual' | 'before-import'
+  /** 服务端生成的公开消息元数据标记；缺失时按包含内部元数据保护。 */
+  publicMessageMetadata?: boolean
   manifest: BackupManifest
 }
 export interface ImportPolicy {

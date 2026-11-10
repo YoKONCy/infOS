@@ -1,66 +1,22 @@
+import { createDrizzleConnection, closeDrizzleConnection } from '@infos/backend/database'
 import Database from 'better-sqlite3'
-import { drizzle } from 'drizzle-orm/better-sqlite3'
 import { eq } from 'drizzle-orm'
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 import { FileSnapshotRepository } from '@infos/backend/repositories/fileSnapshot.repo'
 import { fileChangeSnapshots, threadMessages, threads } from '@infos/backend/database/schema'
 
+let db: ReturnType<typeof createDrizzleConnection>
 let sqlite: Database.Database
 
 describe('FileSnapshotRepository 链式回滚范围', () => {
   beforeEach(() => {
-    sqlite = new Database(':memory:')
-    sqlite.exec(`
-      CREATE TABLE threads (
-        id TEXT PRIMARY KEY NOT NULL,
-        agent_id TEXT NOT NULL,
-        channel TEXT DEFAULT 'desktop' NOT NULL,
-        status TEXT DEFAULT 'active',
-        auto_execute_tools INTEGER DEFAULT false NOT NULL,
-        execution_mode TEXT DEFAULT 'manual' NOT NULL,
-        created_at TEXT,
-        updated_at TEXT
-      );
-      CREATE TABLE thread_messages (
-        id INTEGER PRIMARY KEY AUTOINCREMENT,
-        thread_id TEXT NOT NULL,
-        role TEXT NOT NULL,
-        content TEXT NOT NULL,
-        raw_content TEXT,
-        status TEXT DEFAULT 'active',
-        pair_id TEXT,
-        sender_id TEXT,
-        revision INTEGER DEFAULT 1,
-        agent_id TEXT,
-        metadata_json TEXT DEFAULT '{}',
-        scorer_status TEXT DEFAULT 'pending',
-        timestamp TEXT,
-        deleted_at TEXT,
-        deleted_by TEXT
-      );
-      CREATE TABLE file_change_snapshots (
-        id TEXT PRIMARY KEY NOT NULL,
-        thread_id TEXT NOT NULL,
-        pair_id TEXT NOT NULL,
-        call_id TEXT NOT NULL,
-        file_path TEXT NOT NULL,
-        operation TEXT DEFAULT 'modify' NOT NULL,
-        rename_target_path TEXT,
-        original_content TEXT,
-        original_sha256 TEXT,
-        final_sha256 TEXT,
-        history_continuous INTEGER DEFAULT true,
-        created_at TEXT DEFAULT (datetime('now', 'localtime')) NOT NULL,
-        updated_at TEXT DEFAULT (datetime('now', 'localtime')) NOT NULL
-      );
-      CREATE UNIQUE INDEX uq_file_change_snapshots_pair_file ON file_change_snapshots(pair_id, file_path);
-    `)
+    db = createDrizzleConnection(':memory:')
+    sqlite = db.$client
   })
 
-  afterEach(() => sqlite.close())
+  afterEach(() => closeDrizzleConnection(db))
 
   it('点击 B 的 assistant 时链式删除 B、C、D，并保留 A', async () => {
-    const db = drizzle(sqlite, { schema: { threads, threadMessages, fileChangeSnapshots } })
     const repo = new FileSnapshotRepository(db as never)
     sqlite
       .prepare('INSERT INTO threads (id, agent_id, channel, status) VALUES (?, ?, ?, ?)')
@@ -156,7 +112,6 @@ describe('FileSnapshotRepository 链式回滚范围', () => {
   })
 
   it('中断回复可以作为撤回目标，并删除同轮用户消息与中断回复', async () => {
-    const db = drizzle(sqlite, { schema: { threads, threadMessages, fileChangeSnapshots } })
     const repo = new FileSnapshotRepository(db as never)
     sqlite
       .prepare('INSERT INTO threads (id, agent_id, channel, status) VALUES (?, ?, ?, ?)')
@@ -205,7 +160,6 @@ describe('FileSnapshotRepository 链式回滚范围', () => {
   })
 
   it('同一轮同一文件保留首次前态并更新最终哈希', async () => {
-    const db = drizzle(sqlite, { schema: { threads, threadMessages, fileChangeSnapshots } })
     const repo = new FileSnapshotRepository(db as never)
     await repo.upsert({
       id: 's1',
@@ -244,7 +198,6 @@ describe('FileSnapshotRepository 链式回滚范围', () => {
   })
 
   it('同轮夹入外部修改后，后续工具写入不能把历史重新标记为连续', async () => {
-    const db = drizzle(sqlite, { schema: { threads, threadMessages, fileChangeSnapshots } })
     const repo = new FileSnapshotRepository(db as never)
     const base = { threadId: 't', pairId: 'A', filePath: 'note.md', operation: 'modify' as const }
     await repo.upsert({

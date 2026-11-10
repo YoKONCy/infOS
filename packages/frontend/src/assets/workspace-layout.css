@@ -1,0 +1,60 @@
+/* 三栏放不下时复用工作区已有的互斥开关、遮罩和 Escape 关闭行为。 */
+html:not([data-mobile]) .workspace-tab:not(.workspace-tab--compact) .workspace-explorer,
+html:not([data-mobile]) .workspace-tab:not(.workspace-tab--compact) .workspace-copilot {
+  position: relative;
+  inset: auto;
+  box-shadow: none;
+}
+html:not([data-mobile]) .workspace-tab.workspace-tab--compact .workspace-panel {
+  position: relative;
+}
+html:not([data-mobile]) .workspace-tab.workspace-tab--compact .workspace-body {
+  position: relative;
+}
+html:not([data-mobile]) .workspace-tab.workspace-tab--compact .workspace-center {
+  width: 100%;
+  min-width: 0;
+}
+html:not([data-mobile]) .workspace-tab.workspace-tab--compact .workspace-explorer--collapsed,
+html:not([data-mobile]) .workspace-tab.workspace-tab--compact .workspace-copilot--collapsed {
+  display: none;
+}
+html
+  .workspace-tab.workspace-tab--compact
+  .workspace-body
+  > .workspace-explorer:not(.workspace-explorer--collapsed),
+html
+  .workspace-tab.workspace-tab--compact
+  .workspace-body
+  > .workspace-copilot:not(.workspace-copilot--collapsed) {
+  position: absolute;
+  z-index: 31;
+  top: 0;
+  bottom: 0;
+  max-width: calc(100% - 44px);
+  box-shadow: var(--ui-shadow-panel);
+}
+html:not([data-mobile])
+  .workspace-tab.workspace-tab--compact
+  .workspace-explorer:not(.workspace-explorer--collapsed) {
+  left: 0;
+  right: auto;
+  width: min(320px, calc(100% - 44px)) !important;
+}
+html:not([data-mobile])
+  .workspace-tab.workspace-tab--compact
+  .workspace-copilot:not(.workspace-copilot--collapsed) {
+  left: auto;
+  right: 0;
+  width: min(480px, calc(100% - 44px)) !important;
+}
+html:not([data-mobile]) .workspace-tab.workspace-tab--compact .workspace-mobile-backdrop {
+  position: absolute;
+  z-index: 30;
+  inset: 0;
+  border: 0;
+  background: color-mix(in srgb, var(--ui-bg-canvas) 65%, transparent);
+}
+html:not([data-mobile]) .workspace-tab.workspace-tab--compact .workspace-resizer {
+  display: none;
+}

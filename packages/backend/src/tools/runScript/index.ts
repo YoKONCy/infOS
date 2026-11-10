@@ -78,6 +78,7 @@ export const runScriptTool: BuiltinTool = {
           node.type === 'FunctionCall' &&
           typeof node.name === 'string' &&
           isAdvancedTool(node.name) &&
+          !access.resident?.has(node.name) &&
           (!access.expanded || !access.names.has(node.name))
         )
           unavailable.add(node.name)
@@ -189,6 +190,7 @@ export const runScriptTool: BuiltinTool = {
         async (name, toolArgs, branchSignal = signal) => {
           if (name === 'expand_advanced_tools')
             throw new Error('请在脚本外直接调用 expand_advanced_tools，取得工具定义后再编排脚本')
+          if (name === 'clear_work_context') throw new Error(__t('server.agent', '请在脚本外直接调用 clear_work_context'))
           if (name === 'read_image') throw new Error('请直接调用 read_image，以便将原图交给模型')
           if (name === 'run_script')
             throw new Error('NIT 不允许嵌套运行 run_script，请在同一脚本中编排')
@@ -237,6 +239,8 @@ export const runScriptTool: BuiltinTool = {
               processId: ctx.processId,
               deadline,
               pairId: ctx.pairId,
+              generation: ctx.generation,
+              characterStateVersion: ctx.characterStateVersion,
               toolCallId: callId,
               executionMode: ctx.executionMode,
               interactionMode: ctx.interactionMode,

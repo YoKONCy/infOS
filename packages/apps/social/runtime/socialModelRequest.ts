@@ -3,6 +3,8 @@ import {
   appendNativeReasoning,
   compileModelRequest,
   completePrefilledContent,
+  promptPlanOf,
+  resolveEffectivePromptPlan,
   createLogger,
   safeModelDiagnostic,
   modelNetworkDetails,
@@ -24,7 +26,12 @@ export async function requestSocialModel(
   messages: ChatMessage[],
   options: ChatOptions,
 ): Promise<ChatCompletion> {
-  const request = compileModelRequest(messages, Math.max(0, (options.usageContext?.step ?? 1) - 1))
+  // 按当前模型（含回退链）确定有效预填充；不支持时请求不发送，结果也不拼回。
+  const request = compileModelRequest(
+    messages,
+    Math.max(0, (options.usageContext?.step ?? 1) - 1),
+    resolveEffectivePromptPlan(promptPlanOf(messages), model),
+  )
   const recovery = currentSocialRecovery()
   const context = {
     turnId: recovery?.record.id,
@@ -150,15 +157,11 @@ export async function requestSocialModel(
       }
       completion = { choices: [{ message, finishReason }], usage }
     }
-    // 按续写判定拼回预填充；以思考开标签结尾的预填充只在上游确实续写时拼回。
+    // 只在正文里按续写判定拼回；纯工具调用不拼回预填充。
     if (request.prefill)
       for (const choice of completion.choices)
-        if (choice.message.content || choice.message.toolCalls?.length)
-          choice.message.content = completePrefilledContent(
-            request.prefill,
-            choice.message.content ?? '',
-            !!choice.message.toolCalls?.length,
-          )
+        if (choice.message.content)
+          choice.message.content = completePrefilledContent(request.prefill, choice.message.content)
     const usage = completion.usage
     const cacheReported =
       usage?.inputReported !== false &&

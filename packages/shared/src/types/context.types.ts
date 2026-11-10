@@ -5,6 +5,7 @@
  * 调用方通过这里访问领域能力，避免绕过校验直接耦合内部状态。
  */
 import type { KernelObjectRef } from './kernel.types'
+import type { InteractionMode } from './api.types'
 
 export type ContextRegionKind =
   | 'identity'
@@ -55,6 +56,11 @@ export interface ContextRegionRequest {
   agentId: string
   threadId: string
   channel: string
+  /** 宿主提供的只读场景快照；可选以兼容旧的请求构造方。 */
+  readonly interactionMode?: InteractionMode
+  readonly background?: boolean
+  readonly realmExecution?: boolean
+  readonly taskId?: string
   tokenBudget: number
   retrievalQuery?: string
   enabledKinds?: readonly ContextRegionKind[]

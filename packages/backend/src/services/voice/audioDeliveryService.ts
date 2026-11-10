@@ -1,4 +1,5 @@
-import { mkdirSync, writeFileSync } from 'node:fs'
+import { mkdirSync, writeFileSync, rmSync, readdirSync, statSync } from 'node:fs'
+import os from 'node:os'
 import path from 'node:path'
 import { randomUUID } from 'node:crypto'
 import type { KernelCallContext, KernelNodeId } from '@infos/shared'
@@ -9,6 +10,16 @@ import type { CapabilityDirectory } from '../../kernel/capabilityDirectory'
 import type { CapabilityHandleRegistry } from '../../kernel/capabilityHandleRegistry'
 import { LifecycleScope } from '../../kernel/lifecycleScope'
 
+/** 只回收本模块的 UUID 音频；异常退出遗留文件也不会进入附件库。 */
+function cleanupPerceptionAudio(): void {
+  const root = path.join(os.tmpdir(), 'infos-perception-audio')
+  try { for (const entry of readdirSync(root, {withFileTypes: true})) {
+    if (!entry.isFile() || !/^[a-f0-9-]{36}\.(ogg|wav|flac|aac|mp3)$/.test(entry.name)) continue
+    const file = path.join(root, entry.name)
+    if (Date.now() - statSync(file).mtimeMs > 3_600_000) rmSync(file, {force: true})
+  } } catch { /* 文件可能刚被正常播放流程清理，下次继续。 */ }
+}
+
 export interface AudioPlaybackReceipt {
   playbackId: string
   assetId: string
@@ -18,6 +29,7 @@ export interface AudioPlaybackReceipt {
 
 /** TTS 结果转 Audio Asset，并通过目标 Node 的 audio.output Capability 播放。 */
 export class AudioDeliveryService {
+  isPlaying(principalId: string): boolean { return this.activePlaybacks.has(principalId) }
   private readonly activePlaybacks = new Map<
     string,
     { playbackId: string; stop(): Promise<void> }
@@ -30,7 +42,7 @@ export class AudioDeliveryService {
     private readonly directory: CapabilityDirectory,
     private readonly handles: CapabilityHandleRegistry,
     private readonly localNodeId: KernelNodeId,
-  ) {}
+  ) { cleanupPerceptionAudio() }
 
   canDeliverTo(targetNodeId?: KernelNodeId): boolean {
     return this.directory
@@ -54,10 +66,12 @@ export class AudioDeliveryService {
     audio: TtsResult,
     context: KernelCallContext,
     targetNodeId?: KernelNodeId,
-    presentation?: { caption?: string; threadId?: string; isCurrent?: () => boolean },
+    presentation?: { caption?: string; threadId?: string; isCurrent?: () => boolean; ephemeral?: boolean },
   ): Promise<AudioPlaybackReceipt> {
     await this.cancel(context.principalId)
-    mkdirSync(this.assetRoot, { recursive: true })
+    if (presentation?.ephemeral) cleanupPerceptionAudio()
+    const directory = presentation?.ephemeral ? path.join(os.tmpdir(), 'infos-perception-audio') : this.assetRoot
+    mkdirSync(directory, { recursive: true })
     const extension = (
       {
         'audio/ogg': 'ogg',
@@ -68,7 +82,7 @@ export class AudioDeliveryService {
       } as Record<string, string>
     )[audio.mimeType]
     if (!extension) throw new Error('AUDIO_FORMAT_UNSUPPORTED')
-    const filePath = path.join(this.assetRoot, `${randomUUID()}.${extension}`)
+    const filePath = path.join(directory, `${randomUUID()}.${extension}`)
     writeFileSync(filePath, Buffer.from(audio.audio))
     const asset = this.assets.registerFile({
       ownerPrincipalId: context.principalId,
@@ -78,9 +92,11 @@ export class AudioDeliveryService {
       source: 'generated',
       retention: 'temporary',
     })
-    await this.assetRepository.save(asset, filePath)
+    if (!presentation?.ephemeral) await this.assetRepository.save(asset, filePath)
+    const cleanup = () => { if (presentation?.ephemeral) { this.assets.forgetTemporary(asset.ref); rmSync(filePath, {force: true}) } }
     const playbackId = randomUUID()
     if (presentation?.isCurrent && !presentation.isCurrent()) {
+      cleanup()
       return {
         playbackId,
         assetId: asset.assetId,
@@ -105,6 +121,7 @@ export class AudioDeliveryService {
           (!targetNodeId || candidate.placement?.providerNodeId === targetNodeId),
       )
     if (!offer?.placement?.providerNodeId) {
+      cleanup()
       throw new Error('AUDIO_OUTPUT_UNAVAILABLE: 没有目标音频输出节点')
     }
 
@@ -195,7 +212,9 @@ export class AudioDeliveryService {
         state: result.state,
       }
     } finally {
-      await scope.dispose()
+      if (this.activePlaybacks.get(context.principalId)?.playbackId === playbackId)
+        this.activePlaybacks.delete(context.principalId)
+      try { await scope.dispose() } finally { cleanup() }
     }
   }
 

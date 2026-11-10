@@ -1,0 +1,336 @@
+{
+  "id": "desktop-shell",
+  "name": "桌面外壳",
+  "version": "1.0.0",
+  "author": "infOS Team",
+  "description": "查看并调整 infOS 自己的窗口、主题、桌面卡片与收纳框（桌面版）。不涉及用户电脑上的其他程序。",
+  "type": "tool",
+  "entry": "index.ts",
+  "category": "core",
+  "platforms": ["windows", "linux", "darwin"],
+  "userCopy": {
+    "shell_layout": {
+      "label": "查看 infOS 窗口布局",
+      "description": "查看 infOS 的窗口、显示器、可摘出的页面和当前主题。"
+    },
+    "shell_window": {
+      "label": "调整 infOS 窗口",
+      "description": "摘出、合回、移动、缩放、复位、置顶、聚焦或撤回 infOS 自己的窗口改动。"
+    },
+    "shell_theme": {
+      "label": "管理 infOS 主题",
+      "description": "查看、编写、切换或删除 infOS 的自定义主题。"
+    },
+    "shell_card": {
+      "label": "管理 infOS 桌面卡片",
+      "description": "创建、修改、收藏或删除放在桌面上的 infOS 小卡片。"
+    },
+    "shell_fence": {
+      "label": "整理桌面收纳框",
+      "description": "新建、整理或删除桌面上的收纳框；框里只引用程序和文件的路径，不移动文件。"
+    }
+  },
+  "tools": [
+    {
+      "name": "shell_layout",
+      "description": "查看infOS自己的窗口清单（主窗口、已摘出的面板，含位置大小、置顶、透明度）、显示器工作区、可摘出页面和当前主题。只含infOS窗口，不含其他程序；坐标为屏幕逻辑像素。调整窗口或主题前先调用。",
+      "display": {
+        "icon": "desktop",
+        "color": "blue",
+        "style": "desktop"
+      },
+      "parameters": {
+        "type": "object",
+        "properties": {}
+      }
+    },
+    {
+      "name": "shell_window",
+      "description": "调整infOS自己的窗口。detach把页面摘成桌面面板（可带x/y/width/height），attach合回主窗口，move移动，resize缩放，set设置置顶/透明度，focus聚焦，recover把异常超大、全屏或最大化的窗口复位为默认大小并居中，reset恢复默认布局（合回全部面板），undo撤回上一次窗口改动（最多20次，仅本次运行内，不含主题与卡片；主题请用shell_theme按previous重新apply）。越界坐标会修正到最近的工作区内；全屏或最大化的窗口会先恢复为普通窗口再移动（结果的restoredFrom说明原状态）；移动后读回实际位置，没生效时返回错误，按错误原因向用户说明，不要声称已移动。结果返回实际位置和修改前的值，改完向用户说明。",
+      "display": {
+        "icon": "desktop",
+        "color": "blue",
+        "style": "desktop"
+      },
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "action": {
+            "type": "string",
+            "enum": [
+              "detach",
+              "attach",
+              "move",
+              "resize",
+              "set",
+              "focus",
+              "recover",
+              "reset",
+              "undo"
+            ]
+          },
+          "page": {
+            "type": "string",
+            "description": "detach/attach的页面ID，见shell_layout的pages"
+          },
+          "target": {
+            "type": "string",
+            "description": "move/resize/set/focus/recover的目标：main（主窗口）、panel:<页面ID>或card:<卡片ID>"
+          },
+          "x": {
+            "type": "number"
+          },
+          "y": {
+            "type": "number"
+          },
+          "width": {
+            "type": "number"
+          },
+          "height": {
+            "type": "number"
+          },
+          "alwaysOnTop": {
+            "type": "boolean"
+          },
+          "desktopLayer": {
+            "type": "boolean",
+            "description": "set用（仅Windows，仅面板与卡片）：true贴到桌面底层（桌面图标那一层，Win+D后仍可见，不再置顶；贴底后要先设为false才能移动或缩放），false取消。卡片的设置会保存，面板只在本次运行内有效；不支持时返回错误，窗口保持原样"
+          },
+          "opacity": {
+            "type": "number",
+            "minimum": 0.4,
+            "maximum": 1
+          }
+        },
+        "required": ["action"]
+      }
+    },
+    {
+      "name": "shell_theme",
+      "description": "管理infOS自定义主题。list列出主题与当前主题；read读取theme.json与theme.css；write新建或覆盖主题（manifest含name/description/author/version/mode，css覆盖界面CSS变量，url()只能用主题文件夹内的相对路径；可用assets同时写入图片/字体，removeAssets删除旧资源，未提到的已有资源保留）；apply切换主题（themeId为空字符串恢复默认外观）；delete删除主题。",
+      "display": {
+        "icon": "edit",
+        "color": "pink",
+        "style": "desktop"
+      },
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "action": {
+            "type": "string",
+            "enum": ["list", "read", "write", "apply", "delete"]
+          },
+          "themeId": {
+            "type": "string",
+            "description": "主题ID：小写字母、数字、下划线、连字符"
+          },
+          "manifest": {
+            "type": "object",
+            "description": "write用：theme.json内容",
+            "properties": {
+              "name": {
+                "type": "string"
+              },
+              "description": {
+                "type": "string"
+              },
+              "author": {
+                "type": "string"
+              },
+              "version": {
+                "type": "string"
+              },
+              "mode": {
+                "type": "string",
+                "enum": ["light", "dark"]
+              }
+            }
+          },
+          "css": {
+            "type": "string",
+            "description": "write用：theme.css全文，不超过1MB"
+          },
+          "assets": {
+            "type": "array",
+            "description": "write用：可选，随主题写入的资源文件，同路径覆盖。只接受png/jpg/webp/gif/avif图片与woff/woff2/ttf/otf字体（不接受SVG），单个解码后不超过2MB；base64很耗token，尽量少用、优先小体积webp/woff2",
+            "items": {
+              "type": "object",
+              "properties": {
+                "path": {
+                  "type": "string",
+                  "description": "主题文件夹内的相对路径，如img/bg.webp、fonts/title.woff2；theme.css用url(img/bg.webp)引用"
+                },
+                "base64": {
+                  "type": "string",
+                  "description": "文件内容的标准base64（不带data:前缀）"
+                }
+              },
+              "required": ["path", "base64"]
+            }
+          },
+          "removeAssets": {
+            "type": "array",
+            "description": "write用：可选，要删除的已有资源文件相对路径；不存在的忽略",
+            "items": {
+              "type": "string"
+            }
+          }
+        },
+        "required": ["action"]
+      }
+    },
+    {
+      "name": "shell_card",
+      "description": "管理桌面卡片（类似安卓小组件，放在用户桌面上的小窗口）。create用name与html新建（可带x/y/width/height，最小120×80，默认320×220）；新卡片是临时的，关闭或退出应用后进「最近关闭」保留7天、过期删除，用户想保留时用save收藏（saved:false取消；最近关闭里的卡片也能save捡回）。update整页替换html或改name；list列出；read读回源码与最近的控制台错误；open重新打开已收藏但关闭的卡片；close关闭（未收藏的进最近关闭）；delete删除。html单张不超过512KB，图片用data URI；卡片不能联网、不能读写文件，CSS/JS只能内联。卡片内可调用window.infosCard：data(name)读取time/theme，onData(name,callback)每10秒推送一次，openPage(pageId)在用户点击时打开功能页，toast(message)发出infOS桌面通知（200字内、每分钟最多6条；不要用alert），close()关闭本卡片，togglePin()在用户点击时切换置顶。拖动卡片：给标题区等可拖动元素加CSS -webkit-app-region:drag，其中的按钮、输入框、链接等可点元素必须加-webkit-app-region:no-drag，否则点不动；不要用window.moveTo/resizeTo（无效）。顶部26像素是悬停标题栏，重要内容别放那里。最小骨架：<!doctype html><html><head><meta charset=\"utf-8\"><style>body{margin:0;font:14px system-ui}.drag{-webkit-app-region:drag;padding:30px 10px 6px}.drag button{-webkit-app-region:no-drag}</style></head><body><div class=\"drag\">标题 <button onclick=\"infosCard.close()\">×</button></div><main id=\"m\"></main><script>infosCard.onData('time',t=>{m.textContent=new Date(t.now).toLocaleTimeString()})</script></body></html>。移动卡片用shell_window，target为card:<卡片ID>。",
+      "display": {
+        "icon": "desktop",
+        "color": "green",
+        "style": "desktop"
+      },
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "action": {
+            "type": "string",
+            "enum": ["list", "read", "create", "update", "save", "open", "close", "delete"]
+          },
+          "cardId": {
+            "type": "string",
+            "description": "卡片ID，见list或create的结果"
+          },
+          "name": {
+            "type": "string",
+            "description": "create/update用：卡片名称，不超过60字"
+          },
+          "html": {
+            "type": "string",
+            "description": "create/update用：完整HTML页面（可含内联<style>与<script>），不超过512KB"
+          },
+          "x": {
+            "type": "number"
+          },
+          "y": {
+            "type": "number"
+          },
+          "width": {
+            "type": "number"
+          },
+          "height": {
+            "type": "number"
+          },
+          "alwaysOnTop": {
+            "type": "boolean",
+            "description": "create用：是否置顶"
+          },
+          "saved": {
+            "type": "boolean",
+            "description": "save用：true收藏（默认），false取消收藏"
+          }
+        },
+        "required": ["action"]
+      }
+    },
+    {
+      "name": "shell_fence",
+      "description": "管理桌面收纳框（类似Fences：桌面上半透明的框，把程序图标分组收起来，可折叠、置顶、移动、缩放）。框里只引用路径，不移动、复制或删除用户文件；删除框只删框本身。list列出全部框及其项目路径；desktop只读列出用户桌面与公共桌面上的图标（用来分组）；create用title新建（可带x/y/width/height、paths初始项目、folder映射文件夹、collapsed、alwaysOnTop、iconSize、sort、backgroundOpacity）；update改title、collapsed折叠、alwaysOnTop置顶、iconSize、sort、backgroundOpacity背景透明度或folder（null取消映射）；add/remove按paths把项目加入或移出某个框（移到另一个框=先remove再add）；reorder按paths给出的顺序重排（改为手动排序）；arrange把fenceIds排成一组（layout为column竖排/row横排/grid网格，可带起点x/y、gap、columns；贴在桌面上的框不移动）；delete删除框。大规模重新整理（新建多个框、搬动大量图标、删除框）前先向用户说明方案并取得同意。不能用这个工具启动程序（启动请走桌面操作授权），也不能隐藏桌面原图标（只能由用户在卡片页操作）。移动或缩放单个框也可以用shell_window，target为card:<fenceId>。",
+      "display": {
+        "icon": "desktop",
+        "color": "green",
+        "style": "desktop"
+      },
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "action": {
+            "type": "string",
+            "enum": [
+              "list",
+              "desktop",
+              "create",
+              "update",
+              "add",
+              "remove",
+              "reorder",
+              "arrange",
+              "delete"
+            ]
+          },
+          "fenceId": {
+            "type": "string",
+            "description": "收纳框ID，见list或create的结果"
+          },
+          "fenceIds": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "arrange用：按顺序排列的收纳框ID"
+          },
+          "title": {
+            "type": "string",
+            "description": "create/update用：标题，不超过60字，例如APPLICATIONS、游戏与娱乐"
+          },
+          "paths": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "本机绝对路径（如desktop结果里的path），最多200个；不接受网络路径"
+          },
+          "folder": {
+            "type": ["string", "null"],
+            "description": "create/update用：映射的文件夹，框里显示它的直接子项并随之变化；update时null取消映射"
+          },
+          "collapsed": {
+            "type": "boolean",
+            "description": "是否折叠（只剩标题栏）"
+          },
+          "alwaysOnTop": {
+            "type": "boolean",
+            "description": "是否始终置顶"
+          },
+          "iconSize": {
+            "type": "string",
+            "enum": ["small", "medium", "large"]
+          },
+          "sort": {
+            "type": "string",
+            "enum": ["manual", "name", "type"],
+            "description": "manual手动、name按名称、type按类型"
+          },
+          "backgroundOpacity": {
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 100,
+            "description": "create/update用：背景透明度，0全透明、100不透明，默认42；只影响框的背景和标题栏，图标和文字不变"
+          },
+          "layout": {
+            "type": "string",
+            "enum": ["column", "row", "grid"]
+          },
+          "x": {
+            "type": "number"
+          },
+          "y": {
+            "type": "number"
+          },
+          "width": {
+            "type": "number"
+          },
+          "height": {
+            "type": "number"
+          },
+          "gap": {
+            "type": "number",
+            "description": "arrange用：框之间的间距，默认12"
+          },
+          "columns": {
+            "type": "number",
+            "description": "arrange的grid用：每行几个框，默认2"
+          }
+        },
+        "required": ["action"]
+      }
+    }
+  ]
+}

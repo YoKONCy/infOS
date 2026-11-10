@@ -19,9 +19,9 @@ import {
   type AgentTool,
 } from '../../../api/modules/agentApi'
 import { getApiBaseUrl } from '../../../api/transport'
-import { invoke, isElectron } from '../../../utils/ipcAdapter'
 import { useNotificationStore } from '../../../stores'
 import { systemApi } from '../../../api/modules/systemApi'
+import AgentCardTransfer from './AgentCardTransfer.vue'
 
 /** 角色图鉴采用用户能理解的五区协议，不暴露底层文件结构。 */
 type AtlasSection = 'identity' | 'persona' | 'reactions' | 'capability' | 'runtime'
@@ -41,7 +41,7 @@ const loadingList = ref(false)
 const loadingDetail = ref(false)
 const saving = ref(false)
 const deleting = ref(false)
-const exporting = ref(false)
+const cardTransfer = ref<InstanceType<typeof AgentCardTransfer>>()
 const createDialog = ref(false)
 const deleteDialog = ref(false)
 const newAgentId = ref('')
@@ -358,7 +358,7 @@ async function saveAvatarCrop(): Promise<void> {
       )
     })
     const response = await agentApi.uploadAvatar(form.value.id, blob)
-    const avatarUrl = `${response.data?.avatarUrl ?? `/agents/${form.value.id}/avatar`}?v=${Date.now()}`
+    const avatarUrl = response.data?.avatarUrl ?? `/agents/${form.value.id}/avatar?v=${Date.now()}`
     form.value.avatarUrl = avatarUrl
     agents.value = agents.value.map((agent) =>
       agent.id === form.value!.id ? { ...agent, avatarUrl } : agent,
@@ -796,38 +796,6 @@ async function createAgent(id?: string): Promise<void> {
   }
 }
 
-async function exportAgent(): Promise<void> {
-  if (!form.value || exporting.value) return
-  if (!isElectron()) {
-    notif.toast(__t('ui.settings', '角色包目录导出仅支持桌面客户端'), 'warning')
-    return
-  }
-  if (isDirty.value) {
-    notif.toast(__t('ui.settings', '请先同步当前修改，再导出角色包'), 'warning')
-    return
-  }
-  exporting.value = true
-  try {
-    const response = await agentApi.exportPackage(form.value.id)
-    if (!response.data) throw new Error('服务端没有返回角色包')
-    const result = (await invoke('export-agent-package', response.data)) as {
-      canceled: boolean
-      path?: string
-    } | null
-    if (result && !result.canceled)
-      notif.toast(__t('ui.settings', '角色包已导出到：{0}', [result.path]), 'success')
-  } catch (error) {
-    notif.toast(
-      __t('ui.settings', '导出失败：{0}', [
-        error instanceof Error ? error.message : __t('ui.settings', '未知错误'),
-      ]),
-      'error',
-    )
-  } finally {
-    exporting.value = false
-  }
-}
-
 async function deleteAgent(): Promise<void> {
   if (!form.value?.isUser) return
   deleting.value = true
@@ -871,19 +839,31 @@ onBeforeUnmount(() => {
 </script>
 
 <template>
-  <div class="atlas">
+  <div class="atlas" @dragover.prevent @drop.prevent="cardTransfer?.drop($event)">
     <aside class="atlas-index">
       <header class="index-head">
-        <div>
+        <div class="index-head__identity">
           <b class="index-head-title">{{ __t('ui.settings', '角色管理') }}</b>
-          <span>
-            {{ __t('ui.settings', '角色图鉴 /') }} {{ agents.length.toString().padStart(2, '0') }}
-          </span>
+          <span class="index-head__subtitle">{{ __t('ui.agent', '角色图鉴') }}</span>
         </div>
-        <button :title="__t('ui.settings', '刷新角色图鉴')" @click="fetchAgents(selectedId)">
+        <span class="index-head__count">{{ agents.length.toString().padStart(2, '0') }}</span>
+        <button
+          type="button"
+          :title="__t('ui.settings', '刷新角色图鉴')"
+          :aria-label="__t('ui.settings', '刷新角色图鉴')"
+          :disabled="loadingList"
+          @click="fetchAgents(selectedId)"
+        >
           <PixelIcon name="refresh" size="xs" :animation="loadingList ? 'spin' : undefined" />
         </button>
       </header>
+      <AgentCardTransfer
+        ref="cardTransfer"
+        :agent-id="selectedId"
+        :avatar-url="form?.avatarUrl"
+        :dirty="isDirty"
+        @imported="fetchAgents"
+      />
       <div class="index-list">
         <button
           v-for="(agent, index) in agents"
@@ -916,9 +896,9 @@ onBeforeUnmount(() => {
           </span>
         </button>
       </div>
-      <button class="initialize-agent" @click="createDialog = true">
+      <button type="button" class="initialize-agent" @click="createDialog = true">
         <PixelIcon name="plus" size="xs" />
-        INITIALIZE CHARACTER
+        {{ __t('ui.agent', '新增角色') }}
       </button>
     </aside>
 
@@ -940,7 +920,9 @@ onBeforeUnmount(() => {
           </div>
           <div class="profile-identity">
             <span class="eyebrow">CHARACTER / {{ form.id.toUpperCase() }}</span>
-            <h1>{{ form.name }}</h1>
+            <div class="profile-name">
+              <h1>{{ form.name }}</h1>
+            </div>
             <p>{{ form.description || __t('ui.settings', '尚未记录角色简介。') }}</p>
             <div class="profile-signals">
               <span>
@@ -981,7 +963,7 @@ onBeforeUnmount(() => {
         </nav>
 
         <div class="protocol-scroll">
-          <section v-if="activeSection === 'identity'" class="protocol-page">
+          <section v-if="activeSection === 'identity'" class="protocol-page motion-enter">
             <header class="section-title">
               <span>01</span>
               <div>
@@ -1075,7 +1057,7 @@ onBeforeUnmount(() => {
             </div>
           </section>
 
-          <section v-else-if="activeSection === 'persona'" class="protocol-page">
+          <section v-else-if="activeSection === 'persona'" class="protocol-page motion-enter">
             <header class="section-title">
               <span>02</span>
               <div>
@@ -1131,7 +1113,7 @@ onBeforeUnmount(() => {
             </div>
           </section>
 
-          <section v-else-if="activeSection === 'reactions'" class="protocol-page">
+          <section v-else-if="activeSection === 'reactions'" class="protocol-page motion-enter">
             <header class="section-title">
               <span>03</span>
               <div>
@@ -1228,7 +1210,10 @@ onBeforeUnmount(() => {
             </div>
           </section>
 
-          <section v-else-if="activeSection === 'capability'" class="protocol-page capability-page">
+          <section
+            v-else-if="activeSection === 'capability'"
+            class="protocol-page capability-page motion-enter"
+          >
             <header class="section-title">
               <span>04</span>
               <div>
@@ -1354,7 +1339,7 @@ onBeforeUnmount(() => {
             </div>
           </section>
 
-          <section v-else class="protocol-page">
+          <section v-else class="protocol-page motion-enter">
             <header class="section-title">
               <span>05</span>
               <div>
@@ -1519,114 +1504,114 @@ onBeforeUnmount(() => {
         </p>
       </section>
 
-      <button class="rail-export" :disabled="exporting || isDirty" @click="exportAgent">
-        <PixelIcon name="download" size="xs" />
-        {{ exporting ? __t('ui.settings', '正在生成角色包…') : __t('ui.settings', '导出角色包') }}
-      </button>
       <button v-if="form.isUser" class="rail-danger" @click="deleteDialog = true">
         <PixelIcon name="trash" size="xs" />
         {{ __t('ui.settings', '删除用户档案') }}
       </button>
     </aside>
 
-    <div v-if="switchDecisionOpen" class="decision-layer" @click.self="cancelAgentSwitch">
-      <section
-        class="decision-panel"
-        role="dialog"
-        aria-modal="true"
-        aria-labelledby="switch-decision-title"
-      >
-        <header>
-          <span>UNSYNCED CHARACTER DATA</span>
-          <button :aria-label="__t('ui.settings', '关闭')" @click="cancelAgentSwitch">×</button>
-        </header>
-        <div class="decision-body">
-          <span class="decision-icon"><PixelIcon name="warning" size="lg" /></span>
-          <div>
-            <h2 id="switch-decision-title">{{ __t('ui.settings', '当前角色档案尚未同步') }}</h2>
-            <p>{{ __t('ui.settings', '是否保存当前修改？') }}</p>
+    <Transition name="motion-dialog">
+      <div v-if="switchDecisionOpen" class="decision-layer" @click.self="cancelAgentSwitch">
+        <section
+          class="decision-panel"
+          role="dialog"
+          aria-modal="true"
+          aria-labelledby="switch-decision-title"
+        >
+          <header>
+            <span>UNSYNCED CHARACTER DATA</span>
+            <button :aria-label="__t('ui.settings', '关闭')" @click="cancelAgentSwitch">×</button>
+          </header>
+          <div class="decision-body">
+            <span class="decision-icon"><PixelIcon name="warning" size="lg" /></span>
+            <div>
+              <h2 id="switch-decision-title">{{ __t('ui.settings', '当前角色档案尚未同步') }}</h2>
+              <p>{{ __t('ui.settings', '是否保存当前修改？') }}</p>
+            </div>
           </div>
-        </div>
-        <div class="decision-target">
-          <span>SWITCH TARGET</span>
-          <b>{{ agents.find((item) => item.id === pendingAgentId)?.name || pendingAgentId }}</b>
-        </div>
-        <footer>
-          <PButton variant="danger" @click="discardAndSwitch">
-            {{ __t('ui.settings', '放弃并切换') }}
-          </PButton>
-          <PButton variant="secondary" @click="cancelAgentSwitch">
-            {{ __t('ui.settings', '继续编辑') }}
-          </PButton>
-          <PButton :loading="saving" @click="saveAndSwitch">
-            {{ __t('ui.settings', '先同步再切换') }}
-          </PButton>
-        </footer>
-      </section>
-    </div>
+          <div class="decision-target">
+            <span>SWITCH TARGET</span>
+            <b>{{ agents.find((item) => item.id === pendingAgentId)?.name || pendingAgentId }}</b>
+          </div>
+          <footer>
+            <PButton variant="danger" @click="discardAndSwitch">
+              {{ __t('ui.settings', '放弃并切换') }}
+            </PButton>
+            <PButton variant="secondary" @click="cancelAgentSwitch">
+              {{ __t('ui.settings', '继续编辑') }}
+            </PButton>
+            <PButton :loading="saving" @click="saveAndSwitch">
+              {{ __t('ui.settings', '先同步再切换') }}
+            </PButton>
+          </footer>
+        </section>
+      </div>
+    </Transition>
 
     <input ref="avatarFileInput" hidden type="file" accept="image/*" @change="handleAvatarFile" />
 
-    <div v-if="avatarCropOpen" class="avatar-crop-layer" @click.self="cancelAvatarCrop">
-      <section
-        class="avatar-crop-panel"
-        role="dialog"
-        aria-modal="true"
-        aria-labelledby="avatar-crop-title"
-      >
-        <header>
-          <div>
-            <span>AVATAR RESOURCE</span>
-            <h2 id="avatar-crop-title">{{ __t('ui.settings', '裁切角色头像') }}</h2>
-          </div>
-          <button
-            :disabled="avatarUploading"
-            :aria-label="__t('ui.settings', '关闭裁切窗口')"
-            @click="cancelAvatarCrop"
-          >
-            ×
-          </button>
-        </header>
-        <div class="avatar-crop-body">
-          <div
-            class="avatar-crop-stage"
-            @pointerdown="startAvatarDrag"
-            @pointermove="dragAvatar"
-            @pointerup="stopAvatarDrag"
-            @pointercancel="stopAvatarDrag"
-          >
-            <img
-              :src="avatarCropSource"
-              :style="avatarCropImageStyle"
-              :alt="__t('ui.settings', '待裁切头像')"
-              @load="handleAvatarCropImageLoad"
-            />
-            <i class="avatar-crop-grid" />
-          </div>
-          <label class="avatar-crop-zoom">
-            <span>{{ __t('ui.settings', '缩放') }}</span>
-            <input
-              v-model.number="avatarCropScale"
-              type="range"
-              min="1"
-              max="3"
-              step="0.01"
+    <Transition name="motion-dialog">
+      <div v-if="avatarCropOpen" class="avatar-crop-layer" @click.self="cancelAvatarCrop">
+        <section
+          class="avatar-crop-panel"
+          role="dialog"
+          aria-modal="true"
+          aria-labelledby="avatar-crop-title"
+        >
+          <header>
+            <div>
+              <span>AVATAR RESOURCE</span>
+              <h2 id="avatar-crop-title">{{ __t('ui.settings', '裁切角色头像') }}</h2>
+            </div>
+            <button
               :disabled="avatarUploading"
-            />
-            <b>{{ Math.round(avatarCropScale * 100) }}%</b>
-          </label>
-          <p>{{ __t('ui.settings', '拖动调整位置，保存为 512×512 头像。') }}</p>
-        </div>
-        <footer>
-          <PButton variant="secondary" :disabled="avatarUploading" @click="cancelAvatarCrop">
-            {{ __t('ui.settings', '取消') }}
-          </PButton>
-          <PButton :loading="avatarUploading" @click="saveAvatarCrop">
-            {{ __t('ui.settings', '保存头像') }}
-          </PButton>
-        </footer>
-      </section>
-    </div>
+              :aria-label="__t('ui.settings', '关闭裁切窗口')"
+              @click="cancelAvatarCrop"
+            >
+              ×
+            </button>
+          </header>
+          <div class="avatar-crop-body">
+            <div
+              class="avatar-crop-stage"
+              @pointerdown="startAvatarDrag"
+              @pointermove="dragAvatar"
+              @pointerup="stopAvatarDrag"
+              @pointercancel="stopAvatarDrag"
+            >
+              <img
+                :src="avatarCropSource"
+                :style="avatarCropImageStyle"
+                :alt="__t('ui.settings', '待裁切头像')"
+                @load="handleAvatarCropImageLoad"
+              />
+              <i class="avatar-crop-grid" />
+            </div>
+            <label class="avatar-crop-zoom">
+              <span>{{ __t('ui.settings', '缩放') }}</span>
+              <input
+                v-model.number="avatarCropScale"
+                type="range"
+                min="1"
+                max="3"
+                step="0.01"
+                :disabled="avatarUploading"
+              />
+              <b>{{ Math.round(avatarCropScale * 100) }}%</b>
+            </label>
+            <p>{{ __t('ui.settings', '拖动调整位置，保存为 512×512 头像。') }}</p>
+          </div>
+          <footer>
+            <PButton variant="secondary" :disabled="avatarUploading" @click="cancelAvatarCrop">
+              {{ __t('ui.settings', '取消') }}
+            </PButton>
+            <PButton :loading="avatarUploading" @click="saveAvatarCrop">
+              {{ __t('ui.settings', '保存头像') }}
+            </PButton>
+          </footer>
+        </section>
+      </div>
+    </Transition>
 
     <PDialog
       v-model="createDialog"
@@ -1652,7 +1637,8 @@ onBeforeUnmount(() => {
 <style scoped>
 .atlas {
   display: grid;
-  grid-template-columns: 224px minmax(540px, 1fr) 256px;
+  /* 媒体查询按窗口宽度计算，内容区还要减去导航栏；中栏最小值放到 0，避免越出被 overflow 裁掉。 */
+  grid-template-columns: 224px minmax(0, 1fr) 256px;
   height: 100%;
   min-height: 0;
   color: var(--ui-text-primary);
@@ -1669,25 +1655,43 @@ onBeforeUnmount(() => {
 }
 .index-head {
   display: flex;
-  min-height: 56px;
+  flex: 0 0 auto;
+  min-height: 52px;
   align-items: center;
-  justify-content: space-between;
-  padding: 0 4px 10px;
-  border-bottom: 2px solid var(--ui-accent-primary);
+  gap: 8px;
+  padding: 2px 0 12px;
+  border-bottom: 1px solid var(--ui-border-subtle);
 }
-.index-head div {
+.index-head__identity {
   display: flex;
+  flex: 1;
+  min-width: 0;
   flex-direction: column;
   gap: 4px;
 }
 .index-head .index-head-title {
-  font: 900 18px var(--font-pixel);
-  letter-spacing: 0.05em;
+  overflow: hidden;
+  font: 600 15px/1.3 var(--ui-font-pixel);
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
-.index-head span {
+.index-head__subtitle {
   color: var(--ui-text-tertiary);
-  font: 800 9px var(--ui-font-mono);
-  letter-spacing: 0.08em;
+  font: 11px/1.3 var(--ui-font-sans);
+}
+.index-head__count {
+  display: grid;
+  flex: 0 0 auto;
+  min-width: 25px;
+  height: 24px;
+  padding: 0 5px;
+  place-items: center;
+  border: 1px solid var(--ui-border-subtle);
+  border-radius: 0;
+  background: var(--ui-bg-surface);
+  color: var(--ui-text-secondary);
+  font: 11px/1 var(--ui-font-mono);
+  font-variant-numeric: tabular-nums;
 }
 .index-head button,
 .initialize-agent,
@@ -1700,15 +1704,25 @@ onBeforeUnmount(() => {
 }
 .index-head button {
   display: grid;
+  flex: 0 0 auto;
   width: 30px;
   height: 30px;
   place-items: center;
-  border: 1px solid var(--ui-border-default);
+  border-radius: 0;
+  color: var(--ui-text-tertiary);
+  transition: color 140ms ease, background-color 140ms ease;
 }
-.index-head button:hover {
-  border-color: var(--ui-accent-primary);
-  background: var(--ui-accent-primary-soft);
+.index-head button:hover:not(:disabled) {
+  background: var(--ui-bg-hover);
   color: var(--ui-accent-primary);
+}
+.index-head button:disabled {
+  cursor: progress;
+}
+.index-head button:focus-visible,
+.initialize-agent:focus-visible {
+  outline: 2px solid var(--ui-accent-primary);
+  outline-offset: 2px;
 }
 .index-list {
   min-height: 0;
@@ -1842,17 +1856,36 @@ onBeforeUnmount(() => {
   font: inherit;
 }
 .initialize-agent {
-  min-height: 42px;
-  border: 1px solid var(--ui-accent-primary);
-  background: var(--ui-accent-primary-soft);
+  display: flex;
+  flex: 0 0 auto;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  min-height: 34px;
+  padding: 0 10px;
+  border: 1px dashed color-mix(in srgb, var(--ui-accent-primary) 40%, var(--ui-border-default));
+  border-radius: 0;
+  background: transparent;
   color: var(--ui-accent-primary);
-  font: 800 9px var(--ui-font-mono);
-  letter-spacing: 0.08em;
-  box-shadow: 3px 3px 0 var(--ui-border-subtle);
+  font: 11px/1.3 var(--ui-font-pixel);
+  white-space: nowrap;
+  transition: border-color 140ms ease, background-color 140ms ease;
 }
 .initialize-agent:hover {
-  background: var(--ui-bg-hover);
-  transform: translate(-1px, -1px);
+  border-color: var(--ui-accent-primary);
+  background: var(--ui-accent-primary-soft);
+}
+@media (prefers-reduced-motion: reduce) {
+  .index-head button,
+  .initialize-agent {
+    transition: none;
+  }
+}
+:global([data-motion='off']) .index-head button,
+:global([data-motion='off']) .initialize-agent,
+:global([data-motion='reduced']) .index-head button,
+:global([data-motion='reduced']) .initialize-agent {
+  transition: none;
 }
 .atlas-workspace {
   display: flex;
@@ -1925,6 +1958,18 @@ onBeforeUnmount(() => {
   margin: 7px 0 6px;
   font-size: 28px;
   line-height: 1;
+}
+.profile-name {
+  display: flex;
+  min-width: 0;
+  align-items: center;
+  gap: 10px;
+  margin: 7px 0 6px;
+}
+.profile-name h1 {
+  min-width: 0;
+  margin: 0;
+  overflow-wrap: anywhere;
 }
 .profile-identity > p {
   max-width: 680px;
@@ -3033,7 +3078,7 @@ onBeforeUnmount(() => {
 @media (max-width: 1240px) {
   .atlas {
     position: relative;
-    grid-template-columns: 210px minmax(520px, 1fr);
+    grid-template-columns: 210px minmax(0, 1fr);
   }
   .archive-rail {
     position: absolute;
@@ -3079,7 +3124,7 @@ onBeforeUnmount(() => {
 }
 @media (max-width: 900px) {
   .atlas {
-    grid-template-columns: 180px minmax(480px, 1fr);
+    grid-template-columns: minmax(150px, 180px) minmax(0, 1fr);
   }
   .index-agent {
     grid-template-columns: 54px minmax(0, 1fr);

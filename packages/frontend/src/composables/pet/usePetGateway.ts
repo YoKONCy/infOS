@@ -168,6 +168,7 @@ export function usePetGateway() {
     if (!isThinking.value) activity.finish()
   }
   function applySurface(frame: SurfaceFrame) {
+    if (frame.threadGeneration !== undefined && activeThread.value && frame.threadGeneration < activeThread.value.generation) return
     const operation = frame.operation
     if (operation.type === 'surface.open') {
       if (
@@ -198,6 +199,17 @@ export function usePetGateway() {
     )
       return
     surfaceSequence = frame.sequence
+    if (operation.type === 'surface.publish') {
+      const message = [...operation.snapshot.messages].reverse().find((item) => item.role === 'assistant' && !item.executionRecord)
+      if (message) acceptReply({ agentId: activeAgentId.value, threadId: operation.snapshot.threadId,
+        messageId: message.messageId, spokenReply: message.spokenReply })
+      return
+    }
+    if (operation.type === 'surface.settled') {
+      activity.finish()
+      isThinking.value = false
+      return
+    }
     if (operation.type === 'surface.commit') {
       if (operation.surface.principalId !== activeAgentId.value) return
       acceptReply({
@@ -213,7 +225,6 @@ export function usePetGateway() {
     }
     if (operation.type === 'surface.fail') {
       isThinking.value = false
-      latestReply.value = null
       unread.value = true
       activity.finish()
       hint.value = t('ui.pet-activity', '回复遇到问题，请在主应用查看')
@@ -242,6 +253,13 @@ export function usePetGateway() {
   function stateUpdate(data: Record<string, unknown>) {
     if (data.agentId && data.agentId !== activeAgentId.value) return
     petState.applyPush(data)
+  }
+  function threadReset(data: Record<string, unknown>) {
+    if (data.threadId !== activeSessionId.value || typeof data.generation !== 'number') return
+    if (data.generation < (activeThread.value?.generation ?? 1)) return
+    if (activeThread.value) activeThread.value = { ...activeThread.value, generation: data.generation }
+    clearConversation()
+    void restore()
   }
   watch(
     [activeAgentId, activeSessionId],
@@ -562,6 +580,7 @@ export function usePetGateway() {
     gateway.onPush('proactive_message', proactiveReply)
     gateway.onPush('durable_notification', notification)
     gateway.onPush('state_update', stateUpdate)
+    gateway.onPush('thread_reset', threadReset)
     gateway.onPush('agent_changed', backendAgentChanged)
     void gateway.connect()
     presenceTimer = setInterval(() => {
@@ -593,6 +612,7 @@ export function usePetGateway() {
     gateway.offPush('proactive_message', proactiveReply)
     gateway.offPush('durable_notification', notification)
     gateway.offPush('state_update', stateUpdate)
+    gateway.offPush('thread_reset', threadReset)
     gateway.offPush('agent_changed', backendAgentChanged)
     for (const remove of removeAgentListeners) remove()
     gateway.disconnect()

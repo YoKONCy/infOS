@@ -1,13 +1,8 @@
 /**
  * Group Chat Service — 群聊消息服务
  *
- * 管理群聊房间的消息 CRUD + 视角转换 + 记忆注入。
- * 收到用户消息后触发 GroupChatDispatcher 决定哪个 Agent 接话。
- *
- * - SQLModel → Drizzle ORM
- * - AsyncSession → DrizzleDb (同步但更轻量)
- * - 视角转换逻辑不变
- * - 记忆注入路径改走 MemoryService
+ * 管理房间权威消息、逐条亲历引用与视角转换。
+ * 消息、亲历和 Outbox 同事务提交，调用方负责唤醒需要回应的角色。
  *
  * @module packages/backend/src/services/stronghold/groupChatService
  */
@@ -18,15 +13,40 @@ import {
   groupChatMembers,
   groupChatMessages,
   strongholdAgentPairVisibility,
+  agentLocations,
+  agentExperiences,
+  threads,
+  kernelOutboxEvents,
 } from '../../database/schema'
 import type { DrizzleDb } from '../../database'
+import { KernelOutboxRepository } from '../../kernel/kernelOutboxRepository'
 import { stableHistoryWindow, invalidatePromptReplay } from '../llm/promptCache'
+import { tokenCounter } from '../tokenizer/tokenCounter'
 
 // ── 类型 ──
 
 type RoomRow = typeof groupChatRooms.$inferSelect
 type MemberRow = typeof groupChatMembers.$inferSelect
 type MessageRow = typeof groupChatMessages.$inferSelect
+
+export interface StrongholdReplyIntent {
+  status: 'pending' | 'completed'
+  autonomous?: boolean
+  targets: Array<{ agentId: string; threadId: string; generation: number }>
+  queue?: string[]
+  completed: string[]
+  failedAgentIds?: string[]
+  initialQueue?: string[]
+  reason?: string
+  allMention?: boolean
+  allowAutoFollowUp?: boolean
+  allowSummon?: boolean
+  autoFollowUpChecked?: boolean
+  summonedBy?: string
+  summonReason?: string
+  attempts: number
+  retryAt?: number
+}
 
 /** 发送消息的输入 */
 export interface SendMessageInput {
@@ -37,6 +57,11 @@ export interface SendMessageInput {
   mentions?: string[]
   /** 本轮对话关联键：用户消息与其所有回复共用。 */
   pairId?: string
+  metadata?: Record<string, unknown>
+  requestReplies?: boolean
+  deliveryKey?: string
+  audienceScope?: { agentId: string; threadId: string; generation: number; sourcePairId: string }
+  execution?: { threadId: string; generation: number; executionId?: import('@infos/shared').KernelExecutionId; sourcePairId?: string; sourceMessageId?: number }
 }
 
 /** 据点消息级联删除结果。 */
@@ -113,19 +138,197 @@ export class GroupChatService {
    * 2. 返回保存的消息 (调用方负责触发调度)
    */
   async sendMessage(input: SendMessageInput): Promise<MessageRow> {
-    const rows = await this.db
-      .insert(groupChatMessages)
-      .values({
-        roomId: input.roomId,
-        senderId: input.senderId,
-        content: input.content,
-        role: input.role,
-        mentionsJson: JSON.stringify(input.mentions ?? []),
-        pairId: input.pairId,
+    return this.db.transaction((tx) => {
+      if (input.audienceScope) {
+        const scope = input.audienceScope
+        const main = tx.select().from(threads).where(eq(threads.id, scope.threadId)).get()
+        const source = tx.select({ id: groupChatMessages.id }).from(groupChatMessages)
+          .where(and(eq(groupChatMessages.roomId, input.roomId), eq(groupChatMessages.pairId, scope.sourcePairId), eq(groupChatMessages.status, 'active'))).get()
+        if (!main || main.agentId !== scope.agentId || main.generation !== scope.generation || main.status !== 'active' || !source)
+          throw new Error('THREAD_GENERATION_STALE')
+      }
+      if (input.deliveryKey) {
+        const delivered = tx.select().from(groupChatMessages).where(and(eq(groupChatMessages.roomId, input.roomId),
+          sql`json_extract(${groupChatMessages.metadataJson}, '$.deliveryKey') = ${input.deliveryKey}`)).get()
+        if (delivered) return delivered
+      }
+      if (input.execution) {
+        const main = tx.select().from(threads).where(eq(threads.id, input.execution.threadId)).get()
+        if (!main || main.threadKind !== 'main' || main.agentId !== input.senderId ||
+          main.generation !== input.execution.generation || main.status !== 'active') {
+          throw new Error('THREAD_GENERATION_STALE')
+        }
+        if (input.execution.sourcePairId) {
+          const source = tx.select({ id: groupChatMessages.id }).from(groupChatMessages)
+            .where(and(
+              eq(groupChatMessages.roomId, input.roomId),
+              eq(groupChatMessages.pairId, input.execution.sourcePairId),
+              eq(groupChatMessages.status, 'active'),
+            )).get()
+          if (!source) throw new Error('STRONGHOLD_SOURCE_WITHDRAWN')
+        }
+        if (input.pairId) {
+          const existing = this.getSceneReply(input.roomId, input.senderId, input.pairId, input.execution)
+          if (existing) return existing
+        }
+      }
+      const message = tx.insert(groupChatMessages).values({
+          roomId: input.roomId,
+          senderId: input.senderId,
+          content: input.content,
+          role: input.role,
+          mentionsJson: JSON.stringify(input.mentions ?? []),
+          pairId: input.pairId,
+          metadataJson: JSON.stringify({
+            ...input.metadata,
+            threadId: input.execution?.threadId,
+            threadGeneration: input.execution?.generation,
+            sourceMessageId: input.execution?.sourceMessageId,
+            deliveryKey: input.deliveryKey,
+          }),
+        }).returning().get()!
+      const present = tx.select({ agentId: agentLocations.agentId }).from(agentLocations)
+        .where(eq(agentLocations.roomId, input.roomId)).all().map((row) => row.agentId)
+      const targets: StrongholdReplyIntent['targets'] = []
+      for (const agentId of new Set([...present, input.senderId])) {
+        if (['user', 'system', 'Butler', 'butler'].includes(agentId) || !this.isEnabledAgent(agentId)) continue
+        tx.insert(threads).values({
+          id: `main_${crypto.randomUUID()}`,
+          agentId,
+          channel: 'desktop',
+          purpose: 'conversation',
+          threadKind: 'main',
+          interactionMode: 'chat',
+        }).onConflictDoNothing().run()
+        const main = tx.select().from(threads)
+          .where(and(eq(threads.agentId, agentId), eq(threads.threadKind, 'main'))).get()!
+        targets.push({ agentId, threadId: main.id, generation: main.generation })
+        tx.insert(agentExperiences).values({
+          agentId,
+          threadId: main.id,
+          generation: main.generation,
+          sourceMessageId: message.id,
+          roomId: input.roomId,
+          occurredAt: message.timestamp ?? new Date().toISOString(),
+        }).onConflictDoNothing().run()
+      }
+      if (input.requestReplies && input.role !== 'system' && input.pairId) {
+        const replyIntent: StrongholdReplyIntent = { status: 'pending', targets, completed: [], attempts: 0,
+          autonomous: input.role === 'assistant' }
+        message.metadataJson = JSON.stringify({ ...JSON.parse(message.metadataJson), replyIntent })
+        tx.update(groupChatMessages).set({ metadataJson: message.metadataJson })
+          .where(eq(groupChatMessages.id, message.id)).run()
+      }
+      const outbox = new KernelOutboxRepository(this.db)
+      const event = outbox.createEvent({
+        protocolVersion: 1,
+        type: 'stronghold.message.committed',
+        durability: 'durable',
+        principalId: input.senderId,
+        correlationId: input.pairId,
+        executionId: input.execution?.executionId,
+        payload: { roomId: input.roomId, messageId: message.id, pairId: input.pairId },
       })
-      .returning()
+      tx.insert(kernelOutboxEvents).values(outbox.toRow(event)).run()
+      return message
+    })
+  }
 
-    return rows[0]!
+  /** 已落盘场景回复按角色、轮次和主线代次复用，重复投递共享同一条权威消息。 */
+  getSceneReply(
+    roomId: string,
+    agentId: string,
+    pairId: string,
+    scope: { threadId: string; generation: number; sourceMessageId?: number },
+  ): MessageRow | undefined {
+    const source = scope.sourceMessageId === undefined ? undefined : this.db.select({ role: groupChatMessages.role })
+      .from(groupChatMessages).where(and(eq(groupChatMessages.id, scope.sourceMessageId), eq(groupChatMessages.roomId, roomId), eq(groupChatMessages.pairId, pairId))).get()
+    return this.db.select().from(groupChatMessages).where(and(
+      eq(groupChatMessages.roomId, roomId),
+      eq(groupChatMessages.senderId, agentId),
+      eq(groupChatMessages.pairId, pairId),
+      eq(groupChatMessages.role, 'assistant'),
+      eq(groupChatMessages.status, 'active'),
+      sql`json_extract(${groupChatMessages.metadataJson}, '$.threadId') = ${scope.threadId}`,
+      sql`json_extract(${groupChatMessages.metadataJson}, '$.threadGeneration') = ${scope.generation}`,
+      scope.sourceMessageId === undefined ? undefined :
+        or(sql`json_extract(${groupChatMessages.metadataJson}, '$.sourceMessageId') = ${scope.sourceMessageId}`,
+          source?.role === 'user' ? sql`json_extract(${groupChatMessages.metadataJson}, '$.sourceMessageId') IS NULL` : undefined),
+    )).get()
+  }
+
+  getReplyIntent(messageId: number): { message: MessageRow; intent: StrongholdReplyIntent } | undefined {
+    const message = this.db.select().from(groupChatMessages).where(and(
+      eq(groupChatMessages.id, messageId), eq(groupChatMessages.status, 'active'),
+    )).get()
+    if (!message) return undefined
+    const intent = JSON.parse(message.metadataJson).replyIntent as StrongholdReplyIntent | undefined
+    return intent ? { message, intent } : undefined
+  }
+
+  saveReplyIntent(messageId: number, intent: StrongholdReplyIntent): void {
+    this.db.transaction((tx) => {
+      const source = tx.select().from(groupChatMessages).where(and(
+        eq(groupChatMessages.id, messageId), eq(groupChatMessages.status, 'active'),
+      )).get()
+      if (!source) return
+      tx.update(groupChatMessages).set({
+        metadataJson: JSON.stringify({ ...JSON.parse(source.metadataJson), replyIntent: intent }),
+      }).where(eq(groupChatMessages.id, messageId)).run()
+    })
+  }
+
+  pendingReplyIds(): number[] {
+    return this.db.select({ id: groupChatMessages.id }).from(groupChatMessages).where(and(
+      eq(groupChatMessages.status, 'active'),
+      sql`json_extract(${groupChatMessages.metadataJson}, '$.replyIntent.status') = 'pending'`,
+      sql`coalesce(json_extract(${groupChatMessages.metadataJson}, '$.replyIntent.retryAt'), 0) <= ${Date.now()}`,
+    )).orderBy(asc(groupChatMessages.id)).limit(50).all().map((row) => row.id)
+  }
+
+  getMessageEvent(messageId: number) {
+    return this.db.select().from(groupChatMessages).where(and(eq(groupChatMessages.id, messageId), eq(groupChatMessages.status, 'active'))).get()
+  }
+
+  async getMessageEvents(roomId: string, afterMessageId: number, senderId?: string, sourcePairId?: string) {
+    return this.db.select({ id: groupChatMessages.id, senderId: groupChatMessages.senderId }).from(groupChatMessages)
+      .where(and(eq(groupChatMessages.roomId, roomId), eq(groupChatMessages.status, 'active'),
+        afterMessageId < 0 ? undefined : sql`${groupChatMessages.id} > ${afterMessageId}`,
+        senderId ? eq(groupChatMessages.senderId, senderId) : undefined,
+        sourcePairId ? eq(groupChatMessages.pairId, sourcePairId) : undefined))
+      .orderBy(afterMessageId < 0 ? desc(groupChatMessages.id) : asc(groupChatMessages.id))
+      .limit(afterMessageId < 0 || senderId ? 1 : 100).all()
+  }
+
+  /** 等待条件匹配后把回应请求附到真实来源；先持久化，再由轮次服务恢复。 */
+  async requestRepliesTo(messageId: number, agentIds: string[], autonomous = true, scope?: { threadId: string; generation: number }): Promise<boolean> {
+    return this.db.transaction((tx) => {
+      const message = tx.select().from(groupChatMessages).where(and(eq(groupChatMessages.id, messageId), eq(groupChatMessages.status, 'active'))).get()
+      if (!message || !message.pairId) return false
+      const metadata = JSON.parse(message.metadataJson)
+      const intent = metadata.replyIntent as StrongholdReplyIntent | undefined
+      const targets = tx.select({ agentId: agentExperiences.agentId, threadId: threads.id, generation: threads.generation })
+        .from(agentExperiences).innerJoin(threads, and(eq(threads.id, agentExperiences.threadId), eq(threads.generation, agentExperiences.generation)))
+        .where(and(eq(agentExperiences.sourceMessageId, messageId), eq(agentExperiences.withdrawn, false), eq(threads.status, 'active'))).all()
+      const rawMentions: unknown = JSON.parse(message.mentionsJson ?? '[]')
+      const mentions = Array.isArray(rawMentions) ? rawMentions.filter((value): value is string => typeof value === 'string') : []
+      const requested = [...new Set(agentIds)].filter((id) => targets.some((target) => target.agentId === id &&
+        (!scope || (target.threadId === scope.threadId && target.generation === scope.generation))) && this.isEnabledAgent(id) &&
+        (message.role !== 'user' || !mentions.length || mentions.includes('@all') || mentions.includes(id)))
+      if (!requested.length) return false
+      const completed = intent?.completed ?? []
+      const declared = mentions.includes('@all') ? targets.map((target) => target.agentId) : mentions
+      const queue = [...new Set([...(intent?.queue ?? declared), ...requested])]
+        .filter((id) => !completed.includes(id) && targets.some((target) => target.agentId === id))
+      if (!queue.length) return requested.every((id) => completed.includes(id))
+      const replyIntent: StrongholdReplyIntent = { ...intent, targets,
+        status: 'pending', autonomous: intent?.autonomous ?? autonomous, queue,
+        initialQueue: intent?.initialQueue ?? queue, completed, attempts: intent?.attempts ?? 0,
+        reason: '等待的真实事件已到达', allowSummon: true, allowAutoFollowUp: false }
+      tx.update(groupChatMessages).set({ metadataJson: JSON.stringify({ ...metadata, replyIntent }) })
+        .where(eq(groupChatMessages.id, messageId)).run()
+      return true
+    })
   }
 
   /** 获取房间消息总数（对话日志列表展示用，避免拉取全量）。 */
@@ -133,17 +336,18 @@ export class GroupChatService {
     const row = await this.db
       .select({ count: sql<number>`count(*)` })
       .from(groupChatMessages)
-      .where(eq(groupChatMessages.roomId, roomId))
+      .where(and(eq(groupChatMessages.roomId, roomId), eq(groupChatMessages.status, 'active')))
       .get()
     return row?.count ?? 0
   }
 
   /** 获取房间历史消息 (最新 N 条，按时间正序) */
-  async getHistory(roomId: string, limit = 50): Promise<MessageRow[]> {
+  async getHistory(roomId: string, limit = 50, throughMessageId?: number): Promise<MessageRow[]> {
     const msgs = await this.db
       .select()
       .from(groupChatMessages)
-      .where(eq(groupChatMessages.roomId, roomId))
+      .where(and(eq(groupChatMessages.roomId, roomId), eq(groupChatMessages.status, 'active'),
+        throughMessageId === undefined ? undefined : sql`${groupChatMessages.id} <= ${throughMessageId}`))
       .orderBy(desc(groupChatMessages.id))
       .limit(limit)
       .all()
@@ -152,7 +356,7 @@ export class GroupChatService {
     return msgs.reverse()
   }
 
-  /** 在新回合创建时快照当前在场角色；同轮后续移动不会改变这份可见集合。 */
+  /** 兼容旧亲历表的导入入口；新消息由 sendMessage 固定实际在场关系。 */
   async recordPairVisibility(roomId: string, pairId: string, agentIds: string[]): Promise<void> {
     const uniqueAgentIds = [...new Set(agentIds)]
     if (uniqueAgentIds.length === 0) return
@@ -168,40 +372,41 @@ export class GroupChatService {
       .onConflictDoNothing()
   }
 
-  /** 获取角色亲历的最近N个完整回合；只消费新状态机记录，不推断旧历史。 */
+  /** 按预算读取角色在指定房间亲历的历史。 */
+  async getVisibleHistoryByBudget(agentId: string, tokenBudget: number, roomId: string): Promise<MessageRow[]> {
+    const messages = await this.getVisibleHistoryPairs(agentId, 10000, false, roomId)
+    const selected: MessageRow[] = []
+    let used = 0
+    for (const message of messages.reverse()) {
+      const tokens = tokenCounter.countTokens(message.content) + 8
+      if (selected.length && used + tokens > tokenBudget) break
+      selected.push(message)
+      used += tokens
+    }
+    return selected.reverse()
+  }
+
   async getVisibleHistoryPairs(
     agentId: string,
     pairLimit = 20,
     stable = false,
+    roomId?: string,
   ): Promise<MessageRow[]> {
     const normalizedLimit = Math.max(1, pairLimit)
-    const recentPairs = await this.db
-      .select({
-        pairId: strongholdAgentPairVisibility.pairId,
-        observedAt: strongholdAgentPairVisibility.observedAt,
-        id: strongholdAgentPairVisibility.id,
-      })
-      .from(strongholdAgentPairVisibility)
-      .where(eq(strongholdAgentPairVisibility.agentId, agentId))
-      .orderBy(desc(strongholdAgentPairVisibility.id))
-      .limit(normalizedLimit + (stable ? 1 : 0))
-      .all()
-    if (recentPairs.length === 0) return []
+    const perceived = this.db.select({ message: groupChatMessages }).from(agentExperiences)
+      .innerJoin(groupChatMessages, eq(groupChatMessages.id, agentExperiences.sourceMessageId))
+      .innerJoin(threads, and(eq(threads.id, agentExperiences.threadId), eq(threads.generation, agentExperiences.generation)))
+      .where(and(eq(agentExperiences.agentId, agentId), eq(agentExperiences.withdrawn, false), eq(groupChatMessages.status, 'active'),
+        roomId === undefined ? undefined : eq(groupChatMessages.roomId, roomId)))
+      .orderBy(desc(agentExperiences.id)).all().map((row) => row.message)
+    const recentPairs = [...new Set(perceived.map((row) => row.pairId ?? `message:${row.id}`))]
+      .slice(0, normalizedLimit + (stable ? 1 : 0)).reverse()
     const pairs = stable
-      ? stableHistoryWindow(
-          `stronghold:${agentId}`,
-          [...recentPairs].reverse(),
-          normalizedLimit,
-          (row) => row.pairId,
-        )
+      ? stableHistoryWindow(roomId === undefined ? `stronghold:${agentId}` : `stronghold:${roomId}:${agentId}`,
+          recentPairs, normalizedLimit, (pair) => pair)
       : recentPairs
-    const pairIds = pairs.map((row) => row.pairId)
-    return this.db
-      .select()
-      .from(groupChatMessages)
-      .where(inArray(groupChatMessages.pairId, pairIds))
-      .orderBy(asc(groupChatMessages.id))
-      .all()
+    const selectedPairs = new Set(pairs)
+    return perceived.filter((row) => selectedPairs.has(row.pairId ?? `message:${row.id}`)).reverse()
   }
 
   /** 获取最近 N 个完整群聊回合；一个 pair 包含用户发言及本轮全部回复。 */
@@ -212,7 +417,7 @@ export class GroupChatService {
     const recentPairs = await this.db
       .select({ pairKey, latestId })
       .from(groupChatMessages)
-      .where(eq(groupChatMessages.roomId, roomId))
+      .where(and(eq(groupChatMessages.roomId, roomId), eq(groupChatMessages.status, 'active')))
       .groupBy(pairKey)
       .orderBy(desc(latestId))
       .limit(normalizedLimit)
@@ -241,6 +446,7 @@ export class GroupChatService {
       .where(
         and(
           eq(groupChatMessages.roomId, roomId),
+          eq(groupChatMessages.status, 'active'),
           selectors.length === 1 ? selectors[0] : or(...selectors),
         ),
       )
@@ -269,7 +475,13 @@ export class GroupChatService {
     const condition = target.pairId
       ? and(eq(groupChatMessages.roomId, roomId), eq(groupChatMessages.pairId, target.pairId))
       : and(eq(groupChatMessages.id, messageId), eq(groupChatMessages.roomId, roomId))
-    const rows = await this.db.delete(groupChatMessages).where(condition).returning()
+    const rows = this.db.transaction((tx) => {
+      const removed = tx.update(groupChatMessages).set({ status: 'deleted' })
+        .where(and(condition, eq(groupChatMessages.status, 'active'))).returning().all()
+      if (removed.length) tx.update(agentExperiences).set({ withdrawn: true })
+        .where(inArray(agentExperiences.sourceMessageId, removed.map((row) => row.id))).run()
+      return removed
+    })
     if (target.pairId) await this.rollbackCharacterState?.(roomId, target.pairId)
 
     return {
@@ -283,7 +495,7 @@ export class GroupChatService {
     const message = await this.db
       .select({ id: groupChatMessages.id })
       .from(groupChatMessages)
-      .where(and(eq(groupChatMessages.roomId, roomId), eq(groupChatMessages.pairId, pairId)))
+      .where(and(eq(groupChatMessages.roomId, roomId), eq(groupChatMessages.pairId, pairId), eq(groupChatMessages.status, 'active')))
       .get()
     return Boolean(message)
   }

@@ -44,11 +44,12 @@ describe('预填充续写判定', () => {
     expect(completePrefilledContent('', '答')).toBe('答')
   })
 
-  it('纯工具调用沿用原行为拼回预填充；已有暂存正文时按未续写发布', () => {
-    expect(completePrefilledContent('<selfMinding>', '', true)).toBe('<selfMinding>')
-    expect(completePrefilledContent('<selfMinding>', '先查一下', true)).toBe('先查一下')
+  it('纯工具调用保持空正文；已有暂存正文时按未续写发布', () => {
+    expect(completePrefilledContent('<selfMinding>', '')).toBe('')
+    expect(completePrefilledContent('<selfMinding>', '先查一下')).toBe('先查一下')
     const gate = new PrefillContinuationGate('<selfMinding>')
-    expect(gate.startToolCall()).toBe('<selfMinding>')
-    expect(gate.push('后续')).toBe('后续')
+    expect(gate.finish()).toBe('')
+    expect(gate.push('后续')).toBe('')
+    expect(gate.finish()).toBe('后续')
   })
 })

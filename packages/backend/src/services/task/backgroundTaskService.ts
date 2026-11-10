@@ -67,7 +67,6 @@ const TASK_READ_TOOLS = new Set([
   'update_plan',
   'ask_user',
   'expand_advanced_tools',
-  'load_skill',
   'skill_list_resources',
   'skill_read_resource',
   'read_file',
@@ -473,6 +472,8 @@ export class BackgroundScheduler {
         origin.interactionMode === 'minimal' ? 'minimal' : 'work',
       )
       await this.threadService.updateDisabledTools(thread.id, origin.disabledTools)
+      if (origin.enabledSkills?.length)
+        await this.threadService.updateEnabledSkills(thread.id, origin.enabledSkills)
     }
 
     // 2. 入库（queued）
@@ -494,6 +495,7 @@ export class BackgroundScheduler {
       }),
       metadataJson: JSON.stringify({
         ...(input.metadata ?? {}),
+        ...(origin ? { targetThreadGeneration: origin.generation } : {}),
         ...(input.realmId ? { realmId: input.realmId } : {}),
         ...(input.appId ? { appId: input.appId } : {}),
       }),

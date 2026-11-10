@@ -10,6 +10,7 @@ import { t as __t } from '../i18n/index'
  * - /app        → MainView
  * - /launcher   → LauncherView
  * - /pet-3d     → Pet3DView (仅 Electron 可访问)
+ * - /panel/:id  → DetachedPanelView (桌面外壳面板窗口)
  *
  * @module packages/frontend/src/router
  */
@@ -62,6 +63,13 @@ const routes: RouteRecordRaw[] = [
         path: '/pet-3d',
         redirect: '/app',
       },
+  // 桌面外壳面板窗口：只渲染单个功能页。入口只在 Electron 提供，浏览器中打开时不显示窗口控制。
+  {
+    path: '/panel/:pageId',
+    name: 'DetachedPanel',
+    component: () => import('@/views/DetachedPanelView.vue'),
+    meta: { title: 'PeroperoChat', standalone: true },
+  },
 ]
 
 // ── 创建路由实例 ──

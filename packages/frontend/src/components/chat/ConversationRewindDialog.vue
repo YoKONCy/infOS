@@ -53,7 +53,9 @@ const preservedReasonLabel = {
 } as const
 
 const dialogTitle = computed(() =>
-  props.regenerating
+  props.preview?.scope
+    ? __t('ui.chat', props.regenerating ? '重新生成相关回复？' : '撤回这条消息？')
+    : props.regenerating
     ? __t('ui.chat', '从这一轮重新生成？')
     : props.preview?.wholeThread
       ? __t('ui.chat', '删除这段会话？')
@@ -79,7 +81,7 @@ const confirmText = computed(() =>
       <div class="rewind-dialog__summary">
         <div>
           <strong>{{ preview.pairCount }}</strong>
-          <span>{{ __t('ui.chat', '轮对话') }}</span>
+          <span>{{ preview.scope ? __t('ui.chat', '条消息') : __t('ui.chat', '轮对话') }}</span>
         </div>
         <div v-if="!preview.wholeThread">
           <strong>{{ preview.createdCount }}</strong>
@@ -98,6 +100,9 @@ const confirmText = computed(() =>
       <p class="rewind-dialog__description">
         <template v-if="preview.wholeThread">
           {{ __t('ui.chat', '删除全部会话记录，保留文件。') }}
+        </template>
+        <template v-else-if="preview.scope">
+          {{ regenerating ? __t('ui.chat', '撤回这条输入及相关回复，再生成新回复。') : __t('ui.chat', '撤回所选消息。') }}
         </template>
         <template v-else-if="regenerating">
           {{ __t('ui.chat', '本轮及后续对话将被撤回，再生成新的回复。') }}

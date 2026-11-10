@@ -153,15 +153,13 @@ describe('文件工具统一执行路径', () => {
     expect(await readFile(file, 'utf8')).toBe('旧内容\n新内容')
   })
 
-  it('删除工作区外文件需要本次审批凭证', async () => {
+  it('家的回收服务不可用时，审批凭证也不能绕过保护删除文件', async () => {
     const outsideFile = path.join(tempRoot, 'delete-me.txt')
     await writeFile(outsideFile, '待删除', 'utf8')
-    await expect(deleteFileTool.execute({ file_path: outsideFile }, context)).rejects.toThrow(Error)
-    const deleted = await deleteFileTool.execute(
-      { file_path: outsideFile },
-      { ...context, approvedSensitiveAction: true },
-    )
-    expect(JSON.parse(String(deleted))).toMatchObject({ success: true })
-    await expect(readFile(outsideFile, 'utf8')).rejects.toThrow()
+    for (const approvedSensitiveAction of [false, true]) {
+      const result = await deleteFileTool.execute({ file_path: outsideFile }, { ...context, approvedSensitiveAction })
+      expect(result).toMatchObject({ ok: false, error: { code: 'HOME_UNAVAILABLE' } })
+      expect(await readFile(outsideFile, 'utf8')).toBe('待删除')
+    }
   })
 })

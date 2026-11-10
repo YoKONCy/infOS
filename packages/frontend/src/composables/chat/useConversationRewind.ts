@@ -10,6 +10,7 @@ export interface RewindRequest {
   title?: string
   autoConfirmWithoutFiles?: boolean
   preserveInputAttachments?: boolean
+  restoreFiles?: boolean
   beforeConfirm?: () => void | Promise<void>
   onSuccess?: (result: RewindResult) => void | Promise<void>
 }
@@ -33,6 +34,8 @@ export function useConversationRewind() {
       const response = await chatApi.previewRewind(next.threadId, {
         messageId: next.messageId,
         wholeThread: next.wholeThread,
+        preserveInputAttachments: next.preserveInputAttachments,
+        restoreFiles: next.restoreFiles,
       })
       if (!response.data) throw new Error('回滚预检未返回数据')
       preview.value = response.data
@@ -68,6 +71,7 @@ export function useConversationRewind() {
         messageId: current.messageId,
         wholeThread: current.wholeThread,
         preserveInputAttachments: current.preserveInputAttachments,
+        restoreFiles: current.restoreFiles,
       })
       if (!response.data) throw new Error(`${action}未返回结果`)
       completed = true

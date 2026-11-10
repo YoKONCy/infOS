@@ -4,9 +4,12 @@ import { ToolRegistry } from '@infos/backend/services/agent/toolRegistry'
 import { isToolAllowedInInteractionMode } from '@infos/backend/tools/interactionMode'
 import { buildConversationTimeAnchors } from '@infos/backend/services/context/conversationTime'
 import type { ThreadMessageInfo } from '@infos/backend/services/thread/threadService'
+import type { ChatMessage } from '@infos/backend/services/llm/types'
+import { compileModelRequest } from '@infos/backend/services/prompt/requestCompiler'
 import {
   invalidatePromptReplay,
   preparePromptReplay,
+  promptReplayHistoryStart,
 } from '@infos/backend/services/llm/promptCache'
 
 function fixture(
@@ -32,23 +35,24 @@ function fixture(
     { role: 'system', content: '本地提示词' },
   ])
   const planGet = vi.fn().mockReturnValue({ id: 'plan', revision: 1, title: '当前计划', steps: [] })
+  const threadGet = vi.fn().mockResolvedValue({
+    id: 'thread-test', agentId: 'test', channel, interactionMode: mode, disabledTools,
+    threadKind: 'side', generation: 1,
+    contextPolicy: JSON.stringify({ enableStateInjection: false, enableToolDescriptions: false, enableContinuity: false }),
+  })
+  const conversationHistory = vi.fn().mockResolvedValue([])
+  const activeMessages = vi.fn().mockResolvedValue([])
+  const experiences = vi.fn().mockResolvedValue([])
+  const flowGet = vi.fn().mockResolvedValue({ currentGoal: '', privateFacts: '' })
   const compiler = new ContextCompiler(
     {
-      getThread: vi.fn().mockResolvedValue({
-        id: 'thread-test',
-        agentId: 'test',
-        channel,
-        interactionMode: mode,
-        disabledTools,
-        contextPolicy: JSON.stringify({
-          enableStateInjection: false,
-          enableToolDescriptions: false,
-          enableContinuity: false,
-        }),
-      }),
+      getThread: threadGet,
       getActiveMessagePairs: activePairs,
       getWorkingMessagePairs: workingPairs,
+      getConversationHistory: conversationHistory,
+      getActiveMessages: activeMessages,
       getConversationTimeAnchors: timeAnchors,
+      listExperiences: experiences,
     } as never,
     { getAgent: vi.fn().mockReturnValue(undefined) } as never,
     { get: vi.fn().mockResolvedValue(null) } as never,
@@ -61,13 +65,93 @@ function fixture(
       }),
       isToolAllowedInMode: (name: string, interactionMode: 'chat' | 'work') =>
         isToolAllowedInInteractionMode(name, interactionMode, registry),
+      describeTools: () => '',
     } as never,
-    { get: vi.fn().mockResolvedValue({ currentGoal: '', privateFacts: '' }) } as never,
+    { get: flowGet } as never,
   )
   compiler.setEventMemoryService({ automaticRag } as never)
   compiler.setTaskPlanService({ get: planGet } as never)
-  return { compiler, automaticRag, renderSlots, planGet, workingPairs, activePairs, timeAnchors }
+  return { compiler, automaticRag, renderSlots, planGet, workingPairs, activePairs, timeAnchors,
+    threadGet, conversationHistory, activeMessages, flowGet, experiences }
 }
+
+describe('场景上下文与角色连续性', () => {
+  it.each(['realm', 'stronghold'] as const)('%s 按场景合同装配历史与心流', async (scene) => {
+    const { compiler, threadGet, conversationHistory, activeMessages, flowGet, renderSlots, automaticRag } = fixture('desktop')
+    threadGet.mockResolvedValue({ id: 'thread-test', agentId: 'test', channel: 'desktop',
+      threadKind: 'main', generation: 1, interactionMode: 'chat', disabledTools: [], contextPolicy: null })
+    const privateHistory = [
+      { id: 1, role: 'user', content: '主线私聊原文', revision: 1, metadataJson: '{}' },
+    ]
+    conversationHistory.mockResolvedValue(privateHistory)
+    activeMessages.mockResolvedValue(privateHistory)
+    flowGet.mockResolvedValue({ currentGoal: '主线当前目标', privateFacts: '主线私有现场' })
+    automaticRag.mockResolvedValue([{ id: 'shared-memory', eventAt: '2026-11-06T00:00:00.000Z', narrative: '角色长期记忆' }])
+    renderSlots.mockImplementation((_slots, vars) => [{ role: 'system', content: JSON.stringify({
+      conversation_history: vars.conversation_history,
+      native_history: vars.native_history,
+      flow_state: vars.flow_state,
+      memory_context: vars.memory_context,
+    }) }])
+    const compiled = await compiler.compile('thread-test', 'test', {
+      ...(scene === 'realm' ? { realmExecution: true } : { internalScene: true }),
+      appendThreadMessages: true,
+      currentInput: { role: 'user', content: '当前场景输入' },
+      retrievalQuery: '当前场景输入',
+    })
+    const vars = renderSlots.mock.calls[0]![1]
+    expect(vars.conversation_history).toBe('')
+    expect(vars.native_history).toEqual([])
+    const request = compileModelRequest(compiled.messages, 0).messages
+    expect(request.at(-1)?.content).toBe('当前场景输入')
+    if (scene === 'realm') {
+      expect(vars.flow_state).toEqual({ currentGoal: '', privateFacts: '' })
+      expect(JSON.stringify(request)).not.toMatch(/主线私聊原文|主线当前目标|主线私有现场/)
+    } else {
+      expect(vars.flow_state).toEqual({ currentGoal: '主线当前目标', privateFacts: '主线私有现场' })
+      expect(JSON.stringify(request)).toContain('主线私聊原文')
+      expect(vars.memory_context).toContain('角色长期记忆')
+    }
+  })
+
+  it('跨场景按当前窗口消息数选取整条原文，长消息参与最终请求的统一选择', async () => {
+    const f = fixture('desktop')
+    f.threadGet.mockResolvedValue({ id: 'thread-test', agentId: 'test', channel: 'desktop', threadKind: 'main',
+      generation: 1, interactionMode: 'chat', disabledTools: [], contextPolicy: null })
+    const longMessage = '这是完整的私聊原文。'.repeat(1000)
+    f.activeMessages.mockResolvedValue([
+      { id: 10, role: 'user', content: longMessage, revision: 1, metadataJson: '{}' },
+      { id: 11, role: 'assistant', content: '记住这次讨论', revision: 1, metadataJson: '{}' },
+      { id: 12, role: 'user', content: '周六再接着聊', revision: 1, metadataJson: '{}' },
+      { id: 13, role: 'assistant', content: '好呀，周六见', revision: 1, metadataJson: '{}' },
+    ])
+    const compiled = await f.compiler.compile('thread-test', 'test', {
+      internalScene: true,
+      sceneMessageCount: 8,
+      currentInput: { role: 'user', content: '当前据点输入' },
+      disableMemoryRetrieval: true,
+    })
+    expect(f.activeMessages).toHaveBeenCalledWith('thread-test', 4, { conversationOnly: true })
+    const sceneRegions = compiled.manifest.regions.filter((region) => region.providerId === 'infos.context.scene-history' && region.selected)
+    expect(sceneRegions.flatMap((region) => region.sourceObjectRefs.map((source) => source.objectId))).toEqual(['10', '11', '12', '13'])
+    expect(JSON.stringify(compileModelRequest(compiled.messages, 0).messages)).toContain(longMessage)
+  })
+
+  it('主会话直接读取角色亲历原文，并在清单中保留来源身份', async () => {
+    const f = fixture('desktop')
+    f.threadGet.mockResolvedValue({ id: 'thread-test', agentId: 'test', channel: 'desktop', threadKind: 'main',
+      generation: 1, interactionMode: 'chat', disabledTools: [], contextPolicy: null })
+    f.experiences.mockResolvedValue([{ sourceMessageId: 12, generation: 1, roomId: 'living', roomName: '客厅',
+      senderId: 'nana', timestamp: '2026-11-10T08:00:00Z', content: '我们商量好周六去海边' }])
+    const compiled = await f.compiler.compile('thread-test', 'test', { currentInput: { role: 'user', content: '你们聊得怎么样？' } })
+    expect(JSON.stringify(compileModelRequest(compiled.messages, 0).messages)).toContain('我们商量好周六去海边')
+    expect(f.experiences).toHaveBeenCalledWith('thread-test', 10, { conversationOnly: true })
+    expect(compiled.manifest.regions).toEqual(expect.arrayContaining([expect.objectContaining({
+      providerId: 'infos.context.scene-history', selected: true,
+      sourceObjectRefs: [expect.objectContaining({ objectType: 'stronghold-message', objectId: '12', ownerPrincipalId: 'test' })],
+    })]))
+  })
+})
 
 describe('历史时间标记与当前输入隔离', () => {
   it('任务结果进入原生与模板历史，其他系统消息仍不进入模型', async () => {
@@ -122,23 +206,23 @@ describe('历史时间标记与当前输入隔离', () => {
   ]
   const anchors = buildConversationTimeAnchors(rows.filter((row) => row.role === 'user'))
 
-  it('只标历史用户消息，原生历史与模板历史一致，当前输入即使到点也不加标记', async () => {
+  it('只标历史用户消息，原生历史与模板历史一致，已入库的当前输入沿用同一时间标记', async () => {
     const { compiler, activePairs, timeAnchors, renderSlots } = fixture('desktop')
     activePairs.mockResolvedValue(rows)
     timeAnchors.mockResolvedValue(anchors)
     const before = JSON.stringify(rows)
     const compiled = await compiler.compile('thread-test', 'test', { disableMemoryRetrieval: true })
-    expect(timeAnchors).toHaveBeenCalledWith('thread-test', 6)
+    expect(timeAnchors).toHaveBeenCalledWith('thread-test', 7)
     const history = (id: number) =>
       compiled.messages.find((item) => item.cacheControl?.historyMessageId === id)
     expect(history(1)?.content).toBe('【对话记录时间：2026-10-22 11:04】\n正文-1')
     expect(history(3)?.content).toBe('【对话记录时间：2026-10-25 07:02】\n正文-3')
     expect(history(5)?.content).toBe('正文-5')
     expect(history(4)?.content).toBe('正文-4')
-    expect(compiled.messages[compiled.currentMessageIndex!]?.content).toBe('正文-7')
+    expect(compiled.messages[compiled.currentMessageIndex!]?.content).toBe('【对话记录时间：2026-10-25 08:02】\n正文-7')
     const vars = renderSlots.mock.calls[0]![1]
     expect(vars.conversation_history).toContain('【对话记录时间：2026-10-25 07:02】\n正文-3')
-    expect(vars.current_message).toMatchObject({ role: 'user', content: '正文-7' })
+    expect(vars.current_message).toMatchObject({ role: 'user', content: '【对话记录时间：2026-10-25 08:02】\n正文-7' })
     expect(JSON.stringify(rows)).toBe(before)
   })
 
@@ -177,7 +261,7 @@ describe('历史时间标记与当前输入隔离', () => {
     expect(timeAnchors).not.toHaveBeenCalled()
   })
 
-  it('新标记进入历史时退出旧热轨迹，之后未打标的连续对话仍能复用', async () => {
+  it('已入库输入转为历史时保留时间标记并复用热轨迹', async () => {
     const { compiler, activePairs, timeAnchors } = fixture('desktop')
     timeAnchors.mockResolvedValue(anchors)
     const scope = 'time-anchor-replay'
@@ -189,7 +273,7 @@ describe('历史时间标记与当前输入隔离', () => {
       activePairs.mockResolvedValue(rows.slice(0, 5))
       const second = await compiler.compile('thread-test', 'test', { disableMemoryRetrieval: true })
       const marked = preparePromptReplay(scope, second.messages, '测试模型')
-      expect(marked.reused).toBe(false)
+      expect(marked.reused).toBe(true)
       expect(
         marked.messages.find((item) => item.cacheControl?.historyMessageId === 3)?.content,
       ).toBe('【对话记录时间：2026-10-25 07:02】\n正文-3')
@@ -198,7 +282,7 @@ describe('历史时间标记与当前输入隔离', () => {
       const third = await compiler.compile('thread-test', 'test', { disableMemoryRetrieval: true })
       const continued = preparePromptReplay(scope, third.messages, '测试模型')
       expect(continued.reused).toBe(true)
-      expect(continued.messages.at(-1)?.content).toBe('正文-7')
+      expect(continued.messages.at(-1)?.content).toBe('【对话记录时间：2026-10-25 08:02】\n正文-7')
     } finally {
       invalidatePromptReplay(scope)
     }
@@ -206,6 +290,41 @@ describe('历史时间标记与当前输入隔离', () => {
 })
 
 describe('预算预览与远程记忆检索隔离', () => {
+  it.each(['chat', 'work'] as const)('%s 编译绑定真实上轮用户，发送时前移最新动态资料', async (mode) => {
+    const { compiler, activePairs, workingPairs } = fixture('desktop', mode)
+    const rows = [
+      { id: 1, role: 'user', content: '上轮输入', revision: 1, metadataJson: '{}' },
+      { id: 2, role: 'assistant', content: '上轮回复', revision: 1, metadataJson: '{}' },
+      { id: 3, role: 'user', content: '本轮输入', revision: 1, metadataJson: '{}' },
+    ]
+    activePairs.mockResolvedValue(rows)
+    workingPairs.mockResolvedValue(rows)
+    compiler.setPromptWorkspace({
+      snapshot: () => ({ id: 'depth-config', bundle: { frameworks: [] } }),
+      prepare: async (_snapshot: unknown, _channel: string, _agent: string, vars: Record<string, unknown>) => ({
+        messages: [
+          { role: 'system', content: '固定规则', slotId: 'rules' },
+          ...(vars.native_history as ChatMessage[]).map((message, index) => ({
+            role: message.role, content: message.content, slotId: `history/${index}`,
+            historyMessage: true, historyCache: message.cacheControl,
+          })),
+          { role: 'user', content: '<turn_context>最新资料</turn_context>', slotId: 'turn_context' },
+        ],
+        preview: { requestPlan: { dynamicContextDepth: 1 }, segments: [] },
+      }),
+    } as never)
+    const before = structuredClone(rows)
+    const compiled = await compiler.compile('thread-test', 'test', { disableMemoryRetrieval: true })
+    expect(compiled.messages[3]?.content).toContain('最新资料')
+    const request = compileModelRequest(compiled.messages, 0).messages
+    expect(request[1]?.content).toContain('最新资料')
+    expect(request[2]?.content).toBe('上轮输入')
+    expect(request[3]?.content).toBe('上轮回复')
+    expect(request[4]?.content).toBe('本轮输入')
+    expect(compiled.messages[compiled.currentMessageIndex!]?.content).toBe('本轮输入')
+    expect(rows).toEqual(before)
+  })
+
   it('资料召回开关与记忆 RAG 独立，预算预览和 Realm 不执行资料召回', async () => {
     const { compiler, automaticRag, renderSlots } = fixture('desktop')
     const recall = vi.fn().mockResolvedValue({
@@ -237,7 +356,7 @@ describe('预算预览与远程记忆检索隔离', () => {
       assistantPrefill: { content: '我', mode: 'continuous', source: 'system.assistantPrefill' },
     }
     compiler.setPromptWorkspace({
-      snapshot: () => ({ id: 'compiled-prefill' }),
+      snapshot: () => ({ id: 'compiled-prefill', bundle: { frameworks: [] } }),
       prepare: vi.fn().mockResolvedValue({
         messages: [
           { role: 'system', content: '固定规则' },
@@ -264,13 +383,43 @@ describe('预算预览与远程记忆检索隔离', () => {
       disableMemoryRetrieval: true,
       maxInputTokens: 12_000,
     })
-    expect(work.workingPairs).toHaveBeenCalledWith('thread-test', 12_000)
+    expect(work.workingPairs).toHaveBeenCalledWith('thread-test', 12_000, undefined, undefined)
     const chat = fixture('desktop', 'chat')
     await chat.compiler.compile('thread-test', 'test', { disableMemoryRetrieval: true })
     expect(chat.workingPairs).not.toHaveBeenCalled()
     const realm = fixture('desktop', 'work')
     await realm.compiler.compile('thread-test', 'test', { realmExecution: true })
     expect(realm.workingPairs).not.toHaveBeenCalled()
+  })
+
+  it('工作编译和重复预览沿用同一已提交起点，不消费热轨迹', async () => {
+    const { compiler, workingPairs } = fixture('desktop', 'work')
+    const scope = 'desktop:test:thread-test'
+    const user = { id: 1, role: 'user', content: '首轮输入', revision: 1, metadataJson: '{}' }
+    workingPairs.mockResolvedValue([user])
+    try {
+      const compiled = await compiler.compile('thread-test', 'test', { disableMemoryRetrieval: true })
+      const first = preparePromptReplay(scope, compiled.messages, '模型')
+      first.commit([...first.messages, { role: 'assistant', content: '首轮回复' }], '首轮回复')
+      workingPairs.mockResolvedValue([
+        user,
+        { id: 2, role: 'assistant', content: '首轮回复', revision: 1, metadataJson: '{}' },
+        { id: 3, role: 'user', content: '下一轮输入', revision: 1, metadataJson: '{}' },
+      ])
+      await compiler.compile('thread-test', 'test', {
+        disableMemoryRetrieval: true,
+        maxInputTokens: 1000,
+      })
+      const next = await compiler.compile('thread-test', 'test', {
+        disableMemoryRetrieval: true,
+        maxInputTokens: 1000,
+      })
+      expect(workingPairs).toHaveBeenLastCalledWith('thread-test', 1000, 1, undefined)
+      expect(promptReplayHistoryStart(scope)).toBe(1)
+      expect(preparePromptReplay(scope, next.messages, '模型').reused).toBe(true)
+    } finally {
+      invalidatePromptReplay(scope)
+    }
   })
   it.each([
     { mode: 'chat' as const, disabled: [], enabled: false },
@@ -314,6 +463,8 @@ describe('预算预览与远程记忆检索隔离', () => {
         channel,
         undefined,
         undefined,
+        expect.objectContaining({ preview: false, tokenBudget: channel === 'desktop' ? 2000 : 1000,
+          visibleSource: { threadId: 'thread-test', messageIds: ['1'], messageRevisions: { '1': 1 }, completePairIds: [] } }),
       )
       expect(normal.manifest.hasMemoryRetrieval).toBe(true)
       expect(normal.messages.at(-1)).toMatchObject({ role: 'user', content: '历史问题' })

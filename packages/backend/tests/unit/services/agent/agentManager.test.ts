@@ -354,7 +354,7 @@ describe('AgentManager', () => {
     const manager = new AgentManager(createResolver(builtinDir, dataDir))
 
     expect(manager.getAvatarData('pero')?.buffer.toString()).toBe('用户自选头像')
-    expect(manager.getAvatarUrl('pero')).toBe('/agents/pero/avatar')
+    expect(manager.getAvatarUrl('pero')).toMatch(/^\/agents\/pero\/avatar\?v=.+$/)
     const exported = manager.exportAgentPackage('pero')
     expect(
       Buffer.from(
@@ -373,7 +373,7 @@ describe('AgentManager', () => {
 
     expect(avatar?.buffer.toString()).toBe('webp-data')
     expect(avatar?.mime).toBe('image/webp')
-    expect(manager.getAvatarUrl('pero')).toBe('/agents/pero/avatar')
+    expect(manager.getAvatarUrl('pero')).toMatch(/^\/agents\/pero\/avatar\?v=.+$/)
     expect(manager.getAvatarUrl('custom')).toBeUndefined()
     expect(manager.getAvatarUrl('missing')).toBeUndefined()
     rmSync(join(builtinDir, 'pero', 'avatar.webp'))

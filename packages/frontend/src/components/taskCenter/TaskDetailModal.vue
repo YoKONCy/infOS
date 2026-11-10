@@ -297,7 +297,7 @@ onBeforeUnmount(() => {
           id="task-overview-panel"
           role="tabpanel"
           aria-labelledby="task-overview-tab"
-          class="detail-panel"
+          class="detail-panel motion-enter-fade"
         >
           <section
             v-if="task.result || resultSurfaces.length"
@@ -385,7 +385,7 @@ onBeforeUnmount(() => {
           id="task-activity-panel"
           role="tabpanel"
           aria-labelledby="task-activity-tab"
-          class="detail-panel"
+          class="detail-panel motion-enter-fade"
         >
           <p class="detail-muted">
             {{ __t('ui.taskCenter', '按执行顺序查看思考、工具调用与反馈。') }}
@@ -405,7 +405,7 @@ onBeforeUnmount(() => {
           id="task-runtime-panel"
           role="tabpanel"
           aria-labelledby="task-runtime-tab"
-          class="detail-panel"
+          class="detail-panel motion-enter-fade"
         >
           <section class="detail-section">
             <h3>{{ __t('ui.taskCenter', '时间') }}</h3>

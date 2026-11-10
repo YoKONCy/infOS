@@ -1,4 +1,5 @@
 {
+  "表达手册学习失败，聊天不受影响": "Speech handbook learning failed; chat is unaffected",
   "已加载 {0} 个 Agent": "{0} Agents loaded",
   "已更新 Agent 配置: {0}": "Updated Agent configuration: {0}",
   "内置角色已创建用户副本: {0} → {1}": "built-in role has created a user copy: {0} → {1}",
@@ -76,5 +77,10 @@
   "疑似工具无进展循环，本次拦截并给予一次纠偏机会": "Suspected tool has no progress cycle. This time it will be intercepted and given a chance to correct the error.",
   "工具已注册: {0}": "tool is registered: {0}",
   "应用工具已注册: {0}": "application tool has been registered: {0}",
-  "应用工具已注销: appId={0}, count={1}": "application tool has been logged out: appId={0}, count={1}"
+  "应用工具已注销: appId={0}, count={1}": "application tool has been logged out: appId={0}, count={1}",
+  "当前模型组合不支持回答预填充，本次执行不发送": "The current model setup does not support reply prefill; it will not be sent for this run",
+  "上游未按预填充续写，本轮回复未拼回预填充": "Upstream did not continue from the prefill; the prefill was not prepended to this reply",
+  "表达层事件处理失败，已跳过": "Expression event processing failed and was skipped.",
+  "表达层素材挑选失败，本轮不注入": "Expression material selection failed. Skipping it for this execution.",
+  "表达手册学习跳过了不合格的内容": "Expression handbook learning skipped invalid content."
 }

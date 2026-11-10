@@ -2,10 +2,10 @@
 export function prepareTtsText(text: string): string {
   return text
     .replace(
-      /<(selfMinding|think|thinking|thought|plan|action|observation)\b[^>]*>[\s\S]*?<\/\1>/gi,
+      /<(innerVoice|selfMinding|think|thinking|thought|plan|action|observation)\b[^>]*>[\s\S]*?<\/\1>/gi,
       '',
     )
-    .replace(/<(selfMinding|think|thinking|thought)\b[^>]*>[\s\S]*$/gi, '')
+    .replace(/<(innerVoice|selfMinding|think|thinking|thought)\b[^>]*>[\s\S]*$/gi, '')
     .replace(/```[\s\S]*?```/g, '')
     .replace(/!\[[^\]]*\]\([^)]*\)/g, '')
     .replace(/\[([^\]]+)\]\(https?:[^)]*\)/g, '$1')
@@ -16,10 +16,10 @@ export function prepareTtsText(text: string): string {
 export function cleanTextForTts(text: string): string {
   return text
     .replace(
-      /<(selfMinding|think|thinking|thought|plan|action|observation)\b[^>]*>[\s\S]*?<\/\1>/gi,
+      /<(innerVoice|selfMinding|think|thinking|thought|plan|action|observation)\b[^>]*>[\s\S]*?<\/\1>/gi,
       '',
     )
-    .replace(/<(selfMinding|think|thinking|thought)\b[^>]*>[\s\S]*$/gi, '')
+    .replace(/<(innerVoice|selfMinding|think|thinking|thought)\b[^>]*>[\s\S]*$/gi, '')
     .replace(/```[\s\S]*?```/g, '')
     .replace(/!\[[^\]]*\]\([^)]*\)/g, '')
     .replace(/\[([^\]]+)\]\([^)]*\)/g, '$1')

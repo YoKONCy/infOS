@@ -7,7 +7,7 @@ import { t as __t } from '../../i18n/index'
  * 负责组织该界面的响应式状态、用户交互与领域数据展示。
  * 副作用在组件生命周期内建立并清理，避免跨页面残留监听器或异步状态。
  */
-import { computed, onBeforeUnmount, ref, watch } from 'vue'
+import { computed, inject, onBeforeUnmount, ref, shallowRef, watch, type Ref } from 'vue'
 
 type RunPulseState =
   | 'thinking'
@@ -45,24 +45,48 @@ const initialNow = Date.now()
 const accumulatedMs = ref(props.elapsedMs ?? 0)
 const resumedAt = ref(initialNow)
 const now = ref(initialNow)
-let timer: ReturnType<typeof setInterval> | undefined
+// 主界面被隐藏或被应用标签覆盖时只停止刷新显示，计时基准不变，恢复后读数仍连续。
+const surfaceVisible = inject<Readonly<Ref<boolean>>>(
+  'infos:main-surface-visible',
+  shallowRef(true),
+)
+let running = false
+let timer: ReturnType<typeof setTimeout> | undefined
+
+/** 10 秒内按 0.1s 显示，之后读数只到整秒，按秒边界刷新以减少重渲染。 */
+function scheduleTick(): void {
+  if (timer) clearTimeout(timer)
+  timer = undefined
+  if (!running || !surfaceVisible.value) return
+  const elapsed = accumulatedMs.value + Math.max(0, Date.now() - resumedAt.value)
+  const delay = elapsed < 10_000 ? 100 : 1000 - (elapsed % 1000)
+  timer = setTimeout(() => {
+    timer = undefined
+    now.value = Date.now()
+    scheduleTick()
+  }, delay)
+}
 
 function startTimer(): void {
-  if (timer || props.elapsedMs !== undefined || !props.live) return
+  if (running || props.elapsedMs !== undefined || !props.live) return
+  running = true
   resumedAt.value = Date.now()
   now.value = resumedAt.value
-  timer = setInterval(() => {
-    now.value = Date.now()
-  }, 100)
+  scheduleTick()
 }
 
 function stopTimer(): void {
-  if (timer) {
-    accumulatedMs.value += Math.max(0, Date.now() - resumedAt.value)
-    clearInterval(timer)
-  }
+  if (running) accumulatedMs.value += Math.max(0, Date.now() - resumedAt.value)
+  running = false
+  if (timer) clearTimeout(timer)
   timer = undefined
 }
+
+watch(surfaceVisible, () => {
+  if (!running) return
+  now.value = Date.now()
+  scheduleTick()
+})
 
 watch(
   () => [props.live, props.elapsedMs] as const,

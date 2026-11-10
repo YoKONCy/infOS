@@ -17,7 +17,7 @@ beforeEach(() => {
   vi.useFakeTimers()
   vi.setSystemTime(now)
   sqlite = new Database(':memory:')
-  sqlite.exec('CREATE TABLE threads (id TEXT PRIMARY KEY, title TEXT)')
+  sqlite.exec("CREATE TABLE threads (id TEXT PRIMARY KEY, title TEXT, thread_kind TEXT NOT NULL DEFAULT 'side')")
   sqlite.exec(
     readFileSync(
       new URL('../../../../src/database/migrations/0010_llm_usage.sql', import.meta.url),
@@ -90,15 +90,15 @@ describe('缓存用量的同口径聚合', () => {
   })
 
   it('筛选选项保留已删除 Thread 和社交通道，按实际使用模型去重并支持角色隔离', () => {
-    sqlite.prepare('INSERT INTO threads (id, title) VALUES (?, ?)').run('t1', '制作网页')
+    sqlite.prepare('INSERT INTO threads (id, title, thread_kind) VALUES (?, ?, ?)').run('t1', '制作网页', 'main')
     record(100, 10, { threadId: 't1' })
     record(100, 10, { threadId: 't1' })
     record(100, 10, { threadId: 'social:qq:private:123456' })
     record(100, 10, { threadId: 'nana-only', modelId: 'other-model', agentId: 'nana' })
     expect(service.filterOptions('pero')).toEqual({
       threads: expect.arrayContaining([
-        { id: 't1', title: '制作网页' },
-        { id: 'social:qq:private:123456', title: null },
+        { id: 't1', title: '制作网页', threadKind: 'main' },
+        { id: 'social:qq:private:123456', title: null, threadKind: null },
       ]),
       models: [{ provider: 'deepseek', modelId: 'deepseek-flash' }],
     })

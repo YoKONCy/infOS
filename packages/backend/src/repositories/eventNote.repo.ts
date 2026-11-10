@@ -19,6 +19,9 @@ import {
   eventNoteCoverages,
   eventNotes,
   threadMessages,
+  threads,
+  agentExperiences,
+  groupChatMessages,
 } from '../database/schema'
 
 const parse = <T>(value: string): T => JSON.parse(value) as T
@@ -53,6 +56,13 @@ export interface ManualEventRevision {
   vector: number[]
 }
 
+export class MemorySourceStaleError extends Error {
+  constructor() {
+    super('MEMORY_SOURCE_STALE')
+    this.name = 'MemorySourceStaleError'
+  }
+}
+
 export class EventNoteRepository {
   private privacy?: PrivacyPolicy
   setPrivacyPolicy(policy: PrivacyPolicy): void {
@@ -62,6 +72,41 @@ export class EventNoteRepository {
     return this.privacy?.memoryForgotten(note) ?? false
   }
   constructor(private db: DrizzleDb) {}
+
+  private assertSource(origin: EventNote['origin'], tx: Pick<DrizzleDb, 'select'>): void {
+    if (origin.generation === undefined && origin.mode !== 'background') return
+    const thread = tx.select().from(threads).where(eq(threads.id, origin.threadId)).get()
+    if (!thread || thread.status !== 'active' ||
+        (origin.generation !== undefined && thread.generation !== origin.generation) ||
+        (origin.mode === 'background' && thread.threadKind !== 'main')) throw new MemorySourceStaleError()
+    for (const [id, revision] of Object.entries(origin.messageRevisions ?? {})) {
+      const source = tx.select().from(threadMessages).where(and(eq(threadMessages.id, Number(id)), eq(threadMessages.threadId, thread.id))).get()
+      if (!source || source.status !== 'active' || source.revision !== revision) throw new MemorySourceStaleError()
+    }
+    for (const id of origin.experienceIds ?? []) {
+      const source = tx.select({ id: agentExperiences.id }).from(agentExperiences)
+        .innerJoin(groupChatMessages, eq(groupChatMessages.id, agentExperiences.sourceMessageId))
+        .where(and(eq(agentExperiences.id, Number(id)), eq(agentExperiences.threadId, thread.id),
+          eq(agentExperiences.generation, thread.generation), eq(agentExperiences.withdrawn, false), eq(groupChatMessages.status, 'active'))).get()
+      if (!source) throw new MemorySourceStaleError()
+    }
+  }
+
+  /** 在异步向量化结束、同步写入 TDB 之前重新核验来源。 */
+  assertWritableSource(origin: EventNote['origin']): void {
+    this.assertSource(origin, this.db)
+  }
+
+  retireStaleWrite(operationId: string, noteId: string, targetId?: string): void {
+    this.db.transaction((tx) => {
+      if (targetId) tx.update(eventNotes).set({ replacedBy: null }).where(and(
+        eq(eventNotes.id, targetId), eq(eventNotes.replacedBy, noteId),
+      )).run()
+      tx.delete(eventNotes).where(eq(eventNotes.id, noteId)).run()
+      tx.update(eventMemoryOperations).set({ status: 'discarded', lastError: 'MEMORY_SOURCE_STALE' })
+        .where(eq(eventMemoryOperations.operationId, operationId)).run()
+    })
+  }
 
   async maxTdbId(): Promise<number> {
     const [row] = await this.db
@@ -73,6 +118,7 @@ export class EventNoteRepository {
   async prepareCreate(operationId: string, note: EventNote, tdbId: number): Promise<boolean> {
     this.privacy?.assertMemory(note)
     return this.db.transaction((tx) => {
+      this.assertSource(note.origin, tx)
       const operation = tx
         .insert(eventMemoryOperations)
         .values({
@@ -116,16 +162,18 @@ export class EventNoteRepository {
     newTdbId: number,
     relations: EventNoteRelationView[],
     manualEdit?: ManualEventRevision,
+    source?: EventNote['origin'],
   ): Promise<boolean> {
     this.privacy?.assertPayload('memory', { target, replacement, relations })
     return this.db.transaction((tx) => {
+      if (source) this.assertSource(source, tx)
       const operation = tx
         .insert(eventMemoryOperations)
         .values({
           operationId,
           agentId: target.agentId,
           operation: 'revise',
-          payloadJson: JSON.stringify({ target, replacement, newTdbId, relations, manualEdit }),
+          payloadJson: JSON.stringify({ target, replacement, newTdbId, relations, manualEdit, source }),
           status: 'pending',
           createdAt: new Date().toISOString(),
         })
@@ -313,6 +361,7 @@ export class EventNoteRepository {
     pairIds: string[]
     ownerId: string
     staleBefore?: string
+    allowCovered?: boolean
   }): Promise<boolean> {
     const pairIds = [...new Set(input.pairIds)]
     if (!pairIds.length) return false
@@ -339,7 +388,7 @@ export class EventNoteRepository {
           )
           .all()
         const covered = new Set(coverages.flatMap((row) => parse<string[]>(row.pairIdsJson)))
-        if (pairIds.some((pairId) => covered.has(pairId))) return false
+          if (!input.allowCovered && pairIds.some((pairId) => covered.has(pairId))) return false
 
         const existing = tx
           .select({
@@ -705,6 +754,7 @@ export class EventNoteRepository {
   async pendingReflectionTasks(
     limit = 100,
     now = new Date(),
+    disabledAgentIds: readonly string[] = [],
   ): Promise<
     Array<{
       id: string
@@ -741,12 +791,17 @@ export class EventNoteRepository {
       })
       .from(eventMemoryReflectionTasks)
       .where(
-        or(
-          eq(eventMemoryReflectionTasks.status, 'pending'),
-          and(
-            eq(eventMemoryReflectionTasks.status, 'failed'),
-            sql`${eventMemoryReflectionTasks.attempts} < 5`,
-            sql`julianday(${eventMemoryReflectionTasks.updatedAt}) <= julianday(${now.toISOString()}) - ${retrySeconds} / 86400.0`,
+        and(
+          disabledAgentIds.length
+            ? notInArray(eventMemoryReflectionTasks.agentId, [...disabledAgentIds])
+            : undefined,
+          or(
+            eq(eventMemoryReflectionTasks.status, 'pending'),
+            and(
+              eq(eventMemoryReflectionTasks.status, 'failed'),
+              sql`${eventMemoryReflectionTasks.attempts} < 5`,
+              sql`julianday(${eventMemoryReflectionTasks.updatedAt}) <= julianday(${now.toISOString()}) - ${retrySeconds} / 86400.0`,
+            ),
           ),
         ),
       )

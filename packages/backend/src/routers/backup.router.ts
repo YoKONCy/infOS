@@ -5,6 +5,7 @@ import { validate as zValidator } from '../lib/validation'
 import { AppError } from '../lib/appError'
 import { t } from '../lib/i18n'
 import { prepareBackupDownload, type BackupService } from '../services/backup/backupService'
+import type { ClientAccessService } from '../services/system/clientAccessService'
 import type { BackupImportProgress } from '@infos/shared'
 import { validateBackupUpload } from '../services/backup/backupArchive'
 
@@ -74,7 +75,7 @@ const messages: Record<string, string> = {
   BACKUP_FORMAT_INVALID: '此文件不是受支持的 infOS 备份',
 }
 
-export function createBackupRouter(service: BackupService) {
+export function createBackupRouter(service: BackupService, access?: ClientAccessService) {
   const router = new Hono()
   const downloads = new Map<
     string,
@@ -92,6 +93,14 @@ export function createBackupRouter(service: BackupService) {
       return c.json(
         { code: error.code, message: error.message, data: error.data },
         error.httpStatus as 400,
+      )
+    if (code === 'BACKUP_INTERNAL_METADATA_FORBIDDEN')
+      return c.json(
+        {
+          code: 'FORBIDDEN',
+          message: t('server.backup', '仅管理员可下载包含内部消息元数据的备份'),
+        },
+        403,
       )
     return c.json(
       {
@@ -197,7 +206,13 @@ export function createBackupRouter(service: BackupService) {
   )
   router.post('/', zValidator('json', z.object({ selection, password })), async (c) => {
     const input = c.req.valid('json')
-    return c.json(ok(await service.create(input.selection, input.password)))
+    return c.json(
+      ok(
+        await service.create(input.selection, input.password, {
+          includeInternalMetadata: access?.authenticate(c.req.raw)?.admin === true,
+        }),
+      ),
+    )
   })
   router.delete('/pending', async (c) => {
     await service.cancelPending()
@@ -225,7 +240,9 @@ export function createBackupRouter(service: BackupService) {
   router.post('/:id/download', zValidator('json', z.object({ password })), async (c) => {
     if (downloads.size >= 32) throw new Error('BACKUP_BUSY')
     const download = await prepareBackupDownload(
-      await service.download(c.req.param('id'), c.req.valid('json').password),
+      await service.download(c.req.param('id'), c.req.valid('json').password, {
+        includeInternalMetadata: access?.authenticate(c.req.raw)?.admin === true,
+      }),
     )
     const ticket = randomBytes(32).toString('hex')
     const timer = setTimeout(() => {

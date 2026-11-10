@@ -8,6 +8,8 @@ import { t as __t } from '../../../i18n/index'
  * 由 McpTab 组件编排使用。
  */
 import { PixelIcon, PButton, PCard, PEmpty } from '../../pixel'
+import MotionList from '../../motion/MotionList.vue'
+import MotionSkeleton from '../../motion/MotionSkeleton.vue'
 import type { McpServerView } from '../../../composables/dashboard/useMcpConfig'
 
 /** MCP 未声明用户标题时，将协议工具标识转换为可读名称。 */
@@ -48,12 +50,13 @@ function getStatusMeta(status: string) {
 
 <template>
   <!-- 加载状态 -->
-  <div v-if="isLoading && servers.length === 0" class="flex-1 flex items-center justify-center">
-    <div class="flex flex-col items-center gap-3 text-slate-400">
-      <PixelIcon name="loader" size="lg" />
-      <span class="text-sm font-bold">{{ __t('ui.settings', '正在加载 MCP 配置...') }}</span>
-    </div>
-  </div>
+  <MotionSkeleton
+    v-if="isLoading && servers.length === 0"
+    class="flex-1"
+    variant="card"
+    :rows="3"
+    :label="__t('ui.settings', '正在加载 MCP 配置...')"
+  />
 
   <!-- 空状态 -->
   <div v-else-if="servers.length === 0" class="flex-1 flex items-center justify-center">
@@ -61,7 +64,7 @@ function getStatusMeta(status: string) {
   </div>
 
   <!-- 服务列表 -->
-  <div v-else class="flex-1 overflow-y-auto flex flex-col gap-2 mcp-scrollbar">
+  <MotionList v-else class="flex-1 overflow-y-auto flex flex-col gap-2 mcp-scrollbar">
     <PCard
       v-for="srv in servers"
       :key="srv.id"
@@ -163,5 +166,5 @@ function getStatusMeta(status: string) {
         </p>
       </div>
     </PCard>
-  </div>
+  </MotionList>
 </template>

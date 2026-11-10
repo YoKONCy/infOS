@@ -13,9 +13,15 @@ function createThread() {
     id: 't1',
     agentId: 'pero',
     channel: 'desktop',
+    threadKind: 'side',
+    generation: 1,
+    canDelete: true,
+    canFork: true,
+    canReset: false,
     interactionMode: 'work',
     purpose: 'conversation',
     disabledTools: [],
+    enabledSkills: [] as string[],
     platform: undefined,
     platformIdentifier: undefined,
     title: '测试 Thread',
@@ -65,8 +71,10 @@ function createMessages() {
 function createCtx() {
   const thread = createThread()
   const messages = createMessages()
+  const abortSignal = new AbortController().signal
   return {
     conversationQueue: {
+      assertHistoryStable: vi.fn(),
       beginHistoryChange: vi.fn(() => vi.fn()),
       pause: vi.fn(),
       afterTurn: vi.fn(),
@@ -84,6 +92,8 @@ function createCtx() {
     },
     // AIOS: ThreadService 替代旧 SessionService + LogService
     threadService: {
+      getMainThread: vi.fn(async () => ({ ...thread, threadKind: 'main', canDelete: false, canFork: false, canReset: true })),
+      assertGeneration: vi.fn(async () => {}),
       getThread: vi.fn(() => Promise.resolve(thread)),
       appendUserMessage: vi.fn(() => Promise.resolve(messages[1])),
       appendAssistantMessage: vi.fn(() => Promise.resolve(messages[0])),
@@ -91,6 +101,9 @@ function createCtx() {
       listMessages: vi.fn(() => Promise.resolve({ items: messages, total: messages.length })),
       createThread: vi.fn(() => Promise.resolve(thread)),
       updateInteractionMode: vi.fn(async () => undefined),
+      updateEnabledSkills: vi.fn(async (_id: string, enabledSkills: string[]) => {
+        thread.enabledSkills = [...enabledSkills]
+      }),
       rewindThread: vi.fn(async () => ({ deletedMessageIds: [1, 2] })),
       previewThreadRewind: vi.fn(async () => ({
         pairCount: 1,
@@ -166,7 +179,10 @@ function createCtx() {
       isPrivateTool: vi.fn((_name: string) => false),
     },
     capabilityGate: {
-      resolve: vi.fn(() => ({ allowedTools: new Set<string>() })),
+      resolve: vi.fn((): {
+        allowedTools: Set<string>
+        enabledSkills?: Array<{ id: string; name: string; description: string }>
+      } => ({ allowedTools: new Set<string>(), enabledSkills: [] })),
     },
     flowStateService: {
       deleteThread: vi.fn(async () => undefined),
@@ -182,7 +198,7 @@ function createCtx() {
     // AIOS: RuntimeStateService 替代旧 TaskManager（按 threadId 索引）
     runtimeStateService: {
       getTaskInfo: vi.fn(() => null),
-      getAbortSignal: vi.fn(() => new AbortController().signal),
+      getAbortSignal: vi.fn(() => abortSignal),
       registerTask: vi.fn(),
       unregisterTask: vi.fn(),
       cancelTask: vi.fn(() => true),
@@ -195,6 +211,40 @@ function createCtx() {
 }
 
 describe('ChatRouter', () => {
+  it('会话 Skills 选择保存后可读取，取消后不再启用', async () => {
+    const ctx = createCtx()
+    ctx.capabilityGate.resolve.mockReturnValue({
+      allowedTools: new Set(),
+      enabledSkills: [{ id: 'writing', name: '写作', description: '改写与润色' }],
+    })
+    const router = createChatRouter(ctx as never)
+    const request = (enabledSkills: string[]) => router.request('http://test/threads/t1/skills', {
+      method: 'PUT', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ enabledSkills }),
+    })
+    expect((await request(['writing'])).status).toBe(200)
+    expect(await (await router.request('http://test/threads/t1/skills')).json()).toMatchObject({
+      data: { enabledSkills: ['writing'], skills: [{ id: 'writing', enabled: true }] },
+    })
+    expect((await request([])).status).toBe(200)
+    expect(await (await router.request('http://test/threads/t1/skills')).json()).toMatchObject({
+      data: { enabledSkills: [], skills: [{ id: 'writing', enabled: false }] },
+    })
+  })
+
+  it('会话拒绝选择角色未授权的 Skills，也拒绝生成期间改写', async () => {
+    const ctx = createCtx()
+    const router = createChatRouter(ctx as never)
+    const request = () => router.request('http://test/threads/t1/skills', {
+      method: 'PUT', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ enabledSkills: ['not-allowed'] }),
+    })
+    expect((await request()).status).toBe(400)
+    expect(ctx.threadService.updateEnabledSkills).not.toHaveBeenCalled()
+    ctx.runtimeStateService.listActiveTasks.mockReturnValue([{ threadId: 't1', state: 'running' }])
+    expect((await request()).status).toBe(409)
+    expect(ctx.threadService.updateEnabledSkills).not.toHaveBeenCalled()
+  })
   it('切换非工作模式、清除整条会话及删除历史均撤销当前调试', async () => {
     const ctx = createCtx()
     const router = createChatRouter(ctx as never)

@@ -5,6 +5,7 @@ import { computed, ref, watch } from 'vue'
 import type { ConversationQueueItem, ConversationQueueSnapshot } from '@infos/shared'
 import PixelIcon from '../pixel/PixelIcon.vue'
 import { queueErrorMessage, queueNotice } from '../../composables/chat/queueFeedback'
+import ConversationQueueBody from './ConversationQueueBody.vue'
 
 const props = defineProps<{
   snapshot: ConversationQueueSnapshot
@@ -22,12 +23,12 @@ const running = computed(() => props.snapshot.items.find((item) => item.state ==
 const order = computed(() =>
   pending.value.filter((item) => item.state === 'queued' && !item.immediate),
 )
+// 队列暂停时（例如回合失败后自动暂停）即使没有待发消息也显示，让用户看得到「已暂停」并能恢复
 const hasWaiting = computed(
   () =>
-    pending.value.length > 0 &&
-    Boolean(
-      props.snapshot.active || running.value || props.snapshot.paused || pending.value.length > 1,
-    ),
+    props.snapshot.paused ||
+    (pending.value.length > 0 &&
+      Boolean(props.snapshot.active || running.value || pending.value.length > 1)),
 )
 const notice = computed(() =>
   queueNotice(props.snapshot.paused, props.unavailable, props.snapshot.reason),
@@ -92,17 +93,23 @@ watch(
         <span class="queue-chevron" :class="{ expanded }">⌄</span>
       </button>
       <button
-        v-if="pending.some((item) => item.state === 'queued')"
+        v-if="snapshot.paused || pending.some((item) => item.state === 'queued')"
         type="button"
         class="queue-control"
         :disabled="busy || unavailable"
         @click="emit('control', !snapshot.paused)"
       >
         <PixelIcon :name="snapshot.paused ? 'send' : 'pause'" size="xs" />
-        {{ snapshot.paused ? __t('ui.chat', '发送') : __t('ui.chat', '暂停') }}
+        {{
+          snapshot.paused
+            ? pending.length
+              ? __t('ui.chat', '发送')
+              : __t('ui.chat', '恢复队列')
+            : __t('ui.chat', '暂停')
+        }}
       </button>
     </header>
-    <div v-if="expanded" class="queue-body">
+    <ConversationQueueBody :open="expanded">
       <p v-if="notice" class="queue-notice" role="status">
         <PixelIcon :name="notice.icon" size="xs" :animation="notice.animation" />
         <span>{{ notice.text }}</span>
@@ -111,7 +118,8 @@ watch(
         <span class="queue-pulse" />
         {{ __t('ui.chat', '正在执行：')
         }}{{
-          running.input.taskResultEvent ? __t('ui.chat', '处理后台任务结果') : running.input.content
+          running.input.regeneration ? __t('ui.chat', '重新生成消息') :
+            running.input.taskResultEvent ? __t('ui.chat', '处理后台任务结果') : running.input.content
         }}
       </p>
       <TransitionGroup name="queue-item" tag="ol" class="queue-items">
@@ -131,7 +139,7 @@ watch(
             </div>
             <p class="queue-content">
               {{
-                item.input.taskResultEvent
+                item.input.regeneration ? __t('ui.chat', '重新生成消息') : item.input.taskResultEvent
                   ? __t('ui.chat', '后台任务结果已到达，等待当前对话结束后处理。')
                   : item.input.content
               }}
@@ -153,6 +161,7 @@ watch(
                   {{ __t('ui.chat', '立即提交') }}
                 </button>
                 <button
+                  v-if="!item.input.regeneration"
                   type="button"
                   class="queue-return"
                   :disabled="busy || unavailable"
@@ -203,7 +212,7 @@ watch(
           </div>
         </li>
       </TransitionGroup>
-    </div>
+    </ConversationQueueBody>
   </section>
 </template>
 
@@ -288,12 +297,6 @@ button:disabled {
   padding: 4px 7px;
   color: var(--ui-accent-purple);
   white-space: nowrap;
-}
-.queue-body {
-  padding: 0 12px 10px;
-  max-height: min(32vh, 300px);
-  overflow-y: auto;
-  overscroll-behavior: contain;
 }
 .queue-items {
   padding: 0;
@@ -408,9 +411,6 @@ button:disabled {
   }
   .queue-state {
     max-width: 100px;
-  }
-  .queue-body {
-    padding: 0 8px 8px;
   }
   .queue-actions button {
     min-height: 32px;

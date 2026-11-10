@@ -137,11 +137,10 @@ describe('心流内置工具注册', () => {
     })
   })
 
-  it('必须注册全部EventNote与Facts工具定义', () => {
+  it('注册事件查询、上下文清理与事实工具', () => {
     const names = new Set(getBuiltinToolDefinitions().map((tool) => tool.name))
     for (const name of [
-      'write_event_note',
-      'revise_event_note',
+      'clear_work_context',
       'query_event_notes',
       'query_facts',
       'write_fact',
@@ -152,5 +151,7 @@ describe('心流内置工具注册', () => {
     ]) {
       expect(names.has(name), `${name} 未注册`).toBe(true)
     }
+    expect(names.has('write_event_note')).toBe(false)
+    expect(names.has('revise_event_note')).toBe(false)
   })
 })

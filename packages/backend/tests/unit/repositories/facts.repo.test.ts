@@ -6,6 +6,8 @@ import { createDrizzleConnection, closeDrizzleConnection } from '@infos/backend/
 import { factMemoryOperations, factObjects, factRecords } from '@infos/backend/database/schema'
 import { MemoryStoreRegistry } from '@infos/backend/repositories/storeRegistry'
 import { FactsRepository } from '@infos/backend/repositories/facts.repo'
+import { ThreadRepository } from '@infos/backend/repositories/thread.repo'
+import { threads } from '@infos/backend/database/schema'
 
 const roots: string[] = []
 afterEach(() => {
@@ -27,6 +29,28 @@ function fixture() {
 }
 
 describe('事实的归档还原', () => {
+  it('主线在异步准备期间重置时拒绝旧代次写入，事实和操作回执保持一致', async () => {
+    const { db, stores, repo } = fixture()
+    try {
+      db.insert(threads).values({ id: 'memory-main', agentId: 'pero', threadKind: 'main' }).run()
+      const authority = new ThreadRepository(db)
+      const saving = repo.write({
+        standardName: '准备期间的对象', statement: '旧代次中的信息',
+        observedAt: '2026-11-09T00:00:00Z', createdByAgentId: 'pero', operationId: 'stale-main-write',
+        assertCurrent: () => authority.assertMainMemoryWrite('memory-main', 'pero', 1),
+      })
+      const rejected = expect(saving).rejects.toThrow('主会话')
+      await authority.resetMainThread('memory-main')
+      await rejected
+      expect(db.select().from(factRecords).all()).toEqual([])
+      expect(db.select().from(factObjects).all()).toEqual([])
+      expect(db.select().from(factMemoryOperations).all()).toEqual([])
+      expect((await repo.query('准备期间的对象')).exactMatch).toBeUndefined()
+    } finally {
+      stores.closeAll()
+      closeDrizzleConnection(db)
+    }
+  })
   it('自动召回匹配对象和别名，只返回有效事实，无关问题不取零分候选', async () => {
     const { db, stores, repo } = fixture()
     try {

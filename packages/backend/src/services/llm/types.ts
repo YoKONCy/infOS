@@ -15,9 +15,13 @@ import type { ReasoningEffort } from '@infos/shared'
 
 /** 聊天消息 */
 export interface ChatMessage {
+  /** 仅服务端赋值；临时输入不进入审计、重放和附件。 */
+  transientSource?: 'perception'
   /** 编译产物随检查点保留；各 Provider 仅序列化消息协议字段。 */
   promptPlan?: import('@infos/shared').CompiledPromptPlan
   promptSegment?: 'assistant_prefill'
+  /** 预填充的发送方式；deepseek_prefix 由 OpenAI 兼容 Provider 序列化为 prefix:true。 */
+  prefillProtocol?: import('@infos/shared').AssistantPrefillProtocol
   /** 本地文件事实，Provider 不序列化；检查点与跨轮投影使用同一来源。 */
   fileObservations?: import('../context/fileWorkingContext').FileObservation[]
   toolExecutionFailed?: boolean
@@ -27,12 +31,19 @@ export interface ChatMessage {
     key?: string
     reply?: string
     currentKeys?: string[]
+    /** 热轨迹中材料所属的持久化输入；滑窗后据此固定下一轮的历史读取起点。 */
+    replayAnchor?: { key: string; messageId?: number }
+    /** 请求副本中的动态资料位置；规范轨迹仍保留在本轮尾部。 */
+    dynamicContext?: boolean
+    dynamicContextBefore?: string
     turnStart?: boolean
     edited?: boolean
     historyMessageId?: number
     historyRevision?: number
     /** 展开的工具轨迹仍归属同一条持久化消息，用于校验热轨迹续接。 */
     historySourceKey?: string
+    /** 可独立清理的工作轨迹投影。 */
+    workContext?: boolean
     reasoningModelKey?: string
     pairId?: string
   }

@@ -13,6 +13,7 @@ import tailwindcss from '@tailwindcss/vite'
 import { resolve } from 'node:path'
 import { readFileSync } from 'node:fs'
 import { pdfAssetsPlugin } from './scripts/pdfAssetsPlugin'
+import { frontendCatalogSplitPlugin } from './scripts/frontendCatalogSplit'
 import { browserDependencyOptions } from './scripts/vite-browser-compat'
 
 // 从根 package.json 读取版本号
@@ -23,7 +24,8 @@ export default defineConfig({
   // ── 主进程 ──────────────────────────────────────────────
   main: {
     // 纯 TS Workspace 头像适配包必须内联进 app.asar；运行时不能依赖 pnpm 工作区链接。
-    plugins: [externalizeDepsPlugin({ exclude: ['@infos/avatar-assets'] })],
+    // pixelmatch 只发布 ESM，打进主进程包，不依赖运行时 require(esm)。
+    plugins: [externalizeDepsPlugin({ exclude: ['@infos/avatar-assets', 'pixelmatch'] })],
     resolve: {
       alias: {
         '@infos/avatar-assets': resolve(__dirname, 'packages/avatar-assets/src'),
@@ -32,7 +34,11 @@ export default defineConfig({
     build: {
       outDir: 'dist-electron/main',
       rollupOptions: {
-        input: resolve(__dirname, 'electron/main/index.ts'),
+        input: {
+          index: resolve(__dirname, 'electron/main/index.ts'),
+          // 耳朵的识别进程（utilityProcess 入口）：原生模块 sherpa-onnx-node 只在这里加载。
+          earsWorker: resolve(__dirname, 'electron/main/services/ears/earsWorker.ts'),
+        },
         // bufferutil / utf-8-validate 是 ws 的可选原生依赖
         // 在 Electron 环境经常无法编译，ws 内部已 try/catch 容错
         // 标记为 external 避免 Rollup 尝试解析它们
@@ -50,6 +56,11 @@ export default defineConfig({
         input: {
           index: resolve(__dirname, 'electron/preload/index.ts'),
           startupSplash: resolve(__dirname, 'electron/preload/startupSplash.ts'),
+          card: resolve(__dirname, 'electron/preload/card.ts'),
+          // 桌面预制件（收纳框等受信任的内置卡片）的 preload。
+          prefab: resolve(__dirname, 'electron/preload/prefab.ts'),
+          earsCapture: resolve(__dirname, 'electron/preload/earsCapture.ts'),
+          homeNotice: resolve(__dirname, 'electron/preload/homeNotice.ts'),
         },
       },
     },
@@ -59,7 +70,12 @@ export default defineConfig({
   renderer: {
     root: resolve(__dirname, 'packages/frontend'),
     publicDir: resolve(__dirname, 'public'),
-    plugins: [vue(), tailwindcss(), pdfAssetsPlugin(resolve(__dirname, 'packages/frontend'))],
+    plugins: [
+      vue(),
+      tailwindcss(),
+      pdfAssetsPlugin(resolve(__dirname, 'packages/frontend')),
+      frontendCatalogSplitPlugin(),
+    ],
     optimizeDeps: browserDependencyOptions,
     define: {
       __APP_VERSION__: JSON.stringify(APP_VERSION),

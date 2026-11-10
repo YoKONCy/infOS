@@ -11,9 +11,28 @@ export const EXPAND_ADVANCED_TOOLS = 'expand_advanced_tools'
 export interface AdvancedToolAccess {
   names: ReadonlySet<string>
   expanded: boolean
+  /** 本次执行常驻的包内工具：不用展开即可见、可调用，权限与审批照常。 */
+  resident?: ReadonlySet<string>
+}
+
+/**
+ * 「桌面操作」总开关打开时常驻工具清单的操作工具。
+ * 总开关在整个会话里通常不变，常驻能让工具清单保持稳定，避免中途展开让提示词缓存失效；
+ * 总开关关闭时仍留在高级工具包里，需要先展开。
+ */
+export const DESKTOP_RESIDENT_TOOLS: readonly string[] = [
+  'automation_execute',
+  'get_active_windows',
+  'activate_window',
+]
+
+/** 按「桌面操作」总开关决定本次执行常驻的包内工具。 */
+export function residentAdvancedTools(desktopControlEnabled: boolean): ReadonlySet<string> {
+  return new Set(desktopControlEnabled ? DESKTOP_RESIDENT_TOOLS : [])
 }
 
 export const ADVANCED_TOOL_PACKAGES = {
+  home: ['home_declare', 'home_files', 'home_shelf', 'home_map', 'home_card'],
   browser: [
     'browser_open_url',
     'browser_click',
@@ -40,9 +59,12 @@ export const ADVANCED_TOOL_PACKAGES = {
   computerUse: [
     'automation_execute',
     'get_mouse_position',
+    'desktop_direct',
     'open_application',
     'get_active_windows',
     'activate_window',
+    'desktop_plan',
+    'desktop_safety',
   ],
   remoteTerminal: [
     'remote_terminal_nodes',
@@ -72,6 +94,14 @@ export function availableToolDefinitions<T extends { name: string }>(tools: T[])
 }
 
 const PACKAGE_DESCRIPTIONS = {
+  home: {
+    get label() {
+      return __t('server.home', '共同的家')
+    },
+    get description() {
+      return __t('server.home', '文件保险、置物架、家的地图和卡片互动')
+    },
+  },
   browser: {
     label: __t('server.tools', '浏览器操作'),
     description: __t(

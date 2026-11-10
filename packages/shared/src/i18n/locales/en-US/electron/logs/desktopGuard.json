@@ -1,0 +1,5 @@
+{
+  "内置桌面安全名单无效，所有程序按高危区处理：{0}": "Built-in desktop safety lists are invalid; every program is treated as must-confirm: {0}",
+  "桌面安全设置文件在应用外被修改，放宽的部分等待用户确认": "Desktop safety settings file was changed outside the app; loosening changes await user confirmation",
+  "桌面安全设置文件无效，继续使用上次接受的版本": "Desktop safety settings file is invalid; keeping the last accepted version"
+}

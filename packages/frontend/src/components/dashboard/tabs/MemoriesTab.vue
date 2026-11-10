@@ -23,6 +23,7 @@ import MemoryInspector from '../memories/MemoryInspector.vue'
 import MemoryGraphView from '../memories/MemoryGraphView.vue'
 import PrivacyCleanupPanel from '../PrivacyCleanupPanel.vue'
 import RagConfigPage from '../memories/RagConfigPage.vue'
+import MemoryBackgroundSettings from '../memories/MemoryBackgroundSettings.vue'
 import ArchiveEntryEditor from '../memories/ArchiveEntryEditor.vue'
 import type { ArchiveEditSaved, ArchiveEditTarget } from '../../../lib/archiveEntryEdit'
 
@@ -36,6 +37,7 @@ const {
 const notif = useNotificationStore()
 const agentStore = useAgentStore()
 const showingRagConfig = ref(false)
+const showingBackgroundSettings = ref(false)
 let ragTrigger: HTMLElement | null = null
 
 function openRagConfig(event: MouseEvent): void {
@@ -389,12 +391,21 @@ const statBadges = computed(() => [
             }}
           </span>
         </button>
+        <PButton size="sm" variant="ghost" @click="showingBackgroundSettings = true">
+          {{ __t('ui.settings', '按角色设置') }}
+        </PButton>
         <PButton size="sm" variant="secondary" class="memory-rag-entry" @click="openRagConfig">
           <PixelIcon name="settings" size="xs" />
           {{ __t('ui.rag', 'RAG 配置') }}
         </PButton>
       </nav>
       <PrivacyCleanupPanel />
+      <MemoryBackgroundSettings
+        v-if="showingBackgroundSettings"
+        :agents="agentStore.agents"
+        :background-enabled="memoryBackgroundEnabled"
+        @close="showingBackgroundSettings = false"
+      />
       <div v-if="view === 'list' && archive.items.value.length" class="archive-view-switch">
         <PButton
           size="sm"

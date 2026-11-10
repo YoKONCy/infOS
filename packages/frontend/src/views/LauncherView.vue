@@ -12,13 +12,15 @@ import AsyncMarkdown from '../components/markdown/AsyncMarkdown.vue'
 import { OnboardingOverlay } from '../components/overlays'
 import CustomTitleBar from '../components/layout/CustomTitleBar.vue'
 import InfosLogo from '../components/brands/InfosLogo.vue'
-import { useLauncher, type CheckItem } from '../composables/launcher/useLauncher'
+import { useLauncher } from '../composables/launcher/useLauncher'
+import LauncherCheckStatus from '../components/launcher/LauncherCheckStatus.vue'
 import StartupDiagnosticDialog from '../components/launcher/StartupDiagnosticDialog.vue'
 import { getLauncherSteps } from '../composables/launcher/onboardingScripts'
 import { useAgentStore, useNotificationStore } from '../stores'
 import { getApiBaseUrl } from '../api/transport'
 import { invoke, listen, send } from '../utils/ipcAdapter'
 import { useMainNav } from '../composables/main/useMainNav'
+import { useCustomTheme } from '../composables/ui/useCustomTheme'
 
 interface ClientInfo {
   version: string
@@ -241,16 +243,6 @@ const diagnosticReport = computed(() => {
     .join('\n\n')
 })
 
-/** 卡片文案只由状态枚举生成，错误对象和日志永远不参与卡片布局。 */
-function checkStatusLabel(status: CheckItem['status']): string {
-  return {
-    pending: __t('ui.launcher', '等待检测'),
-    running: __t('ui.launcher', '检测中'),
-    ok: __t('ui.launcher', '已通过'),
-    warn: __t('ui.launcher', '待确认'),
-    error: __t('ui.launcher', '未就绪'),
-  }[status]
-}
 const launchesDesktopGuide = computed(
   () => desktopGuidePending.value || (showOnboarding.value && tutorialLaunchStep.value),
 )
@@ -433,6 +425,7 @@ onMounted(async () => {
     })
   })
   await Promise.all([agentStore.fetchAgents(), refreshClientInfo(), startLaunch()])
+  void useCustomTheme().start()
   void loadRelease()
   stopUpdateListener = await listen('client-update-state', (payload) => {
     updateState.value = payload as UpdateState
@@ -612,7 +605,7 @@ onUnmounted(() => {
                 <i :class="item.status" aria-hidden="true" />
                 <span>{{ checkFriendlyLabel[item.id] ?? item.label }}</span>
               </span>
-              <strong>{{ checkStatusLabel(item.status) }}</strong>
+              <LauncherCheckStatus :item="item" />
             </div>
           </div>
           <div class="launch-actions">
@@ -625,7 +618,7 @@ onUnmounted(() => {
               :aria-haspopup="launchesDesktopGuide ? undefined : 'menu'"
               :aria-expanded="launchesDesktopGuide ? undefined : launchMenuOpen"
               :aria-controls="launchesDesktopGuide ? undefined : 'launcher-start-menu'"
-              :disabled="!['ready', 'done'].includes(phase) || onboardingLaunching"
+              :disabled="!['ready', 'done'].includes(phase) || onboardingLaunching || !!switchingAgent"
               @click="primaryLaunch"
               @keydown.down.prevent="primaryLaunch"
             >

@@ -22,6 +22,6 @@ export const packagesApi = {
   rollback: (id: string) => apiClient.post(`${endpoint(id)}/rollback`),
   uninstall: (id: string) => apiClient.delete(endpoint(id)),
   panels: (slot: PackageUiSlot) => apiClient.get<PackagePanel[]>(`/packages/panels/${slot}`),
-  action: (panelId: string, actionId: string) =>
-    apiClient.post('/packages/panel-actions', { panelId, actionId }),
+  action: <T = unknown>(panelId: string, actionId: string, payload?: Record<string, unknown>) =>
+    apiClient.post<T>('/packages/panel-actions', { panelId, actionId, payload }),
 }

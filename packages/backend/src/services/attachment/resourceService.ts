@@ -9,6 +9,7 @@ import type { ThreadService } from '../thread/threadService'
 import { AppError } from '../../lib/appError'
 import { t } from '../../lib/i18n'
 import { resolveWorkspaceReference } from '../workspace/workspaceReference'
+import { referenceNotFound } from './referenceNotFound'
 import {
   getProductivityRuntime,
   resolveExecutionSession,
@@ -254,7 +255,12 @@ export class ResourceService {
         cause: error,
       })
     }
-    const local = await this.localFile(context, target, context.lookupWorkspace === true)
+    const lookup = context.lookupWorkspace === true
+    const local = await this.localFile(context, target, lookup).catch((error: unknown) => {
+      // 只有真正做过工作区补全查找时，才把“不存在”说明成查找范围并标记失效。
+      if (!lookup || path.isAbsolute(target) || target.split(/[\\/]/).includes('..')) throw error
+      throw referenceNotFound(target, error)
+    })
     const name = resourceName(local.filePath)
     const mimeType = resourceMime(name)
     return {

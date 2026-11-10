@@ -73,10 +73,11 @@ describe('ApprovalService SQLite', () => {
   it('Daemon 重启后不会保留本轮对话授权', () => {
     const { sqlite, repository } = createRepository()
     const service = new ApprovalService(repository)
-    const request = service.create(input)
+    const sessionInput = { ...input, toolName: 'demo.run', args: { value: 1 } }
+    const request = service.create(sessionInput)
     service.resolve(request.id, 'allow_session')
-    expect(service.authorize(input)).toBe('allow')
-    expect(new ApprovalService(repository).authorize(input)).toBe('none')
+    expect(service.authorize(sessionInput)).toBe('allow')
+    expect(new ApprovalService(repository).authorize(sessionInput)).toBe('none')
     sqlite.close()
   })
 })

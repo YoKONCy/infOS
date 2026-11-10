@@ -175,6 +175,7 @@ const icons: Record<string, string> = {
   minimize: 'M3 8h5V3 M16 3v5h5 M8 21v-5H3 M21 16h-5v5',
   'external-link': 'M15 3h6v6 M10 14L21 3 M21 14v5a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5',
   copy: 'M20 9H11a2 2 0 0 0-2 2v9a2 2 0 0 0 2 2h9a2 2 0 0 0 2-2v-9a2 2 0 0 0-2-2z M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1',
+  'git-branch': 'M6 7a2 2 0 1 0 0-4 2 2 0 0 0 0 4 M6 21a2 2 0 1 0 0-4 2 2 0 0 0 0 4 M18 10a2 2 0 1 0 0-4 2 2 0 0 0 0 4 M6 7v10 M6 14h5a7 7 0 0 0 7-4',
   refresh:
     'M23 4v6h-6 M1 20v-6h6 M3.51 9a9 9 0 0 1 14.85-3.36L23 10 M1 14l4.64 4.36A9 9 0 0 0 20.49 15',
   loader:

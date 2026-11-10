@@ -142,6 +142,14 @@ export async function projectFileWorkingContext(
     if (message.toolCalls.some((call) => call.function.name === 'run_script')) {
       replacements.set(index, {
         role: 'user',
+        ...(message.cacheControl?.replayAnchor
+          ? {
+              cacheControl: {
+                kind: 'snapshot' as const,
+                replayAnchor: message.cacheControl.replayAnchor,
+              },
+            }
+          : {}),
         content: `【已执行脚本的结果：数据】\n${answers
           .map((answer) => {
             const content = input[answer!]!.content

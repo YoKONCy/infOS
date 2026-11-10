@@ -10,6 +10,7 @@ import type { ToolApprovalRepository } from '../../repositories/toolApproval.rep
 import { AppError } from '../../lib/appError'
 import type { ApprovalRiskLevel } from './policyEngine'
 import { createLogger } from '../../lib/logger'
+import { assertApprovalDecisionAllowed } from './approvalOnceOnly'
 
 const logger = createLogger('ApprovalService')
 
@@ -103,21 +104,17 @@ export class ApprovalService {
 
   create(input: CreateApprovalInput): ApprovalRequest {
     const fingerprint = this.fingerprint(input.args)
-    const existing =
-      this.repository?.findPending({
-        agentId: input.agentId,
-        sessionId: input.sessionId,
-        toolName: input.toolName,
-        argsFingerprint: fingerprint,
-      }) ??
-      [...this.requests.values()].find(
-        (request) =>
-          request.status === 'pending' &&
-          request.agentId === input.agentId &&
-          request.sessionId === input.sessionId &&
-          request.toolName === input.toolName &&
-          request.argsFingerprint === fingerprint,
-      )
+    const existing = this.list({
+      status: 'pending',
+      agentId: input.agentId,
+      sessionId: input.sessionId,
+    }).find(
+      (request) =>
+        request.toolName === input.toolName &&
+        request.argsFingerprint === fingerprint &&
+        request.taskId === input.taskId &&
+        request.threadId === input.threadId,
+    )
     if (existing) {
       this.requests.set(existing.id, existing)
       return existing
@@ -152,6 +149,7 @@ export class ApprovalService {
     if (request.status !== 'pending') {
       throw new AppError('CONFLICT', { message: `审批请求当前不可决策: ${request.status}` })
     }
+    assertApprovalDecisionAllowed(request, decision)
     request.decision = decision
     request.resolutionMessage = message?.trim() ? message.trim().slice(0, 2_000) : undefined
     request.resolvedAt = new Date().toISOString()
@@ -207,6 +205,11 @@ export class ApprovalService {
     this.persist(request)
     this.audit(request, 'cancelled', { message })
     this.finish(request)
+  }
+
+  cancelThread(threadId: string, message: string): void {
+    for (const request of this.list())
+      if (request.threadId === threadId && ['pending', 'approved'].includes(request.status)) this.cancel(request.id, message)
   }
 
   get(id: string): ApprovalRequest | undefined {
@@ -286,33 +289,35 @@ export class ApprovalService {
 
   authorize(input: {
     approvalId?: string
+    onceOnly?: boolean
+    taskId?: string
+    threadId?: string
     agentId: string
     sessionId: string
     toolName: string
     args: Record<string, unknown>
   }): 'allow' | 'deny' | 'none' {
-    if (this.sessionGrants.has(this.sessionKey(input.sessionId, input.toolName))) return 'allow'
+    if (!input.onceOnly && this.sessionGrants.has(this.sessionKey(input.sessionId, input.toolName)))
+      return 'allow'
     const fingerprint = this.fingerprint(input.args)
-    let request = input.approvalId ? this.get(input.approvalId) : undefined
-    if (!request) {
-      request =
-        this.repository?.findApprovedOnce({
-          agentId: input.agentId,
-          sessionId: input.sessionId,
-          toolName: input.toolName,
-          argsFingerprint: fingerprint,
-        }) ??
-        [...this.requests.values()].find(
+    const request = input.approvalId
+      ? this.get(input.approvalId)
+      : this.list({ status: 'approved', agentId: input.agentId, sessionId: input.sessionId }).find(
           (candidate) =>
-            candidate.status === 'approved' &&
             candidate.decision === 'allow_once' &&
-            candidate.agentId === input.agentId &&
-            candidate.sessionId === input.sessionId &&
             candidate.toolName === input.toolName &&
-            candidate.argsFingerprint === fingerprint,
+            candidate.argsFingerprint === fingerprint &&
+            (!input.onceOnly ||
+              (candidate.taskId === input.taskId && candidate.threadId === input.threadId)),
         )
-    }
     if (!request || request.status !== 'approved') return 'none'
+    if (
+      input.onceOnly &&
+      (request.decision !== 'allow_once' ||
+        request.taskId !== input.taskId ||
+        request.threadId !== input.threadId)
+    )
+      return 'none'
     if (
       request.agentId !== input.agentId ||
       request.sessionId !== input.sessionId ||

@@ -1,6 +1,7 @@
 import { describe, expect, it, vi } from 'vitest'
 import type { EventNote } from '@infos/shared'
 import { MemoryAgentScope } from '@infos/backend/services/memory/memoryAgentScope'
+import { MemoryBackgroundControl } from '@infos/backend/services/memory/memoryBackgroundControl'
 import {
   EventReflectionService,
   type ReflectionDecision,
@@ -32,7 +33,7 @@ function note(id: string): EventNote {
   }
 }
 
-function fixture(agents?: MemoryAgentScope) {
+function fixture(agents?: MemoryAgentScope, background?: MemoryBackgroundControl) {
   const main = note('main')
   const candidate = note('candidate')
   const notes = new Map([
@@ -69,6 +70,7 @@ function fixture(agents?: MemoryAgentScope) {
   const model = { reflect: vi.fn<EventReflectionModel['reflect']>().mockResolvedValue(decision) }
   const service = new EventReflectionService(memory as never, {} as never, model, repo as never, {
     agents,
+    background,
     canMaintain: () => !busy,
   })
   return {
@@ -88,6 +90,35 @@ function fixture(agents?: MemoryAgentScope) {
 }
 
 describe('事件关系维护与永久删除互斥', () => {
+  it('角色暂停时保留待处理任务和决策，重新开启后继续维护', async () => {
+    const background = new MemoryBackgroundControl()
+    background.setAgentEnabled('pero', false)
+    const f = fixture(undefined, background)
+    await f.service.drain()
+    expect(f.model.reflect).not.toHaveBeenCalled()
+    expect(f.repo.completeReflectionTask).not.toHaveBeenCalled()
+    expect(f.repo.discardReflectionDecision).not.toHaveBeenCalled()
+    background.setAgentEnabled('pero', true)
+    await f.service.drain()
+    expect(f.model.reflect).toHaveBeenCalledOnce()
+    expect(f.repo.completeReflectionTask).toHaveBeenCalledWith(f.task.id)
+  })
+
+  it('单角色关闭又开启时仍拒绝旧模型结果，并保留任务等待新一轮', async () => {
+    const background = new MemoryBackgroundControl()
+    const f = fixture(undefined, background)
+    f.model.reflect.mockImplementationOnce(async () => {
+      background.setAgentEnabled('pero', false)
+      background.setAgentEnabled('pero', true)
+      return { ...decision, revision: { narrative: '关闭前任务的迟到结果' } }
+    })
+    await f.service.drain()
+    expect(f.repo.createOperation).not.toHaveBeenCalled()
+    expect(f.memory.revise).not.toHaveBeenCalled()
+    expect(f.repo.completeReflectionTask).not.toHaveBeenCalled()
+    expect(f.repo.failReflectionTask).not.toHaveBeenCalled()
+  })
+
   it('已删除角色的排队任务直接收口，不调用模型或登记失败重试', async () => {
     const f = fixture(new MemoryAgentScope(() => false))
     await f.service.drain()

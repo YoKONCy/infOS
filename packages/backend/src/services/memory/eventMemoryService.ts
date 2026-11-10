@@ -16,17 +16,32 @@ import type {
   EventMemoryGraphSnapshot,
 } from '@infos/shared'
 import type { TransactionOperation } from 'triviumdb'
+import { isMemoryBackgroundEnabled } from '@infos/shared'
 import type { EmbeddingService } from '../embedding/embeddingService'
 import type { ContextRnnRuntime } from '../retrieval/contextRnnRuntime'
-import { isContextRnnFeedbackEnabled, type MemoryRuntimeConfig } from './memoryRuntimeConfig'
+import {
+  DEFAULT_MEMORY_RUNTIME_CONFIG,
+  isContextRnnFeedbackEnabled,
+  type MemoryRuntimeConfig,
+} from './memoryRuntimeConfig'
 import type { MemoryStoreRegistry } from '../../repositories/storeRegistry'
 import {
   EventNoteRepository,
+  MemorySourceStaleError,
   type StoredEventNote,
   type ManualEventRevision,
 } from '../../repositories/eventNote.repo'
 import { createLogger } from '../../lib/logger'
 import { tokenCounter } from '../tokenizer/tokenCounter'
+import {
+  buildAutomaticRagCandidates,
+  dedupeByNarrative,
+  dedupeCandidatesByNarrative,
+  isSourceVisible,
+  selectWithinTokenBudget,
+  type VisibleMemorySource,
+} from './automaticRagSelection'
+import { filterBasicRelevant } from './basicRelevanceFilter'
 import type { PrivacyPolicy } from '../maintenance/privacyPolicy'
 
 const logger = createLogger('EventMemoryService')
@@ -66,6 +81,16 @@ export interface AutomaticRagProgress {
   message: string
   candidateCount?: number
   resultCount?: number
+}
+
+/** 自动 RAG 的调用方策略；均为可选，缺省时与旧行为一致。 */
+export interface AutomaticRagOptions {
+  /** 预览不更新学习状态或发出检索事件，普通召回保持原行为。 */
+  preview?: boolean
+  /** 记忆专属 Token 上限，0 或缺省表示不限。 */
+  tokenBudget?: number
+  /** 本轮模型可见的对话来源；缺省时不做来源去重。 */
+  visibleSource?: VisibleMemorySource
 }
 
 export class AutomaticRagStageError extends Error {
@@ -169,10 +194,10 @@ export class EventMemoryService {
 
   async applyRetrievalFeedback(traceId: string, reply: string): Promise<void> {
     const trace = this.takeAutomaticRagTrace(traceId)
-    if (!this.embeddings.isAvailable || this.background?.enabled === false) return
-    const backgroundSignal = this.background?.signal
+    if (!trace || !this.embeddings.isAvailable || !isMemoryBackgroundEnabled(this.background, trace.agentId)) return
+    const backgroundSignal = this.background?.agentSignal?.(trace.agentId) ?? this.background?.signal
     const runtime = this.contextRnnRuntime
-    if (!trace || !runtime || !this.getRuntimeConfig) return
+    if (!runtime || !this.getRuntimeConfig) return
     const { agentId, channel } = trace
     const beforeLoad = runtime.generation
     const config = await this.getRuntimeConfig()
@@ -198,7 +223,7 @@ export class EventMemoryService {
         ? await this.safeVector(trace.notes[0].narrative)
         : undefined
     // Embedding 请求期间可能关闭管线；迟到反馈不得重新创建实例或修改已停用的权重。
-    if (!runtime.feedbackEnabled || runtime.peek(trace.rnnGeneration) !== rnn) return
+    if (backgroundSignal?.aborted || !runtime.feedbackEnabled || runtime.peek(trace.rnnGeneration) !== rnn) return
     rnn.trainMinGru(agentId, channel, new Float32Array(trace.queryEmbedding), positive)
     if (trace.contextBias && target) {
       rnn.updateOutputWeights(
@@ -217,6 +242,7 @@ export class EventMemoryService {
   ): Promise<EventNote> {
     options.signal?.throwIfAborted()
     const existing = await this.repo.findOperation(operationId)
+    if (existing?.status === 'discarded') throw new MemorySourceStaleError()
     if (existing?.operation === 'create') {
       const payload = existing.payload as { note: EventNote; tdbId: number }
       await this.applyCreate(operationId, payload.note, payload.tdbId, true, options.signal)
@@ -371,12 +397,14 @@ export class EventMemoryService {
   ): Promise<EventNote> {
     options.signal?.throwIfAborted()
     const existing = await this.repo.findOperation(operationId)
+    if (existing?.status === 'discarded') throw new MemorySourceStaleError()
     if (existing?.operation === 'revise') {
       const payload = existing.payload as {
         target: StoredEventNote
         replacement: EventNote
         newTdbId: number
         relations: EventNoteRelationView[]
+        source?: EventNote['origin']
       }
       await this.applyRevise(
         operationId,
@@ -385,6 +413,8 @@ export class EventMemoryService {
         payload.newTdbId,
         payload.relations,
         options.signal,
+        undefined,
+        payload.source,
       )
       if (options.coverageOwnerId)
         await this.commitCoverage(payload.replacement, options, input.origin)
@@ -397,6 +427,10 @@ export class EventMemoryService {
     const target = await this.repo.findById(targetId)
     if (!target || target.replacedBy) throw new Error('目标事件不存在或已被修订')
     if (target.agentId !== input.agentId) throw new Error('不能修订其他 Agent 的事件')
+    const { sources: previousSources = [], ...primarySource } = target.origin
+    const { sources: inputSources = [], ...inputSource } = input.origin
+    const sources = new Map([...previousSources, inputSource, ...inputSources].map((source) => [JSON.stringify(source), source] as const))
+    sources.delete(JSON.stringify(primarySource))
 
     const replacement: EventNote = {
       id: randomUUID(),
@@ -412,16 +446,16 @@ export class EventMemoryService {
       topics: input.topics ?? target.topics,
       origin: {
         ...target.origin,
-        pairIds: [...new Set([...target.origin.pairIds, ...input.origin.pairIds])],
-        messageIds: [...new Set([...target.origin.messageIds, ...input.origin.messageIds])],
+        sources: [...sources.values()],
       },
       status: 'active',
     }
     delete replacement.origin.manualEdit
     const newTdbId = await this.allocateTdbId()
     const relations = await this.repo.listRelations(targetId)
-    await this.repo.prepareRevise(operationId, target, replacement, newTdbId, relations)
-    await this.applyRevise(operationId, target, replacement, newTdbId, relations, options.signal)
+    const source = options.maintenance ? undefined : input.origin
+    await this.repo.prepareRevise(operationId, target, replacement, newTdbId, relations, undefined, source)
+    await this.applyRevise(operationId, target, replacement, newTdbId, relations, options.signal, undefined, source)
     options.signal?.throwIfAborted()
     await this.commitCoverage(replacement, options, input.origin)
     // 关系维护产生的修订已在当前任务中处理，不得再次触发自身。
@@ -723,7 +757,10 @@ export class EventMemoryService {
     }
   }
 
-  async query(input: EventNoteQuery): Promise<EventNote[]> {
+  /**
+   * @param queryVector 调用方已生成的查询向量；自动 RAG 用它避免同一次检索重复请求 Embedding。
+   */
+  async query(input: EventNoteQuery, queryVector?: number[]): Promise<EventNote[]> {
     const limit = Math.max(1, Math.min(input.limit ?? 10, 100))
     const all = this.listTdbNotes(input.agentId).filter(
       (note) => input.includeArchived || note.status === 'active',
@@ -757,7 +794,7 @@ export class EventMemoryService {
     }
     const useVector = this.embeddings.isAvailable
     const vector = useVector
-      ? await this.safeVector(input.query)
+      ? (queryVector ?? (await this.safeVector(input.query)))
       : Array(this.stores.getDimension()).fill(0)
     const store = this.stores.ensureTextIndexReady(input.agentId, 'desktop')
     const hits =
@@ -966,6 +1003,7 @@ export class EventMemoryService {
     channel = 'desktop',
     traceId?: string,
     onProgress?: (progress: AutomaticRagProgress) => void | Promise<void>,
+    options: AutomaticRagOptions = {},
   ): Promise<EventNote[]> {
     const generation = this.privacy?.generation
     const revision = this.retrievalRevision
@@ -974,7 +1012,12 @@ export class EventMemoryService {
     const timeline = this.listTdbNotes(agentId)
       .filter((note) => note.status === 'active')
       .sort((a, b) => a.eventAt.localeCompare(b.eventAt) || a.id.localeCompare(b.id))
-    const latest = timeline.at(-1)
+    // 原文已在本轮可见历史中的事件不再注入；末尾补充改用窗口之前最近的事件。
+    const visible = (note: EventNote) => isSourceVisible(note, options.visibleSource)
+    const latest = [...timeline].reverse().find((note) => !visible(note))
+    // 命中先去掉可见来源与重复正文，再截取 top_k，让空出的名额由后续候选递补。
+    const refineHits = (ranked: EventNote[]) =>
+      dedupeByNarrative(ranked.filter((note) => !visible(note))).slice(0, topK)
     const runtime = this.contextRnnRuntime
     const beforeLoad = runtime?.generation
     const config = this.getRuntimeConfig ? await this.getRuntimeConfig() : undefined
@@ -987,6 +1030,8 @@ export class EventMemoryService {
     let contextBias: Float32Array | undefined
     let usedRnnGeneration: number | undefined
     let hits: EventNote[]
+    // 直接前驱限额；只有基础管线的相关度门槛开启时才收紧。
+    let maxPrevious = Number.POSITIVE_INFINITY
 
     if (advanced?.enableSaPpr && this.embeddings.isAvailable) {
       await onProgress?.({ stage: 'embedding', message: __t('server.memory', '正在拉取记忆……') })
@@ -995,7 +1040,7 @@ export class EventMemoryService {
       if (advanced.enableContextRnn && rnnGeneration !== undefined) {
         const rnn = runtime?.acquire(rnnGeneration)
         if (rnn) {
-          rnn.update(agentId, channel, queryEmbedding)
+          if (!options.preview) rnn.update(agentId, channel, queryEmbedding)
           contextBias = rnn.generateBias(agentId, channel)
           usedRnnGeneration = rnnGeneration
         }
@@ -1052,14 +1097,39 @@ export class EventMemoryService {
             ? [payload as EventNote]
             : []
         })
-        .slice(0, topK)
+      hits = refineHits(hits)
     } else {
       await onProgress?.({ stage: 'embedding', message: __t('server.memory', '正在拉取记忆……') })
       await onProgress?.({
         stage: 'retrieval',
         message: __t('server.memory', '正在拉取记忆……'),
       })
-      hits = await this.query({ agentId, query, mode: 'mixed', limit: topK })
+      const gate = config?.basic ?? DEFAULT_MEMORY_RUNTIME_CONFIG.basic
+      // 门槛需要查询向量做独立余弦判断；只生成一次并交给 query 复用，不增加 Embedding 请求。
+      const vector =
+        gate.enableRelevanceGate && this.embeddings.isAvailable
+          ? await this.safeVector(query)
+          : undefined
+      if (stale()) return []
+      // 有可见来源或门槛时多取一倍候选，供过滤后递补；排序与旧路径一致。
+      const ranked = await this.query(
+        {
+          agentId,
+          query,
+          mode: 'mixed',
+          limit: options.visibleSource || gate.enableRelevanceGate ? topK * 2 : topK,
+        },
+        vector,
+      )
+      hits = refineHits(
+        gate.enableRelevanceGate
+          ? filterBasicRelevant(this.stores, agentId, query, ranked, {
+              minSimilarity: gate.minSimilarity,
+              queryVector: vector?.some((value) => value !== 0) ? vector : undefined,
+            })
+          : ranked,
+      )
+      if (gate.enableRelevanceGate) maxPrevious = Math.ceil(topK / 2)
       await onProgress?.({
         stage: 'reranking',
         message: __t('server.memory', '基础召回已筛选出 {0} 个相关事件', [hits.length]),
@@ -1074,19 +1144,34 @@ export class EventMemoryService {
     })
     if (stale()) return []
     const index = new Map(timeline.map((note, i) => [note.id, i]))
-    const result: EventNote[] = []
-    if (latest) result.push(latest)
-    for (const hit of hits) {
-      result.push(hit)
-      const position = index.get(hit.id)
-      if (position !== undefined && position > 0) result.push(timeline[position - 1]!)
-    }
-    const notes = [...new Map(result.map((note) => [note.id, note])).values()].filter(
-      (note) =>
+    const candidates = buildAutomaticRagCandidates(
+      hits,
+      latest,
+      (hit) => {
+        const position = index.get(hit.id)
+        return position !== undefined && position > 0 ? timeline[position - 1] : undefined
+      },
+      maxPrevious,
+    ).filter(
+      ({ note }) =>
+        !visible(note) &&
         !this.privacy?.deleted('memory', note.id) &&
         this.findTdbNode(agentId, note.id)?.note.status === 'active',
     )
+    const budgeted = selectWithinTokenBudget(
+      dedupeCandidatesByNarrative(candidates),
+      options.tokenBudget ?? 0,
+    )
+    const notes = budgeted.notes
+    if (budgeted.droppedCount > 0)
+      logger.debug(
+        __t('logs.memory', '记忆注入超出 {0} Token 上限，按优先级舍弃 {1} 个完整事件', [
+          options.tokenBudget ?? 0,
+          budgeted.droppedCount,
+        ]),
+      )
     if (
+      !options.preview &&
       traceId &&
       usedRnnGeneration !== undefined &&
       runtime?.feedbackEnabled &&
@@ -1108,7 +1193,8 @@ export class EventMemoryService {
       candidateCount: hits.length,
       resultCount: notes.length,
     })
-    await this.packageHooks?.emitHook('memory:afterRetrieve', { agentId, notes, channel })
+    if (!options.preview)
+      await this.packageHooks?.emitHook('memory:afterRetrieve', { agentId, notes, channel })
     return stale() ? [] : notes
   }
 
@@ -1181,7 +1267,7 @@ export class EventMemoryService {
       // 已删除角色的未完成操作保持原状，不在启动时重新打开其记忆存储。
       if (!isAgentAvailable(operation.agentId)) continue
       if (
-        this.background?.enabled === false &&
+        !isMemoryBackgroundEnabled(this.background, operation.agentId) &&
         /^(background:|reflection:)/.test(operation.operationId)
       )
         continue
@@ -1196,6 +1282,7 @@ export class EventMemoryService {
             newTdbId: number
             relations: EventNoteRelationView[]
             manualEdit?: ManualEventRevision
+            source?: EventNote['origin']
           }
           await this.applyRevise(
             operation.operationId,
@@ -1205,9 +1292,11 @@ export class EventMemoryService {
             payload.relations,
             undefined,
             payload.manualEdit,
+            payload.source,
           )
         }
       } catch (error) {
+        if (error instanceof MemorySourceStaleError) continue
         await this.repo.markOperationFailed(operation.operationId, String(error))
         logger.warn(__t('logs.memory', '事件记忆事务重放失败: {0}', [operation.operationId]), {
           error,
@@ -1424,12 +1513,19 @@ export class EventMemoryService {
       if (generation !== this.privacy?.generation || indexRevision !== this.retrievalRevision)
         throw new Error('记忆数据或索引已变化，已停止旧写入')
       signal?.throwIfAborted()
-      if (!store.contains(tdbId)) store.commitTransaction(operations)
+      if (!store.contains(tdbId)) {
+        this.repo.assertWritableSource(note.origin)
+        store.commitTransaction(operations)
+      }
       store.indexText(tdbId, note.narrative)
       await this.ensureEntityRelations(note, tdbId, undefined, signal)
       this.stores.markTextIndexDirty(this.stores.resolveAgentStorePath(note.agentId, 'main'))
       if (markCommitted) await this.repo.markOperationCommitted(operationId)
     } catch (error) {
+      if (error instanceof MemorySourceStaleError) {
+        this.repo.retireStaleWrite(operationId, note.id)
+        throw error
+      }
       await this.repo.markOperationFailed(operationId, String(error))
       throw error
     }
@@ -1443,6 +1539,7 @@ export class EventMemoryService {
     relations: EventNoteRelationView[],
     signal?: AbortSignal,
     manualEdit?: ManualEventRevision,
+    source?: EventNote['origin'],
   ): Promise<void> {
     signal?.throwIfAborted()
     const generation = this.privacy?.generation
@@ -1492,6 +1589,8 @@ export class EventMemoryService {
             weight: edge.weight,
           })
         operations.push({ type: 'delete', id: target.tdbId })
+        const writeSource = source ?? (operationId.startsWith('background:') ? replacement.origin : undefined)
+        if (writeSource) this.repo.assertWritableSource(writeSource)
         store.commitTransaction(operations)
       }
       // 索引失败后重放也必须补齐文本，不能只以节点已存在判断完成。
@@ -1507,6 +1606,10 @@ export class EventMemoryService {
       }
       await this.repo.markOperationCommitted(operationId)
     } catch (error) {
+      if (error instanceof MemorySourceStaleError) {
+        this.repo.retireStaleWrite(operationId, replacement.id, target.id)
+        throw error
+      }
       await this.repo.markOperationFailed(operationId, String(error))
       throw error
     }

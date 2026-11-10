@@ -8,6 +8,7 @@ import '@infos/shared/i18n/catalogs/petActivity'
 import BedrockAvatar from '../components/avatar/BedrockAvatar.vue'
 import PetOverlayUI from '../components/pet/PetOverlayUI.vue'
 import { usePetWindow } from '../composables/pet/usePetWindow'
+import { useHomeCardReaction } from '../composables/pet/useHomeCardReaction'
 import { useWindowVisibility } from '../composables/main/useWindowVisibility'
 import { usePetGateway } from '../composables/pet/usePetGateway'
 import { usePetVoice } from '../composables/pet/usePetVoice'
@@ -86,6 +87,12 @@ const {
   selectPrincipal,
 } = usePetGateway()
 const { attention, attentionKey, attentionKind, attentionTarget } = usePetAttention(activeAgentId)
+useHomeCardReaction({
+  agentId: activeAgentId,
+  visible: windowVisible,
+  busy: () => isDragging.value || speaking.value,
+  element: () => (avatarRef.value?.$el instanceof HTMLElement ? avatarRef.value.$el : undefined),
+})
 const reaction = ref('')
 const replyText = ref('')
 const transientHint = ref('')
@@ -542,6 +549,7 @@ onUnmounted(() => {
       :agent-id="activeAgentId"
       :thread-id="activeSessionId"
       :thread-title="activeThread?.title"
+      :thread-kind="activeThread?.threadKind"
       :switching="switching"
       :attention="attention"
       :attention-key="attentionKey"

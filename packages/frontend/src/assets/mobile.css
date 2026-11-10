@@ -62,6 +62,9 @@ html[data-mobile][data-keyboard] :is(.main-mobile-header, .main-statusbar, .deck
 html[data-mobile] .dashboard-tab-content {
   padding: 12px 10px 24px;
 }
+html[data-mobile] .dashboard-tab-content.desktop-home-page {
+  padding: 0;
+}
 html[data-mobile] .main-tab-content.p-8 {
   padding: 12px 8px;
 }
@@ -246,7 +249,7 @@ html[data-mobile] .deck-brand {
 html[data-mobile] .deck-footer {
   padding: 6px;
   gap: 6px;
-  align-items: flex-end;
+  align-items: center;
 }
 html[data-mobile] .deck-tools {
   min-width: 0;
@@ -255,7 +258,7 @@ html[data-mobile] .deck-tools {
   gap: 4px;
   overflow: visible;
 }
-html[data-mobile] .deck .deck-tools > button,
+html[data-mobile] .deck .deck-tools .input-tool-trigger,
 html[data-mobile] .deck .deck-tools :is(.image-mode-selector, .audio-input-selector) {
   min-width: 38px;
   min-height: 40px;

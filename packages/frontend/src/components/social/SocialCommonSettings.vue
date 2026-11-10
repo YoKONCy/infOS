@@ -171,7 +171,7 @@ onMounted(loadModeConfig)
         {{ item.label }}
       </button>
     </nav>
-    <div v-if="activeSection === 'identity'" class="sp-owner-config">
+    <div v-if="activeSection === 'identity'" class="sp-owner-config motion-enter">
       <div class="sp-block-header">
         <PixelIcon name="user" size="xs" />
         {{ __t('ui.settings', '社交身份') }}
@@ -202,8 +202,12 @@ onMounted(loadModeConfig)
         </div>
       </div>
     </div>
-    <SocialTurnPanel v-if="activeSection === 'mode'" class="sp-turn-panel" :agent-id="agentId" />
-    <div v-if="activeSection === 'mode'" class="sp-mode-grid">
+    <SocialTurnPanel
+      v-if="activeSection === 'mode'"
+      class="sp-turn-panel motion-enter"
+      :agent-id="agentId"
+    />
+    <div v-if="activeSection === 'mode'" class="sp-mode-grid motion-enter">
       <section class="sp-config-block sp-mode-wide">
         <div class="sp-block-header">
           <PixelIcon name="clock" size="xs" />

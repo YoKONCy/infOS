@@ -11,6 +11,7 @@ import PetToolbelt, { type PetPanel } from './PetToolbelt.vue'
 import PetSpeechBubble from './PetSpeechBubble.vue'
 import PetActivityTrace from './PetActivityTrace.vue'
 import PetDeliveries from './PetDeliveries.vue'
+import PetListeningBadge from './PetListeningBadge.vue'
 import { useDesktopControl } from '../../composables/useDesktopControl'
 import { invoke } from '../../utils/ipcAdapter'
 
@@ -18,6 +19,7 @@ interface Props {
   agentId?: string
   threadId?: string | null
   threadTitle?: string
+  threadKind?: 'main' | 'side'
   switching?: boolean
   petName: string
   moodText?: string
@@ -381,6 +383,7 @@ onUnmounted(() => clearTimeout(hideTimer))
           :agent-id="agentId"
           :thread-id="threadId"
           :thread-title="threadTitle"
+          :thread-kind="threadKind"
           :switching="switching"
           :thinking="thinking"
           :speaking="speaking"
@@ -415,6 +418,7 @@ onUnmounted(() => clearTimeout(hideTimer))
       @pointerenter="enter"
       @pointerleave="leave"
     >
+      <PetListeningBadge />
       <Transition name="pet-status">
         <div v-if="desktopVisible && !occupied" class="stage" role="status" aria-live="polite">
           <PetHudIcon name="thought" size="sm" />

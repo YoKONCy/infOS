@@ -1,6 +1,7 @@
 import { t as __t } from '../../lib/i18n'
 import type { EventNote, EventNoteRelation, MemoryBackgroundPolicy } from '@infos/shared'
 import { MemoryBackgroundControl } from './memoryBackgroundControl'
+import { isMemoryBackgroundEnabled } from '@infos/shared'
 import { MemoryAgentScope } from './memoryAgentScope'
 import type { EventMemoryService } from './eventMemoryService'
 import type { EventNoteRepository } from '../../repositories/eventNote.repo'
@@ -99,7 +100,7 @@ export class EventReflectionService {
 
   async enqueueDailyBackfill(): Promise<number> {
     if (!this.options.background.enabled || !this.options.canMaintain()) return 0
-    return this.repo.enqueueMissingReflectionTasks((id) => this.options.agents.isAvailable(id))
+    return this.repo.enqueueMissingReflectionTasks((id) => this.options.agents.isAvailable(id) && isMemoryBackgroundEnabled(this.options.background, id))
   }
 
   async drain(): Promise<void> {
@@ -107,7 +108,7 @@ export class EventReflectionService {
     const signal = AbortSignal.any([this.options.background.signal, this.deletionController.signal])
     this.running = true
     try {
-      const tasks = await this.repo.pendingReflectionTasks(100, this.options.now())
+      const tasks = await this.repo.pendingReflectionTasks(100, this.options.now(), this.options.background.disabledAgentIds)
       for (const task of tasks) {
         if (signal.aborted) return
         if (!this.options.agents.isAvailable(task.agentId)) {
@@ -115,10 +116,13 @@ export class EventReflectionService {
           await this.repo.completeReflectionTask(task.id)
           continue
         }
+        if (!isMemoryBackgroundEnabled(this.options.background, task.agentId)) continue
         const agentSignal = this.options.agents.signal(task.agentId)
+        const backgroundAgentSignal = this.options.background.agentSignal?.(task.agentId)
         try {
           await this.reflect(task.agentId, task.eventId)
           if (signal.aborted) return
+          if (backgroundAgentSignal?.aborted || !isMemoryBackgroundEnabled(this.options.background, task.agentId)) continue
           await this.repo.completeReflectionTask(task.id)
         } catch (error) {
           if (signal.aborted) return
@@ -127,6 +131,8 @@ export class EventReflectionService {
             await this.repo.completeReflectionTask(task.id)
             continue
           }
+          // 角色暂停后保留队列和已生成决策，重新开启时沿用恢复进度。
+          if (backgroundAgentSignal?.aborted || !isMemoryBackgroundEnabled(this.options.background, task.agentId)) continue
           if (error instanceof MemoryForgottenError) {
             await this.repo.discardReflectionDecision(task.agentId, task.eventId)
             const current = await this.repo.findById(task.eventId)
@@ -150,7 +156,7 @@ export class EventReflectionService {
   async reflect(agentId: string, eventId: string): Promise<void> {
     if (
       !this.options.agents.isAvailable(agentId) ||
-      !this.options.background.enabled ||
+      !isMemoryBackgroundEnabled(this.options.background, agentId) ||
       !this.options.canMaintain()
     )
       return
@@ -158,6 +164,7 @@ export class EventReflectionService {
       this.options.background.signal,
       this.deletionController.signal,
       this.options.agents.signal(agentId),
+      ...(this.options.background.agentSignal ? [this.options.background.agentSignal(agentId)] : []),
     ])
     const decisionId = `reflection:decision:${agentId}:${eventId}`
     const current = await this.repo.findById(eventId)
@@ -337,7 +344,7 @@ export class EventReflectionService {
   validateAndRepair(agentId: string): { valid: boolean; repaired: boolean } {
     if (
       !this.options.agents.isAvailable(agentId) ||
-      !this.options.background.enabled ||
+      !isMemoryBackgroundEnabled(this.options.background, agentId) ||
       !this.options.canMaintain()
     )
       return { valid: true, repaired: false }

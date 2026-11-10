@@ -13,6 +13,15 @@ import { diffLines } from '../../services/execution/virtualWorkspace'
 import { getProductivityRuntime, resolveExecutionSession } from '../productivityRuntimeHolder'
 import { toolSuccess } from '../../services/execution/toolResult'
 import { createReadReference, fileEditOwner } from '../../services/execution/fileEditing'
+import {
+  abandonLegacyHomeWrite,
+  beginLegacyHomeWrite,
+  finishLegacyHomeWrite,
+  recycleLegacyHomeFile,
+  homeToolFailure,
+  withLegacyHomeConfirmation,
+} from '../home'
+import { HomeError } from '../../services/home/homeErrors'
 
 export { readImageTool, setImageReadResourceService } from './readImage'
 
@@ -149,34 +158,65 @@ export const writeFileTool: BuiltinTool = {
       const workspace = getProductivityRuntime().virtualWorkspace
       let beforeExists = false
       let oldRead: Awaited<ReturnType<typeof workspace.read>> | null = null
-      const result = await workspace.write(session, {
-        path: filePath,
-        content,
-        append,
-        signal: ctx.signal,
-        deviceScope: ctx.approvedOutsideWorkspace,
-        expectedHash: args.expected_hash ? String(args.expected_hash) : undefined,
-        beforeWrite: async () => {
-          ctx.signal?.throwIfAborted()
-          beforeExists = (await workspace.fileInfo(session, filePath, ctx.approvedOutsideWorkspace))
-            .exists
-          oldRead = beforeExists
-            ? await workspace
-                .read(session, filePath, {
-                  limit: 128_000,
-                  deviceScope: ctx.approvedOutsideWorkspace,
-                })
-                .catch(() => null)
-            : null
-          return ctx.approvedOutsideWorkspace
-            ? null
-            : await checkpointService?.captureToolMutation(ctx, filePath)
-        },
-        afterWrite: async (captured, written) =>
-          checkpointService?.commitFromDisk(
-            captured as Awaited<ReturnType<WorkspaceCheckpointService['captureBefore']>>,
-            written,
-          ),
+      let operationId: string | undefined
+      // 整段放进去：要确认时锁已释放才开始等，批准后从头再来一遍。
+      const result = await withLegacyHomeConfirmation(ctx, async () => {
+        let pending: import('@infos/shared').HomeCheckpoint | undefined
+        try {
+          return await workspace.write(session, {
+            path: filePath,
+            content,
+            append,
+            signal: ctx.signal,
+            deviceScope: ctx.approvedOutsideWorkspace,
+            expectedHash: args.expected_hash ? String(args.expected_hash) : undefined,
+            beforeWrite: async () => {
+              ctx.signal?.throwIfAborted()
+              const homeCheckpoint = await beginLegacyHomeWrite(
+                ctx,
+                filePath,
+                Buffer.from(content),
+                append,
+              )
+              pending = homeCheckpoint
+              operationId = homeCheckpoint?.id
+              beforeExists = (
+                await workspace.fileInfo(session, filePath, ctx.approvedOutsideWorkspace)
+              ).exists
+              oldRead = beforeExists
+                ? await workspace
+                    .read(session, filePath, {
+                      limit: 128_000,
+                      deviceScope: ctx.approvedOutsideWorkspace,
+                    })
+                    .catch(() => null)
+                : null
+              const legacyCheckpoint = ctx.approvedOutsideWorkspace
+                ? null
+                : await checkpointService?.captureToolMutation(ctx, filePath)
+              return {
+                homeCheckpoint,
+                legacyCheckpoint,
+                expectedBeforeHash: homeCheckpoint?.before[0]?.hash,
+              }
+            },
+            afterWrite: async (captured, written) => {
+              const value = captured as {
+                homeCheckpoint?: import('@infos/shared').HomeCheckpoint
+                legacyCheckpoint: Awaited<ReturnType<WorkspaceCheckpointService['captureBefore']>>
+              }
+              pending = undefined
+              finishLegacyHomeWrite(ctx, value.homeCheckpoint)
+              await checkpointService?.commitFromDisk(value.legacyCheckpoint, written)
+            },
+          })
+        } catch (error) {
+          abandonLegacyHomeWrite(ctx, pending)
+          // 新建时被别人抢先：不覆盖，交回去再判断一次，这次它就是已有文件。
+          if ((error as NodeJS.ErrnoException).code === 'EEXIST')
+            throw new HomeError('HOME_CREATE_RACE', { paths: [filePath] })
+          throw error
+        }
       })
       const previousRead = oldRead as Awaited<ReturnType<typeof workspace.read>> | null
       const previewIncomplete = beforeExists && (!previousRead || previousRead.truncated)
@@ -190,6 +230,7 @@ export const writeFileTool: BuiltinTool = {
         success: true,
         path: filePath,
         operation: result.operation,
+        ...(operationId ? { operationId } : {}),
         bytes: Buffer.byteLength(content),
         ...diff,
         insertions: result.insertions,
@@ -204,6 +245,8 @@ export const writeFileTool: BuiltinTool = {
         ),
       })
     } catch (err) {
+      if (err instanceof HomeError) return homeToolFailure(err)
+      if (ctx.signal?.aborted) return homeToolFailure(new HomeError('HOME_CANCELLED'))
       return JSON.stringify({
         error: `写入失败: ${err instanceof Error ? err.message : String(err)}`,
       })
@@ -215,17 +258,7 @@ export const deleteFileTool: BuiltinTool = {
   name: 'delete_file',
 
   async execute(args, ctx) {
-    if (!ctx.approvedSensitiveAction) throw new Error('删除文件缺少本次用户审批凭证')
-    const filePath = String(args.file_path ?? '').trim()
-    if (!filePath) throw new Error('file_path 不能为空')
-
-    const session = await resolveExecutionSession(ctx)
-    await getProductivityRuntime().virtualWorkspace.deleteFile(
-      session,
-      filePath,
-      ctx.approvedOutsideWorkspace,
-    )
-    return JSON.stringify({ success: true, path: filePath })
+    return recycleLegacyHomeFile(args, ctx)
   },
 }
 

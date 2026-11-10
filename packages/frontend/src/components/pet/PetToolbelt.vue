@@ -20,6 +20,7 @@ const props = defineProps<{
   agentId?: string
   threadId?: string | null
   threadTitle?: string
+  threadKind?: 'main' | 'side'
   switching?: boolean
   message: string
   thinking?: boolean
@@ -200,6 +201,7 @@ onMounted(() => {
                 :pet-name="petName"
                 :thread-id="threadId"
                 :thread-title="threadTitle"
+                :thread-kind="threadKind"
                 :switching="switching"
                 @select-agent="(id, complete) => emit('select-agent', id, complete)"
                 @select-thread="(id, complete) => emit('select-thread', id, complete)"
@@ -322,6 +324,10 @@ onMounted(() => {
               <button type="button" class="menu-item" @click="emit('open-section', 'voice_config')">
                 <PetHudIcon name="mic" size="sm" />
                 {{ __t('ui.pet', '语音与快捷键') }}
+              </button>
+              <button type="button" class="menu-item" @click="emit('open-section', 'cards')">
+                <PetHudIcon name="sparkle" size="sm" />
+                {{ __t('ui.pet', '桌面卡片') }}
               </button>
               <slot name="window-settings" />
             </template>

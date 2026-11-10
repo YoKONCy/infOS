@@ -10,6 +10,36 @@ export interface PackagePanel {
   text?: string
   fields?: Array<{ label: string; value: string }>
   actions?: Array<{ id: string; label: string }>
+  /**
+   * 由宿主绘制的入口：`tool-groups` 为工具管理弹窗；`local-page` 在插件卡片上显示「打开页面」，
+   * 经 `page.url` 动作取得插件本机页面地址（只接受回环地址），在浏览器或独立窗口中打开，不嵌入设置页。
+   */
+  settings?: { kind: 'tool-groups' } | { kind: 'local-page' }
+}
+
+export type PackageToolGroupState = 'pinned' | 'ondemand' | 'off'
+export interface PackageToolGroup {
+  id: string
+  name: string
+  description: string
+  state: PackageToolGroupState
+  tools: string[]
+}
+export interface PackageToolSettingsSnapshot {
+  revision: number
+  values: Record<string, string>
+  fields: Array<{ id: string; label: string; placeholder?: string; checkable?: boolean }>
+  groups: PackageToolGroup[]
+  ungroupedState: PackageToolGroupState
+  disabledTools: string[]
+  tools: Array<{
+    id: string
+    title: string
+    description: string
+    params?: Record<string, { required: boolean; description: string }>
+  }>
+  fresh: string[]
+  notice?: { message: string; parameters?: string[] }
 }
 export interface ManagedPackageInfo {
   manifest: PackageManifest

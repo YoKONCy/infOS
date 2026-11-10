@@ -1,4 +1,5 @@
 {
+  "PERCEPTION_STOPPED: 感知已全部停止，请在界面点击恢复": "PERCEPTION_STOPPED: 感知已全部停止，請在介面點擊恢復",
   "SCREENSHOT_REGION_INVALID: 选区必须是参考画面内的有效矩形": "SCREENSHOT_REGION_INVALID: 選區必須是參考畫面內的有效矩形",
   "SCREENSHOT_SIZE_INVALID: maxWidth 必须是 320 到 2560 的整数": "SCREENSHOT_SIZE_INVALID: maxWidth 必須是 320 到 2560 的整數",
   "SCREENSHOT_REFERENCE_REQUIRED: 区域截图需要有效的参考截图编号": "SCREENSHOT_REFERENCE_REQUIRED: 區域截圖需要有效的參考截圖編號",
@@ -98,7 +99,7 @@
   "请在主应用中继续桌面操作": "請在主應用中繼續桌面操作",
   "DESKTOP_PLATFORM_UNSUPPORTED: 受控桌面操作目前支持 Windows": "DESKTOP_PLATFORM_UNSUPPORTED: 受控桌面操作目前支持 Windows",
   "DESKTOP_OBSERVATION_STALE: 用户操作后需要重新观察": "DESKTOP_OBSERVATION_STALE: 用戶操作後需要重新觀察",
-  "DESKTOP_DISPLAY_NOT_FOUND: 目标显示器已断开": "DESKTOP_DISPLAY_NOT_FOUND: 目標顯示器已斷開",
+  "DESKTOP_DISPLAY_NOT_FOUND: 目标显示器已断开": "DESKTOP_DISPLAY_NOT_FOUND: 目標顯示器已中斷連線",
   "DESKTOP_OBSERVATION_STALE: 观察期间控制权发生变化，请重新观察": "DESKTOP_OBSERVATION_STALE: 觀察期間控制權發生變化，請重新觀察",
   "DESKTOP_OBSERVATION_STALE: 截图期间窗口发生移动，请重新观察": "DESKTOP_OBSERVATION_STALE: 截圖期間窗口發生移動，請重新觀察",
   "DESKTOP_OBSERVATION_STALE: 请先观察桌面，再引用本次 observationId 操作": "DESKTOP_OBSERVATION_STALE: 請先觀察桌面，再引用本次 observationId 操作",
@@ -108,6 +109,7 @@
   "DESKTOP_CANCELLED: 桌面操作已暂停": "DESKTOP_CANCELLED: 桌面操作已暫停",
   "DESKTOP_OBSERVATION_STALE: 前台窗口已变化，请重新观察或激活目标窗口": "DESKTOP_OBSERVATION_STALE: 前臺窗口已變化，請重新觀察或激活目標窗口",
   "停止快捷键已被占用，请更换绑定": "停止快捷鍵已被佔用，請更換綁定",
+  "桌面操作已关闭": "桌面操作已關閉",
   "DESKTOP_COORDINATE_INVALID: {0}必须是有限数字": "DESKTOP_COORDINATE_INVALID: {0}必須是有限數字",
   "DESKTOP_COORDINATE_OUT_OF_RANGE: {0}必须在{1}到{2}之间": "DESKTOP_COORDINATE_OUT_OF_RANGE: {0}必須在{1}到{2}之間",
   "DESKTOP_SCREENSHOT_CONTEXT_INVALID: 截图宽高必须大于0": "DESKTOP_SCREENSHOT_CONTEXT_INVALID: 截圖寬高必須大於0",
@@ -203,5 +205,15 @@
   "仅通知层可以操作通知": "僅通知層可以操作通知",
   "通知数据无效": "通知數據無效",
   "未知窗口配置: {0}": "未知窗口配置: {0}",
-  "仅主应用可以修改界面语言": "僅主應用可以修改界面語言"
+  "仅主应用可以修改界面语言": "僅主應用可以修改界面語言",
+  "DESKTOP_WINDOW_ID_INVALID: windowId 应为窗口列表中的十进制 windowId，或 infOS 窗口 ID（main、panel:<页面 ID>、card:<卡片 ID>）": "DESKTOP_WINDOW_ID_INVALID: windowId 應為視窗清單中的十進位 windowId，或 infOS 視窗 ID（main、panel:<頁面 ID>、card:<卡片 ID>）",
+  "SCREEN_CAPTURE_REGION_INVALID: 窗口或选区不在目标显示器内": "SCREEN_CAPTURE_REGION_INVALID: 視窗或選取範圍不在目標顯示器內",
+  "SCREEN_CAPTURE_FAILED: 系统截图接口出错：{0}": "SCREEN_CAPTURE_FAILED: 系統截圖介面出錯：{0}",
+  "SCREEN_CAPTURE_DENIED: 系统没有提供可截取的屏幕，可能是截图权限被拒、正处于锁屏或管理员确认界面，或远程桌面已断开": "SCREEN_CAPTURE_DENIED: 系統沒有提供可擷取的螢幕，可能是截圖權限被拒、正處於鎖定畫面或系統管理員確認畫面，或遠端桌面已中斷連線",
+  "SCREEN_CAPTURE_SOURCE_MISSING: 没有找到目标显示器的截图源": "SCREEN_CAPTURE_SOURCE_MISSING: 沒有找到目標顯示器的截圖來源",
+  "SCREEN_CAPTURE_EMPTY: 截图结果为空，可能是截图权限被拒或画面受保护": "SCREEN_CAPTURE_EMPTY: 截圖結果為空，可能是截圖權限被拒或畫面受保護",
+  "DESKTOP_WATCH_ACTION_INVALID: watch.action 必须是 start、poll、status 或 stop": "DESKTOP_WATCH_ACTION_INVALID: watch.action 必須是 start、poll、status 或 stop",
+  "PERCEPTION_IMAGE_UNAVAILABLE: 这张图没能通过本机打码，所以不发。可能是文字识别不可用或超时，或者窗口刚刚变了": "PERCEPTION_IMAGE_UNAVAILABLE: 這張圖沒能通過本機打碼，所以不發。可能是文字辨識不可用或逾時，或者視窗剛剛變了",
+  "PERCEPTION_SENSITIVE_WINDOW: 这个窗口在涂黑名单里，不能看": "PERCEPTION_SENSITIVE_WINDOW: 這個視窗在塗黑名單裡，不能看",
+  "PERCEPTION_WATCH_UNAVAILABLE: 没找到能陪看的窗口，或者陪看现在不能开始": "PERCEPTION_WATCH_UNAVAILABLE: 沒找到能陪看的視窗，或者陪看現在不能開始"
 }

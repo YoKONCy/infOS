@@ -167,6 +167,48 @@ export async function resolveToolDisplay(name: string): Promise<AgentToolDisplay
 }
 
 const FALLBACK_TOOL_LABEL: Record<string, string> = {
+  get conversation() {
+    return __t('common.tools', '主线交流')
+  },
+  get home_declare() {
+    return __t('common.tools', '声明行动范围')
+  },
+  get home_files() {
+    return __t('common.tools', '家的文件通道')
+  },
+  get home_shelf() {
+    return __t('common.tools', '置物架')
+  },
+  get home_map() {
+    return __t('common.tools', '家的地图')
+  },
+  get home_card() {
+    return __t('common.tools', '卡片互动')
+  },
+  get shell_layout() {
+    return __t('common.tools', '查看 infOS 窗口布局')
+  },
+  get shell_window() {
+    return __t('common.tools', '调整 infOS 窗口')
+  },
+  get shell_theme() {
+    return __t('common.tools', '管理 infOS 主题')
+  },
+  get shell_card() {
+    return __t('common.tools', '管理 infOS 桌面卡片')
+  },
+  get shell_fence() {
+    return __t('common.tools', '整理桌面收纳框')
+  },
+  get desktop_plan() {
+    return __t('common.tools', '申请任务预批')
+  },
+  get desktop_safety() {
+    return __t('common.tools', '查看或调整桌面操作权限')
+  },
+  get desktop_direct() {
+    return __t('common.tools', '剪贴板与媒体键')
+  },
   get send_file() {
     return __t('ui.tools', '发送文件')
   },

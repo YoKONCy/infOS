@@ -117,7 +117,15 @@ export function createDistributedRouter(ctx: AppContext) {
 
   router.post('/snapshot', async (c) => {
     const transferKey = c.req.header('X-Sync-Transfer-Key') ?? ''
-    const bytes = await ctx.distributedSyncService.createEncryptedSnapshot(transferKey)
+    const signal = c.req.raw.signal
+    let bytes: Buffer
+    try {
+      bytes = await ctx.distributedSyncService.createEncryptedSnapshot(transferKey, signal)
+    } catch (error) {
+      // 客户端断开属于主动取消，清理完成后结束请求。
+      if (signal.aborted) return new Response(null, { status: 499 })
+      throw error
+    }
     return new Response(new Uint8Array(bytes), {
       headers: {
         'Content-Type': 'application/vnd.infos.full-sync',

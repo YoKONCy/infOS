@@ -7,6 +7,8 @@ import {
   persistentWorkMessage,
   projectWorkHistory,
   publicWorkMetadata,
+  workMessagesAfterClear,
+  workSourceMessages,
   type WorkContextRecord,
 } from '../../../../src/services/context/workContext'
 import { promptFingerprint } from '../../../../src/services/llm/promptCache'
@@ -72,6 +74,35 @@ function fixture() {
 }
 
 describe('持久工作上下文', () => {
+  it('已应用清理边界的恢复执行可继续积累新工具过程', () => {
+    const { user, assistant, record, compiled } = fixture()
+    record.clearToolCallId = 'previous-clear'
+    assistant.metadataJson = JSON.stringify({ workContext: record })
+    const boundary = { id: 1, pairId: record.pairId, toolCallId: 'previous-clear', messageIds: [], executionIds: [] }
+    const restored = projectWorkHistory(compiled, [user, assistant], { ...scope, boundary })
+    expect(restored.find((message) => message.toolCallId === 'read')?.content).toBe('文件的完整旧版本正文')
+    expect(workSourceMessages([assistant], boundary)).toEqual([assistant])
+  })
+  it('清理已覆盖的工作轨迹后保留正式对话正文', () => {
+    const { user, assistant, compiled } = fixture()
+    const boundary = { id: 1, pairId: 'new-pair', toolCallId: 'clear', messageIds: [1, 2], executionIds: [] }
+    expect(projectWorkHistory(compiled, [user, assistant], { ...scope, boundary })).toEqual(compiled)
+    expect(workSourceMessages([user, assistant], boundary)).toEqual([])
+  })
+
+  it('清理从完整原生工具批次开始，后续结果继续保留', () => {
+    const batch: ChatMessage[] = [
+      { role: 'assistant', content: null, toolCalls: [
+        { id: 'clear', type: 'function', function: { name: 'clear_work_context', arguments: '{}' } },
+        { id: 'next', type: 'function', function: { name: 'query_facts', arguments: '{"object":"主人"}' } },
+      ] },
+      { role: 'tool', toolCallId: 'clear', content: '{"cleared":true}' },
+      { role: 'tool', toolCallId: 'next', content: '新阶段的事实' },
+    ]
+    expect(workMessagesAfterClear([...trace, ...batch], 'clear')).toEqual(batch)
+    expect(workMessagesAfterClear(trace, 'missing')).toEqual([])
+  })
+
   it('恢复历史工作输入时保留时间标记，原始输入哈希与本轮输入保持原样', () => {
     const { user, assistant, record, compiled } = fixture()
     record.input = { role: 'user', content: '读取文件\n【工作区选择】a.ts' }

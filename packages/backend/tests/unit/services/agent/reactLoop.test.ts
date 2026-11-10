@@ -12,6 +12,7 @@ import { readToolObservation } from '@infos/backend/services/execution/toolObser
 import { ConversationSurfaceProjector } from '@infos/backend/projections/conversationSurfaceProjector'
 
 const modelConfig: ModelConfig = {
+  assistantPrefill: 'supported',
   provider: 'openai',
   modelId: 'test-model',
   apiKey: 'test-key',
@@ -58,6 +59,72 @@ async function collectLoop(params: Parameters<typeof runReActLoop>[0]) {
 }
 
 describe('runReActLoop', () => {
+  it('据点可在首个模型请求中直接休息，执行结束工具收到等待意图', async () => {
+    const args = { reply: '', next_activity: { kind: 'rest' } }
+    const chatStream = vi.fn(() => streamFrom([{ choices: [{ delta: {
+      toolCalls: [{ index: 0, id: 'rest-now', type: 'function', function: { name: 'finish_task', arguments: JSON.stringify(args) } }],
+    }, finishReason: 'tool_calls' }] }]))
+    const execute = vi.fn().mockResolvedValue({ output: '{"finished":true,"reply":""}', durationMs: 1, isError: false, shouldTerminate: true })
+    const { result } = await collectLoop({
+      llmService: { chatStream } as never, modelConfig,
+      messages: [{ role: 'user', content: '当前没有新的事情需要处理' }],
+      tools: [{ name: 'finish_task', description: '结束当前执行', parameters: { type: 'object' } }],
+      toolExecutor: { execute }, source: 'group', agentId: 'pero',
+      threadContext: { threadId: 'main-pero', channel: 'group', interactionMode: 'work', sceneRoomId: 'living' },
+    })
+    expect(execute).toHaveBeenCalledWith('finish_task', args, 'group', expect.objectContaining({ threadId: 'main-pero', sceneRoomId: 'living' }))
+    expect(result.toolCalls.map((call) => ({ name: call.name, isError: call.isError }))).toEqual([{ name: 'finish_task', isError: false }])
+    expect(chatStream).toHaveBeenCalledTimes(1)
+  })
+  it('清理工具批次结束后重建下一次请求，正式消息和新记事本继续可用', async () => {
+    const base: ChatMessage[] = [
+      { role: 'system', content: '固定角色设定' },
+      { role: 'assistant', content: '此前正式发言' },
+      { role: 'user', content: '工作结束，继续聊天', cacheControl: { kind: 'current' } },
+    ]
+    const previous: ChatMessage[] = [
+      { role: 'assistant', content: null, cacheControl: { kind: 'history', workContext: true }, toolCalls: [
+        { id: 'previous-read', type: 'function', function: { name: 'read_file', arguments: '{"file_path":"old.md"}' } },
+      ] },
+      { role: 'tool', toolCallId: 'previous-read', content: '旧会话中的工作过程', cacheControl: { kind: 'history', workContext: true } },
+    ]
+    const requests: ChatMessage[][] = []
+    const chatStream = vi.fn((_model: ModelConfig, messages: ChatMessage[]) => {
+      requests.push(structuredClone(messages))
+      const call = requests.length === 1
+        ? { id: 'read-now', name: 'read_file', args: { file_path: 'current.md' } }
+        : { id: 'clear-now', name: 'clear_work_context', args: {} }
+      return requests.length < 3
+        ? streamFrom([{ choices: [{ delta: { toolCalls: [{ index: 0, id: call.id, type: 'function',
+            function: { name: call.name, arguments: JSON.stringify(call.args) } }] }, finishReason: 'tool_calls' }] }])
+        : streamFrom([{ choices: [{ delta: { content: '我们继续聊吧。' }, finishReason: 'stop' }] }])
+    })
+    const { result } = await collectLoop({
+      llmService: { chatStream } as never,
+      modelConfig, workContextBase: base,
+      messages: [base[0]!, ...previous, base[1]!, base[2]!],
+      tools: [{ name: 'read_file', description: '读取', parameters: {} },
+        { name: 'clear_work_context', description: '清理', parameters: {} }],
+      toolExecutor: { execute: vi.fn(async (name) => name === 'clear_work_context'
+        ? { output: '{"cleared":true}', durationMs: 1, isError: false, shouldTerminate: false,
+            metadata: { workContextCleared: true, notebookContext: '主文件新要点' } }
+        : { output: '本次执行中较早读取的正文', durationMs: 1, isError: false, shouldTerminate: false }) },
+      source: 'desktop', agentId: 'pero',
+      threadContext: { threadId: 'clear-live', interactionMode: 'work' },
+    })
+    expect(requests).toHaveLength(3)
+    const next = requests[2]!
+    expect(JSON.stringify(next)).not.toContain('旧会话中的工作过程')
+    expect(JSON.stringify(next)).not.toContain('本次执行中较早读取的正文')
+    expect(next).toContainEqual(expect.objectContaining({ role: 'assistant', content: '此前正式发言' }))
+    expect(next).toContainEqual(expect.objectContaining({ role: 'user', content: '工作结束，继续聊天' }))
+    expect(next).toContainEqual(expect.objectContaining({ content: '主文件新要点' }))
+    expect(next.find((message) => message.toolCalls?.some((call) => call.id === 'clear-now'))?.role).toBe('assistant')
+    expect(next.find((message) => message.toolCallId === 'clear-now')?.role).toBe('tool')
+    expect(result.toolCalls.map((call) => call.name)).toEqual(['read_file', 'clear_work_context'])
+    expect(result.messages.at(-1)?.content).toBe('我们继续聊吧。')
+  })
+
   it('提前拒绝 finish_task 时先确认草稿再回传失败，最终投影保留调用记录', async () => {
     const args = { reply: '完成', summary: '尚未执行' }
     const execute = vi.fn()
@@ -318,18 +385,18 @@ describe('runReActLoop', () => {
           : { role: 'user', content: '查询一下' },
       )
       expect(requests[1]!.at(-1)?.role).toBe(
-        assistantPrefill && mode === 'continuous' ? 'assistant' : 'tool',
+        assistantPrefill ? 'assistant' : 'tool',
       )
       expect(requests[1]!.filter((message) => message.role === 'tool')).toHaveLength(1)
       const replies = result.messages.filter((message) => message.role === 'assistant')
       expect(replies).toHaveLength(2)
       expect(replies[0]).toMatchObject({
-        content: assistantPrefill || null,
+        content: null,
         toolCalls: [{ id: 'prefill-tool' }],
       })
-      expect(replies[1]!.content).toBe((mode === 'continuous' ? assistantPrefill : '') + '查到了。')
+      expect(replies[1]!.content).toBe(assistantPrefill + '查到了。')
       expect(yields.filter((item) => typeof item === 'string').join('')).toBe(
-        assistantPrefill + (mode === 'continuous' ? assistantPrefill : '') + '查到了。',
+        assistantPrefill + '查到了。',
       )
       expect(result.rawText).not.toContain('我先查看。')
       expect(prepareToolDefinitions).toHaveBeenCalledTimes(1)
@@ -3119,64 +3186,6 @@ describe('runReActLoop', () => {
         'remote_terminal_create',
       ]),
     )
-  })
-
-  it('load_skill成功后应刷新下一轮工具定义', async () => {
-    const observedTools: string[][] = []
-    const llmService = {
-      chatStream: vi.fn((_config, _messages, options) => {
-        observedTools.push(
-          (options?.tools ?? []).map((tool: { function: { name: string } }) => tool.function.name),
-        )
-        return observedTools.length === 1
-          ? streamFrom([
-              {
-                choices: [
-                  {
-                    delta: {
-                      content: undefined,
-                      toolCalls: [
-                        {
-                          index: 0,
-                          id: 'skill-1',
-                          type: 'function',
-                          function: { name: 'load_skill', arguments: '{"skill_id":"demo"}' },
-                        },
-                      ],
-                    },
-                  },
-                ],
-              },
-            ])
-          : streamFrom([{ choices: [{ delta: { content: '已加载' } }] }])
-      }),
-    }
-    const toolExecutor = {
-      execute: vi.fn().mockResolvedValue({
-        output: 'Skill内容',
-        durationMs: 1,
-        isError: false,
-        shouldTerminate: false,
-      }),
-    }
-
-    await collectLoop({
-      llmService: llmService as never,
-      modelConfig,
-      messages: [{ role: 'user', content: '加载技能' }],
-      tools: [{ name: 'load_skill', description: '加载', parameters: { type: 'object' } }],
-      refreshToolDefinitions: () => [
-        { name: 'load_skill', description: '加载', parameters: { type: 'object' } },
-        { name: 'new_tool', description: '新工具', parameters: { type: 'object' } },
-      ],
-      toolExecutor: toolExecutor as never,
-      source: 'desktop',
-      sessionId: 's1',
-      agentId: 'pero',
-    })
-
-    expect(observedTools[0]).toEqual(['load_skill'])
-    expect(observedTools[1]).toContain('new_tool')
   })
 
   it('首轮幻觉调用finish_task时应拒绝执行并要求自然回复', async () => {

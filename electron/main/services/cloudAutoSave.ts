@@ -4,13 +4,15 @@ import { watch, type Dirent, type FSWatcher } from 'node:fs'
 import { readdir, stat } from 'node:fs/promises'
 import path from 'node:path'
 import type { SteamCloudSaveStatus } from '@infos/shared'
+import { isSnapshotProgramPath, isSnapshotTransientPath } from '@infos/shared'
 import { paths } from '../utils/env'
 import { getClientCredential } from '../utils/clientCredential'
 import { t } from '../utils/i18n'
 import { logger } from '../utils/logger'
 import { isRemoteConnection } from './clientConnection'
 import { IS_STEAM, getSteamCloudApi, getSteamUser } from './steam'
-import { cloudSyncService, type SyncResult } from './cloudSync'
+import type { SyncResult } from './cloudSync'
+import { cloudSnapshotTransport } from './cloudSnapshotTransport'
 import { CloudSnapshotStore, type CloudSnapshot, type LocalCloudState } from './cloudSnapshotStore'
 
 const IGNORED_ROOTS = new Set([
@@ -47,6 +49,8 @@ export function isCloudSaveChange(relative: string): boolean {
   const parts = normalized.split('/')
   return Boolean(
     normalized &&
+    !isSnapshotProgramPath(normalized) &&
+    !isSnapshotTransientPath(normalized) &&
     !IGNORED_ROOTS.has(parts[0]!) &&
     !MACHINE_FILES.has(normalized) &&
     !parts.some((part) => part.startsWith('.resource-') || part.startsWith('.index-')) &&
@@ -230,7 +234,7 @@ export class SteamCloudAutoSave {
           bytes = await this.store.readRemote(selected, timeout)
         }
         timeout.throwIfAborted()
-        const snapshotId = await cloudSyncService.stageSnapshot(bytes, timeout)
+        const snapshotId = await cloudSnapshotTransport.stageSnapshot(bytes, timeout)
         this.state.restoring = {
           revision: selected.id,
           snapshotId,
@@ -324,7 +328,7 @@ export class SteamCloudAutoSave {
       if (!snapshot) throw new Error('STEAM_CLOUD_SNAPSHOT_MISSING')
       const signal = AbortSignal.timeout(60_000)
       const bytes = await this.store.readRemote(snapshot, signal)
-      const snapshotId = await cloudSyncService.stageSnapshot(bytes, signal)
+      const snapshotId = await cloudSnapshotTransport.stageSnapshot(bytes, signal)
       this.state.restoring = {
         revision: snapshot.id,
         snapshotId,
@@ -410,7 +414,7 @@ export class SteamCloudAutoSave {
       if (force || latest !== fingerprint) {
         let bytes: Buffer
         try {
-          bytes = await cloudSyncService.captureSnapshot(signal)
+          bytes = await cloudSnapshotTransport.captureSnapshot(signal)
         } catch (error) {
           // 后端异常时仍将已落盘的上一份完整快照交给 Steam，不依赖退出时临时生成。
           if (this.state.checkpoint?.pending && !this.paused && this.currentAccount())
@@ -440,16 +444,15 @@ export class SteamCloudAutoSave {
     return result
   }
 
-  /** 先取消旧请求，再限时请求最后一次快照，完成后才交还后端退出清理。 */
+  /** 等待在途保存完成，再捕获最后一次快照，完成后才交还后端退出清理。 */
   async stopAndSave(): Promise<void> {
     if (this.stopping) return
     this.stopping = true
     clearInterval(this.timer)
     this.watcher?.close()
     this.watcher = undefined
-    this.controller?.abort()
     await this.running
-    if (this.ready) await this.saveNow('exit', 20_000, true)
+    if (this.ready) await this.saveNow('exit', 60_000, true)
     this.ready = false
   }
 

@@ -1,0 +1,256 @@
+<script setup lang="ts">
+import { computed, reactive, ref, shallowRef, watch } from 'vue'
+import type { HomeMapEntry, HomeScope } from '@infos/shared'
+import { t } from '../../i18n'
+import { useHomeCollection } from '../../composables/useHomeCollection'
+import { MotionCollapse, MotionList, MotionSkeleton } from '../motion'
+import { PButton } from '../pixel'
+
+const props = defineProps<{ scope: HomeScope | null; refreshKey?: number }>()
+const emit = defineEmits<{ changed: [] }>()
+const { items, busy, error, execute, refresh, key } = useHomeCollection<HomeMapEntry>(
+  () => props.scope,
+  'map',
+)
+const query = ref(''),
+  editing = ref(''),
+  selected = shallowRef<HomeMapEntry | null>(null)
+const recycled = ref(false)
+const adding = ref(false)
+const form = reactive({
+  kind: 'folder' as HomeMapEntry['kind'],
+  name: '',
+  location: '',
+  purpose: '',
+})
+const disabled = computed(() => !props.scope || busy.value)
+const visible = computed(() =>
+  items.value.filter(
+    (item) =>
+      (item.deletedAt !== undefined) === recycled.value &&
+      `${item.name}\n${item.location}\n${item.purpose}`
+        .toLowerCase()
+        .includes(query.value.toLowerCase()),
+  ),
+)
+const tr = (source: string) => t('home.map', source)
+function clear() {
+  editing.value = ''
+  adding.value = false
+  form.kind = 'folder'
+  form.name = ''
+  form.location = ''
+  form.purpose = ''
+}
+watch(key, () => {
+  clear()
+  recycled.value = false
+  selected.value = null
+  query.value = ''
+})
+watch(
+  () => props.refreshKey,
+  () => void refresh(),
+)
+/** 「添加地点」开关：编辑中点它会放弃编辑、换成空白表单。 */
+function toggleAdd() {
+  if (adding.value && !editing.value) return clear()
+  clear()
+  adding.value = true
+}
+function edit(item: HomeMapEntry) {
+  editing.value = item.id
+  Object.assign(form, {
+    kind: item.kind,
+    name: item.name,
+    location: item.location,
+    purpose: item.purpose,
+  })
+  selected.value = null
+  adding.value = true
+}
+async function changed() {
+  await refresh()
+  emit('changed')
+}
+async function save() {
+  if (disabled.value) return
+  const result = await execute<HomeMapEntry>({
+    action: 'put',
+    ...form,
+    ...(editing.value ? { id: editing.value } : {}),
+  })
+  if (result) {
+    clear()
+    await changed()
+  }
+}
+async function remove(item: HomeMapEntry) {
+  const result = await execute({ action: 'delete', id: item.id })
+  if (!result) return
+  if (editing.value === item.id) clear()
+  if (selected.value?.id === item.id) selected.value = null
+  await changed()
+}
+async function restore(item: HomeMapEntry) {
+  if (disabled.value) return
+  const result = await execute<HomeMapEntry>({
+    action: 'restore',
+    id: item.id,
+  })
+  if (result) {
+    await changed()
+  }
+}
+function kindName(kind: HomeMapEntry['kind']) {
+  return tr({ app: '应用', folder: '文件夹', window: '窗口' }[kind])
+}
+</script>
+
+<template>
+  <section class="home-panel home-map">
+    <header>
+      <div>
+        <h4>{{ tr('家的地图') }}</h4>
+        <p class="home-muted">{{ tr('她记住的常用地方，以及每个地方是做什么的。') }}</p>
+      </div>
+      <div class="home-filters">
+        <PButton
+          size="sm"
+          variant="secondary"
+          :disabled="disabled"
+          @click="toggleAdd"
+        >
+          {{ adding && !editing ? tr('收起') : tr('添加地点') }}
+        </PButton>
+        <PButton size="sm" variant="ghost" :disabled="disabled" :loading="busy" @click="refresh">
+          {{ tr('刷新') }}
+        </PButton>
+      </div>
+    </header>
+    <p v-if="!scope" class="home-empty">{{ tr('先在上面选一段对话。') }}</p>
+    <MotionCollapse :open="adding">
+      <form class="map-form" @submit.prevent="save">
+        <div class="fields">
+          <label>
+            {{ tr('类型') }}
+            <select v-model="form.kind" :disabled="disabled">
+              <option value="app">{{ tr('应用') }}</option>
+              <option value="folder">{{ tr('文件夹') }}</option>
+              <option value="window">{{ tr('窗口') }}</option>
+            </select>
+          </label>
+          <label>
+            {{ tr('名称') }}
+            <input v-model="form.name" maxlength="1000" required :disabled="disabled" />
+          </label>
+        </div>
+        <label>
+          {{ tr('位置') }}
+          <input v-model="form.location" maxlength="1000" required :disabled="disabled" />
+        </label>
+        <label>
+          {{ tr('用途') }}
+          <textarea v-model="form.purpose" maxlength="1000" rows="2" :disabled="disabled" />
+        </label>
+        <p class="home-muted">
+          {{ tr('这里只记地方和用途。含密码、联系方式或禁存词的内容不会被记下。') }}
+        </p>
+        <div class="actions">
+          <PButton
+            size="sm"
+            type="submit"
+            :disabled="disabled || !form.name.trim() || !form.location.trim()"
+          >
+            {{ editing ? tr('保存修改') : tr('添加地点') }}
+          </PButton>
+          <PButton size="sm" variant="ghost" :disabled="busy" @click="clear">
+            {{ editing ? tr('取消编辑') : tr('取消') }}
+          </PButton>
+        </div>
+      </form>
+    </MotionCollapse>
+    <Transition name="motion-rise">
+      <p v-if="error" role="alert" class="home-error">{{ error }}</p>
+    </Transition>
+    <div v-if="scope" class="toolbar">
+      <input
+        v-model="query"
+        type="search"
+        class="search"
+        :placeholder="tr('搜索地图')"
+        :aria-label="tr('搜索地图')"
+      />
+      <label class="check">
+        <input v-model="recycled" type="checkbox" />
+        {{ tr('看已删除的') }}
+      </label>
+    </div>
+    <MotionSkeleton v-if="scope && busy && !items.length" :rows="2" />
+    <p v-else-if="scope && !visible.length" class="home-empty">
+      {{
+        query
+          ? tr('没有找到相关的地点。')
+          : recycled
+            ? tr('没有删掉的地点。')
+            : tr('还没有记住任何地点。')
+      }}
+    </p>
+    <MotionList tag="ul" class="home-list">
+      <li v-for="item in visible" :key="item.id" class="item">
+        <div class="item-name">
+          <strong>{{ item.name }}</strong>
+          <small>{{ kindName(item.kind) }} · {{ item.location }}</small>
+        </div>
+        <span class="home-row-actions">
+          <PButton size="sm" variant="ghost" :disabled="disabled" @click="selected = item">
+            {{ tr('查看') }}
+          </PButton>
+          <PButton
+            v-if="!recycled"
+            size="sm"
+            variant="ghost"
+            :disabled="disabled"
+            @click="edit(item)"
+          >
+            {{ tr('编辑') }}
+          </PButton>
+          <PButton
+            v-if="!recycled"
+            size="sm"
+            variant="ghost"
+            :disabled="disabled"
+            @click="remove(item)"
+          >
+            {{ tr('删除') }}
+          </PButton>
+          <PButton
+            v-if="recycled"
+            size="sm"
+            variant="secondary"
+            :disabled="disabled"
+            @click="restore(item)"
+          >
+            {{ tr('恢复地点') }}
+          </PButton>
+        </span>
+      </li>
+    </MotionList>
+    <Transition name="motion-rise">
+      <section v-if="selected" class="preview">
+        <header>
+          <strong>{{ selected.name }}</strong>
+          <PButton size="sm" variant="ghost" @click="selected = null">{{ tr('关闭') }}</PButton>
+        </header>
+        <p>{{ selected.location }}</p>
+        <pre>{{ selected.purpose }}</pre>
+      </section>
+    </Transition>
+    <p v-if="recycled" class="home-muted">
+      {{ tr('删掉的地点在「改动备份留多久」的期限内都能找回，找回后编号不变。') }}
+    </p>
+  </section>
+</template>
+
+<style scoped src="./home/homePanel.css"></style>
+<style scoped src="./homePanels.css"></style>

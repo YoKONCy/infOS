@@ -32,6 +32,8 @@ export interface OnboardingStep {
   expression?: string
   /** 聚焦元素 CSS 选择器 */
   focusSelector?: string | null
+  /** 允许用户操作高亮区域，并可继续下一步。 */
+  interactive?: boolean
   /** 选择按钮 */
   choices?: { label: string; value: string }[]
   /** 此步由真实页面按钮接续，点击对话框不能直接结束。 */
@@ -81,7 +83,10 @@ const dialogOnTop = computed(
       (spotlight.value?.rect?.y ?? 0) > viewport.value.height * 0.5),
 )
 const blockers = computed(() => {
-  const rect = currentStep.value?.action && !preparing.value ? spotlight.value?.rect : null
+  const rect =
+    (currentStep.value?.action || currentStep.value?.interactive) && !preparing.value
+      ? spotlight.value?.rect
+      : null
   if (!rect) return [{ inset: '0' }]
   const { width, height } = viewport.value
   const left = Math.max(0, Math.min(width, rect.x - 8)),
@@ -236,11 +241,14 @@ function keyboard(event: KeyboardEvent) {
     const buttons = [
       ...(dialog.value?.querySelectorAll<HTMLButtonElement>('button:not(:disabled)') ?? []),
     ]
-    const action =
-      currentStep.value?.action && currentStep.value.focusSelector
-        ? document.querySelector<HTMLButtonElement>(currentStep.value.focusSelector)
+    const target =
+      (currentStep.value?.action || currentStep.value?.interactive) && currentStep.value.focusSelector
+        ? document.querySelector<HTMLElement>(currentStep.value.focusSelector)
         : null
-    if (action && !action.disabled) buttons.push(action)
+    if (target instanceof HTMLButtonElement && !target.disabled) buttons.push(target)
+    if (currentStep.value?.interactive && target) {
+      buttons.push(...target.querySelectorAll<HTMLButtonElement>('button:not(:disabled)'))
+    }
     if (!buttons.length) {
       event.preventDefault()
       dialog.value?.focus()

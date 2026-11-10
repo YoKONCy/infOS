@@ -102,6 +102,26 @@ export interface AgentPackageExport {
 }
 
 export const agentApi = {
+  previewCard: (file: File) => {
+    const data = new FormData()
+    data.append('file', file)
+    return apiClient.post<AgentCardPreview>('/agents/cards/preview', data)
+  },
+  importCard: (file: File, mode: 'create' | 'overwrite' | 'new') => {
+    const data = new FormData()
+    data.append('file', file)
+    data.append('mode', mode)
+    return apiClient.post<{ id: string; name: string }>(`/agents/cards/import`, data)
+  },
+  exportCard: (id: string, format: 'png' | 'zip', cover?: Blob) => {
+    const data = new FormData()
+    data.append('format', format)
+    if (cover) data.append('cover', cover, 'cover.png')
+    return apiClient.post<{ fileName: string; contentBase64: string }>(
+      `/agents/${encodeURIComponent(id)}/card/export`,
+      data,
+    )
+  },
   /** 获取所有 Agent */
   list: () => apiClient.get<AgentListItem[]>('/agents'),
 
@@ -177,6 +197,13 @@ export const agentApi = {
   /** 启用或关闭角色的主动陪伴调度。 */
   setCompanionState: (agentId: string, enabled: boolean) =>
     apiClient.put<CompanionStateResponse>(`/agents/${agentId}/companion`, { enabled }),
+}
+
+export interface AgentCardPreview {
+  agentId: string
+  name: string
+  exists: boolean
+  avatar: string
 }
 
 /** 角色陪伴调度状态。 */

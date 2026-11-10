@@ -23,13 +23,12 @@ describe('FlowStateService', () => {
     service = new FlowStateService(repo as never, threadService as never)
   })
 
-  it('局部更新目标时保留已有私有事实', async () => {
-    repo.get.mockResolvedValue({ currentGoal: '旧目标', privateFacts: '隐藏汤底', revision: 1 })
-    repo.save.mockImplementation(async (input) => ({
-      ...input,
+  it('局部补丁交给仓库事务合并，返回仓库保存后的完整心流', async () => {
+    repo.save.mockResolvedValue({
+      threadId: 'thread-1', agentId: 'pero', currentGoal: '主持海龟汤', privateFacts: '隐藏汤底',
       revision: 2,
       updatedAt: '2026-08-14 12:00:00',
-    }))
+    })
 
     const result = await service.update({
       threadId: 'thread-1',
@@ -38,9 +37,10 @@ describe('FlowStateService', () => {
     })
 
     expect(repo.save).toHaveBeenCalledWith(
-      expect.objectContaining({ currentGoal: '主持海龟汤', privateFacts: '隐藏汤底' }),
+      expect.objectContaining({ currentGoal: '主持海龟汤', privateFacts: undefined }),
     )
     expect(result.revision).toBe(2)
+    expect(result.privateFacts).toBe('隐藏汤底')
   })
 
   it('拒绝访问普通 Thread 中其他 Agent 的心流', async () => {

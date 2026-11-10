@@ -1,0 +1,10 @@
+{
+  "后端启动程序不存在或类型不受支持：{0}": "Backend launcher is missing or not a supported type: {0}",
+  "本机后端未运行，正在启动：{0}": "Local backend is not running, starting: {0}",
+  "后端启动程序打开失败：{0}": "Failed to open backend launcher: {0}",
+  "等待后端就绪超时（{0} 秒）": "Timed out waiting for the backend ({0} s)",
+  "开机启动已设置为：{0}": "Start at login set to: {0}",
+  "已设置后端启动程序：{0}": "Backend launcher set: {0}",
+  "后端启动程序已打开过，继续等待后端就绪": "Backend launcher already opened; still waiting for the backend",
+  "后端启动程序设置的签名无效（可能被应用外修改），已忽略": "Backend launcher setting has an invalid signature (possibly modified outside the app); ignored"
+}

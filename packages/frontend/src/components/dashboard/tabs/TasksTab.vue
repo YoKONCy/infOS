@@ -28,8 +28,10 @@ import {
   watch,
 } from 'vue'
 import { PixelIcon, PButton, PBadge, PEmpty } from '../../pixel'
+import MotionList from '../../motion/MotionList.vue'
 import { schedulerApi } from '../../../api/modules/schedulerApi'
 import { threadsApi, type ThreadInfo } from '../../../api/modules/threadsApi'
+import { threadDisplayName } from '../../../utils/threadPresentation'
 import type {
   SchedulerTask,
   ReminderItem as ReminderItemData,
@@ -676,7 +678,7 @@ onUnmounted(() => {
     </nav>
 
     <!-- ═══ 进行中视图 ═══ -->
-    <section v-if="activeView === 'active'" class="tasks-tab__section">
+    <section v-if="activeView === 'active'" class="tasks-tab__section motion-enter">
       <SocialTurnPanel
         :agent-id="agentStore.activeAgentId"
         tasks-only
@@ -703,7 +705,7 @@ onUnmounted(() => {
           <PixelIcon name="activity" size="xs" />
           {{ __t('ui.settings', '后台任务 ·') }} {{ taskCenter.activeTasks.length }}
         </h3>
-        <div class="tasks-tab__list">
+        <MotionList class="tasks-tab__list">
           <TaskCard
             v-for="task in taskCenter.activeTasks"
             :key="task.id"
@@ -715,7 +717,7 @@ onUnmounted(() => {
             @resume="(t) => taskCenter.resume(t.id)"
             @cancel="(t) => taskCenter.cancel(t.id)"
           />
-        </div>
+        </MotionList>
       </div>
 
       <!-- 常驻状态只供查看，不进入普通任务控制与计数。 -->
@@ -724,7 +726,7 @@ onUnmounted(() => {
           <PixelIcon name="activity" size="xs" />
           {{ __t('ui.settings', '系统常驻 · 只读状态') }}
         </summary>
-        <div class="tasks-tab__list">
+        <MotionList class="tasks-tab__list">
           <TaskCard
             v-for="task in residentTasks"
             :key="task.id"
@@ -733,7 +735,7 @@ onUnmounted(() => {
             :agent-name="agentDisplayName(task.agentId)"
             @detail="openDetail"
           />
-        </div>
+        </MotionList>
       </details>
 
       <!-- 待触发提醒（无后台任务时也展示） -->
@@ -742,21 +744,21 @@ onUnmounted(() => {
           <PixelIcon name="clock" size="xs" />
           {{ __t('ui.settings', '待触发提醒 ·') }} {{ reminders.length }}
         </h3>
-        <div class="tasks-tab__list">
+        <MotionList class="tasks-tab__list">
           <ReminderItem
             v-for="item in reminders"
             :key="item.id"
             :item="item"
             @changed="fetchReminders"
           />
-        </div>
+        </MotionList>
       </div>
     </section>
 
     <!-- ═══ 历史记录视图（时间线） ═══ -->
     <section
       v-if="activeView === 'history'"
-      class="tasks-tab__section"
+      class="tasks-tab__section motion-enter"
       :aria-busy="taskCenter.isLoadingHistory"
     >
       <form class="task-history-filter" @submit.prevent="taskCenter.refreshHistory({ page: 1 })">
@@ -885,7 +887,7 @@ onUnmounted(() => {
     </section>
 
     <!-- ═══ 定时与提醒视图 ═══ -->
-    <section v-if="activeView === 'reminders'" class="tasks-tab__section">
+    <section v-if="activeView === 'reminders'" class="tasks-tab__section motion-enter">
       <details ref="scheduledComposer" class="scheduled-agent-composer">
         <summary>
           <PixelIcon name="clock" size="sm" />
@@ -911,7 +913,7 @@ onUnmounted(() => {
             <select v-model="scheduledThreadId">
               <option value="">{{ __t('ui.settings', '使用角色最近的会话') }}</option>
               <option v-for="thread in scheduledThreads" :key="thread.id" :value="thread.id">
-                {{ thread.title || __t('ui.settings', '未命名会话') }} ·
+                {{ threadDisplayName(thread) }} ·
                 {{
                   thread.interactionMode === 'minimal'
                     ? __t('ui.settings', '极简')
@@ -971,14 +973,14 @@ onUnmounted(() => {
           v-if="!isLoadingReminders && reminders.length === 0"
           :description="__t('ui.settings', '通过聊天让 Agent 帮你设置提醒吧~')"
         />
-        <div v-else class="tasks-tab__list">
+        <MotionList v-else class="tasks-tab__list">
           <ReminderItem
             v-for="item in reminders"
             :key="item.id"
             :item="item"
             @changed="fetchReminders"
           />
-        </div>
+        </MotionList>
       </div>
 
       <!-- 系统后台任务（折叠） -->

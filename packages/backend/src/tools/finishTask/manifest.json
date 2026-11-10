@@ -7,10 +7,15 @@
   "type": "tool",
   "entry": "index.ts",
   "category": "core",
-  "platforms": ["windows", "linux", "darwin", "docker"],
+  "platforms": [
+    "windows",
+    "linux",
+    "darwin",
+    "docker"
+  ],
   "toolDefinition": {
     "name": "finish_task",
-    "description": "显式提交任务完成、部分完成或失败状态；普通回复可直接输出并结束，无需调用。可选角色状态只作用于当前会话，并随本轮消息删除或撤回。",
+    "description": "提交本次执行结果与最终回复。可同时指定接下来休息、等待某人回答或等待已有任务结果，由事件恢复执行。可选状态更新归角色共享。",
     "display": {
       "label": "完成任务",
       "description": "结束当前任务，并把最终结果回复给你。",
@@ -21,13 +26,36 @@
     "parameters": {
       "type": "object",
       "properties": {
+        "next_activity": {
+          "type": "object",
+          "description": "角色主会话或据点执行结束后的等待意图。据点等待在场伙伴回答时，本次发言自动形成定向请求。等待时释放执行，由真实消息或任务结果恢复。",
+          "properties": {
+            "kind": { "type": "string", "enum": ["rest", "wait_message", "wait_task"] },
+            "senderId": { "type": "string", "description": "等待回答的角色ID，用户使用 user。" },
+            "taskId": { "type": "string", "description": "等待的已有后台任务ID。" }
+          },
+          "required": ["kind"],
+          "additionalProperties": false
+        },
+        "ongoing_goals": {
+          "type": "string",
+          "description": "跨场景持续目标的完整当前记录，留空可清除。"
+        },
+        "commitments": {
+          "type": "string",
+          "description": "持续承诺的完整当前记录，留空可清除。"
+        },
+        "relationships": {
+          "type": "string",
+          "description": "当前关系状态的完整记录，留空可清除。"
+        },
         "spoken_reply": {
           "type": "string",
           "description": "独立的简短口语答复，通常一至两句、不超过一百二十字，不含代码、emoji或装饰符号。TTS只播放此字段，完整交付仍放在reply。"
         },
         "reply": {
           "type": "string",
-          "description": "调用本工具时提交的最终回复，必填。"
+          "description": "最终回复。主线已经通过 conversation 发表消息时可省略。据点休息可留空，等待回答时提供本次发言，其余执行提供完整交付。"
         },
         "summary": {
           "type": "string",
@@ -36,7 +64,11 @@
         "status": {
           "type": "string",
           "description": "完成状态",
-          "enum": ["done", "partial", "failed"]
+          "enum": [
+            "done",
+            "partial",
+            "failed"
+          ]
         },
         "mood": {
           "type": "string",
@@ -108,7 +140,13 @@
           "properties": {
             "outcome": {
               "type": "string",
-              "enum": ["continue", "wait", "deliver", "blocked", "failed"]
+              "enum": [
+                "continue",
+                "wait",
+                "deliver",
+                "blocked",
+                "failed"
+              ]
             },
             "summary": {
               "type": "string"
@@ -137,16 +175,22 @@
                     "type": "string"
                   }
                 },
-                "required": ["toolCallId", "description"],
+                "required": [
+                  "toolCallId",
+                  "description"
+                ],
                 "additionalProperties": false
               }
             }
           },
-          "required": ["outcome", "summary"],
+          "required": [
+            "outcome",
+            "summary"
+          ],
           "additionalProperties": false
         }
       },
-      "required": ["reply"]
+      "required": []
     }
   }
 }

@@ -7,10 +7,14 @@
   "type": "tool",
   "entry": "index.ts",
   "category": "core",
-  "platforms": ["windows", "linux", "darwin"],
+  "platforms": [
+    "windows",
+    "linux",
+    "darwin"
+  ],
   "toolDefinition": {
     "name": "take_screenshot",
-    "description": "观察桌面、指定窗口或参考截图中的选区，返回新截图、observationId和可选控件摘要。",
+    "description": "观察桌面。要操作某个程序：先用get_active_windows拿到windowId，传windowId观察，系统会先把它切到前台再截取窗口；不传windowId是整屏观察，只供查看，不能用于点击和输入。也可用region在参考截图上框选局部放大。返回observationId、坐标换算（coordinateContext.mapping：截图像素↔物理像素），可选带编号的元素图（elementMap）、文字识别、持续盯窗口与陪看（watch）。「桌面操作」总开关打开时get_active_windows与automation_execute常驻菜单；菜单里没有时先调用expand_advanced_tools展开。操作流程与错误码处理见Skill desktop-operation。",
     "display": {
       "label": "截取屏幕画面",
       "description": "截取当前电脑屏幕，供视觉模型查看。",
@@ -29,17 +33,34 @@
           "type": "object",
           "description": "参考截图中的矩形，按其像素坐标填写；不能超出该截图。可继续在局部截图中选择更小区域",
           "properties": {
-            "x": { "type": "number", "minimum": 0 },
-            "y": { "type": "number", "minimum": 0 },
-            "width": { "type": "number", "exclusiveMinimum": 0 },
-            "height": { "type": "number", "exclusiveMinimum": 0 }
+            "x": {
+              "type": "number",
+              "minimum": 0
+            },
+            "y": {
+              "type": "number",
+              "minimum": 0
+            },
+            "width": {
+              "type": "number",
+              "exclusiveMinimum": 0
+            },
+            "height": {
+              "type": "number",
+              "exclusiveMinimum": 0
+            }
           },
-          "required": ["x", "y", "width", "height"],
+          "required": [
+            "x",
+            "y",
+            "width",
+            "height"
+          ],
           "additionalProperties": false
         },
         "windowId": {
           "type": "string",
-          "description": "窗口列表中的windowId；指定后截取窗口所在区域"
+          "description": "窗口列表中的windowId，或infOS自己的窗口ID（main、panel:<页面ID>、card:<卡片ID>，见shell_layout）；指定后先切到前台（infOS自己的窗口只看不切）再截取窗口区域"
         },
         "displayId": {
           "type": "string",
@@ -47,13 +68,68 @@
         },
         "includeElements": {
           "type": "boolean",
-          "description": "读取目标窗口可操作控件，默认关闭"
+          "description": "返回带编号的元素图elementMap：可操作控件（带elementId）、界面文字与OCR文字合成一份清单，截图坐标；UIA读到的太少时自动补OCR。默认关闭"
+        },
+        "ocr": {
+          "type": "boolean",
+          "description": "识别画面文字（Windows OCR）并并入elementMap；不可用时说明原因"
+        },
+        "annotate": {
+          "type": "boolean",
+          "description": "在截图上叠加elementMap的编号框"
+        },
+        "watch": {
+          "type": "object",
+          "description": "持续盯windowId窗口：start后本机截图（不发给你），listen:true同时听电脑声音（本机转写，用户须在设置里开耳朵），companion:true陪看（含listen，会按频率上限主动叫你插话）；poll取上次以来变化区域的拼图+新台词heard+陪看时钟；heard按from/to(ISO)或lastSec查台词（不动游标）；status；stop全部停止",
+          "properties": {
+            "action": {
+              "type": "string",
+              "enum": [
+                "start",
+                "poll",
+                "heard",
+                "status",
+                "stop"
+              ]
+            },
+            "fps": {
+              "type": "number",
+              "minimum": 0.2,
+              "maximum": 2
+            },
+            "durationSec": {
+              "type": "integer",
+              "minimum": 10,
+              "maximum": 3600
+            },
+            "listen": {
+              "type": "boolean"
+            },
+            "companion": {
+              "type": "boolean"
+            },
+            "from": {
+              "type": "string"
+            },
+            "to": {
+              "type": "string"
+            },
+            "lastSec": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 7200
+            }
+          },
+          "required": [
+            "action"
+          ],
+          "additionalProperties": false
         },
         "maxWidth": {
           "type": "integer",
           "minimum": 320,
           "maximum": 2560,
-          "description": "输出截图最大宽度，默认1280；局部截图按选区保留清晰度，不放大已有图片"
+          "description": "输出截图最大宽度；默认整屏1600、窗口1920、局部2560（按原始清晰度，不放大）"
         }
       }
     }

@@ -71,9 +71,11 @@ function thinkingSections(message: ConversationMessageProjection): string[] {
 
   const raw = message.rawContent ?? ''
   return [
-    ...raw.matchAll(/<(selfMinding|think|thinking|thought)(?:\s[^>]*)?>([\s\S]*?)<\/\1>/gi),
+    ...raw.matchAll(/<(innerVoice|selfMinding|think|thinking|thought)(?:\s[^>]*)?>([\s\S]*?)<\/\1>/gi),
   ].map((match) => {
-    const tag = match[1]!.toLowerCase() === 'selfminding' ? 'selfMinding' : match[1]!.toLowerCase()
+    const lower = match[1]!.toLowerCase()
+    const tag =
+      lower === 'selfminding' ? 'selfMinding' : lower === 'innervoice' ? 'innerVoice' : lower
     return `<${tag}>${match[2] ?? ''}</${tag}>`
   })
 }

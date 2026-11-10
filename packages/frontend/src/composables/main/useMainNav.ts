@@ -13,9 +13,10 @@ import { t as __t } from '../../i18n/index'
  */
 
 import { ref, computed, watch, type Ref } from 'vue'
-import { invoke } from '../../utils/ipcAdapter'
+import { invoke, isElectron } from '../../utils/ipcAdapter'
 import { preloadTab } from './tabRegistry'
 import { useNotificationStore } from '../../stores/useNotificationStore'
+import { detachedPageIds, redirectTabRequest } from '../shell/useDetachedPanels'
 
 // ── 常量 ──
 
@@ -186,6 +187,19 @@ const navGroups: MainNavGroup[] = [
           secondary: 'rgba(252, 165, 165, 0.06)',
         },
       },
+      // 桌面卡片只在 Electron 主应用里存在。
+      ...(isElectron()
+        ? [
+            {
+              id: 'cards',
+              get label() {
+                return __t('ui.navigation', '卡片')
+              },
+              labelEn: 'Cards',
+              icon: 'layout',
+            },
+          ]
+        : []),
     ],
   },
   {
@@ -208,6 +222,13 @@ const navGroups: MainNavGroup[] = [
           return __t('ui.navigation', '系统设定')
         },
         icon: 'settings',
+      },
+      {
+        id: 'desktop_home',
+        get label() {
+          return __t('ui.desktop', '桌面与家')
+        },
+        icon: 'home',
       },
       {
         id: 'model_config',
@@ -287,17 +308,40 @@ const navGroups: MainNavGroup[] = [
 
 // ── 方法 ──
 
+/** 离开当前页面前的确认；返回 false 时取消切换（例如有未保存修改且用户选择留下）。 */
+export type TabLeaveGuard = () => boolean | Promise<boolean>
+const tabLeaveGuards = new Set<TabLeaveGuard>()
+
+/** 页面挂载时注册、卸载时调用返回的函数注销。 */
+export function registerTabLeaveGuard(guard: TabLeaveGuard): () => void {
+  tabLeaveGuards.add(guard)
+  return () => tabLeaveGuards.delete(guard)
+}
+
+/** 依次执行离开确认（例如合回或关闭桌面面板前）；任一确认选择留下时返回 false。 */
+export async function confirmTabLeave(): Promise<boolean> {
+  for (const guard of [...tabLeaveGuards]) if (!(await guard())) return false
+  return true
+}
+
 /** 切换 Tab：首次进入先完成模块下载和解析，再原子提交，旧页面始终保持可见。 */
 let tabRequestSequence = 0
 async function setTab(id: string): Promise<void> {
   const item = navGroups.flatMap((g) => g.items).find((i) => i.id === id)
   if (item?.disabled) return
+  // 已摘成桌面面板的页面改为聚焦面板；面板窗口中的跳转交给主窗口。
+  if (redirectTabRequest(id)) return
   if (currentTab.value === id) {
     tabRequestSequence++
     pendingTab.value = ''
     return
   }
   const sequence = ++tabRequestSequence
+  for (const guard of [...tabLeaveGuards]) {
+    if (!(await guard())) return
+    // 确认期间又发起了新的切换时，以最后一次为准。
+    if (sequence !== tabRequestSequence) return
+  }
   const order = navGroups.flatMap((group) => group.items).map((entry) => entry.id)
   tabDirection.value = order.indexOf(id) >= order.indexOf(currentTab.value) ? 1 : -1
   pendingTab.value = id
@@ -397,6 +441,14 @@ watch(theme, () => {
 
 // 初始化
 init()
+
+// 主窗口当前页面被摘成桌面面板后切回对话，同一页面只在一个地方显示。
+watch(detachedPageIds, (ids) => {
+  if (!ids.has(currentTab.value)) return
+  tabRequestSequence++
+  pendingTab.value = ''
+  currentTab.value = 'chat'
+})
 
 // 接收桌宠等其他窗口修改的主题，复用现有应用与持久化逻辑。
 function syncThemeFromStorage(event: StorageEvent): void {

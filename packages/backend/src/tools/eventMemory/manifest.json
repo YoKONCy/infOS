@@ -3,95 +3,17 @@
   "name": "事件记忆",
   "version": "1.0.0",
   "author": "infOS Team",
-  "description": "主动记录、修订和查询Agent的长期事件记忆",
+  "description": "查询与召回由后台整理的长期事件记忆",
   "type": "tool",
   "entry": "index.ts",
   "category": "memory",
-  "platforms": ["windows", "linux", "darwin", "docker"],
+  "platforms": [
+    "windows",
+    "linux",
+    "darwin",
+    "docker"
+  ],
   "tools": [
-    {
-      "name": "write_event_note",
-      "description": "记录值得长期保留的真实互动；同一目标或连续因果合并，无关事件分开，略过寒暄和临时操作。草稿随本轮回复保存后提交。",
-      "display": {
-        "label": "记录事件",
-        "description": "记录值得长期记住的互动。",
-        "icon": "book",
-        "color": "orange",
-        "style": "edit"
-      },
-      "parameters": {
-        "type": "object",
-        "required": ["narrative", "importance", "affect"],
-        "properties": {
-          "narrative": {
-            "type": "string",
-            "description": "完整记事，中文以‘我’为主语开篇，英文用‘I’；‘我’指当前 Agent。如‘我得知小林下周搬家’。概括真实互动，保留他人经历、偏好和感受的归属及信息来源；不照抄对话或推测。"
-          },
-          "importance": {
-            "type": "integer",
-            "minimum": 0,
-            "maximum": 10,
-            "description": "长期价值：0到3通常不记录，4到6有持续价值，7到8长期重要，9到10仅限罕见关键转折"
-          },
-          "affect": {
-            "type": "object",
-            "required": ["tones", "valence", "arousal"],
-            "properties": {
-              "tones": { "type": "array", "items": { "type": "string" } },
-              "valence": { "type": "integer", "minimum": 0, "maximum": 10 },
-              "arousal": { "type": "integer", "minimum": 0, "maximum": 10 }
-            }
-          },
-          "participants": { "type": "array", "items": { "type": "string" } },
-          "places": { "type": "array", "items": { "type": "string" } },
-          "objects": { "type": "array", "items": { "type": "string" } },
-          "topics": { "type": "array", "items": { "type": "string" } },
-          "scope": { "type": "string", "enum": ["current_pair", "current_uncovered_segment"] }
-        }
-      }
-    },
-    {
-      "name": "revise_event_note",
-      "description": "修订已有事件记忆，保留真实事实、信息来源与原有个性。替换草稿随本轮回复保存后提交。",
-      "display": {
-        "label": "修订事件",
-        "description": "修订已有长期事件记忆。",
-        "icon": "edit",
-        "color": "orange",
-        "style": "edit"
-      },
-      "parameters": {
-        "type": "object",
-        "required": ["targetId", "narrative", "importance", "affect"],
-        "properties": {
-          "targetId": { "type": "string", "description": "待修订EventNote ID" },
-          "narrative": {
-            "type": "string",
-            "description": "完整替换记事，中文以‘我’为主语开篇，英文用‘I’；‘我’指当前 Agent。如‘我得知小林下周搬家’。概括真实互动，保留他人经历、偏好和感受的归属及信息来源；不照抄对话或推测。"
-          },
-          "importance": {
-            "type": "integer",
-            "minimum": 0,
-            "maximum": 10,
-            "description": "长期价值：0到3通常不记录，4到6有持续价值，7到8长期重要，9到10仅限罕见关键转折"
-          },
-          "affect": {
-            "type": "object",
-            "required": ["tones", "valence", "arousal"],
-            "properties": {
-              "tones": { "type": "array", "items": { "type": "string" } },
-              "valence": { "type": "integer", "minimum": 0, "maximum": 10 },
-              "arousal": { "type": "integer", "minimum": 0, "maximum": 10 }
-            }
-          },
-          "participants": { "type": "array", "items": { "type": "string" } },
-          "places": { "type": "array", "items": { "type": "string" } },
-          "objects": { "type": "array", "items": { "type": "string" } },
-          "topics": { "type": "array", "items": { "type": "string" } },
-          "scope": { "type": "string", "enum": ["current_pair", "current_uncovered_segment"] }
-        }
-      }
-    },
     {
       "name": "query_event_notes",
       "description": "主动查询自己的长期事件记忆；默认隐藏归档事件。",
@@ -105,7 +27,9 @@
       "parameters": {
         "type": "object",
         "properties": {
-          "query": { "type": "string" },
+          "query": {
+            "type": "string"
+          },
           "mode": {
             "type": "string",
             "enum": [
@@ -119,13 +43,35 @@
               "mixed"
             ]
           },
-          "from": { "type": "string" },
-          "to": { "type": "string" },
-          "includeArchived": { "type": "boolean" },
-          "limit": { "type": "integer", "minimum": 1, "maximum": 100 },
-          "maxDepth": { "type": "integer", "minimum": 0, "maximum": 6 },
-          "maxNodes": { "type": "integer", "minimum": 1, "maximum": 100 },
-          "maxReturnTokens": { "type": "integer", "minimum": 1, "maximum": 32000 },
+          "from": {
+            "type": "string"
+          },
+          "to": {
+            "type": "string"
+          },
+          "includeArchived": {
+            "type": "boolean"
+          },
+          "limit": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 100
+          },
+          "maxDepth": {
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 6
+          },
+          "maxNodes": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 100
+          },
+          "maxReturnTokens": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 32000
+          },
           "edgeLabels": {
             "type": "array",
             "items": {
@@ -142,7 +88,14 @@
               ]
             }
           },
-          "direction": { "type": "string", "enum": ["outgoing", "incoming", "both"] }
+          "direction": {
+            "type": "string",
+            "enum": [
+              "outgoing",
+              "incoming",
+              "both"
+            ]
+          }
         }
       }
     }

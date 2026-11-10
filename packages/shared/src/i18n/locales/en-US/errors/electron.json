@@ -1,4 +1,5 @@
 {
+  "PERCEPTION_STOPPED: 感知已全部停止，请在界面点击恢复": "PERCEPTION_STOPPED: Perception has been stopped. Click Resume in the app to continue.",
   "SCREENSHOT_REGION_INVALID: 选区必须是参考画面内的有效矩形": "SCREENSHOT_REGION_INVALID: The region must be a valid rectangle within the reference image",
   "SCREENSHOT_SIZE_INVALID: maxWidth 必须是 320 到 2560 的整数": "SCREENSHOT_SIZE_INVALID: maxWidth must be an integer between 320 and 2560",
   "SCREENSHOT_REFERENCE_REQUIRED: 区域截图需要有效的参考截图编号": "SCREENSHOT_REFERENCE_REQUIRED: A region capture requires a valid reference screenshot ID",
@@ -98,7 +99,7 @@
   "请在主应用中继续桌面操作": "Please continue desktop operations in the main application",
   "DESKTOP_PLATFORM_UNSUPPORTED: 受控桌面操作目前支持 Windows": "DESKTOP_PLATFORM_UNSUPPORTED: Controlled desktop operations currently support Windows",
   "DESKTOP_OBSERVATION_STALE: 用户操作后需要重新观察": "DESKTOP_OBSERVATION_STALE: User needs to re-observe after operation",
-  "DESKTOP_DISPLAY_NOT_FOUND: 目标显示器已断开": "DESKTOP_DISPLAY_NOT_FOUND: The target display is disconnected",
+  "DESKTOP_DISPLAY_NOT_FOUND: 目标显示器已断开": "DESKTOP_DISPLAY_NOT_FOUND: The target display was disconnected",
   "DESKTOP_OBSERVATION_STALE: 观察期间控制权发生变化，请重新观察": "DESKTOP_OBSERVATION_STALE: Control changed during observation, please observe again",
   "DESKTOP_OBSERVATION_STALE: 截图期间窗口发生移动，请重新观察": "DESKTOP_OBSERVATION_STALE: The window moved during the screenshot, please observe again",
   "DESKTOP_OBSERVATION_STALE: 请先观察桌面，再引用本次 observationId 操作": "DESKTOP_OBSERVATION_STALE: Please observe the desktop first, and then refer to this observationId operation",
@@ -108,6 +109,7 @@
   "DESKTOP_CANCELLED: 桌面操作已暂停": "DESKTOP_CANCELLED: Desktop operation has been suspended",
   "DESKTOP_OBSERVATION_STALE: 前台窗口已变化，请重新观察或激活目标窗口": "DESKTOP_OBSERVATION_STALE: The foreground window has changed, please re-observe or activate the target window",
   "停止快捷键已被占用，请更换绑定": "The stop shortcut key has been occupied, please change the binding.",
+  "桌面操作已关闭": "Desktop operation has been turned off",
   "DESKTOP_COORDINATE_INVALID: {0}必须是有限数字": "DESKTOP_COORDINATE_INVALID: {0} must be a finite number",
   "DESKTOP_COORDINATE_OUT_OF_RANGE: {0}必须在{1}到{2}之间": "DESKTOP_COORDINATE_OUT_OF_RANGE: {0} must be between {1} and {2}",
   "DESKTOP_SCREENSHOT_CONTEXT_INVALID: 截图宽高必须大于0": "DESKTOP_SCREENSHOT_CONTEXT_INVALID: Screenshot width and height must be greater than 0",
@@ -203,5 +205,15 @@
   "仅通知层可以操作通知": "Only the notification layer can operate notifications",
   "通知数据无效": "notification data is invalid",
   "未知窗口配置: {0}": "Unknown window configuration: {0}",
-  "仅主应用可以修改界面语言": "Only the main application can modify the interface language"
+  "仅主应用可以修改界面语言": "Only the main application can modify the interface language",
+  "DESKTOP_WINDOW_ID_INVALID: windowId 应为窗口列表中的十进制 windowId，或 infOS 窗口 ID（main、panel:<页面 ID>、card:<卡片 ID>）": "DESKTOP_WINDOW_ID_INVALID: windowId must be a decimal windowId from the window list, or an infOS window ID (main, panel:<page ID>, card:<card ID>)",
+  "SCREEN_CAPTURE_REGION_INVALID: 窗口或选区不在目标显示器内": "SCREEN_CAPTURE_REGION_INVALID: The window or region is not on the target display",
+  "SCREEN_CAPTURE_FAILED: 系统截图接口出错：{0}": "SCREEN_CAPTURE_FAILED: The system screenshot API failed: {0}",
+  "SCREEN_CAPTURE_DENIED: 系统没有提供可截取的屏幕，可能是截图权限被拒、正处于锁屏或管理员确认界面，或远程桌面已断开": "SCREEN_CAPTURE_DENIED: The system provided no screen to capture; screen capture may be denied, the session may be on the lock or elevation prompt screen, or remote desktop may be disconnected",
+  "SCREEN_CAPTURE_SOURCE_MISSING: 没有找到目标显示器的截图源": "SCREEN_CAPTURE_SOURCE_MISSING: No capture source was found for the target display",
+  "SCREEN_CAPTURE_EMPTY: 截图结果为空，可能是截图权限被拒或画面受保护": "SCREEN_CAPTURE_EMPTY: The screenshot is empty; screen capture may be denied or the content is protected",
+  "DESKTOP_WATCH_ACTION_INVALID: watch.action 必须是 start、poll、status 或 stop": "DESKTOP_WATCH_ACTION_INVALID: watch.action must be start, poll, status or stop",
+  "PERCEPTION_IMAGE_UNAVAILABLE: 这张图没能通过本机打码，所以不发。可能是文字识别不可用或超时，或者窗口刚刚变了": "PERCEPTION_IMAGE_UNAVAILABLE: This image could not be redacted locally, so it was not sent. Text recognition may be unavailable or timed out, or the window just changed",
+  "PERCEPTION_SENSITIVE_WINDOW: 这个窗口在涂黑名单里，不能看": "PERCEPTION_SENSITIVE_WINDOW: This window is on the redaction list and cannot be viewed",
+  "PERCEPTION_WATCH_UNAVAILABLE: 没找到能陪看的窗口，或者陪看现在不能开始": "PERCEPTION_WATCH_UNAVAILABLE: No window to watch was found, or watching cannot start right now"
 }

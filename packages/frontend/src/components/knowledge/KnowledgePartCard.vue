@@ -5,6 +5,7 @@ import { ref } from 'vue'
 import type { KnowledgePartInfo, KnowledgeSearchHit } from '@infos/shared'
 import { knowledgeApi } from '../../api/modules/knowledgeApi'
 import { PixelIcon } from '../pixel'
+import MotionCollapse from '../motion/MotionCollapse.vue'
 
 const props = defineProps<{ part: KnowledgePartInfo; hit?: KnowledgeSearchHit }>()
 const open = ref(false)
@@ -82,12 +83,14 @@ async function expand(more = false): Promise<void> {
       </button>
     </footer>
     <p v-if="error" class="part-error" role="alert">{{ error }}</p>
-    <div v-if="open" class="part-original">
-      <pre>{{ body }}</pre>
-      <button v-if="offset !== undefined" :disabled="loading" @click="expand(true)">
-        {{ loading ? __t('ui.knowledge', '读取中…') : __t('ui.knowledge', '继续展开') }}
-      </button>
-    </div>
+    <MotionCollapse :open="open" lazy>
+      <div class="part-original">
+        <pre>{{ body }}</pre>
+        <button v-if="offset !== undefined" :disabled="loading" @click="expand(true)">
+          {{ loading ? __t('ui.knowledge', '读取中…') : __t('ui.knowledge', '继续展开') }}
+        </button>
+      </div>
+    </MotionCollapse>
   </article>
 </template>
 

@@ -1,13 +1,16 @@
-import { and, asc, eq, inArray, or } from 'drizzle-orm'
+import { and, asc, desc, eq, inArray } from 'drizzle-orm'
 import { DEFAULT_CHARACTER_STATE, normalizeCharacterState } from '@infos/shared'
 import {
-  threadCharacterStateEvents as events,
+  agentCharacterStateEvents as events,
   threads,
   threadMessages,
   groupChatMessages,
+  agentExperiences,
+  kernelOutboxEvents,
 } from '../../database/schema'
 import type { DrizzleDb } from '../../database'
 import { AppError } from '../../lib/appError'
+import { ConversationRepository } from '../../repositories/conversation.repo'
 
 const TEMP_TEXT_TTL_MS = 6 * 60 * 60 * 1000
 const MAX_TEMP_LINES_PER_POOL = 12
@@ -20,6 +23,9 @@ export interface PetStateUpdateData {
   mood?: string
   vibe?: string
   mind?: string
+  ongoingGoals?: string
+  commitments?: string
+  relationships?: string
   clickMessages?: Record<string, string[]>
   idleMessages?: string[]
   backMessages?: string[]
@@ -30,6 +36,10 @@ export interface PetStateScope {
   pairId?: string
   toolCallId?: string
   signal?: AbortSignal
+  generation?: number
+  executionId?: string
+  channel?: string
+  characterStateVersion?: { revision: number }
 }
 
 export interface PetStateData {
@@ -39,6 +49,9 @@ export interface PetStateData {
   mood: string
   vibe: string
   mind: string
+  ongoingGoals: string
+  commitments: string
+  relationships: string
   clickMessagesJson: string
   idleMessagesJson: string
   backMessagesJson: string
@@ -46,7 +59,7 @@ export interface PetStateData {
   updatedAt: string | null
 }
 
-/** 状态归属 Thread × Agent；按剩余变更重放，删除中间轮次不会覆盖后续有效字段。 */
+/** 角色共享状态按来源贡献重放，撤回一轮保留其他场景随后产生的有效字段。 */
 export class PetStateService {
   private publish?: (payload: Record<string, unknown>) => Promise<void>
   constructor(private db: DrizzleDb) {}
@@ -56,6 +69,8 @@ export class PetStateService {
   }
 
   async get(agentId: string, threadId?: string): Promise<PetStateData | null> {
+    if (!threadId) threadId = this.db.select({ id: threads.id }).from(threads)
+      .where(and(eq(threads.agentId, agentId), eq(threads.threadKind, 'main'))).get()?.id
     if (!threadId) return null
     const thread = this.db
       .select({ agentId: threads.agentId, channel: threads.channel, status: threads.status })
@@ -67,10 +82,7 @@ export class PetStateService {
       .select()
       .from(events)
       .where(
-        and(
-          eq(events.threadId, threadId),
-          or(eq(events.agentId, agentId), eq(events.agentId, '*')),
-        ),
+        eq(events.agentId, agentId),
       )
       .orderBy(asc(events.id))
       .all()
@@ -85,17 +97,15 @@ export class PetStateService {
       textExpiresAt: null,
       updatedAt: null,
     }
-    if (thread.status === 'deleted') return state
-    const retracted = new Set(rows.filter((row) => row.kind === 'retract').map((row) => row.pairId))
-    const clearedThrough = rows.filter((row) => row.kind === 'clear').at(-1)?.id ?? 0
+    const sourceKey = (row: typeof rows[number]) => `${row.threadId}:${row.generation}:${row.pairId}`
+    const retracted = new Set(rows.filter((row) => row.kind === 'retract').map(sourceKey))
     let click: Record<string, string[]> = {},
       idle: string[] = [],
       back: string[] = []
     for (const row of rows) {
       if (
         row.kind !== 'update' ||
-        row.id <= clearedThrough ||
-        (row.pairId && retracted.has(row.pairId))
+        retracted.has(sourceKey(row))
       )
         continue
       const patch = JSON.parse(row.patchJson) as PetStateUpdateData
@@ -138,6 +148,8 @@ export class PetStateService {
     scope.signal?.throwIfAborted()
     // 全部检查与写入同步完成，不在检查后让出执行权，避免撤回与旧工具竞态。
     this.db.transaction((tx) => {
+      const continuousExecution = scope.pairId ? new ConversationRepository(this.db).get(scope.pairId) : undefined
+      if (continuousExecution) new ConversationRepository(this.db).assertCurrent(continuousExecution.id)
       const thread = tx
         .select({
           agentId: threads.agentId,
@@ -145,6 +157,7 @@ export class PetStateService {
           status: threads.status,
           platform: threads.platform,
           platformIdentifier: threads.platformIdentifier,
+          generation: threads.generation,
         })
         .from(threads)
         .where(eq(threads.id, scope.threadId))
@@ -152,6 +165,7 @@ export class PetStateService {
       if (
         !thread ||
         thread.status === 'deleted' ||
+        (scope.generation !== undefined && thread.generation !== scope.generation) ||
         (thread.channel !== 'group' && thread.agentId !== agentId)
       )
         throw new AppError('FORBIDDEN', { message: '该会话不存在、已删除或不属于当前角色' })
@@ -182,6 +196,7 @@ export class PetStateService {
                     (thread.platformIdentifier ?? '').slice(0, -(thread.agentId.length + 1)),
                   ),
                   eq(groupChatMessages.pairId, scope.pairId!),
+                  eq(groupChatMessages.status, 'active'),
                 ),
               )
               .get()
@@ -196,25 +211,56 @@ export class PetStateService {
                 ),
               )
               .get()
-      if (!activePair) throw new AppError('CONFLICT', { message: '状态来源消息不存在或已撤回' })
+      const scenePair = !activePair && tx.select({ id: agentExperiences.id }).from(agentExperiences)
+        .innerJoin(groupChatMessages, eq(groupChatMessages.id, agentExperiences.sourceMessageId))
+        .where(and(eq(agentExperiences.agentId, agentId), eq(agentExperiences.threadId, scope.threadId),
+          eq(agentExperiences.generation, thread.generation), eq(agentExperiences.withdrawn, false),
+          eq(groupChatMessages.pairId, scope.pairId!), eq(groupChatMessages.status, 'active'))).get()
+      const withdrawnPair = tx.select({ id: threadMessages.id }).from(threadMessages)
+        .where(and(eq(threadMessages.threadId, scope.threadId), eq(threadMessages.pairId, scope.pairId!), eq(threadMessages.status, 'deleted'))).get()
+      const withdrawnScene = tx.select({ id: groupChatMessages.id }).from(groupChatMessages)
+        .where(and(eq(groupChatMessages.pairId, scope.pairId!), eq(groupChatMessages.status, 'deleted'))).get()
+      const execution = scope.channel !== 'group' && !activePair && !scenePair && !withdrawnPair && !withdrawnScene && scope.executionId && scope.generation !== undefined
+        ? tx.select({ payload: kernelOutboxEvents.payloadJson }).from(kernelOutboxEvents)
+          .where(and(eq(kernelOutboxEvents.executionId, scope.executionId), eq(kernelOutboxEvents.eventType, 'kernel.execution.created'), eq(kernelOutboxEvents.principalId, agentId))).get()
+        : undefined
+      const executionThread = execution ? (JSON.parse(execution.payload) as { descriptor?: { threadId?: string } }).descriptor?.threadId : undefined
+      if (!activePair && !scenePair &&
+          !(continuousExecution?.threadId === scope.threadId && continuousExecution.agentId === agentId) &&
+          executionThread !== scope.threadId) throw new AppError('CONFLICT', { message: '状态来源消息不存在或已撤回' })
+      const latest = tx.select({ id: events.id }).from(events)
+        .where(eq(events.agentId, agentId)).orderBy(desc(events.id)).get()?.id ?? 0
+      const duplicate = scope.toolCallId && tx.select({ id: events.id }).from(events)
+        .where(and(eq(events.agentId, agentId), eq(events.threadId, scope.threadId),
+          eq(events.generation, thread.generation), eq(events.pairId, scope.pairId!), eq(events.toolCallId, scope.toolCallId))).get()
+      if (duplicate) {
+        if (scope.characterStateVersion) scope.characterStateVersion.revision = latest
+        return
+      }
+      if (scope.characterStateVersion && scope.characterStateVersion.revision !== latest) {
+        scope.characterStateVersion.revision = latest
+        throw new AppError('CONFLICT', { message: '角色状态已由其他场景更新，请重试' })
+      }
       const patch: PetStateUpdateData = {
         ...normalizeCharacterState(data),
         clickMessages: data.clickMessages,
         idleMessages: data.idleMessages,
         backMessages: data.backMessages,
       }
-      tx.insert(events)
+      const saved = tx.insert(events)
         .values({
           threadId: scope.threadId,
           agentId,
+          generation: thread.generation,
           kind: 'update',
-          pairId: scope.pairId ?? null,
+          pairId: scope.pairId!,
           toolCallId: scope.toolCallId ?? null,
           patchJson: JSON.stringify(patch),
           createdAt: new Date().toISOString(),
         })
         .onConflictDoNothing()
-        .run()
+        .returning({ id: events.id }).get()
+      if (saved && scope.characterStateVersion) scope.characterStateVersion.revision = saved.id
     })
     return (await this.get(agentId, scope.threadId))?.textExpiresAt ?? null
   }
@@ -222,7 +268,7 @@ export class PetStateService {
   async rollbackPairs(threadId: string, pairIds: string[]): Promise<void> {
     if (!pairIds.length) return
     const agents = this.db
-      .selectDistinct({ agentId: events.agentId })
+      .selectDistinct({ agentId: events.agentId, generation: events.generation })
       .from(events)
       .where(
         and(
@@ -232,35 +278,39 @@ export class PetStateService {
         ),
       )
       .all()
+    if (!agents.length) {
+      const thread = this.db.select({ agentId: threads.agentId, generation: threads.generation })
+        .from(threads).where(eq(threads.id, threadId)).get()
+      if (thread) agents.push(thread)
+    }
     this.db.transaction((tx) => {
-      for (const pairId of new Set(pairIds))
-        tx.insert(events)
-          .values({
-            threadId,
-            agentId: '*',
-            kind: 'retract',
-            pairId,
-            createdAt: new Date().toISOString(),
-          })
-          .run()
+      for (const { agentId, generation } of agents) {
+        for (const pairId of new Set(pairIds)) {
+          tx.insert(events).values({
+              threadId,
+              agentId,
+              generation,
+              kind: 'retract',
+              pairId,
+              createdAt: new Date().toISOString(),
+            }).run()
+        }
+      }
     })
     for (const { agentId } of agents) await this.broadcast(agentId, threadId)
   }
 
   async clearThread(threadId: string): Promise<void> {
-    const agents = this.db
-      .selectDistinct({ agentId: events.agentId })
-      .from(events)
-      .where(and(eq(events.threadId, threadId), eq(events.kind, 'update')))
-      .all()
-    this.db
-      .insert(events)
-      .values({ threadId, agentId: '*', kind: 'clear', createdAt: new Date().toISOString() })
-      .run()
-    for (const { agentId } of agents) await this.broadcast(agentId, threadId)
+    const pairs = this.db.selectDistinct({ pairId: events.pairId }).from(events)
+      .where(and(eq(events.threadId, threadId), eq(events.kind, 'update'))).all()
+    await this.rollbackPairs(threadId, pairs.map((row) => row.pairId))
   }
 
   async rollbackRoomPair(roomId: string, pairId: string): Promise<void> {
+    const mainThreads = this.db.selectDistinct({ threadId: agentExperiences.threadId }).from(agentExperiences)
+      .innerJoin(groupChatMessages, eq(groupChatMessages.id, agentExperiences.sourceMessageId))
+      .where(and(eq(agentExperiences.roomId, roomId), eq(groupChatMessages.pairId, pairId))).all()
+    for (const row of mainThreads) await this.rollbackPairs(row.threadId, [pairId])
     const roomThreads = this.db
       .select({ id: threads.id, identity: threads.platformIdentifier })
       .from(threads)
@@ -285,11 +335,15 @@ export class PetStateService {
     await this.publish?.({
       agentId,
       threadId,
+      scope: 'agent',
       revision: state.revision,
       replace: true,
       mood: state.mood,
       vibe: state.vibe,
       mind: state.mind,
+      ongoingGoals: state.ongoingGoals,
+      commitments: state.commitments,
+      relationships: state.relationships,
       click_messages: JSON.parse(state.clickMessagesJson),
       idle_messages: JSON.parse(state.idleMessagesJson),
       back_messages: JSON.parse(state.backMessagesJson),

@@ -1,5 +1,6 @@
 import { t as __t } from '../../i18n/index'
 import { computed, onMounted, onUnmounted, ref, watch } from 'vue'
+import type { AttachmentInfo } from '../../api/modules/attachmentsApi'
 import type {
   ConversationQueueItem,
   ConversationQueueSnapshot,
@@ -16,6 +17,7 @@ import { createClientUuid } from '../../lib/clientPlatform'
 import { logger } from '../../lib/logger'
 import { publishWorkspaceChanges } from './workspaceChanges'
 import { queueErrorMessage } from './queueFeedback'
+import { useOptimisticTurn } from './useOptimisticTurn'
 
 /** 队列内容以服务端为准；轮询负责断线补偿，Gateway 只负责实时显示。 */
 export function useConversationQueue() {
@@ -41,6 +43,7 @@ export function useConversationQueue() {
   let lastWarningAt = 0
   let waitingForAuthentication = false
   let nextAuthenticationCheck = 0
+  const optimistic = useOptimisticTurn(snapshot)
   useGateway({ onSurface: applyFrame })
 
   function applyFrame(frame: SurfaceFrame) {
@@ -52,7 +55,9 @@ export function useConversationQueue() {
       queuedRunObserved = true
       needsHistorySync = true
       const id = `queue-live:${frame.surfaceId}`
-      if (!threads.messages.some((message) => message.id === id)) {
+      // 发送时已显示「正在思考」占位：由 applySurfaceFrame 把实时画面挂到它身上
+      const adopted = optimistic.adopt()
+      if (!adopted && !threads.messages.some((message) => message.id === id)) {
         threads.addMessage({
           id,
           role: 'assistant',
@@ -63,16 +68,21 @@ export function useConversationQueue() {
           surfaceId: frame.surfaceId,
         })
       }
-      threads.streamingMessageId = id
+      if (!adopted) threads.streamingMessageId = id
       threads.generationState = 'thinking'
       void refresh()
     }
-    if (!liveSurfaces.has(frame.surfaceId)) return
+    if (!liveSurfaces.has(frame.surfaceId)) {
+      if (operation.type === 'surface.settled' && !threads.isGenerating &&
+          operation.snapshot.threadId === threads.threadId && operation.snapshot.principalId === threads.agentId)
+        threads.applySurfaceFrame(frame)
+      return
+    }
     lastFrameAt = Date.now()
     threads.applySurfaceFrame(frame)
     if (operation.type === 'surface.commit')
       publishWorkspaceChanges(operation.message, threads.agentId, threads.threadId)
-    if (operation.type === 'surface.commit' || operation.type === 'surface.fail') {
+    if (operation.type === 'surface.commit' || operation.type === 'surface.fail' || operation.type === 'surface.settled') {
       liveSurfaces.delete(frame.surfaceId)
       threads.finishStreaming()
       void refresh()
@@ -153,6 +163,7 @@ export function useConversationQueue() {
               compositor.install(live)
             liveSurfaces.add(live.surfaceId)
             if (
+              !optimistic.adopt(live.surfaceId) &&
               !threads.messages.some(
                 (message) => message.isStreaming && message.surfaceId === live.surfaceId,
               )
@@ -173,10 +184,12 @@ export function useConversationQueue() {
           }
         }
         if (!threads.isGenerating) threads.generationState = 'thinking'
-      } else if (queuedRunObserved && !next.active) {
+      } else if (queuedRunObserved && !next.active && !optimistic.inFlight(threadId, next)) {
         queuedRunObserved = false
+        const turn = optimistic.take(threadId)
         threads.finishStreaming()
         await threads.loadThreadMessages(threadId, threads.agentId)
+        if (epoch === revision && !disposed) optimistic.warnIfUnsent(turn, next)
         if (epoch === revision && !disposed)
           window.dispatchEvent(
             new CustomEvent('infos:conversation-completed', {
@@ -205,13 +218,21 @@ export function useConversationQueue() {
     }
   }
 
-  async function enqueue(input: QueuedConversationInput): Promise<boolean> {
+  async function enqueue(
+    input: QueuedConversationInput,
+    options: { attachments?: AttachmentInfo[] } = {},
+  ): Promise<boolean> {
     mutationVersion++
     const key = JSON.stringify(input)
     const id = pendingIds.get(key) ?? createClientUuid()
     pendingIds.set(key, id)
     const epoch = revision
     changing.value = true
+    // 发送即显示：用户消息与「正在思考」占位立刻出现，不等服务端开始回复。
+    const turn = optimistic.begin(input, options.attachments, id)
+    const accept = () => {
+      if (optimistic.accept(turn, id)) queuedRunObserved = true
+    }
     try {
       const response = await chatApi.enqueue(input, id)
       pendingIds.delete(key)
@@ -219,6 +240,7 @@ export function useConversationQueue() {
         snapshot.value = response.data
         submittedIds.add(id)
       }
+      accept()
       void refresh()
       return true
     } catch (error) {
@@ -231,11 +253,13 @@ export function useConversationQueue() {
             snapshot.value = response.data
             submittedIds.add(id)
           }
+          accept()
           return true
         }
       } catch {
         /* 保留提交身份，用户重试仍然幂等。 */
       }
+      optimistic.cancel(turn)
       logger.warn('ConversationQueue', __t('logs.frontend.chat', '消息提交暂未确认'), error)
       notify.toast(queueErrorMessage(error), {
         type: 'error',
@@ -308,6 +332,7 @@ export function useConversationQueue() {
       liveSurfaces.clear()
       submittedIds.clear()
       queuedRunObserved = false
+      optimistic.reset()
       lastRunId = ''
       snapshot.value = { threadId: threads.threadId, paused: false, items: [] }
       lastFrameAt = 0

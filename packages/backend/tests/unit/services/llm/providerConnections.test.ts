@@ -50,6 +50,7 @@ beforeEach(() => {
   insert.run(4, '本地免密', 'ollama', 'local-model', '', '', 'global')
   insert.run(5, '本地带认证', 'ollama', 'proxy-model', '', 'proxy-key', 'global')
   sqlite.exec(sql('0019_provider_connections'))
+  for (const entry of journal.entries.filter((entry) => entry.idx > 19)) sqlite.exec(sql(entry.tag))
   // 此字段由生产建连补表维护，不属于历史 SQL 迁移链。
   sqlite.exec('ALTER TABLE ai_model_configs ADD COLUMN max_react_turns INTEGER')
   const db = drizzle(sqlite, { schema })

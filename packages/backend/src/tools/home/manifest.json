@@ -1,0 +1,101 @@
+{
+  "id": "home",
+  "type": "tool",
+  "entry": "index.ts",
+  "tools": [
+    {
+      "name": "home_declare",
+      "description": "可选：说清这次要动的绝对路径和应用。说了就按范围来，超出时系统会等用户确认；不说也能直接做。",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "paths": { "type": "array", "items": { "type": "string" } },
+          "apps": { "type": "array", "items": { "type": "string" } }
+        },
+        "required": ["paths", "apps"],
+        "additionalProperties": false
+      }
+    },
+    {
+      "name": "home_files",
+      "description": "文件的读写、搜索、列目录、移动和回收。用绝对路径；看不用确认；写前快照，需要确认时系统会等用户，被拒绝后不要换路径重试；不永久删除。",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "action": {
+            "type": "string",
+            "enum": ["read", "list", "search", "write", "move", "delete"]
+          },
+          "path": { "type": "string" },
+          "destination": { "type": "string" },
+          "content": { "type": "string" },
+          "encoding": { "type": "string", "enum": ["utf8", "base64"] },
+          "query": { "type": "string" }
+        },
+        "required": ["action", "path"],
+        "additionalProperties": false
+      }
+    },
+    {
+      "name": "home_shelf",
+      "description": "查看或放入给用户的文件、图片、文字、网址；删除进可恢复区。文件可传绝对路径。",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "action": { "type": "string", "enum": ["list", "put", "take", "delete", "restore"] },
+          "id": { "type": "string" },
+          "kind": { "type": "string", "enum": ["file", "image", "text", "url"] },
+          "name": { "type": "string" },
+          "value": { "type": "string" },
+          "path": { "type": "string" },
+          "content": { "type": "string", "description": "base64" },
+          "includeDeleted": { "type": "boolean" }
+        },
+        "required": ["action"],
+        "additionalProperties": false
+      }
+    },
+    {
+      "name": "home_map",
+      "description": "查询或记住软件、文件夹、窗口用途。只存地点和用途，禁止密码、凭据或隐私。",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "action": { "type": "string", "enum": ["list", "get", "put", "delete", "restore"] },
+          "id": { "type": "string" },
+          "kind": { "type": "string", "enum": ["app", "folder", "window"] },
+          "name": { "type": "string" },
+          "location": { "type": "string" },
+          "purpose": { "type": "string" },
+          "query": { "type": "string" },
+          "includeDeleted": { "type": "boolean" }
+        },
+        "required": ["action"],
+        "additionalProperties": false
+      }
+    },
+    {
+      "name": "home_card",
+      "description": "接收本会话卡片消息并确认收取，或按 revision 局部更新卡片数据。",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "action": { "type": "string", "enum": ["get", "messages", "ack", "patch"] },
+          "cardId": { "type": "string" },
+          "messageId": { "type": "string" },
+          "revision": { "type": "integer" },
+          "data": { "type": "object" }
+        },
+        "required": ["action"],
+        "additionalProperties": false
+      }
+    }
+  ],
+  "userCopy": {
+    "home_declare": { "label": "声明行动范围", "description": "先说清这次准备动哪些路径和应用" },
+    "home_files": { "label": "家的文件通道", "description": "有快照和确认保护的文件操作" },
+    "home_shelf": { "label": "置物架", "description": "互相递文件、图片、文字和网址" },
+    "home_map": { "label": "家的地图", "description": "记住常用位置和窗口用途" },
+    "home_card": { "label": "卡片互动", "description": "接收卡片消息和更新卡片数据" }
+  }
+}

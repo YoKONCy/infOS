@@ -371,14 +371,16 @@ describe('最近会话激活与初始化竞态', () => {
     expect(store.navigationTarget).toBeNull()
     expect(store.isLoadingHistory).toBe(false)
   })
-  it('重复进入页面复用已加载会话，显式刷新仍请求最新会话', async () => {
+  it('重复进入页面复用已加载会话，显式刷新优先读取已选会话', async () => {
     const store = useThreadStore()
     await store.ensureLatestThread('pero')
     await store.ensureLatestThread('pero')
     expect(api.latest).toHaveBeenCalledTimes(1)
     expect(api.projection).toHaveBeenCalledTimes(1)
     await store.loadLatestThread('pero')
-    expect(api.latest).toHaveBeenCalledTimes(2)
+    expect(api.latest).toHaveBeenCalledTimes(1)
+    expect(api.get).toHaveBeenCalledWith('pero-thread', { pageSize: 1 })
+    expect(api.projection).toHaveBeenCalledTimes(2)
   })
   it('主窗口与聊天组件同时恢复同一角色时共用一次请求', async () => {
     const latest = deferred<ReturnType<typeof latestResponse>>()

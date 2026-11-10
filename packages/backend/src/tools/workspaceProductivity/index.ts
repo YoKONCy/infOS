@@ -13,6 +13,14 @@ import {
 } from '../../services/execution/fileEditing'
 import { readToolObservation } from '../../services/execution/toolObservation'
 import { codeSymbols, type CodeSymbol } from '../../services/execution/codeSymbols'
+import {
+  abandonLegacyHomeWrite,
+  beginLegacyHomeWrite,
+  finishLegacyHomeWrite,
+  homeToolFailure,
+  withLegacyHomeConfirmation,
+} from '../home'
+import { HomeError } from '../../services/home/homeErrors'
 
 const logger = createLogger('WorkspaceProductivity')
 let checkpointService: WorkspaceCheckpointService | null = null
@@ -231,35 +239,57 @@ export const editFileTool: BuiltinTool = {
   async execute(args, ctx) {
     const session = await resolveExecutionSession(ctx)
     try {
-      const result = await applyFileEdits(
-        getProductivityRuntime().virtualWorkspace,
-        session,
-        args,
-        {
-          owner: fileEditOwner(session, ctx.realmId),
-          approved: ctx.approvedOutsideWorkspace,
-          signal: ctx.signal,
-          afterWrite: async (captured, written) =>
-            checkpointService?.commitFromDisk(
-              captured as Awaited<ReturnType<WorkspaceCheckpointService['captureBefore']>>,
-              written,
-            ),
-        },
-        async () =>
-          ctx.approvedOutsideWorkspace
-            ? null
-            : await checkpointService?.captureToolMutation(ctx, String(args.path)),
-      )
+      let operationId: string | undefined
+      // 整段放进去：要确认时锁已释放才开始等，批准后重新读文件、重新算一遍。
+      const result = await withLegacyHomeConfirmation(ctx, async () => {
+        let pending: import('@infos/shared').HomeCheckpoint | undefined
+        try {
+          return await applyFileEdits(
+            getProductivityRuntime().virtualWorkspace,
+            session,
+            args,
+            {
+              owner: fileEditOwner(session, ctx.realmId),
+              approved: ctx.approvedOutsideWorkspace,
+              signal: ctx.signal,
+              afterWrite: async (captured, written) => {
+                const value = captured as {
+                  homeCheckpoint?: import('@infos/shared').HomeCheckpoint
+                  legacyCheckpoint: Awaited<ReturnType<WorkspaceCheckpointService['captureBefore']>>
+                }
+                pending = undefined
+                finishLegacyHomeWrite(ctx, value.homeCheckpoint)
+                await checkpointService?.commitFromDisk(value.legacyCheckpoint, written)
+              },
+            },
+            async (filePath, next) => {
+              const homeCheckpoint = await beginLegacyHomeWrite(ctx, filePath, next)
+              pending = homeCheckpoint
+              operationId = homeCheckpoint?.id
+              const legacyCheckpoint = ctx.approvedOutsideWorkspace
+                ? null
+                : await checkpointService?.captureToolMutation(ctx, filePath)
+              return { homeCheckpoint, legacyCheckpoint }
+            },
+          )
+        } catch (error) {
+          abandonLegacyHomeWrite(ctx, pending)
+          throw error
+        }
+      })
       if (!result.success) return toolSuccess(JSON.stringify(result), { needsSelection: true })
       const { beforeText, afterText, ...receipt } = result
       const preview = buildToolDiff(beforeText, afterText)
       const output = {
         ...receipt,
+        ...(operationId ? { operationId } : {}),
         diffPreview: preview.diffPreview,
         diffTruncated: preview.diffTruncated,
       }
       return toolSuccess(JSON.stringify(output), receipt)
     } catch (err) {
+      if (err instanceof HomeError) return homeToolFailure(err)
+      if (ctx.signal?.aborted) return homeToolFailure(new HomeError('HOME_CANCELLED'))
       // 失败原因：既打印到后端日志，也结构化返回给 Agent 供其自我修正
       const message = err instanceof Error ? err.message : String(err)
       logger.error(

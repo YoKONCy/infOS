@@ -3,6 +3,7 @@ import { nextTick, onBeforeUnmount, onDeactivated, onMounted, ref, useId, watch 
 import type { CSSProperties } from 'vue'
 import { t } from '../../i18n'
 import PixelIcon from '../pixel/PixelIcon.vue'
+import { focusFoldoutOption, isReachableFoldoutButton } from './inputFoldoutFocus'
 
 const props = withDefaults(
   defineProps<{
@@ -17,10 +18,24 @@ const props = withDefaults(
     compact?: boolean
     width?: number
     scopeKey: string
+    /** text 为紧凑文字入口，由 trigger 插槽提供内容。 */
+    variant?: 'block' | 'text'
+    /** 覆盖入口默认拼接的悬停提示。 */
+    hint?: string
+    /** 面板内使用滑块或分段控件时关闭上下方向键的按钮轮转。 */
+    arrowNavigation?: boolean
   }>(),
-  { width: 320, accent: 'var(--ui-accent-primary)' },
+  {
+    width: 320,
+    accent: 'var(--ui-accent-primary)',
+    variant: 'block',
+    summary: undefined,
+    badge: undefined,
+    hint: undefined,
+    arrowNavigation: true,
+  },
 )
-const emit = defineEmits<{ open: [] }>()
+const emit = defineEmits<{ open: []; close: [] }>()
 const id = `input-foldout-${useId()}`
 const open = ref(false)
 const trigger = ref<HTMLButtonElement | null>(null)
@@ -68,7 +83,9 @@ function place(): void {
 }
 
 function buttons(): HTMLButtonElement[] {
-  return Array.from(panel.value?.querySelectorAll<HTMLButtonElement>('button:not(:disabled)') ?? [])
+  return Array.from(
+    panel.value?.querySelectorAll<HTMLButtonElement>('button:not(:disabled)') ?? [],
+  ).filter(isReachableFoldoutButton)
 }
 
 async function expand(last = false): Promise<void> {
@@ -78,9 +95,10 @@ async function expand(last = false): Promise<void> {
   await nextTick()
   if (!open.value || !trigger.value) return
   place()
-  const options = buttons().filter((button) => !button.hasAttribute('data-foldout-close'))
-  const selected = options.find((button) => button.getAttribute('aria-pressed') === 'true')
-  ;(last ? options.at(-1) : (selected ?? options[0]))?.focus({ preventScroll: true })
+  // 定位会把首次打开的面板从 visibility:hidden 改为可见，等样式落地后再选焦点。
+  await nextTick()
+  if (!open.value || !trigger.value) return
+  focusFoldoutOption(buttons(), last, panel.value)
 }
 
 function toggle(): void {
@@ -103,6 +121,7 @@ function onKeydown(event: KeyboardEvent): void {
     return
   }
   if (
+    !props.arrowNavigation ||
     !panel.value?.contains(event.target as Node) ||
     !['ArrowDown', 'ArrowUp', 'Home', 'End'].includes(event.key)
   )
@@ -136,6 +155,7 @@ function otherOpened(event: Event): void {
 
 watch(open, (value) => {
   if (value) window.dispatchEvent(new CustomEvent('infos:input-foldout-open', { detail: id }))
+  else emit('close')
 })
 watch(
   () => props.scopeKey,
@@ -170,15 +190,20 @@ defineExpose({ close })
 <template>
   <span
     class="input-foldout"
-    :class="{ 'is-compact': compact }"
+    :class="{ 'is-compact': compact, 'input-foldout--text': variant === 'text' }"
     :style="{ '--foldout-accent': accent }"
   >
     <button
       ref="trigger"
       type="button"
       class="input-foldout__trigger"
-      :class="{ 'is-open': open, 'has-badge': badge }"
-      :title="[title, label, summary, badge].filter(Boolean).join(' · ')"
+      :class="{
+        'is-open': open,
+        'has-badge': badge,
+        'input-foldout__trigger--text': variant === 'text',
+        'input-tool-trigger': variant === 'text',
+      }"
+      :title="hint || [title, label, summary, badge].filter(Boolean).join(' · ')"
       :aria-label="title"
       :aria-controls="id"
       aria-haspopup="dialog"
@@ -188,14 +213,16 @@ defineExpose({ close })
       @click="toggle"
       @keydown="onTriggerKeydown"
     >
-      <span class="input-foldout__emblem" aria-hidden="true">
-        <PixelIcon v-if="busy" name="refresh" size="xs" animation="spin" />
-        <slot v-else name="icon"><PixelIcon :name="icon" size="xs" /></slot>
-      </span>
-      <span class="input-foldout__label">{{ label }}</span>
-      <span v-if="summary" class="input-foldout__summary">{{ summary }}</span>
-      <span v-if="badge" class="input-foldout__badge">{{ badge }}</span>
-      <PixelIcon name="chevron-up" size="xs" class="input-foldout__chevron" aria-hidden="true" />
+      <slot name="trigger" :open="open">
+        <span class="input-foldout__emblem" aria-hidden="true">
+          <PixelIcon v-if="busy" name="refresh" size="xs" animation="spin" />
+          <slot v-else name="icon"><PixelIcon :name="icon" size="xs" /></slot>
+        </span>
+        <span class="input-foldout__label">{{ label }}</span>
+        <span v-if="summary" class="input-foldout__summary">{{ summary }}</span>
+        <span v-if="badge" class="input-foldout__badge">{{ badge }}</span>
+        <PixelIcon name="chevron-up" size="xs" class="input-foldout__chevron" aria-hidden="true" />
+      </slot>
     </button>
     <Teleport to="body">
       <Transition name="input-foldout">
@@ -205,6 +232,7 @@ defineExpose({ close })
           ref="panel"
           class="input-foldout-panel"
           role="dialog"
+          tabindex="-1"
           :aria-label="title"
           :style="[material, position, { '--foldout-accent': accent }]"
         >
@@ -213,14 +241,16 @@ defineExpose({ close })
               <PixelIcon :name="icon" size="xs" />
               <strong>{{ title }}</strong>
             </span>
-            <button
-              type="button"
-              data-foldout-close
-              :aria-label="t('ui.input-controls', '收起选项')"
-              @click="close(true)"
-            >
-              <PixelIcon name="close" size="xs" />
-            </button>
+            <slot name="head-actions">
+              <button
+                type="button"
+                data-foldout-close
+                :aria-label="t('ui.input-controls', '收起选项')"
+                @click="close(true)"
+              >
+                <PixelIcon name="close" size="xs" />
+              </button>
+            </slot>
           </header>
           <div class="input-foldout-panel__body"><slot /></div>
         </section>
@@ -314,8 +344,11 @@ defineExpose({ close })
 .input-foldout-panel {
   position: fixed;
   z-index: 1000;
+  -webkit-app-region: no-drag;
   box-sizing: border-box;
   overflow-y: auto;
+  scrollbar-gutter: stable;
+  overflow-anchor: none;
   overscroll-behavior: contain;
   border: 1px solid var(--ui-border-strong);
   border-radius: 0;
@@ -347,7 +380,8 @@ defineExpose({ close })
   color: var(--ui-text-primary);
   font: 12px/1.5 var(--ui-font-pixel);
 }
-.input-foldout-panel__head > button {
+.input-foldout-panel__head > button,
+.input-foldout-panel__head :slotted(button) {
   display: grid;
   place-items: center;
   width: 24px;
@@ -359,12 +393,14 @@ defineExpose({ close })
   background: transparent;
   cursor: pointer;
 }
-.input-foldout-panel__head > button:hover {
+.input-foldout-panel__head > button:hover,
+.input-foldout-panel__head :slotted(button:hover:not(:disabled)) {
   border-color: var(--ui-border-default);
   color: var(--ui-text-primary);
   background: var(--ui-bg-hover);
 }
-.input-foldout-panel__head > button:focus-visible {
+.input-foldout-panel__head > button:focus-visible,
+.input-foldout-panel__head :slotted(button:focus-visible) {
   outline: 2px solid var(--foldout-accent);
   outline-offset: -2px;
 }
@@ -403,3 +439,5 @@ defineExpose({ close })
   transition: none;
 }
 </style>
+
+<style scoped src="./input-foldout-text.css"></style>

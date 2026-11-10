@@ -12,6 +12,7 @@ import { defineStore } from 'pinia'
 import { ref } from 'vue'
 import { getApiBaseUrl } from '../api/transport'
 import { translateDiagnostic } from '@infos/shared/i18n'
+import { stripIpcErrorPrefix } from '../utils/ipcErrorMessage'
 
 export type NotificationType = 'info' | 'success' | 'warning' | 'error'
 export type NotificationSeverity = 'silent' | 'toast' | 'modal'
@@ -69,7 +70,7 @@ export const useNotificationStore = defineStore('notification', () => {
     typeOrOpts: NotificationType | ToastOptions = 'info',
     duration = 4000,
   ) {
-    message = translateDiagnostic(message)
+    message = translateDiagnostic(stripIpcErrorPrefix(message))
     const opts: ToastOptions =
       typeof typeOrOpts === 'string' ? { type: typeOrOpts, duration } : typeOrOpts
 
@@ -145,7 +146,7 @@ export const useNotificationStore = defineStore('notification', () => {
 
   /** 显示模态通知（阻断） */
   function showModal(message: string, title?: string, type: NotificationType = 'error') {
-    message = translateDiagnostic(message)
+    message = translateDiagnostic(stripIpcErrorPrefix(message))
     modal.value = {
       id: nextId++,
       type,

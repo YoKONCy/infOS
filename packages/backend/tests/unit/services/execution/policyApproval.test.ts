@@ -249,11 +249,12 @@ describe('ApprovalService', () => {
 
   it('allow_session 允许同会话后续调用，并可清理', () => {
     const service = new ApprovalService()
-    const request = service.create({ ...base, reason: '需要审批' })
+    const input = { ...base, toolName: 'demo.run', args: { value: 1 } }
+    const request = service.create({ ...input, reason: '需要审批' })
     service.resolve(request.id, 'allow_session')
-    expect(service.authorize(base)).toBe('allow')
+    expect(service.authorize(input)).toBe('allow')
     service.clearSession(base.sessionId)
-    expect(service.authorize(base)).toBe('none')
+    expect(service.authorize(input)).toBe('none')
   })
 
   it('对敏感参数脱敏并复用相同 pending 请求', () => {

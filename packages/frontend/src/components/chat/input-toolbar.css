@@ -1,0 +1,88 @@
+/* 主设置、会话功能和快捷操作分别成组，边框由整组持有。 */
+.deck-tool-group {
+  display: inline-flex;
+  flex: 0 0 auto;
+  align-items: center;
+  min-height: 36px;
+  padding: 1px;
+  border: 1px solid var(--ui-border-default);
+  border-radius: 0;
+  background: var(--app-soft-fill, var(--ui-bg-surface-soft));
+}
+.deck-tool-group > * {
+  flex: 0 0 auto;
+}
+.deck-tools > .deck-tool-group > * + * {
+  border-left: 1px solid var(--ui-border-subtle);
+}
+.deck-tools :deep(.input-tool-trigger)::after {
+  position: absolute;
+  right: 8px;
+  bottom: 1px;
+  left: 8px;
+  height: 2px;
+  background: var(--ui-accent-primary);
+  content: '';
+  pointer-events: none;
+  transform: scaleX(0);
+  transform-origin: left;
+}
+.deck-tools :deep(.input-tool-trigger.is-open)::after {
+  transform: scaleX(1);
+}
+.deck-tools :deep(.input-tool-trigger:focus-visible) {
+  outline-offset: -2px;
+}
+.deck-tools :deep(.session-settings-entry .input-foldout__trigger) {
+  justify-content: flex-start;
+  gap: 0;
+  min-width: 168px;
+  height: 36px;
+  padding: 0;
+  overflow: hidden;
+  border: 1px solid color-mix(in srgb, var(--ui-accent-primary) 32%, var(--ui-border-default));
+  border-left: 3px solid var(--ui-accent-primary);
+  background: var(--app-soft-fill, var(--ui-bg-surface-soft));
+}
+.deck-tools :deep(.session-settings-entry .input-foldout__trigger)::after {
+  content: none;
+}
+.deck-tools :deep(.session-settings-entry .input-foldout__trigger:hover:not(:disabled)),
+.deck-tools :deep(.session-settings-entry .input-foldout__trigger.is-open) {
+  border-color: var(--ui-accent-primary);
+  background: color-mix(in srgb, var(--ui-accent-primary) 6%, var(--ui-bg-surface));
+}
+.deck-tools :deep(.session-settings-entry.is-compact .input-foldout__trigger) {
+  width: 36px;
+  min-width: 36px;
+}
+.deck-tools :deep(.session-settings-entry.is-compact .session-trigger__emblem) {
+  flex: 1;
+  border-right: 0;
+}
+.deck-tools .deck-tool-group--shortcuts > .input-tool-trigger {
+  padding-inline: 8px;
+  color: var(--ui-text-tertiary);
+}
+.deck-tools .deck-tool-group--shortcuts > .deck-add-file {
+  width: 32px;
+  padding: 0;
+}
+.deck-tools .deck-tool-group--shortcuts > .input-tool-trigger:hover,
+.deck-tools .deck-tool-group--shortcuts > .input-tool-trigger.is-open {
+  color: var(--ui-accent-primary);
+}
+.deck-actions > button {
+  min-height: 36px;
+  border-radius: 0;
+}
+.deck--compact .deck-tools {
+  gap: 6px;
+}
+:global(html[data-mobile]) .deck-tools :deep(.session-settings-entry.is-compact .input-foldout__trigger) {
+  width: 40px;
+  min-width: 40px;
+}
+:global(html[data-mobile]) .deck-actions > button {
+  min-height: 40px;
+}

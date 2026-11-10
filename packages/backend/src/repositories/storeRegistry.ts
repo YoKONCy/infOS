@@ -473,7 +473,7 @@ export class MemoryStoreRegistry {
     this.discardUpgradeBackup(tdbPath)
   }
 
-  /** 在同步边界内冻结写入和自动压实，SQLite 与各 Store 的复制之间不让出事件循环。 */
+  /** 在同步边界内暂停自动压实，固定 SQLite 视图并复制各 Store 文件组，期间不让出事件循环。 */
   captureSnapshot(destination: string, captureSqlite: () => void): void {
     if (this.maintenance.size || [...this.activeCalls.values()].some((calls) => calls.size))
       throw new StoreOperationError({

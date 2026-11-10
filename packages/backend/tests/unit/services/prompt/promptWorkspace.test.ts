@@ -2,7 +2,7 @@ import { afterEach, describe, expect, it } from 'vitest'
 import { mkdtempSync, mkdirSync, readFileSync, writeFileSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import path from 'node:path'
-import { ASSISTANT_PREFILL_KEY, WHOLESOME_MODE_KEY, type PromptBundle } from '@infos/shared'
+import { ASSISTANT_PREFILL_KEY, DYNAMIC_CONTEXT_DEPTH_KEY, WHOLESOME_MODE_KEY, type PromptBundle } from '@infos/shared'
 import type { ConfigRepository } from '../../../../src/repositories/config.repo'
 import { MdpEngine } from '../../../../src/services/prompt/mdpEngine'
 import { PromptWorkspace } from '../../../../src/services/prompt/promptWorkspace'
@@ -75,6 +75,26 @@ async function setup() {
 }
 
 describe('预填充进入提示词编译结果', () => {
+  it('全局动态深度在编译读取，后续保存不改变已生成的计划', async () => {
+    const { workspace, bundle, values } = await setup()
+    bundle.documents.push({
+      id: 'components/state/turn_context', name: '动态资料', kind: 'component',
+      body: '<turn_context>本轮状态</turn_context>', role: 'user', enabled: true, variables: [],
+    })
+    bundle.frameworks[0]!.blocks.push({
+      id: 'renamed-dynamic', name: '改名的动态区块', kind: 'template', role: 'user',
+      enabled: true, source: 'components/state/turn_context',
+    })
+    values.set(DYNAMIC_CONTEXT_DEPTH_KEY, '1')
+    const first = await workspace.prepare({ id: 'depth', bundle }, 'desktop', 'pero', {})
+    expect(first.preview.requestPlan).toEqual({ dynamicContextDepth: 1 })
+    expect(first.messages.find((message) => message.slotId === 'renamed-dynamic')?.dynamicContext).toBe(true)
+    values.set(DYNAMIC_CONTEXT_DEPTH_KEY, '0')
+    const next = await workspace.prepare({ id: 'next-depth', bundle }, 'social', 'pero', {})
+    expect(next.preview.requestPlan).toEqual({})
+    expect(first.preview.requestPlan).toEqual({ dynamicContextDepth: 1 })
+  })
+
   it('全局配置只在编译读取，预览可见且不混入正常历史消息', async () => {
     const { workspace, bundle, values } = await setup()
     values.set(

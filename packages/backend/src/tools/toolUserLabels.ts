@@ -2,10 +2,11 @@ import { t } from '../lib/i18n'
 
 /** 官方工具面向用户的名称。模型使用的函数名不会受这里影响。 */
 export const TOOL_USER_LABELS: Record<string, string> = {
+  conversation: '主线交流',
+  clear_work_context: '清理工作上下文',
   send_file: '发送文件',
   document: '处理文档',
   finish_task: '完成任务',
-  load_skill: '加载技能',
   skill_list_resources: '查看技能资源',
   skill_read_resource: '读取技能资源',
   update_flow_state: '更新心流',
@@ -86,6 +87,7 @@ export const TOOL_USER_LABELS: Record<string, string> = {
   activate_window: '切换应用窗口',
   automation_execute: '操作桌面应用',
   get_mouse_position: '查看鼠标位置',
+  desktop_direct: '剪贴板与媒体键',
   set_reminder: '创建提醒',
   list_reminders: '查看提醒',
   cancel_reminder: '取消提醒',
@@ -102,8 +104,8 @@ export const TOOL_USER_LABELS: Record<string, string> = {
 
 /** 工具管理界面使用的简明说明，避免暴露内部协议与开发术语。 */
 export const TOOL_USER_DESCRIPTIONS: Record<string, string> = {
+  conversation: '发表消息、记录待回应的问题，并在收到回答后接续。',
   finish_task: '结束当前任务，并把最终结果回复给你。',
-  load_skill: '按需加载一项技能的详细工作指引。',
   skill_list_resources: '列出技能捆绑的参考资料、资源和脚本。',
   skill_read_resource: '安全读取技能目录内的文本资源。',
   update_flow_state: '记录当前目标和临时要点，帮助助手保持任务思路。',
@@ -175,6 +177,7 @@ export const TOOL_USER_DESCRIPTIONS: Record<string, string> = {
   activate_window: '把指定应用窗口切换到最前面。',
   automation_execute: '使用鼠标和键盘操作桌面应用。',
   get_mouse_position: '查看鼠标指针当前所在的位置。',
+  desktop_direct: '读写剪贴板、按媒体键、用默认浏览器打开网址。',
   set_reminder: '按指定时间创建提醒。',
   list_reminders: '查看当前已有的提醒。',
   cancel_reminder: '删除不再需要的提醒。',

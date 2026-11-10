@@ -5,10 +5,11 @@ import type { ToolCallRecord } from '@infos/backend/services/pipeline/types'
 function fixture() {
   const eventMemory = { create: vi.fn(), revise: vi.fn() }
   const eventRepo = {
+    findOperation: vi.fn().mockResolvedValue(null),
     claimCoverageRange: vi.fn().mockResolvedValue(true),
     releaseCoverageClaim: vi.fn(),
   }
-  const threads = { findMessagesByPairIds: vi.fn().mockResolvedValue([{ id: 1 }, { id: 2 }]) }
+  const threads = { getThread: vi.fn().mockResolvedValue({ threadKind: 'side' }), conversations: { get: vi.fn() }, findMessagesByPairIds: vi.fn().mockResolvedValue([{ id: 1, revision: 1 }, { id: 2, revision: 1 }]) }
   const committer = new EventNoteDraftCommitter(
     eventMemory as never,
     eventRepo as never,
@@ -65,20 +66,20 @@ describe('主动记事提交时的视角边界', () => {
       if (name === 'write_event_note') {
         expect(eventMemory.create).toHaveBeenCalledExactlyOnceWith(
           input,
-          'event-note:pair-1:write:0',
-          { coverageOwnerId: 'active:2:0' },
+          'event-note:pero:thread-1:pair-1:write:new:0',
+          { coverageOwnerId: 'active:desktop:pero:thread-1:2:0' },
         )
         expect(eventMemory.revise).not.toHaveBeenCalled()
       } else {
         expect(eventMemory.revise).toHaveBeenCalledExactlyOnceWith(
           'note-1',
           input,
-          'event-note:pair-1:revise:note-1',
-          { coverageOwnerId: 'active:2:0' },
+          'event-note:pero:thread-1:pair-1:revise:note-1:0',
+          { coverageOwnerId: 'active:desktop:pero:thread-1:2:0' },
         )
         expect(eventMemory.create).not.toHaveBeenCalled()
       }
-      expect(eventRepo.releaseCoverageClaim).toHaveBeenCalledWith('active:2:0')
+      expect(eventRepo.releaseCoverageClaim).toHaveBeenCalledWith('active:desktop:pero:thread-1:2:0')
     },
   )
 })

@@ -79,7 +79,7 @@
     },
     {
       "name": "edit_file",
-      "description": "精确编辑单个文件。优先 read_ref+new_text 替换实际读取片段；也支持 path+old_text+new_text 唯一文本替换，或 path+expected_hash+line_start/line_end+new_text 行替换（删除传空字符串）、after_line+new_text 插入（0为文件开头）。steps 批量步骤全部基于同一原始版本，重叠或任一步失败整批不写。多处文本匹配返回 ticketId；再次用 ticket_id+pick 选择，无需重发正文。文件变化后引用失效，必须重读。",
+      "description": "精确编辑单个文件。优先 read_ref+new_text 替换实际读取片段；也支持 path+old_text+new_text 唯一文本替换，或 path+expected_hash+line_start/line_end+new_text 行替换（删除传空字符串）、after_line+new_text 插入（0为文件开头）。steps 批量步骤全部基于同一原始版本，重叠或任一步失败整批不写。多处文本匹配返回 ticketId；再次用 ticket_id+pick 选择，无需重发正文。文件变化后引用失效，必须重读。改用户已有文件、系统和启动位置要确认，系统会等用户应答；被拒绝后不要换路径或换工具重试。",
       "display": { "label": "编辑文件", "icon": "edit", "color": "pink", "style": "edit" },
       "parameters": {
         "type": "object",

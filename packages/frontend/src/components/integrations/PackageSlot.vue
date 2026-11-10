@@ -11,7 +11,9 @@ const busy = ref(false)
 const error = ref('')
 async function refresh() {
   try {
-    panels.value = (await packagesApi.panels(props.region)).data ?? []
+    panels.value = ((await packagesApi.panels(props.region)).data ?? []).filter(
+      (panel) => !panel.settings,
+    )
   } catch {
     panels.value = []
   }

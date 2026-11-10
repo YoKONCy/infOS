@@ -3,11 +3,11 @@ import { isToolAllowedInInteractionMode } from '../../../src/tools/interactionMo
 
 const registry = { isChatEnabled: vi.fn(() => true), isRuntimeScoped: vi.fn(() => false) } as never
 describe('Thread 极简模式', () => {
-  it('仅开放截图、完成任务、私有心流和事件查询，其他工具不能通过扩展元数据或 NIT 绕过', () => {
-    for (const name of ['finish_task', 'update_flow_state', 'take_screenshot', 'query_event_notes'])
+  it('开放基础交流、记忆查询和受限记事本入口，其他能力按模式关闭', () => {
+    for (const name of ['conversation', 'finish_task', 'update_flow_state', 'take_screenshot', 'query_event_notes',
+      'query_facts', 'clear_work_context', 'read_file', 'write_file', 'edit_file', 'get_file_info', 'list_directory'])
       expect(isToolAllowedInInteractionMode(name, 'minimal', registry)).toBe(true)
     for (const name of [
-      'query_facts',
       'set_reminder',
       'list_reminders',
       'cancel_reminder',
@@ -29,8 +29,6 @@ describe('Thread 极简模式', () => {
       'run_script',
       'expand_advanced_tools',
       'terminal_execute',
-      'read_file',
-      'edit_file',
       'custom_tool',
     ])
       expect(isToolAllowedInInteractionMode(name, 'minimal', registry)).toBe(false)

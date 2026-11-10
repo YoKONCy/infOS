@@ -1,0 +1,187 @@
+/* 置物架与地图独有的部分：拖放区、表单、工具条和预览。通用面板样式在 home/homePanel.css。 */
+.actions,
+.toolbar {
+  display: flex;
+  gap: 8px 12px;
+  align-items: center;
+  flex-wrap: wrap;
+}
+.actions {
+  margin-top: 4px;
+}
+.toolbar {
+  margin-top: 12px;
+}
+label {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  margin-top: 10px;
+  color: var(--ui-text-secondary);
+  font-size: 12px;
+}
+label.check {
+  flex-direction: row;
+  align-items: center;
+  gap: 6px;
+  margin: 0;
+  cursor: pointer;
+}
+input:not([type='checkbox']),
+textarea,
+select {
+  box-sizing: border-box;
+  width: 100%;
+  min-width: 0;
+  padding: 7px 10px;
+  border: 1px solid var(--ui-border-default);
+  border-radius: var(--ui-radius-sm);
+  background: var(--dash-input-bg, var(--ui-bg-surface));
+  color: var(--ui-text-primary);
+  font: inherit;
+  font-size: 13px;
+  transition: border-color var(--motion-duration-fast) var(--motion-ease-out);
+}
+input[type='checkbox'] {
+  accent-color: var(--ui-accent-sky);
+}
+input.search {
+  flex: 1 1 180px;
+  width: auto;
+}
+textarea {
+  resize: vertical;
+}
+input:focus-visible,
+textarea:focus-visible,
+select:focus-visible {
+  outline: none;
+  border-color: var(--ui-accent-sky);
+  box-shadow: 0 0 0 2px color-mix(in srgb, var(--ui-accent-sky) 25%, transparent);
+}
+input:disabled,
+textarea:disabled,
+select:disabled {
+  opacity: 0.6;
+}
+.fields {
+  display: grid;
+  grid-template-columns: 130px minmax(0, 1fr);
+  gap: 12px;
+}
+.fields label {
+  margin-top: 10px;
+}
+.give-text,
+.map-form {
+  padding: 2px 2px 8px;
+}
+.dropzone {
+  display: flex;
+  gap: 10px 14px;
+  align-items: center;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  margin-top: 12px;
+  padding: 16px;
+  border: 2px dashed var(--ui-border-default);
+  border-radius: var(--ui-radius-md);
+  background: var(--ui-bg-surface);
+  font-size: 13px;
+  transition:
+    background-color var(--motion-duration-fast) var(--motion-ease-out),
+    border-color var(--motion-duration-fast) var(--motion-ease-out);
+}
+.dropzone.dragging {
+  border-color: var(--ui-accent-sky);
+  background: color-mix(in srgb, var(--ui-accent-sky) 8%, var(--ui-bg-surface));
+}
+.dropzone.disabled {
+  opacity: 0.6;
+}
+.dropzone-text {
+  display: flex;
+  flex: 1 1 200px;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+}
+.dropzone-text small {
+  color: var(--ui-text-secondary);
+  font-size: 12px;
+}
+.dropzone-actions {
+  display: flex;
+  gap: 6px;
+  flex-wrap: wrap;
+}
+.home-ok {
+  margin-top: 8px;
+}
+.item {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+.item-name {
+  display: flex;
+  flex: 1 1 180px;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+.item-name strong {
+  font-size: 13px;
+}
+.item-name small {
+  color: var(--ui-text-secondary);
+  font-size: 12px;
+}
+.preview {
+  margin-top: 12px;
+  padding: 12px;
+  border: 1px solid var(--ui-border-subtle);
+  border-radius: var(--ui-radius-sm);
+  background: var(--ui-bg-surface);
+  overflow-wrap: anywhere;
+}
+.preview header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+.preview p {
+  margin-top: 6px;
+  color: var(--ui-text-secondary);
+  font-size: 12px;
+}
+.preview img {
+  display: block;
+  max-width: 100%;
+  max-height: 300px;
+  object-fit: contain;
+  margin: 12px 0;
+}
+pre {
+  margin-top: 8px;
+  max-height: 300px;
+  overflow: auto;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  font: inherit;
+  font-size: 12px;
+}
+a {
+  color: var(--ui-accent-sky);
+  font-size: 12px;
+  text-decoration: underline;
+}
+@media (max-width: 520px) {
+  .fields {
+    grid-template-columns: 1fr;
+    gap: 0;
+  }
+}

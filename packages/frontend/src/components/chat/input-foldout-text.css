@@ -1,0 +1,26 @@
+/* 文字入口沿用输入栏工具行的尺寸，外层不再额外预留硬阴影空间。 */
+.input-foldout--text {
+  padding: 0;
+}
+.input-foldout__trigger--text {
+  gap: 5px;
+  min-height: 30px;
+  padding: 0 8px;
+  border-color: var(--ui-border-strong);
+  background: transparent;
+  box-shadow: none;
+  font-size: 11px;
+}
+.input-foldout__trigger--text:hover:not(:disabled) {
+  border-color: var(--ui-border-strong);
+  color: var(--ui-text-primary);
+  background: var(--ui-bg-hover);
+}
+.input-foldout__trigger--text.is-open {
+  border-color: var(--ui-border-default);
+  color: var(--ui-text-primary);
+  background: var(--ui-bg-hover);
+}
+.input-foldout__trigger--text:active:not(:disabled) {
+  box-shadow: none;
+}

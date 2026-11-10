@@ -291,6 +291,26 @@ describe('记忆的人工修订', () => {
 })
 
 describe('EventMemoryService真实双库存储', () => {
+  it('向量化期间主线重置时撤销未落盘草稿，重放保持退出状态', async () => {
+    const { db, repo, service, embeddings, stores } = createFixture()
+    const threads = new ThreadRepository(db)
+    const main = threads.ensureMainThread('pero')
+    const user = await threads.appendMessage({ threadId: main.id, role: 'user', content: '旧主线来源', pairId: 'old-main' })
+    vi.spyOn(embeddings, 'embedOne').mockImplementationOnce(async () => {
+      await threads.resetMainThread(main.id)
+      return [1, 0, 0, 0]
+    })
+    await expect(service.create({ ...draft, origin: {
+      mode: 'background', threadId: main.id, generation: 1, channel: 'desktop',
+      pairIds: ['old-main'], messageIds: [String(user.id)], messageRevisions: { [String(user.id)]: 1 },
+    } }, 'background:stale-main')).rejects.toThrow('MEMORY_SOURCE_STALE')
+    expect((await repo.findOperation('background:stale-main'))?.status).toBe('discarded')
+    expect(await repo.list('pero', { includeArchived: true })).toEqual([])
+    expect(countNodesByKind(stores, 'event_note')).toBe(0)
+    await service.replayPending()
+    expect((await repo.findOperation('background:stale-main'))?.status).toBe('discarded')
+  })
+
   it('编辑一轮只重开该轮，整批其他已审阅来源在重启后仍保持覆盖', async () => {
     const { db, repo } = createFixture()
     await repo.saveCoverage({
@@ -499,7 +519,7 @@ describe('EventMemoryService真实双库存储', () => {
       { chatText } as never,
       async () => ({}) as never,
       repo,
-      { findMessagesByPairIds } as never,
+      { findMessagesByPairIds, getThread: vi.fn().mockResolvedValue({ threadKind: 'main' }) } as never,
       async () => ['社交应用完成了当日消息整理。'],
       () => new Date('2026-08-27T21:00:00.000Z'),
     )
@@ -702,7 +722,9 @@ describe('EventMemoryService真实双库存储', () => {
 
     expect((await repo.findById(old.id))?.replacedBy).toBe(revised.id)
     expect(stores.getAgentStore('pero').contains(oldBackup!.tdbId)).toBe(false)
-    expect((await repo.findById(revised.id))?.origin.pairIds).toEqual(['pair-1', 'pair-2'])
+    const origin = (await repo.findById(revised.id))!.origin
+    expect(origin.pairIds).toEqual(['pair-1'])
+    expect(origin.sources).toContainEqual(expect.objectContaining({ pairIds: ['pair-2'], messageIds: ['message-3'] }))
 
     stores.closeAll()
     closeDrizzleConnection(db)
@@ -903,8 +925,8 @@ describe('EventMemoryService真实双库存储', () => {
     }
     service.setAdvancedRetrieval(new ContextRnnRuntime(() => rnn as never), async () => ({
       channels: {
-        desktop: { contextPairs: 20, enableAutoRag: true, retrievalLimit: 8 },
-        group: { contextPairs: 20, enableAutoRag: true, retrievalLimit: 3 },
+        desktop: { historyTokenBudget: 16384, contextPairs: 20, enableAutoRag: true, retrievalLimit: 8 },
+        group: { historyTokenBudget: 16384, contextPairs: 20, enableAutoRag: true, retrievalLimit: 3 },
       },
       advanced: {
         enableSaPpr: true,
@@ -1062,7 +1084,7 @@ describe('EventMemoryService真实双库存储', () => {
     closeDrizzleConnection(db)
   })
 
-  it('Thread软删除应失效Coverage并使来源Router返回原文不可用', async () => {
+  it('Thread软删除应失效Coverage并标明来源已撤回', async () => {
     const { db, stores, repo, service } = createFixture()
     const threads = new ThreadRepository(db)
     await threads.createThread({
@@ -1109,7 +1131,11 @@ describe('EventMemoryService真实双库存储', () => {
     const source = (await sourceResponse.json()) as {
       data: { available: boolean; messages: unknown[] }
     }
-    expect(source.data).toEqual({ available: false, messages: [] })
+    expect(source.data).toMatchObject({ available: true, withdrawn: true, revised: false })
+    expect(source.data.messages).toEqual([
+      expect.objectContaining({ id: user.id, content: '将被软删除的来源消息。' }),
+      expect.objectContaining({ id: assistant.id, content: '这条回复对应同一个来源Pair。' }),
+    ])
     expect(await service.detail(note.id)).toBeDefined()
 
     stores.closeAll()

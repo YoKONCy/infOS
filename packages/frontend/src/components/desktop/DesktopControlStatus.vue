@@ -13,9 +13,14 @@ const props = defineProps<{
 }>()
 const emit = defineEmits<{ resumeTask: [input: { threadId?: string; callId: string }] }>()
 const { state, error, control, supported } = useDesktopControl()
+// 只是在准备桌面组件（首次编译），没有暂停也没有在操作：只显示进度提示。
+const preparingOnly = computed(
+  () => !props.pause && supported && !!state.value.preparing && state.value.phase === 'idle',
+)
 const visible = computed(
   () =>
     !!props.pause ||
+    preparingOnly.value ||
     (supported &&
       state.value.phase !== 'idle' &&
       (!props.taskId || state.value.taskId === props.taskId) &&
@@ -32,7 +37,13 @@ async function resume() {
 
 <template>
   <section v-if="visible" class="desktop-control-status" role="status" aria-live="polite">
-    <div>
+    <div v-if="preparingOnly">
+      <strong>{{ __t('ui.desktop', '正在准备桌面组件') }}</strong>
+      <small>
+        {{ __t('ui.desktop', '第一次使用或更新后需要编译，大约 10–20 秒，之后会快很多。') }}
+      </small>
+    </div>
+    <div v-else>
       <strong>
         {{
           !pause && state.phase === 'running'
@@ -53,17 +64,19 @@ async function resume() {
       </small>
       <small v-if="error" role="alert">{{ error }}</small>
     </div>
-    <PButton
-      v-if="!pause && state.phase === 'running'"
-      size="sm"
-      variant="ghost"
-      @click="control('pause')"
-    >
-      {{ __t('ui.desktop', '暂停') }}
-    </PButton>
-    <PButton v-else size="sm" variant="ghost" :disabled="busy" @click="resume">
-      {{ pause ? __t('ui.desktop', '继续任务') : __t('ui.desktop', '解除桌面暂停') }}
-    </PButton>
+    <template v-if="!preparingOnly">
+      <PButton
+        v-if="!pause && state.phase === 'running'"
+        size="sm"
+        variant="ghost"
+        @click="control('pause')"
+      >
+        {{ __t('ui.desktop', '暂停') }}
+      </PButton>
+      <PButton v-else size="sm" variant="ghost" :disabled="busy" @click="resume">
+        {{ pause ? __t('ui.desktop', '继续任务') : __t('ui.desktop', '解除桌面暂停') }}
+      </PButton>
+    </template>
   </section>
 </template>
 

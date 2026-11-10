@@ -1,5 +1,6 @@
 import { existsSync, readFileSync } from 'node:fs'
 import type { EventNote, MemoryBackgroundPolicy } from '@infos/shared'
+import { isMemoryBackgroundEnabled } from '@infos/shared'
 import { MemoryBackgroundControl } from './memoryBackgroundControl'
 import { MemoryAgentScope } from './memoryAgentScope'
 import type { PathResolver } from '../../core/pathResolver'
@@ -55,7 +56,7 @@ export class DailyNotesService {
     private llm: LlmService,
     private getModelConfig: (agentId: string) => Promise<ModelConfig | null>,
     private repo: EventNoteRepository,
-    private threads?: Pick<ThreadRepository, 'findMessagesByPairIds'>,
+    private threads?: Pick<ThreadRepository, 'findMessagesByPairIds' | 'getThread' | 'queryMemoryExperiencesThrough' | 'latestExperienceId'>,
     private collectApplicationSummaries?: (agentId: string, date: string) => Promise<string[]>,
     private now: () => Date = () => new Date(),
   ) {}
@@ -67,9 +68,9 @@ export class DailyNotesService {
   }
 
   async generate(agentId: string, date: string, sourceIncomplete = false): Promise<string[]> {
-    if (!this.agents.isAvailable(agentId) || !this.background.enabled) return []
+    if (!this.agents.isAvailable(agentId) || !isMemoryBackgroundEnabled(this.background, agentId)) return []
     const agentSignal = this.agents.signal(agentId)
-    const backgroundSignal = this.background.signal
+    const backgroundSignal = this.background.agentSignal?.(agentId) ?? this.background.signal
     const generation = this.generation
     await this.repo.ensureDailyNoteTask({
       id: `daily-note:${agentId}:${date}`,
@@ -208,7 +209,13 @@ export class DailyNotesService {
       .sort((a, b) => a.coveredAt.localeCompare(b.coveredAt))
     const interactions: string[] = []
     for (const coverage of coverages) {
+      const thread = await this.threads.getThread(coverage.threadId)
+      if (thread?.threadKind !== 'main') continue
       const messages = await this.threads.findMessagesByPairIds(coverage.threadId, coverage.pairIds)
+      const selected = new Set(coverage.pairIds)
+      if (coverage.pairIds.some((id) => id.startsWith('experience:')))
+        messages.push(...(await this.threads.queryMemoryExperiencesThrough(coverage.threadId, await this.threads.latestExperienceId()))
+          .filter((message) => message.pairId && selected.has(message.pairId)))
       const content = messages
         .map((message) => `${message.role}: ${message.content}`)
         .join('\n')

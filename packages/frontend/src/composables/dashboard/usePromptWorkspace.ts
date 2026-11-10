@@ -185,6 +185,12 @@ export function usePromptWorkspace() {
       return false
     }
   }
+  /** 其他页面改过同一份正文前后调用：先收下源码框里的改动，再让源码框跟上最新正文。 */
+  function syncSource(): boolean {
+    if (!applySource()) return false
+    refreshSource()
+    return true
+  }
   function select(id: string, nextSection = section.value) {
     if (!applySource()) return
     section.value = nextSection
@@ -560,7 +566,7 @@ export function usePromptWorkspace() {
         if (result.data) accept(result.data)
       }
       notify.toast(
-        publish ? __t('ui.settings', '已发布，下轮生效') : __t('ui.settings', '草稿已保存'),
+        publish ? __t('ui.settings', '已保存，下一轮生效') : __t('ui.settings', '草稿已保存'),
         'success',
       )
     })
@@ -896,6 +902,7 @@ export function usePromptWorkspace() {
     setSection,
     select,
     setMode,
+    syncSource,
     create,
     createIndependent,
     assignSelectedFramework,

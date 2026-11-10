@@ -59,6 +59,7 @@ export function appendPromptSnapshot(
 interface Entry {
   fingerprint: string
   expected: string[]
+  historyStart?: number
   reply: string
   deliveries?: Array<{ key: string; reply: string }>
   messages: ChatMessage[]
@@ -67,6 +68,14 @@ interface Entry {
 }
 
 let privacyEpoch = 0
+const scopeEpochs = new Map<string, number>()
+
+/** 阶段清理只失效当前会话的热轨迹和在途缓存提交。 */
+export function clearPromptReplay(scope: string): void {
+  scopeEpochs.set(scope, (scopeEpochs.get(scope) ?? 0) + 1)
+  entries.delete(scope)
+  scheduleExpiry()
+}
 const entries = new Map<string, Entry>()
 const MAX_BYTES = 32 * 1024 * 1024
 let expiryTimer: ReturnType<typeof setTimeout> | undefined
@@ -101,9 +110,16 @@ export function invalidatePromptReplay(scope?: string, deleteStored = false): vo
   scheduleExpiry()
 }
 
-/** 仅在历史仍为原始前缀、权限和模型一致时续接真实轨迹；冷启动从规范历史重新编译。 */
+/** 只读取已提交轨迹的起点；编译与预算预览不会消费或前移窗口。 */
+export function promptReplayHistoryStart(scope: string): number | undefined {
+  const entry = entries.get(scope)
+  return entry && entry.expires > Date.now() ? entry.historyStart : undefined
+}
+
+/** 校验保留窗口的完整历史、权限和模型，再续接真实轨迹；冷启动从规范历史编译。 */
 export function preparePromptReplay(scope: string, input: ChatMessage[], identity: unknown) {
   const epoch = privacyEpoch
+  const scopeEpoch = scopeEpochs.get(scope) ?? 0
   // 一条持久化回复可展开为数百条工具消息；按来源消息校验，而非按展开后的条数匹配。
   const history: Array<{ key: string; messages: ChatMessage[]; lastIndex: number }> = []
   input.forEach((message, index) => {
@@ -138,11 +154,27 @@ export function preparePromptReplay(scope: string, input: ChatMessage[], identit
   ])
   const previous = entries.get(scope)
   entries.delete(scope)
-  const replyGroup = previous && history[previous.expected.length]
+  // 完整对话对可能带回起点之前的输入，只允许略过游标之前的材料。
+  const historyStart = previous?.historyStart
+  const historyOffset =
+    historyStart !== undefined ? keys.indexOf(previous!.expected[0]!) : 0
+  const historyMatches =
+    historyOffset >= 0 &&
+    history.slice(0, historyOffset).every((group) =>
+      group.messages.every(
+        (message) =>
+          message.cacheControl?.historyMessageId !== undefined &&
+          historyStart !== undefined &&
+          message.cacheControl.historyMessageId < historyStart,
+      ),
+    ) &&
+    Boolean(previous?.expected.every((key, index) => keys[historyOffset + index] === key))
+  const replyIndex = historyOffset + (previous?.expected.length ?? 0)
+  const replyGroup = previous && history[replyIndex]
   const replyMessage = replyGroup?.messages.at(-1)
   const deliveriesMatch = previous?.deliveries?.length
     ? previous.deliveries.every((delivery, index) => {
-        const group = history[previous.expected.length + index]
+        const group = history[replyIndex + index]
         const message = group?.messages.at(-1)
         return (
           group?.key === delivery.key &&
@@ -159,7 +191,7 @@ export function preparePromptReplay(scope: string, input: ChatMessage[], identit
     previous &&
     previous.expires > Date.now() &&
     previous.fingerprint === fingerprint &&
-    previous.expected.every((key, index) => keys[index] === key) &&
+    historyMatches &&
     deliveriesMatch
   const reason = compatible
     ? '完整轨迹已复用'
@@ -171,7 +203,7 @@ export function preparePromptReplay(scope: string, input: ChatMessage[], identit
           ? '历史消息布局不连续'
           : previous.fingerprint !== fingerprint
             ? '模型、工具或系统前缀发生变化'
-            : !previous.expected.every((key, index) => keys[index] === key)
+            : !historyMatches
               ? '历史滑出、撤回或内容发生变化'
               : '已送达消息组缺失、顺序变化或被修改'
   logger.debug(__t('logs.llm', '提示词轨迹续接'), {
@@ -182,6 +214,27 @@ export function preparePromptReplay(scope: string, input: ChatMessage[], identit
     deliveredMessages: previous?.deliveries?.length ?? (previous ? 1 : 0),
   })
   let messages = structuredClone(input)
+  const currentAnchor = [...input]
+    .reverse()
+    .find((message) => message.cacheControl?.kind === 'current')?.cacheControl?.replayAnchor
+  const trackWindow = ordered && currentAnchor?.messageId !== undefined
+  if (trackWindow) {
+    for (const message of messages) {
+      if (message.role === 'system') continue
+      const cache = message.cacheControl
+      message.cacheControl = {
+        ...cache,
+        kind: cache?.kind ?? 'snapshot',
+        replayAnchor:
+          cache?.kind === 'history'
+            ? {
+                key: cache.historySourceKey ?? historyKey(message),
+                messageId: cache.historyMessageId,
+              }
+            : currentAnchor,
+      }
+    }
+  }
   const turnStart = messages.find(
     (message) => message.role !== 'system' && message.cacheControl?.kind !== 'history',
   )
@@ -192,7 +245,7 @@ export function preparePromptReplay(scope: string, input: ChatMessage[], identit
       turnStart: true,
     }
   if (compatible) {
-    const consumed = previous.expected.length + (previous.deliveries?.length || 1)
+    const consumed = replyIndex + (previous.deliveries?.length || 1)
     const consumedThrough = history[consumed - 1]!.lastIndex
     const tail = messages.filter((message, index) => {
       if (message.role === 'system') return false
@@ -210,7 +263,7 @@ export function preparePromptReplay(scope: string, input: ChatMessage[], identit
       visibleReply: string,
       deliveries?: Array<{ key: string; reply: string }>,
     ): void {
-      if (epoch !== privacyEpoch || !visibleReply.trim()) return
+      if (epoch !== privacyEpoch || scopeEpoch !== (scopeEpochs.get(scope) ?? 0) || !visibleReply.trim()) return
       const last = transcript.at(-1)
       if (
         last?.role === 'assistant' &&
@@ -218,19 +271,41 @@ export function preparePromptReplay(scope: string, input: ChatMessage[], identit
         !(typeof last.content === 'string' ? last.content.trim() : last.content?.length)
       )
         return
-      const expected = [
+      let expected = [
         ...keys,
         ...input.flatMap((message) => message.cacheControl?.currentKeys ?? []),
       ]
-      const bytes = Buffer.byteLength(JSON.stringify(transcript), 'utf8')
+      const saved = structuredClone(transcript)
+      let historyStart: number | undefined
+      if (trackWindow) {
+        // 新增的工具结果和回复归属本轮输入；保留下来的旧材料继续使用原锚点。
+        const retained = new Map<string, number | undefined>()
+        for (const message of saved) {
+          if (message.role === 'system') continue
+          message.cacheControl = {
+            ...message.cacheControl,
+            kind: message.cacheControl?.kind ?? 'snapshot',
+            replayAnchor: message.cacheControl?.replayAnchor ?? currentAnchor,
+          }
+          const anchor = message.cacheControl.replayAnchor!
+          retained.set(anchor.key, anchor.messageId)
+        }
+        const first = expected.findIndex((key) => retained.has(key))
+        if (first >= 0 && retained.get(expected[first]!) !== undefined) {
+          expected = expected.slice(first)
+          historyStart = retained.get(expected[0]!)
+        }
+      }
+      const bytes = Buffer.byteLength(JSON.stringify(saved), 'utf8')
       if (bytes > MAX_BYTES / 2) return
       for (const [key, entry] of entries) if (entry.expires <= Date.now()) entries.delete(key)
       entries.set(scope, {
         fingerprint,
         expected,
+        historyStart,
         reply: visibleReply,
         deliveries: deliveries?.length ? structuredClone(deliveries) : undefined,
-        messages: structuredClone(transcript),
+        messages: saved,
         bytes,
         expires: Date.now() + 30 * 60_000,
       })

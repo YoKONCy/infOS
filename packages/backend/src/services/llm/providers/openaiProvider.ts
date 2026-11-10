@@ -14,6 +14,7 @@ import { t as __t } from '../../../lib/i18n'
  * @module packages/backend/src/services/llm/providers/openaiProvider
  */
 
+import { resolveReasoningDialect } from '@infos/shared'
 import { providerApiUrl } from './providerUrl'
 import { normalizeTokenUsage, reportedCacheUsage, reportedCacheInput, tokenCount } from '../usage'
 import { combinedOutputLimit, fetchLlmResponse } from '../requestPolicy'
@@ -445,6 +446,9 @@ export class OpenAiProvider implements LlmProvider {
       : undefined
     if (details) serialized.reasoning_details = details
     if (msg.toolCallId) serialized.tool_call_id = msg.toolCallId
+    // DeepSeek Beta 前缀续写要求末尾 assistant 显式声明 prefix；其他接口不发送该字段。
+    if (msg.promptSegment === 'assistant_prefill' && msg.prefillProtocol === 'deepseek_prefix')
+      serialized.prefix = true
 
     if (msg.toolCalls?.length) {
       serialized.tool_calls = msg.toolCalls.map((tc) => ({
@@ -525,13 +529,8 @@ export class OpenAiProvider implements LlmProvider {
   }
 
   private resolveReasoningDialect(): 'openai' | 'deepseek' | 'openrouter' | 'generic' {
-    const configured = this.config.reasoningDialect
-    if (configured && configured !== 'auto') return configured
-    const base = this.config.apiBase.toLowerCase()
-    if (base.includes('deepseek')) return 'deepseek'
-    if (base.includes('openrouter')) return 'openrouter'
-    if (base.includes('openai.com')) return 'openai'
-    return 'generic'
+    // 与预填充能力判断共用同一套识别规则。
+    return resolveReasoningDialect(this.config.reasoningDialect, this.config.apiBase)
   }
 
   private extractReasoning(source: Record<string, unknown>): {

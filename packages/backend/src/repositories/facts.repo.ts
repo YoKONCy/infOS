@@ -58,8 +58,8 @@ type FactOperationKind = 'write' | 'supersede' | 'delete' | 'retract' | 'restore
 export class FactsRepository {
   private manualEdits = new Map<string, Promise<FactRecord>>()
   private privacy?: PrivacyPolicy
-  private purge?: (id: string) => Promise<void>
-  setPrivacyPolicy(policy: PrivacyPolicy, purge: (id: string) => Promise<void>): void {
+  private purge?: (id: string, assertCurrent?: () => void) => Promise<void>
+  setPrivacyPolicy(policy: PrivacyPolicy, purge: (id: string, assertCurrent?: () => void) => Promise<void>): void {
     this.privacy = policy
     this.purge = purge
   }
@@ -297,8 +297,10 @@ export class FactsRepository {
     confidence?: number
     createdByAgentId: string
     operationId?: string
+    assertCurrent?: () => void
   }): Promise<FactRecord> {
     const generation = this.privacy?.generation
+    input.assertCurrent?.()
     const operationId = input.operationId ?? randomUUID()
     const existing = await this.findOperation(operationId)
     if (existing) {
@@ -345,6 +347,7 @@ export class FactsRepository {
     this.privacy?.assertPayload('fact', payload)
 
     this.db.transaction((tx) => {
+      input.assertCurrent?.()
       tx.insert(factMemoryOperations)
         .values({
           operationId,
@@ -409,6 +412,7 @@ export class FactsRepository {
     },
   ): Promise<FactRecord> {
     const generation = this.privacy?.generation
+    input.assertCurrent?.()
     const operationId = input.operationId ?? randomUUID()
     const existing = await this.findOperation(operationId)
     if (existing) {
@@ -450,6 +454,7 @@ export class FactsRepository {
     if (generation !== this.privacy?.generation) throw new Error('事实数据已变化，已阻止旧任务写入')
 
     this.db.transaction((tx) => {
+      input.assertCurrent?.()
       tx.insert(factMemoryOperations)
         .values({
           operationId,
@@ -566,8 +571,9 @@ export class FactsRepository {
     await this.applyOperation(operationId, 'restore', payload)
   }
 
-  async deleteFact(id: string, operationId: string = randomUUID()): Promise<void> {
-    if (this.purge) return this.purge(id)
+  async deleteFact(id: string, operationId: string = randomUUID(), assertCurrent?: () => void): Promise<void> {
+    assertCurrent?.()
+    if (this.purge) return this.purge(id, assertCurrent)
     const existing = await this.findOperation(operationId)
     if (existing) {
       if (existing.operation !== 'delete') throw new Error('operationId 已用于其他事实操作')
@@ -583,6 +589,7 @@ export class FactsRepository {
       factTdbId: row.tdbId,
     }
     this.db.transaction((tx) => {
+      assertCurrent?.()
       tx.insert(factMemoryOperations)
         .values({
           operationId,
@@ -601,16 +608,18 @@ export class FactsRepository {
     objectId: string,
     alias: string,
     operationId: string = randomUUID(),
+    assertCurrent?: () => void,
   ): Promise<void> {
-    await this.changeAlias(objectId, alias, true, operationId)
+    await this.changeAlias(objectId, alias, true, operationId, assertCurrent)
   }
 
   async removeAlias(
     objectId: string,
     alias: string,
     operationId: string = randomUUID(),
+    assertCurrent?: () => void,
   ): Promise<void> {
-    await this.changeAlias(objectId, alias, false, operationId)
+    await this.changeAlias(objectId, alias, false, operationId, assertCurrent)
   }
 
   async replayPending(): Promise<void> {
@@ -705,7 +714,9 @@ export class FactsRepository {
     alias: string,
     add: boolean,
     operationId: string,
+    assertCurrent?: () => void,
   ): Promise<void> {
+    assertCurrent?.()
     const existing = await this.findOperation(operationId)
     if (existing) {
       if (existing.operation !== 'alias') throw new Error('operationId 已用于其他事实操作')
@@ -725,6 +736,7 @@ export class FactsRepository {
     const payload: FactAliasOperationPayload = { object: updated }
     this.privacy?.assertPayload('fact', payload)
     this.db.transaction((tx) => {
+      assertCurrent?.()
       tx.insert(factMemoryOperations)
         .values({
           operationId,

@@ -10,7 +10,7 @@
   "platforms": ["windows", "linux", "darwin", "docker"],
   "toolDefinition": {
     "name": "update_state",
-    "description": "按需更新当前会话内的角色状态或桌宠临时台词，不结束任务。不影响其他会话；变更绑定本轮消息，删除或撤回本轮时一并撤回。",
+    "description": "按需更新角色共享状态或桌宠临时台词。所有会话读取同一角色状态，任务心流和计划各自保存在会话中。变更绑定本轮来源，撤回本轮时撤销其贡献并保留其他有效变更。",
     "display": {
       "label": "更新角色状态",
       "description": "更新角色当前状态和临时交互台词。",
@@ -21,6 +21,9 @@
     "parameters": {
       "type": "object",
       "properties": {
+        "ongoing_goals": { "type": "string", "description": "跨场景持续目标的完整当前记录，留空可清除。" },
+        "commitments": { "type": "string", "description": "角色持续履行的承诺完整记录，留空可清除。" },
+        "relationships": { "type": "string", "description": "角色当前关系状态的完整记录，留空可清除。" },
         "mood": { "type": "string", "description": "情感底色，例如开心、担心、略有失落。" },
         "vibe": { "type": "string", "description": "外在表现，例如轻松、认真、欲言又止。" },
         "mind": {

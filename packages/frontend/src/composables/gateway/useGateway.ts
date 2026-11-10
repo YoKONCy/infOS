@@ -915,6 +915,9 @@ export function createGatewayClient() {
           }
           break
         }
+        case 'thread_reset':
+          window.dispatchEvent(new CustomEvent('infos:thread-reset', { detail: msg.payload }))
+          break
         case 'state_update':
           if (typeof msg.payload.language === 'string' || msg.payload.language === null)
             applyLanguage(msg.payload.language)

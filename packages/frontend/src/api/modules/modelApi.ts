@@ -28,6 +28,7 @@ export interface ModelConfigItem {
   returnNativeReasoning: boolean
   wireApi: 'chat_completions' | 'responses'
   reasoningDialect: 'auto' | 'openai' | 'deepseek' | 'openrouter' | 'generic'
+  assistantPrefill?: 'auto' | 'supported' | 'unsupported'
   stream: boolean
   providerType?: string
   enableVision?: boolean

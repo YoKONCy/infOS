@@ -38,6 +38,13 @@ export interface WindowInfo {
   title: string
   /** 窗口句柄 (平台相关) */
   handle?: number
+  /** 十进制窗口 ID（Windows HWND），可直接传给 take_screenshot / activate_window */
+  windowId?: string
+  pid?: number
+  /** 窗口位置（物理屏幕像素） */
+  bounds?: { x: number; y: number; width: number; height: number }
+  /** infOS 自己的窗口：main、panel:<页面 ID> 或 card:<卡片 ID> */
+  infosWindowId?: string
 }
 
 /** 工厂函数: 供 tools/index.ts 调用 (闭包内无模块级可变状态) */
@@ -172,7 +179,14 @@ export const getActiveWindowsTool: BuiltinTool = {
         const windows = await _windowProvider.getActiveWindows()
         return JSON.stringify({
           success: true,
-          windows: windows.map((w: WindowInfo) => `[${w.processName}] ${w.title}`),
+          // windowId 与 take_screenshot、activate_window 共用；infOS 自己的窗口另给 infosWindowId。
+          windows: windows.map((w: WindowInfo) => ({
+            ...(w.windowId ? { windowId: w.windowId } : {}),
+            process: w.processName,
+            title: w.title,
+            ...(w.bounds ? { bounds: w.bounds } : {}),
+            ...(w.infosWindowId ? { infosWindowId: w.infosWindowId } : {}),
+          })),
           total: windows.length,
         })
       } catch (err) {

@@ -279,6 +279,28 @@
   animation-iteration-count: 1 !important;
 }
 
+/* 减少动效时，加载图标不转（只转一圈会停在歪的角度），改成静止的半透明图标表示「进行中」 */
+[data-motion='reduced'] .animate-pixel-spin,
+[data-motion='reduced'] .p-btn-spinner,
+[data-motion='reduced'] .media-spinner,
+[data-motion='off'] .animate-pixel-spin,
+[data-motion='off'] .p-btn-spinner,
+[data-motion='off'] .media-spinner {
+  animation: none !important;
+  transform: none !important;
+  opacity: 0.6;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .animate-pixel-spin,
+  .p-btn-spinner,
+  .media-spinner {
+    animation: none !important;
+    transform: none !important;
+    opacity: 0.6;
+  }
+}
+
 [data-motion='off'] *,
 [data-motion='off'] *::before,
 [data-motion='off'] *::after {

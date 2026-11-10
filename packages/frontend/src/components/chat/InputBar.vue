@@ -19,12 +19,12 @@ import {
   MAX_AUDIO_RECORDING_MS,
 } from '@infos/shared'
 import PixelIcon from '../pixel/PixelIcon.vue'
+import { useWatchAlongInput } from '../../composables/chat/useWatchAlongInput'
 import { attachmentsApi, type AttachmentInfo } from '../../api/modules/attachmentsApi'
 import { ApiError } from '../../api/errors'
 import { configApi } from '../../api/modules/configApi'
-import ThreadModelControls from './ThreadModelControls.vue'
-import RuntimeDebugToggle from './RuntimeDebugToggle.vue'
-import InputBarFoldout from './InputBarFoldout.vue'
+import ThreadSkillControls from './ThreadSkillControls.vue'
+import SessionSettingsPanel from './SessionSettingsPanel.vue'
 import { voiceApi } from '../../api/modules/voiceApi'
 import { useAgentStore, useNotificationStore, useThreadStore } from '../../stores'
 import {
@@ -172,6 +172,11 @@ function onIntegrationsChanged(): void {
   if (!toolsSaving.value) void loadThreadTools()
 }
 const textareaRef = ref<HTMLTextAreaElement | null>(null)
+useWatchAlongInput(textareaRef, () => ({
+  agentId: agentStore.activeAgentId,
+  threadId: threadStore.threadId ?? '',
+  channel: props.channel,
+}))
 /** @ 内联 chip 的叠加渲染层（group 模式与 textarea 同尺寸叠放）。 */
 const overlayRef = ref<HTMLElement | null>(null)
 const fileInputRef = ref<HTMLInputElement | null>(null)
@@ -189,72 +194,13 @@ const toolsLoading = ref(false)
 const toolsSaving = ref(false)
 const modeSaving = ref(false)
 const pendingInteractionMode = ref<InteractionMode | null>(null)
-const interactionModeOptions: Array<{
-  value: InteractionMode
-  label: string
-  icon: string
-  title: string
-}> = [
-  {
-    value: 'minimal',
-    get label() {
-      return __t('ui.chat', '极简')
-    },
-    icon: 'leaf',
-    get title() {
-      return __t('ui.chat', '极简模式：仅截图、完成任务、心流和查询事件')
-    },
-  },
-  {
-    value: 'chat',
-    get label() {
-      return __t('ui.chat', '聊天')
-    },
-    icon: 'chat',
-    get title() {
-      return __t('ui.chat', '聊天模式')
-    },
-  },
-  {
-    value: 'work',
-    get label() {
-      return __t('ui.chat', '工作')
-    },
-    icon: 'tool',
-    get title() {
-      return __t('ui.chat', '工作模式')
-    },
-  },
-]
-const currentInteractionMode = computed(
-  () =>
-    interactionModeOptions.find(
-      (option) => option.value === (pendingInteractionMode.value ?? threadStore.interactionMode),
-    ) ?? interactionModeOptions[1]!,
-)
-const interactionAccent = computed(
-  () =>
-    ({
-      minimal: 'var(--ui-success)',
-      chat: 'var(--ui-accent-primary)',
-      work: 'var(--ui-accent-sky)',
-    })[currentInteractionMode.value.value],
-)
 const debugStatus = ref({ enabled: false, busy: false })
-const sessionModeMenu = ref<InstanceType<typeof InputBarFoldout> | null>(null)
-const mediaInputMenu = ref<InstanceType<typeof InputBarFoldout> | null>(null)
+const skillControls = ref<InstanceType<typeof ThreadSkillControls> | null>(null)
+const skillSettingsBusy = ref(false)
+const sessionPanel = ref<InstanceType<typeof SessionSettingsPanel> | null>(null)
 const inputScope = computed(
   () => `${agentStore.activeAgentId}:${threadStore.threadId}:${props.channel}`,
 )
-const modeStatusLabel = computed(() => {
-  const option = interactionModeOptions.find(
-    (item) => item.value === (pendingInteractionMode.value ?? threadStore.interactionMode),
-  )
-  return __t('ui.chat', '{0}{1}模式', [
-    modeSaving.value ? __t('ui.chat', '正在切换为') : __t('ui.chat', '当前为'),
-    option?.label ?? __t('ui.chat', '聊天'),
-  ])
-})
 const disabledToolNames = ref<string[]>([])
 let toolsRequest = 0
 const executionMode = computed<ExecutionMode>({
@@ -263,19 +209,14 @@ const executionMode = computed<ExecutionMode>({
     threadStore.executionMode = value
   },
 })
-const executionModeIcons: Record<ExecutionMode, string> = {
-  manual: 'shield',
-  auto: 'flash',
-  auto_approve: 'check',
-  full: 'sparkle',
-}
 const toolQuery = ref('')
 const imageMode = ref<'auto' | 'native' | 'relay'>('auto')
 const relayAvailable = ref(false)
 
 function closeInputPopovers() {
-  sessionModeMenu.value?.close()
-  mediaInputMenu.value?.close()
+  sessionPanel.value?.close()
+  skillControls.value?.close()
+  onFoldoutOpened()
 }
 
 function onFoldoutOpened(): void {
@@ -284,29 +225,13 @@ function onFoldoutOpened(): void {
   flowOpen.value = false
 }
 
-async function selectInteractionMode(mode: InteractionMode): Promise<void> {
-  if (modeSwitchDisabled.value) return
-  await switchInteractionMode(mode)
-  if (threadStore.interactionMode === mode) sessionModeMenu.value?.close(true)
-}
-
-async function selectAudioInput(mode: 'asr' | 'native') {
-  mediaInputMenu.value?.close(true)
-  recordingMode.value = mode
-  await startRecording(mode)
-}
-
-/** 识图方式按钮文案：跟随当前选择实时切换。 */
-const imageModeLabel = computed(() => {
-  if (imageMode.value === 'native') return __t('ui.chat', '原生多模态')
-  if (imageMode.value === 'relay') return __t('ui.chat', '多模态转述')
-  return __t('ui.chat', '自动识图')
-})
-
-/** 选择某个识图方式后：更新模式并收起弹层。 */
-function selectImageMode(mode: 'auto' | 'native' | 'relay') {
-  imageMode.value = mode
-  mediaInputMenu.value?.close(true)
+/** 会话设置面板的“恢复默认”：模式、执行权限与识图/语音回到初始值。 */
+async function resetSessionSettings(): Promise<void> {
+  imageMode.value = 'auto'
+  recordingMode.value = 'native'
+  // 两项保存共用工具配置锁，需依次执行；降低权限不需要确认。
+  if (executionMode.value !== 'manual') await changeExecutionMode('manual')
+  if (threadStore.interactionMode !== 'chat') await switchInteractionMode('chat')
 }
 
 const commandQuery = ref('')
@@ -551,6 +476,7 @@ async function loadThreadTools(): Promise<void> {
 }
 
 async function switchInteractionMode(mode: InteractionMode): Promise<void> {
+  if (skillSettingsBusy.value) return
   if (modeSwitchDisabled.value || threadStore.interactionMode === mode) return
   toolsSaving.value = true
   modeSaving.value = true
@@ -1367,6 +1293,7 @@ function send() {
     voiceBusy.value ||
     startingVoice.value ||
     modelSettingsBusy.value ||
+    skillSettingsBusy.value ||
     modeSaving.value ||
     submitting.value ||
     props.submissionBusy ||
@@ -1853,24 +1780,26 @@ defineExpose({
       />
 
       <!-- @ 候选弹窗（QQ 风格：@全体成员置顶 + 房间成员） -->
-      <div v-if="mentionOpen && isGroupChannel" class="deck-popover mention-popover">
-        <button
-          v-for="(candidate, index) in mentionFiltered"
-          :key="candidate.agentId"
-          :class="{ active: index === activeMentionIndex }"
-          @mousedown.prevent="selectMention(candidate)"
-        >
-          <span class="mention-avatar">
-            <img v-if="candidate.avatarUrl" :src="candidate.avatarUrl" :alt="candidate.name" />
-            <PixelIcon v-else :name="candidate.agentId === '@all' ? 'users' : 'user'" size="xs" />
-          </span>
-          <strong>{{ candidate.name }}</strong>
-          <small v-if="candidate.agentId === '@all'">{{ __t('ui.chat', '全体成员') }}</small>
-        </button>
-        <p v-if="!mentionFiltered.length" class="mention-empty">
-          {{ __t('ui.chat', '没有匹配的成员') }}
-        </p>
-      </div>
+      <Transition name="motion-pop">
+        <div v-if="mentionOpen && isGroupChannel" class="deck-popover mention-popover">
+          <button
+            v-for="(candidate, index) in mentionFiltered"
+            :key="candidate.agentId"
+            :class="{ active: index === activeMentionIndex }"
+            @mousedown.prevent="selectMention(candidate)"
+          >
+            <span class="mention-avatar">
+              <img v-if="candidate.avatarUrl" :src="candidate.avatarUrl" :alt="candidate.name" />
+              <PixelIcon v-else :name="candidate.agentId === '@all' ? 'users' : 'user'" size="xs" />
+            </span>
+            <strong>{{ candidate.name }}</strong>
+            <small v-if="candidate.agentId === '@all'">{{ __t('ui.chat', '全体成员') }}</small>
+          </button>
+          <p v-if="!mentionFiltered.length" class="mention-empty">
+            {{ __t('ui.chat', '没有匹配的成员') }}
+          </p>
+        </div>
+      </Transition>
     </div>
 
     <AudioRecordingHud
@@ -1886,269 +1815,95 @@ defineExpose({
 
     <div class="deck-footer">
       <div v-if="!isGroupChannel" class="deck-tools">
-        <ThreadModelControls
-          :compact="compact"
+        <SessionSettingsPanel
+          ref="sessionPanel"
           :thread-id="threadStore.threadId"
-          :disabled="disabled || isSending || modeSaving || submissionBusy || submitting"
-          @changed="onThreadModelChanged"
-          @busy="modelSettingsBusy = $event"
+          :scope-key="inputScope"
+          :compact="compact || isMobile"
+          :model-disabled="disabled || isSending || modeSaving || skillSettingsBusy || submissionBusy || submitting"
+          :interaction-mode="threadStore.interactionMode"
+          :pending-interaction-mode="pendingInteractionMode"
+          :mode-busy="modeSaving || debugStatus.busy"
+          :mode-disabled="modeSwitchDisabled || skillSettingsBusy"
+          :execution-mode="executionMode"
+          :execution-disabled="executionModeDisabled || skillSettingsBusy"
+          :image-mode="imageMode"
+          :enable-vision="enableVision"
+          :relay-available="relayAvailable"
+          :recording-mode="preferredRecordingMode"
+          :asr-available="asrAvailable"
+          :native-audio-available="nativeAudioAvailable"
+          :voice-disabled="disabled || voiceBusy || startingVoice"
+          :locked="isSending || threadStore.isGenerating"
+          :ensure-thread="ensureThread"
           @open="onFoldoutOpened"
+          @model-changed="onThreadModelChanged"
+          @model-busy="modelSettingsBusy = $event"
+          @select-mode="switchInteractionMode"
+          @change-execution="changeExecutionMode"
+          @update:image-mode="imageMode = $event"
+          @update:recording-mode="recordingMode = $event"
+          @debug-state="debugStatus = $event"
+          @debug-change="loadThreadTools"
+          @reset="resetSessionSettings"
         />
-        <InputBarFoldout
-          ref="sessionModeMenu"
-          :label="currentInteractionMode.label"
-          :title="__t('ui.chat', '会话模式')"
-          :icon="currentInteractionMode.icon"
-          :accent="interactionAccent"
-          :busy="modeSaving || debugStatus.busy"
-          :badge="
-            debugStatus.enabled && threadStore.interactionMode === 'work'
-              ? __t('ui.runtime-debug', '调试')
-              : undefined
-          "
-          :compact="compact"
-          :scope-key="inputScope"
-          @open="onFoldoutOpened"
-        >
-          <div
-            class="input-choice-list session-mode-choices"
-            role="group"
-            :aria-label="__t('ui.chat', '会话模式')"
-            :aria-busy="modeSaving"
+        <div class="deck-tool-group">
+          <ThreadSkillControls
+            ref="skillControls"
+            :thread-id="threadStore.threadId"
+            :compact="compact || isMobile"
+            :disabled="modeSwitchDisabled || modeSaving || modelSettingsBusy || threadStore.interactionMode === 'minimal'"
+            @open="onFoldoutOpened"
+            @busy="skillSettingsBusy = $event"
+            @changed="scheduleTokenBudgetRefresh"
+          />
+          <slot
+            name="session-tools"
+            :compact="compact || isMobile"
+            :disabled="disabled"
+            :dismiss="closeInputPopovers"
+          />
+          <button
+            type="button"
+            class="input-tool-trigger"
+            :title="__t('ui.chat', '管理本会话可用工具')"
+            :aria-label="__t('ui.chat', '管理本会话可用工具')"
+            :aria-expanded="toolOpen"
+            :disabled="modeSaving || skillSettingsBusy"
+            :class="{ 'is-open': toolOpen }"
+            @click="toggleToolManager"
           >
-            <button
-              v-for="mode in interactionModeOptions"
-              :key="mode.value"
-              type="button"
-              class="input-choice"
-              :class="{
-                'is-selected':
-                  !pendingInteractionMode && threadStore.interactionMode === mode.value,
-                'is-pending': pendingInteractionMode === mode.value,
-              }"
-              :data-interaction-mode="mode.value"
-              :aria-pressed="threadStore.interactionMode === mode.value"
-              :disabled="modeSwitchDisabled"
-              :title="mode.title"
-              @click="selectInteractionMode(mode.value)"
-            >
-              <span class="input-choice__icon" aria-hidden="true">
-                <PixelIcon
-                  :name="pendingInteractionMode === mode.value ? 'refresh' : mode.icon"
-                  :animation="pendingInteractionMode === mode.value ? 'spin' : undefined"
-                  size="xs"
-                  aria-hidden="true"
-                />
-              </span>
-              <span class="input-choice__copy">
-                <strong>{{ mode.label }}</strong>
-                <small>
-                  {{
-                    __t(
-                      'ui.input-controls',
-                      mode.value === 'minimal'
-                        ? '轻量对话与日常工具'
-                        : mode.value === 'chat'
-                          ? '自然交流与角色互动'
-                          : '使用工具处理任务',
-                    )
-                  }}
-                </small>
-              </span>
-              <span class="input-choice__check" aria-hidden="true">
-                <PixelIcon
-                  v-if="!pendingInteractionMode && threadStore.interactionMode === mode.value"
-                  name="check"
-                  size="xs"
-                />
-              </span>
-            </button>
-          </div>
-          <div class="input-debug-section">
-            <RuntimeDebugToggle
-              layout="menu"
-              :thread-id="threadStore.threadId"
-              :mode="threadStore.interactionMode"
-              :disabled="modeSwitchDisabled"
-              :ensure-thread="ensureThread"
-              @state="debugStatus = $event"
-              @change="loadThreadTools"
-            />
-          </div>
-          <span class="sr-only" role="status">{{ modeStatusLabel }}</span>
-        </InputBarFoldout>
-        <InputBarFoldout
-          ref="mediaInputMenu"
-          :label="__t('ui.input-controls', '输入')"
-          :title="__t('ui.input-controls', '图片与语音输入')"
-          :summary="imageModeLabel"
-          :compact="compact"
-          :scope-key="inputScope"
-          icon="image"
-          accent="var(--ui-accent-sky)"
-          :width="340"
-          @open="onFoldoutOpened"
-        >
-          <section class="input-choice-section" :aria-label="__t('ui.chat', '识图方式')">
-            <header class="input-choice-section__head">
-              <span>
-                <PixelIcon name="image" size="xs" />
-                {{ __t('ui.chat', '识图方式') }}
-              </span>
-              <small>{{ imageModeLabel }}</small>
-            </header>
-            <div class="input-choice-list" role="group" :aria-label="__t('ui.chat', '识图方式')">
-              <button
-                v-for="option in [
-                  {
-                    value: 'auto',
-                    label: __t('ui.chat', '自动选择'),
-                    hint: enableVision
-                      ? __t('ui.chat', '优先主模型原生识图')
-                      : relayAvailable
-                        ? __t('ui.chat', '使用多模态转述')
-                        : __t('ui.chat', '暂无可用能力'),
-                  },
-                  {
-                    value: 'native',
-                    label: __t('ui.chat', '原生多模态'),
-                    hint: enableVision
-                      ? __t('ui.chat', '当前可用')
-                      : __t('ui.chat', '当前模型不支持'),
-                  },
-                  {
-                    value: 'relay',
-                    label: __t('ui.chat', '多模态转述'),
-                    hint: relayAvailable ? __t('ui.chat', '当前可用') : __t('ui.chat', '尚未配置'),
-                  },
-                ]"
-                :key="option.value"
-                type="button"
-                class="input-choice"
-                :class="{ 'is-selected': imageMode === option.value }"
-                :aria-pressed="imageMode === option.value"
-                :data-image-mode="option.value"
-                :disabled="
-                  (option.value === 'native' && !enableVision) ||
-                  (option.value === 'relay' && !relayAvailable)
-                "
-                @click="selectImageMode(option.value as 'auto' | 'native' | 'relay')"
-              >
-                <span class="input-choice__icon" aria-hidden="true">
-                  <PixelIcon
-                    :name="
-                      option.value === 'auto'
-                        ? 'sparkle'
-                        : option.value === 'native'
-                          ? 'eye'
-                          : 'network'
-                    "
-                    size="xs"
-                  />
-                </span>
-                <span class="input-choice__copy">
-                  <strong>{{ option.label }}</strong>
-                  <small>{{ option.hint }}</small>
-                </span>
-                <span class="input-choice__check" aria-hidden="true">
-                  <PixelIcon v-if="imageMode === option.value" name="check" size="xs" />
-                </span>
-              </button>
-            </div>
-          </section>
-          <section
-            class="input-choice-section input-choice-section--voice"
-            :aria-label="__t('ui.chat', '语音输入')"
+            <PixelIcon name="tool" size="xs" />
+            <span v-if="!compact && !isMobile">{{ __t('ui.chat', '会话工具') }}</span>
+            <span v-if="threadTools.length && !compact && !isMobile" class="tool-count">
+              {{ enabledToolCount }}/{{ availableToolCount }}
+            </span>
+          </button>
+        </div>
+        <div class="deck-tool-group deck-tool-group--shortcuts">
+          <button
+            type="button"
+            class="input-tool-trigger"
+            :class="{ 'is-open': commandOpen }"
+            :title="__t('ui.chat', '命令')"
+            :aria-label="__t('ui.chat', '命令')"
+            :aria-expanded="commandOpen"
+            @click="commandOpen = !commandOpen"
           >
-            <header class="input-choice-section__head">
-              <span>
-                <PixelIcon name="mic" size="xs" />
-                {{ __t('ui.chat', '语音输入') }}
-              </span>
-              <small>{{ __t('ui.input-controls', '录音') }}</small>
-            </header>
-            <button
-              type="button"
-              class="input-choice"
-              data-audio-input="asr"
-              :disabled="disabled || voiceBusy || startingVoice"
-              @click="selectAudioInput('asr')"
-            >
-              <span class="input-choice__icon" aria-hidden="true">
-                <PixelIcon name="mic" size="xs" />
-              </span>
-              <span class="input-choice__copy">
-                <strong>
-                  {{ __t('ui.chat', '语音转写') }}
-                  <em v-if="!asrAvailable">{{ __t('ui.chat', '未配置') }}</em>
-                </strong>
-                <small>{{ __t('ui.chat', '录音转成文字，可编辑后发送') }}</small>
-              </span>
-              <PixelIcon
-                name="chevron-right"
-                size="xs"
-                class="input-choice__arrow"
-                aria-hidden="true"
-              />
-            </button>
-            <button
-              type="button"
-              class="input-choice"
-              data-audio-input="native"
-              :disabled="
-                disabled ||
-                voiceBusy ||
-                startingVoice ||
-                (!nativeAudioAvailable && Boolean(threadStore.threadId))
-              "
-              @click="selectAudioInput('native')"
-            >
-              <span class="input-choice__icon" aria-hidden="true">
-                <PixelIcon name="volume" size="xs" />
-              </span>
-              <span class="input-choice__copy">
-                <strong>
-                  {{ __t('ui.chat', '原生音频') }}
-                  <em>Gemini</em>
-                </strong>
-                <small>
-                  {{
-                    nativeAudioAvailable
-                      ? __t('ui.audio-input', '录制原音，试听后发送')
-                      : __t('ui.audio-input', '请在 Gemini 模型卡片中手动开启音频输入')
-                  }}
-                </small>
-              </span>
-              <PixelIcon name="info" size="xs" class="input-choice__arrow" aria-hidden="true" />
-            </button>
-          </section>
-        </InputBarFoldout>
-        <button
-          :title="__t('ui.chat', '管理本会话可用工具')"
-          :disabled="modeSaving"
-          :class="{ reserved: toolOpen }"
-          @click="toggleToolManager"
-        >
-          <PixelIcon name="tool" size="xs" />
-          {{ __t('ui.chat', '会话工具') }}
-          <span v-if="threadTools.length" class="tool-count">
-            {{ enabledToolCount }}/{{ availableToolCount }}
-          </span>
-        </button>
-        <button :title="__t('ui.chat', '命令')" @click="commandOpen = !commandOpen">
-          <PixelIcon name="terminal" size="xs" class="deck-tool-icon" />
-          <span class="pixel-label">/ CMD</span>
-        </button>
-        <button
-          type="button"
-          class="deck-add-file"
-          :title="__t('ui.attachments', '添加文件')"
-          :aria-label="__t('ui.attachments', '添加文件')"
-          :disabled="disabled"
-          @click="fileInputRef?.click()"
-        >
-          <PixelIcon name="plus" size="sm" aria-hidden="true" />
-        </button>
+            <PixelIcon name="terminal" size="xs" class="deck-tool-icon" />
+            <span v-if="!compact && !isMobile">/ CMD</span>
+          </button>
+          <button
+            type="button"
+            class="deck-add-file input-tool-trigger"
+            :title="__t('ui.attachments', '添加文件')"
+            :aria-label="__t('ui.attachments', '添加文件')"
+            :disabled="disabled"
+            @click="fileInputRef?.click()"
+          >
+            <PixelIcon name="plus" size="xs" aria-hidden="true" />
+          </button>
+        </div>
       </div>
       <div v-else-if="isGroupChannel" class="group-footer-tools">
         <button
@@ -2223,6 +1978,7 @@ defineExpose({
             submitting ||
             submissionBusy ||
             modelSettingsBusy ||
+            skillSettingsBusy ||
             modeSaving ||
             hasUploading ||
             (!inputText.trim() && !successfulAttachments.length)
@@ -2240,198 +1996,165 @@ defineExpose({
       </div>
     </div>
 
-    <div v-if="commandOpen" class="deck-popover command-popover">
-      <input v-model="commandQuery" autofocus :placeholder="__t('ui.chat', '搜索命令…')" />
-      <button
-        v-for="command in filteredCommands"
-        :key="command.id"
-        @click="executeCommand(command.id)"
-      >
-        <strong>/ {{ command.label }}</strong>
-        <span>{{ command.hint }}</span>
-      </button>
-      <p v-if="!filteredCommands.length">{{ __t('ui.chat', '没有匹配的命令') }}</p>
-    </div>
-
-    <div v-if="flowOpen" class="deck-popover flow-popover">
-      <header class="flow-panel__head">
-        <div>
-          <strong>{{ __t('ui.chat', '私有临时心流') }}</strong>
-          <span>{{ __t('ui.chat', '当前会话 · Agent 自维护') }}</span>
-        </div>
-        <div class="flow-panel__actions">
-          <button
-            :title="__t('ui.chat', '刷新心流')"
-            :disabled="flowLoading"
-            @click="loadFlowState"
-          >
-            <PixelIcon name="refresh" size="xs" :animation="flowLoading ? 'spin' : undefined" />
-          </button>
-          <button :title="__t('ui.chat', '收起心流')" @click="flowOpen = false">
-            <PixelIcon name="chevron-down" size="xs" />
-          </button>
-        </div>
-      </header>
-      <div v-if="flowLoading && !flowStates.length" class="flow-panel__empty">
-        <PixelIcon name="refresh" size="xs" animation="spin" />
-        {{ __t('ui.chat', '正在读取心流…') }}
-      </div>
-      <div v-else-if="!flowStates.length" class="flow-panel__empty">
-        {{ __t('ui.chat', '当前会话还没有心流') }}
-      </div>
-      <article v-for="state in flowStates" v-else :key="state.agentId" class="flow-state-card">
-        <header>
-          <span>
-            {{
-              agentStore.agents.find((agent) => agent.id === state.agentId)?.name ?? state.agentId
-            }}
-          </span>
-          <b>REV.{{ state.revision }}</b>
-        </header>
-        <section>
-          <small>{{ __t('ui.chat', '当前目标') }}</small>
-          <p>{{ state.currentGoal || __t('ui.chat', '暂无明确的持续目标。') }}</p>
-        </section>
-        <section class="flow-state-card__private">
-          <small>{{ __t('ui.chat', '私有事实') }}</small>
-          <p>{{ state.privateFacts || __t('ui.chat', '暂无需要私下持续记住的事实。') }}</p>
-        </section>
-        <footer>
-          <time>
-            {{
-              state.updatedAt
-                ? __t('ui.chat', '更新于 {0}', [state.updatedAt])
-                : __t('ui.chat', '尚未更新')
-            }}
-          </time>
-          <button
-            :disabled="flowClearing || (!state.currentGoal && !state.privateFacts)"
-            @click="clearFlowState(state.agentId)"
-          >
-            <PixelIcon name="trash" size="xs" />
-            {{ __t('ui.chat', '清空') }}
-          </button>
-        </footer>
-      </article>
-      <p class="flow-panel__notice">{{ __t('ui.chat', '仅用于当前会话，不存入长期记忆。') }}</p>
-    </div>
-
-    <div v-if="toolOpen" class="deck-popover tool-popover">
-      <header class="tool-manager__head">
-        <div>
-          <strong>{{ __t('ui.chat', '本会话工具') }}</strong>
-          <span>
-            {{ channelLabel }} ·
-            {{
-              threadStore.interactionMode === 'minimal'
-                ? __t('ui.chat', '极简模式')
-                : threadStore.interactionMode === 'chat'
-                  ? __t('ui.chat', '聊天模式')
-                  : __t('ui.chat', '工作模式')
-            }}
-          </span>
-        </div>
-        <b>{{ enabledToolCount }}/{{ availableToolCount }} {{ __t('ui.chat', '启用') }}</b>
-      </header>
-      <section
-        class="execution-policy"
-        :aria-label="__t('ui.chat', '本会话执行权限')"
-        :aria-busy="toolsSaving"
-      >
-        <div class="execution-policy__head">
-          <span>
-            <PixelIcon name="shield" size="xs" />
-            {{ __t('ui.chat', '执行权限') }}
-          </span>
-          <small>{{ __t('ui.chat', '仅当前会话') }}</small>
-        </div>
-        <div
-          class="execution-policy__options"
-          role="group"
-          :aria-label="__t('ui.chat', '选择执行权限')"
-        >
-          <button
-            v-for="option in executionModeOptions"
-            :key="option.value"
-            type="button"
-            class="execution-policy__option"
-            :class="{
-              'is-selected': executionMode === option.value,
-              'is-full': option.value === 'full',
-            }"
-            :aria-pressed="executionMode === option.value"
-            :disabled="executionModeDisabled"
-            @click="changeExecutionMode(option.value)"
-          >
-            <span class="execution-policy__label">
-              <PixelIcon :name="executionModeIcons[option.value]" size="xs" />
-              <strong>{{ option.label }}</strong>
-              <span class="execution-policy__marker" aria-hidden="true">
-                <PixelIcon v-if="executionMode === option.value" name="check" size="xs" />
-              </span>
-            </span>
-            <small>{{ option.description }}</small>
-          </button>
-        </div>
-      </section>
-      <p class="tool-manager__notice">{{ __t('ui.chat', '仅影响本会话；系统必需项不可关闭。') }}</p>
-      <label class="tool-manager__search">
-        <PixelIcon name="search" size="xs" />
-        <input v-model="toolQuery" :placeholder="__t('ui.chat', '搜索功能名称或用途…')" />
-      </label>
-      <div class="tool-manager__list">
-        <div v-if="toolsLoading" class="tool-manager__empty">
-          <PixelIcon name="refresh" size="xs" animation="spin" />
-          {{ __t('ui.chat', '正在加载工具权限…') }}
-        </div>
+    <Transition name="motion-pop">
+      <div v-if="commandOpen" class="deck-popover command-popover">
+        <input v-model="commandQuery" autofocus :placeholder="__t('ui.chat', '搜索命令…')" />
         <button
-          v-for="tool in visibleThreadTools"
-          v-else
-          :key="tool.name"
-          class="tool-manager__item"
-          :class="{
-            'is-enabled': tool.enabled,
-            'is-locked': tool.locked,
-            'is-mode-blocked': !tool.modeAllowed,
-          }"
-          :disabled="toolsSaving || isSending || !tool.modeAllowed"
-          @click="toggleThreadTool(tool)"
+          v-for="command in filteredCommands"
+          :key="command.id"
+          @click="executeCommand(command.id)"
         >
-          <span class="tool-manager__icon" :style="{ color: toolDisplayColor(tool.display) }">
-            <PixelIcon :name="toolDisplayIcon(tool.display)" size="xs" />
-          </span>
-          <span class="tool-manager__meta">
-            <strong>{{ tool.label }}</strong>
-            <small>
-              {{ tool.description }}
-            </small>
-            <span class="tool-manager__tooltip" role="tooltip">
-              <b>{{ tool.label }}</b>
-              <span>
-                {{ tool.description || __t('ui.chat', '暂无工具介绍') }}
+          <strong>/ {{ command.label }}</strong>
+          <span>{{ command.hint }}</span>
+        </button>
+        <p v-if="!filteredCommands.length">{{ __t('ui.chat', '没有匹配的命令') }}</p>
+      </div>
+    </Transition>
+
+    <Transition name="motion-pop">
+      <div v-if="flowOpen" class="deck-popover flow-popover">
+        <header class="flow-panel__head">
+          <div>
+            <strong>{{ __t('ui.chat', '私有临时心流') }}</strong>
+            <span>{{ __t('ui.chat', '当前会话 · Agent 自维护') }}</span>
+          </div>
+          <div class="flow-panel__actions">
+            <button
+              :title="__t('ui.chat', '刷新心流')"
+              :disabled="flowLoading"
+              @click="loadFlowState"
+            >
+              <PixelIcon name="refresh" size="xs" :animation="flowLoading ? 'spin' : undefined" />
+            </button>
+            <button :title="__t('ui.chat', '收起心流')" @click="flowOpen = false">
+              <PixelIcon name="chevron-down" size="xs" />
+            </button>
+          </div>
+        </header>
+        <div v-if="flowLoading && !flowStates.length" class="flow-panel__empty">
+          <PixelIcon name="refresh" size="xs" animation="spin" />
+          {{ __t('ui.chat', '正在读取心流…') }}
+        </div>
+        <div v-else-if="!flowStates.length" class="flow-panel__empty">
+          {{ __t('ui.chat', '当前会话还没有心流') }}
+        </div>
+        <article v-for="state in flowStates" v-else :key="state.agentId" class="flow-state-card">
+          <header>
+            <span>
+              {{
+                agentStore.agents.find((agent) => agent.id === state.agentId)?.name ?? state.agentId
+              }}
+            </span>
+            <b>REV.{{ state.revision }}</b>
+          </header>
+          <section>
+            <small>{{ __t('ui.chat', '当前目标') }}</small>
+            <p>{{ state.currentGoal || __t('ui.chat', '暂无明确的持续目标。') }}</p>
+          </section>
+          <section class="flow-state-card__private">
+            <small>{{ __t('ui.chat', '私有事实') }}</small>
+            <p>{{ state.privateFacts || __t('ui.chat', '暂无需要私下持续记住的事实。') }}</p>
+          </section>
+          <footer>
+            <time>
+              {{
+                state.updatedAt
+                  ? __t('ui.chat', '更新于 {0}', [state.updatedAt])
+                  : __t('ui.chat', '尚未更新')
+              }}
+            </time>
+            <button
+              :disabled="flowClearing || (!state.currentGoal && !state.privateFacts)"
+              @click="clearFlowState(state.agentId)"
+            >
+              <PixelIcon name="trash" size="xs" />
+              {{ __t('ui.chat', '清空') }}
+            </button>
+          </footer>
+        </article>
+        <p class="flow-panel__notice">{{ __t('ui.chat', '仅用于当前会话，不存入长期记忆。') }}</p>
+      </div>
+    </Transition>
+
+    <Transition name="motion-pop">
+      <div v-if="toolOpen" class="deck-popover tool-popover">
+        <header class="tool-manager__head">
+          <div>
+            <strong>{{ __t('ui.chat', '本会话工具') }}</strong>
+            <span>
+              {{ channelLabel }} ·
+              {{
+                threadStore.interactionMode === 'minimal'
+                  ? __t('ui.chat', '极简模式')
+                  : threadStore.interactionMode === 'chat'
+                    ? __t('ui.chat', '聊天模式')
+                    : __t('ui.chat', '工作模式')
+              }}
+            </span>
+          </div>
+          <b>{{ enabledToolCount }}/{{ availableToolCount }} {{ __t('ui.chat', '启用') }}</b>
+        </header>
+        <p class="tool-manager__notice">
+          {{ __t('ui.chat', '仅影响本会话；系统必需项不可关闭。') }}
+        </p>
+        <label class="tool-manager__search">
+          <PixelIcon name="search" size="xs" />
+          <input v-model="toolQuery" :placeholder="__t('ui.chat', '搜索功能名称或用途…')" />
+        </label>
+        <div class="tool-manager__list">
+          <div v-if="toolsLoading" class="tool-manager__empty">
+            <PixelIcon name="refresh" size="xs" animation="spin" />
+            {{ __t('ui.chat', '正在加载工具权限…') }}
+          </div>
+          <button
+            v-for="tool in visibleThreadTools"
+            v-else
+            :key="tool.name"
+            class="tool-manager__item"
+            :class="{
+              'is-enabled': tool.enabled,
+              'is-locked': tool.locked,
+              'is-mode-blocked': !tool.modeAllowed,
+            }"
+            :disabled="toolsSaving || isSending || !tool.modeAllowed"
+            @click="toggleThreadTool(tool)"
+          >
+            <span class="tool-manager__icon" :style="{ color: toolDisplayColor(tool.display) }">
+              <PixelIcon :name="toolDisplayIcon(tool.display)" size="xs" />
+            </span>
+            <span class="tool-manager__meta">
+              <strong>{{ tool.label }}</strong>
+              <small>
+                {{ tool.description }}
+              </small>
+              <span class="tool-manager__tooltip" role="tooltip">
+                <b>{{ tool.label }}</b>
+                <span>
+                  {{ tool.description || __t('ui.chat', '暂无工具介绍') }}
+                </span>
               </span>
             </span>
-          </span>
-          <span v-if="!tool.modeAllowed" class="tool-manager__protocol">
-            {{ __t('ui.chat', '模式未开放') }}
-          </span>
-          <span v-else-if="tool.locked" class="tool-manager__protocol">
-            {{ __t('ui.chat', '系统必需') }}
-          </span>
-          <span
-            v-else
-            class="tool-manager__switch"
-            :aria-label="tool.enabled ? __t('ui.chat', '已启用') : __t('ui.chat', '已禁用')"
-          >
-            <i />
-          </span>
-        </button>
-        <div v-if="!toolsLoading && !visibleThreadTools.length" class="tool-manager__empty">
-          {{ __t('ui.chat', '当前会话没有匹配的功能。') }}
+            <span v-if="!tool.modeAllowed" class="tool-manager__protocol">
+              {{ __t('ui.chat', '模式未开放') }}
+            </span>
+            <span v-else-if="tool.locked" class="tool-manager__protocol">
+              {{ __t('ui.chat', '系统必需') }}
+            </span>
+            <span
+              v-else
+              class="tool-manager__switch"
+              :aria-label="tool.enabled ? __t('ui.chat', '已启用') : __t('ui.chat', '已禁用')"
+            >
+              <i />
+            </span>
+          </button>
+          <div v-if="!toolsLoading && !visibleThreadTools.length" class="tool-manager__empty">
+            {{ __t('ui.chat', '当前会话没有匹配的功能。') }}
+          </div>
         </div>
+        <footer v-if="isSending">{{ __t('ui.chat', '助手工作期间暂不能修改功能设置') }}</footer>
       </div>
-      <footer v-if="isSending">{{ __t('ui.chat', '助手工作期间暂不能修改功能设置') }}</footer>
-    </div>
+    </Transition>
 
     <input ref="fileInputRef" hidden type="file" multiple @change="handleFiles" />
   </div>
@@ -2525,22 +2248,17 @@ defineExpose({
   white-space: nowrap;
 }
 .deck-brand,
-.pixel-label {
-  font-family: var(--font-pixel);
-  font-size: 9px;
-  font-weight: 900;
-  letter-spacing: 0.1em;
-  color: var(--ui-accent-primary);
-}
 .token-capacitor {
   display: inline-flex;
   align-items: center;
   flex: 0 0 auto;
   gap: 5px;
-  margin-left: auto;
-  padding-left: 10px;
   color: var(--ui-success);
   font: 800 9px var(--font-mono);
+}
+.token-capacitor {
+  margin-left: auto;
+  padding-left: 10px;
 }
 .token-capacitor-ring {
   --token-capacitor-angle: 0deg;
@@ -2840,10 +2558,67 @@ button {
   min-width: 0;
   flex: 1;
   align-items: center;
-  gap: 5px;
+  gap: 8px;
   overflow-x: auto;
+  scrollbar-width: none;
 }
-.deck-tools button,
+/* 各子组件的入口统一由工具行定尺寸和状态，弹层内容继续使用各自样式。 */
+.deck-tools :deep(.input-tool-trigger) {
+  position: relative;
+  display: inline-flex;
+  flex: 0 0 auto;
+  align-items: center;
+  justify-content: center;
+  gap: 5px;
+  min-width: 30px;
+  height: 32px;
+  min-height: 32px;
+  margin: 0;
+  padding: 0 9px;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+  color: var(--ui-text-secondary);
+  box-shadow: none;
+  font: 11px/1 var(--ui-font-pixel);
+  white-space: nowrap;
+  cursor: pointer;
+  transition: color 140ms ease, background-color 140ms ease, border-color 140ms ease;
+}
+.deck-tools :deep(.input-tool-trigger:hover:not(:disabled)),
+.deck-tools :deep(.input-tool-trigger.is-open) {
+  background: var(--ui-bg-hover);
+  color: var(--ui-accent-primary);
+  box-shadow: none;
+}
+.deck-tools :deep(.input-tool-trigger:active:not(:disabled)) {
+  box-shadow: none;
+}
+.deck-tools :deep(.input-tool-trigger:disabled) {
+  cursor: not-allowed;
+  opacity: 0.4;
+}
+.deck-tools :deep(.input-tool-trigger:focus-visible) {
+  outline: 1px solid var(--ui-accent-primary);
+  outline-offset: -1px;
+}
+.deck-tools :deep(.input-tool-trigger .pixel-icon) {
+  flex: 0 0 auto;
+}
+.deck--compact .deck-tools :deep(.input-tool-trigger),
+.deck-tools .deck-add-file {
+  width: 32px;
+  padding: 0;
+}
+@media (prefers-reduced-motion: reduce) {
+  .deck-tools :deep(.input-tool-trigger) {
+    transition: none;
+  }
+}
+:global([data-motion='off']) .deck-tools :deep(.input-tool-trigger),
+:global([data-motion='reduced']) .deck-tools :deep(.input-tool-trigger) {
+  transition: none;
+}
 .stop-btn,
 .send-btn {
   display: inline-flex;
@@ -2866,25 +2641,6 @@ button {
     border-color var(--ui-duration-fast) var(--ui-ease-standard),
     color var(--ui-duration-fast) var(--ui-ease-standard),
     box-shadow var(--ui-duration-fast) var(--ui-ease-standard);
-}
-.deck-tools button:hover:not(:disabled) {
-  color: var(--ui-accent-primary);
-  border-color: var(--ui-accent-primary);
-}
-.deck-tools button:disabled {
-  cursor: not-allowed;
-  opacity: 0.4;
-}
-.deck-tools .reserved {
-  color: var(--ui-accent-purple);
-}
-.deck-tools > .deck-add-file {
-  width: 30px;
-  height: 30px;
-  padding: 0;
-  border-radius: 0;
-  border-color: var(--ui-border-default);
-  box-shadow: inset 0 1px 0 color-mix(in srgb, var(--ui-text-primary) 5%, transparent);
 }
 /* 据点群聊的 @ 提及按钮：品牌色描边，突出 @ 符号 */
 .group-footer-tools {
@@ -3183,6 +2939,9 @@ button {
 }
 
 .deck-popover {
+  /* 自输入栏向上弹出 */
+  --motion-origin: bottom left;
+  --motion-pop-direction: 1;
   position: absolute;
   z-index: 20;
   bottom: 50px;
@@ -3195,6 +2954,9 @@ button {
 }
 .command-popover {
   left: 10px;
+  /* 命令多、窗口矮时内部滚动，否则顶上的搜索框会顶出窗口。 */
+  max-height: min(520px, 70vh);
+  overflow-y: auto;
 }
 .command-popover input {
   width: 100%;
@@ -3232,11 +2994,8 @@ button {
   color: var(--ui-text-tertiary);
 }
 .tool-count {
-  margin-left: 2px;
-  padding-left: 6px;
-  border-left: 1px solid var(--ui-border-default);
   color: var(--ui-text-tertiary);
-  font: 800 8px var(--ui-font-mono);
+  font: 9px/1 var(--ui-font-mono);
 }
 .tool-popover {
   display: flex;
@@ -3274,108 +3033,6 @@ button {
 .tool-manager__head b {
   color: var(--ui-accent-primary);
   font: 800 9px var(--ui-font-mono);
-}
-.execution-policy {
-  flex-shrink: 0;
-  padding: 10px;
-  border-bottom: 1px solid var(--ui-border-default);
-  background: var(--ui-bg-surface-soft);
-}
-.execution-policy__head,
-.execution-policy__head > span,
-.execution-policy__label {
-  display: flex;
-  align-items: center;
-  gap: 7px;
-}
-.execution-policy__head {
-  justify-content: space-between;
-  margin-bottom: 8px;
-}
-.execution-policy__head > span {
-  color: var(--ui-text-secondary);
-  font-size: 10px;
-  font-weight: 800;
-}
-.execution-policy__head > small {
-  color: var(--ui-text-tertiary);
-  font-size: 9px;
-}
-.execution-policy__options {
-  display: grid;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
-  gap: 7px;
-}
-.execution-policy__option {
-  --policy-accent: var(--ui-accent-purple);
-  position: relative;
-  min-width: 0;
-  padding: 9px;
-  border: 1px solid var(--ui-border-default);
-  border-radius: 0;
-  background: var(--ui-bg-elevated);
-  color: var(--ui-text-secondary);
-  text-align: left;
-  cursor: pointer;
-  transition:
-    background 140ms ease,
-    border-color 140ms ease,
-    box-shadow 140ms ease;
-}
-.execution-policy__option.is-full {
-  --policy-accent: var(--ui-accent-pink);
-}
-.execution-policy__option:hover:not(:disabled) {
-  border-color: var(--policy-accent);
-  background: var(--ui-bg-hover);
-}
-.execution-policy__option.is-selected {
-  border-color: color-mix(in srgb, var(--policy-accent) 65%, var(--ui-border-default));
-  background: color-mix(in srgb, var(--policy-accent) 9%, var(--ui-bg-elevated));
-  box-shadow:
-    inset 2px 0 0 var(--policy-accent),
-    2px 2px 0 var(--ui-border-subtle);
-}
-.execution-policy__option.is-selected::after {
-  content: '';
-  position: absolute;
-  top: -1px;
-  left: -1px;
-  width: 5px;
-  height: 5px;
-  background: var(--policy-accent);
-}
-.execution-policy__option:focus-visible {
-  outline: 2px solid var(--policy-accent);
-  outline-offset: 2px;
-}
-.execution-policy__option:disabled {
-  opacity: 0.55;
-  cursor: not-allowed;
-}
-.execution-policy__label {
-  margin-bottom: 5px;
-}
-.execution-policy__label > :first-child {
-  color: var(--policy-accent);
-}
-.execution-policy__label strong {
-  flex: 1;
-  font-size: 11px;
-  font-weight: 800;
-}
-.execution-policy__marker {
-  display: grid;
-  width: 14px;
-  height: 14px;
-  place-items: center;
-  color: var(--policy-accent);
-}
-.execution-policy__option > small {
-  display: block;
-  color: var(--ui-text-tertiary);
-  font-size: 9px;
-  line-height: 1.5;
 }
 .tool-manager__head,
 .tool-manager__notice,
@@ -3594,9 +3251,6 @@ button {
 .deck--compact .deck-status .deck-chip:last-child {
   margin-left: auto;
 }
-.deck--compact .deck-footer {
-  align-items: flex-end;
-}
 /* 紧凑模式下 footer 仍保持同一条基线，避免会话工具计数把按钮顶偏。 */
 .deck--compact .deck-footer {
   align-items: center;
@@ -3611,49 +3265,6 @@ button {
   flex-wrap: wrap;
   gap: 4px;
   overflow: visible;
-}
-/* / CMD 在紧凑下只显示图标 */
-.deck-tool-icon {
-  display: none;
-}
-.deck--compact .deck-tool-icon {
-  display: inline-flex;
-}
-.deck--compact .pixel-label {
-  display: none;
-}
-/* 工具按钮统一收窄为 30px 等宽图标钮 */
-.deck--compact .deck-tools > button {
-  width: 30px;
-  min-width: 30px;
-  height: 30px;
-  padding: 0;
-  justify-content: center;
-  font-size: 0;
-  overflow: visible;
-  white-space: nowrap;
-}
-.deck--compact .deck-tools > button {
-  position: relative;
-}
-.deck--compact .deck-tools > button .tool-count {
-  position: absolute;
-  right: -3px;
-  bottom: -5px;
-  margin: 0;
-  padding: 1px 2px;
-  border: 1px solid var(--ui-border-default);
-  background: var(--ui-bg-surface);
-  color: var(--ui-accent-primary);
-  font-size: 7px;
-  line-height: 1;
-  letter-spacing: -0.04em;
-  transform: scale(0.82);
-  transform-origin: right bottom;
-}
-.deck--compact .deck-tools button :deep(.pixel-icon) {
-  flex-shrink: 0;
-  font-size: initial;
 }
 .deck--compact .deck-actions > button {
   width: 34px;
@@ -3670,16 +3281,7 @@ button {
     padding: 6px;
   }
   .deck-footer {
-    align-items: flex-end;
-  }
-  .deck-tools button {
-    padding: 0 6px;
-  }
-  .deck-tools button:not(:first-child) {
-    font-size: 0;
-  }
-  .deck-tools button :deep(.pixel-icon) {
-    font-size: initial;
+    align-items: center;
   }
   .deck-actions .action-label {
     display: none;
@@ -3695,3 +3297,5 @@ button {
   border-color: rgba(139, 92, 246, 0.25);
 }
 </style>
+
+<style scoped src="./input-toolbar.css"></style>

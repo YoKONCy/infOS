@@ -3,6 +3,7 @@ import PackageSlot from '../../integrations/PackageSlot.vue'
 import { getDisplayLocale } from '../../../i18n/index'
 
 import { t as __t } from '../../../i18n/index'
+import { threadDisplayName } from '../../../utils/threadPresentation'
 
 /**
  * OverviewTab — 总览 Tab (像素风)
@@ -19,6 +20,7 @@ import TokenUsageCard from '../../usage/TokenUsageCard.vue'
 import AchievementsCard from '../../achievements/AchievementsCard.vue'
 import { useDashboardContext } from '../../../composables/dashboard'
 import { PixelIcon, PCard } from '../../pixel'
+import MotionSkeleton from '../../motion/MotionSkeleton.vue'
 import { systemApi } from '../../../api/modules/systemApi'
 import { memoryApi } from '../../../api/modules/memoryApi'
 import { schedulerApi } from '../../../api/modules/schedulerApi'
@@ -140,10 +142,10 @@ const recentChats = ref<
   Array<{
     id: string
     summary: string
+    threadKind: 'main' | 'side'
     agent: string
     time: string
     messageCount: number
-    pairCount: number
   }>
 >([])
 
@@ -198,7 +200,8 @@ async function loadOverview() {
       stats.value.totalChats = threadItems.reduce((sum, t) => sum + (t.messageCount ?? 0), 0)
       recentChats.value = threadItems.map((thread) => ({
         id: thread.id,
-        summary: thread.title || '未命名会话',
+        summary: thread.title,
+        threadKind: thread.threadKind,
         agent: thread.agentId || 'Pero',
         time: new Date(thread.lastMessageAt || thread.updatedAt || thread.createdAt).toLocaleString(
           getDisplayLocale(),
@@ -210,7 +213,6 @@ async function loadOverview() {
           },
         ),
         messageCount: thread.messageCount ?? 0,
-        pairCount: thread.pairCount ?? 0,
       }))
     }
 
@@ -240,13 +242,12 @@ onUnmounted(() => document.removeEventListener('pointerdown', onAgentOutside))
   <div class="overview-tab p-6 space-y-6 overflow-y-auto h-full custom-scrollbar">
     <PackageSlot region="dashboard.overview" />
     <!-- 加载中 -->
-    <div
+    <MotionSkeleton
       v-if="isLoading"
-      class="flex flex-col items-center justify-center gap-3 h-72 text-slate-400 font-bold"
-    >
-      <PixelIcon name="refresh" size="lg" animation="spin" />
-      <span class="font-pixel text-sm">{{ __t('ui.settings', '加载中...') }}</span>
-    </div>
+      variant="card"
+      :rows="4"
+      :label="__t('ui.settings', '加载中...')"
+    />
 
     <template v-else>
       <div class="overview-utilities">
@@ -321,33 +322,39 @@ onUnmounted(() => document.removeEventListener('pointerdown', onAgentOutside))
                   :class="{ 'is-open': showAgentDropdown }"
                 />
               </button>
-              <div v-if="showAgentDropdown" id="overview-agent-options" class="overview-agent-menu">
-                <div class="overview-agent-menu-label">{{ __t('ui.settings', '切换角色') }}</div>
-                <button
-                  v-for="agent in agents"
-                  :key="agent.id"
-                  type="button"
-                  class="overview-agent-option"
-                  :aria-pressed="agent.id === activeAgent?.id"
-                  :disabled="isSwitchingAgent || agent.id === activeAgent?.id || !agent.isEnabled"
-                  @click="selectAgent(agent.id)"
+              <Transition name="motion-pop">
+                <div
+                  v-if="showAgentDropdown"
+                  id="overview-agent-options"
+                  class="overview-agent-menu"
                 >
-                  <span class="overview-agent-avatar">
-                    <img
-                      v-if="agent.avatarUrl"
-                      :src="`${getApiBaseUrl()}${agent.avatarUrl}`"
-                      alt=""
-                    />
-                    <PixelIcon v-else name="paw" size="xs" />
-                  </span>
-                  <span class="overview-agent-name">{{ agent.name }}</span>
-                  <span
-                    v-if="agent.id === activeAgent?.id"
-                    class="overview-agent-selected"
-                    aria-hidden="true"
-                  ></span>
-                </button>
-              </div>
+                  <div class="overview-agent-menu-label">{{ __t('ui.settings', '切换角色') }}</div>
+                  <button
+                    v-for="agent in agents"
+                    :key="agent.id"
+                    type="button"
+                    class="overview-agent-option"
+                    :aria-pressed="agent.id === activeAgent?.id"
+                    :disabled="isSwitchingAgent || agent.id === activeAgent?.id || !agent.isEnabled"
+                    @click="selectAgent(agent.id)"
+                  >
+                    <span class="overview-agent-avatar">
+                      <img
+                        v-if="agent.avatarUrl"
+                        :src="`${getApiBaseUrl()}${agent.avatarUrl}`"
+                        alt=""
+                      />
+                      <PixelIcon v-else name="paw" size="xs" />
+                    </span>
+                    <span class="overview-agent-name">{{ agent.name }}</span>
+                    <span
+                      v-if="agent.id === activeAgent?.id"
+                      class="overview-agent-selected"
+                      aria-hidden="true"
+                    ></span>
+                  </button>
+                </div>
+              </Transition>
             </div>
           </header>
           <dl class="overview-state-grid">
@@ -388,11 +395,11 @@ onUnmounted(() => document.removeEventListener('pointerdown', onAgentOutside))
               <div class="w-1.5 h-1.5 bg-sky-400 mt-1.5 flex-shrink-0" />
               <div class="min-w-0">
                 <span class="text-sm font-bold text-slate-700 block truncate">
-                  {{ chat.summary }}
+                  {{ threadDisplayName({ threadKind: chat.threadKind, title: chat.summary }) }}
                 </span>
                 <div class="flex gap-2.5 mt-0.5 text-[10px] text-slate-400 font-bold font-pixel">
                   <span>{{ chat.agent }}</span>
-                  <span>{{ chat.pairCount }} {{ __t('ui.settings', '轮') }}</span>
+                  <span>{{ chat.messageCount }} {{ __t('ui.settings', '条消息') }}</span>
                   <span>{{ chat.messageCount }} {{ __t('ui.settings', '条') }}</span>
                   <span>{{ chat.time }}</span>
                 </div>

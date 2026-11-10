@@ -7,7 +7,10 @@
   "type": "tool",
   "entry": "index.ts",
   "category": "core",
-  "platforms": ["windows", "darwin"],
+  "platforms": [
+    "windows",
+    "darwin"
+  ],
   "userCopy": {
     "automation_execute": {
       "label": "操作桌面应用",
@@ -16,12 +19,16 @@
     "get_mouse_position": {
       "label": "查看鼠标位置",
       "description": "查看鼠标指针当前所在的位置。"
+    },
+    "desktop_direct": {
+      "label": "剪贴板与媒体键",
+      "description": "读写剪贴板、按媒体键、用默认浏览器打开网址。"
     }
   },
   "tools": [
     {
       "name": "automation_execute",
-      "description": "依据桌面观察操作，优先使用控件ID，坐标操作兜底；返回操作后画面。",
+      "description": "依据传了windowId的桌面观察操作（整屏观察不能操作），优先用元素编号ref或控件ID，坐标兜底；动作后等画面稳定再按原视角返回操作后画面。",
       "parameters": {
         "type": "object",
         "properties": {
@@ -37,6 +44,7 @@
               "collapse",
               "click",
               "double_click",
+              "triple_click",
               "right_click",
               "move",
               "drag",
@@ -61,21 +69,25 @@
           },
           "x2": {
             "type": "number",
-            "description": "拖拽目标 X 坐标，与起点使用同一坐标空间"
+            "description": "拖拽终点X，与起点同一坐标空间"
           },
           "y2": {
             "type": "number",
-            "description": "拖拽目标 Y 坐标，与起点使用同一坐标空间"
+            "description": "拖拽终点Y，与起点同一坐标空间"
           },
           "coordinateSpace": {
             "type": "string",
             "description": "鼠标坐标空间，默认采用最近截图像素坐标",
-            "enum": ["normalized", "screenshot", "desktop"],
+            "enum": [
+              "normalized",
+              "screenshot",
+              "desktop"
+            ],
             "default": "screenshot"
           },
           "text": {
             "type": "string",
-            "description": "输入文字或快捷键组合；按住的键最多保留2秒"
+            "description": "输入文字或快捷键（如Ctrl+S、Num0、VolumeUp）；按住的键最多保留2秒"
           },
           "message": {
             "type": "string",
@@ -87,11 +99,21 @@
           },
           "elementId": {
             "type": "string",
-            "description": "本次观察中的控件ID；控件操作必填"
+            "description": "本次观察中的控件ID；控件操作给它或ref"
+          },
+          "ref": {
+            "type": "integer",
+            "minimum": 1,
+            "description": "元素图编号，须与同一次观察的observationId同用"
           },
           "direction": {
             "type": "string",
-            "enum": ["up", "down", "left", "right"],
+            "enum": [
+              "up",
+              "down",
+              "left",
+              "right"
+            ],
             "description": "滚动方向"
           },
           "amount": {
@@ -102,21 +124,69 @@
           },
           "button": {
             "type": "string",
-            "enum": ["left", "right"],
-            "description": "按住或释放的鼠标键"
+            "enum": [
+              "left",
+              "right",
+              "middle"
+            ],
+            "description": "鼠标键，默认left"
+          },
+          "modifiers": {
+            "type": "string",
+            "description": "按住的修饰键，如ctrl+shift"
           },
           "includeElements": {
             "type": "boolean",
             "description": "操作后同时读取可操作控件"
           },
+          "expect": {
+            "type": "object",
+            "description": "预期结果，动作后核对：text出现/gone消失/window窗口出现",
+            "properties": {
+              "text": {
+                "type": "string"
+              },
+              "gone": {
+                "type": "string"
+              },
+              "window": {
+                "type": "string"
+              }
+            },
+            "additionalProperties": false
+          },
           "timeoutMs": {
             "type": "integer",
             "minimum": 100,
-            "maximum": 3000,
-            "description": "等待界面更新的毫秒数，默认500"
+            "maximum": 30000,
+            "description": "wait毫秒数，默认500最多3000；带until时为上限，默认10000"
+          },
+          "until": {
+            "type": "object",
+            "description": "wait直到：window窗口出现（无需observationId）/text出现/gone消失",
+            "properties": {
+              "window": {
+                "type": "string"
+              },
+              "text": {
+                "type": "string"
+              },
+              "gone": {
+                "type": "string"
+              }
+            },
+            "additionalProperties": false
+          },
+          "settleTimeoutMs": {
+            "type": "integer",
+            "minimum": 200,
+            "maximum": 5000,
+            "description": "动作后等画面稳定的上限毫秒数，默认1500"
           }
         },
-        "required": ["action"]
+        "required": [
+          "action"
+        ]
       }
     },
     {
@@ -131,6 +201,60 @@
       "parameters": {
         "type": "object",
         "properties": {}
+      }
+    },
+    {
+      "name": "desktop_direct",
+      "description": "不用观察、不点界面的直通操作：读写剪贴板、媒体键（播放暂停、切歌、音量）、用系统默认浏览器打开网址；同样经过桌面审批。打开程序用open_application，读写搜索文件用home_files。",
+      "display": {
+        "label": "直通操作",
+        "icon": "desktop",
+        "color": "purple",
+        "style": "desktop"
+      },
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "action": {
+            "type": "string",
+            "enum": [
+              "clipboard_read",
+              "clipboard_write",
+              "media_key",
+              "open_url"
+            ]
+          },
+          "text": {
+            "type": "string",
+            "description": "clipboard_write要放进剪贴板的文字"
+          },
+          "key": {
+            "type": "string",
+            "enum": [
+              "play_pause",
+              "next",
+              "previous",
+              "stop",
+              "volume_up",
+              "volume_down",
+              "mute"
+            ],
+            "description": "media_key的按键"
+          },
+          "times": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 10,
+            "description": "媒体键按几次，默认1（调音量时常用）"
+          },
+          "url": {
+            "type": "string",
+            "description": "open_url的网址，只收http/https"
+          }
+        },
+        "required": [
+          "action"
+        ]
       }
     }
   ]

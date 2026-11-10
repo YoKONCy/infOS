@@ -1,0 +1,165 @@
+/* 页面断点以导航栏之外的实际内容宽度为准，兼容 Electron 和嵌入的管理页面。 */
+.main-content {
+  container: app-content / inline-size;
+  min-width: 0;
+}
+
+.cards-page .cards-page__tools {
+  max-width: 100%;
+}
+.cards-page .cards-page__tools > :first-child {
+  min-width: 0;
+}
+.cards-page .cards-page__tools .p-btn {
+  flex-shrink: 0;
+  white-space: nowrap;
+}
+
+.main-content .installed-extensions .installed-filters {
+  grid-template-columns: minmax(0, 1fr) repeat(2, minmax(0, 150px));
+}
+.main-content .installed-extensions .installed-filters > * {
+  min-width: 0;
+  max-width: 100%;
+}
+
+@container app-content (max-width: 760px) {
+  .backup-page .backup-heading {
+    flex-direction: column;
+    align-items: stretch;
+  }
+  .backup-page .backup-brand > div:last-child {
+    min-width: 0;
+  }
+  .backup-page .backup-heading-end {
+    justify-content: space-between;
+    flex-wrap: wrap;
+  }
+  .backup-page .backup-heading-end .p-btn {
+    flex-shrink: 0;
+    white-space: nowrap;
+  }
+}
+
+@container app-content (max-width: 600px) {
+  .main-content .installed-extensions .installed-filters {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+  .main-content .installed-extensions .installed-filters > :first-child {
+    grid-column: 1 / -1;
+  }
+}
+
+@container app-content (max-width: 720px) {
+  html:not([data-mobile]) .main-content .atlas {
+    position: relative;
+    grid-template-columns: minmax(0, 1fr);
+    grid-template-rows: auto minmax(0, 1fr);
+    overflow: hidden;
+  }
+  html:not([data-mobile]) .main-content .atlas .atlas-index {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) auto;
+    gap: 6px 12px;
+    padding: 10px 12px;
+    border-bottom: 1px solid var(--ui-border-default);
+    border-right: 0;
+  }
+  html:not([data-mobile]) .main-content .atlas .index-head {
+    min-height: 32px;
+    padding: 0;
+    border: 0;
+  }
+  html:not([data-mobile]) .main-content .atlas .card-transfer {
+    grid-column: 1 / -1;
+    grid-row: 2;
+    display: block;
+    padding: 0;
+    border: 0;
+  }
+  html:not([data-mobile]) .main-content .atlas .card-transfer__hint:not(.is-dirty) {
+    display: none;
+  }
+  html:not([data-mobile]) .main-content .atlas .card-transfer__hint.is-dirty {
+    margin-top: 6px;
+  }
+  html:not([data-mobile]) .main-content .atlas .card-transfer__actions {
+    display: inline-flex;
+  }
+  html:not([data-mobile]) .main-content .atlas :is(.card-transfer__import, .card-formats) {
+    flex: 0 0 auto;
+  }
+  html:not([data-mobile]) .main-content .atlas .initialize-agent {
+    grid-column: 2;
+    grid-row: 1;
+    min-height: 32px;
+    padding: 0 8px;
+  }
+  html:not([data-mobile]) .main-content .atlas .index-list {
+    grid-column: 1 / -1;
+    display: flex;
+    gap: 8px;
+    margin: 0;
+    padding: 2px 0;
+    overflow-x: auto;
+  }
+  html:not([data-mobile]) .main-content .atlas .index-agent {
+    flex: 0 0 155px;
+    grid-template-columns: 40px minmax(0, 1fr);
+    grid-template-rows: 12px 34px 14px;
+    gap: 0 6px;
+    margin: 0;
+  }
+  html:not([data-mobile]) .main-content .atlas .index-avatar {
+    width: 40px;
+    height: 60px;
+  }
+  html:not([data-mobile]) .main-content .atlas .index-meta em {
+    display: none;
+  }
+  html:not([data-mobile]) .main-content .atlas .atlas-workspace {
+    padding-right: 30px;
+  }
+  html:not([data-mobile]) .main-content .atlas .profile-band {
+    min-height: 100px;
+    grid-template-columns: 76px minmax(0, 1fr) 58px;
+    margin: 12px 12px 0;
+  }
+  html:not([data-mobile]) .main-content .atlas .profile-identity {
+    min-width: 0;
+    padding: 10px;
+  }
+  html:not([data-mobile]) .main-content .atlas .profile-name {
+    flex-wrap: wrap;
+  }
+  html:not([data-mobile]) .main-content .atlas .profile-name h1 {
+    font-size: 22px;
+    line-height: 1.2;
+  }
+  html:not([data-mobile]) .main-content .atlas .profile-signals {
+    gap: 6px 10px;
+    margin-top: 8px;
+  }
+  html:not([data-mobile]) .main-content .atlas .protocol-nav {
+    grid-template-columns: repeat(auto-fit, minmax(100px, 1fr));
+    margin: 10px 12px 0;
+  }
+  html:not([data-mobile]) .main-content .atlas .protocol-nav button {
+    min-height: 40px;
+    grid-template-columns: 22px minmax(0, 1fr);
+    gap: 5px;
+    padding: 5px;
+  }
+  html:not([data-mobile]) .main-content .atlas .protocol-nav strong {
+    white-space: nowrap;
+  }
+  html:not([data-mobile]) .main-content .atlas .protocol-page {
+    padding: 16px 12px;
+  }
+  html:not([data-mobile]) .main-content .atlas .identity-layout {
+    grid-template-columns: 100px minmax(0, 1fr);
+  }
+  html:not([data-mobile]) .main-content .atlas .data-fields {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}

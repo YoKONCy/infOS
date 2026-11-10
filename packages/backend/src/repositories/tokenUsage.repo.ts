@@ -84,7 +84,7 @@ export class TokenUsageRepository {
   filterOptions(agentId?: string) {
     return {
       threads: this.db
-        .select({ id: records.threadId, title: threads.title })
+        .select({ id: records.threadId, title: threads.title, threadKind: threads.threadKind })
         .from(records)
         .leftJoin(threads, eq(records.threadId, threads.id))
         .where(
@@ -93,10 +93,10 @@ export class TokenUsageRepository {
             agentId ? eq(records.agentId, agentId) : undefined,
           ),
         )
-        .groupBy(records.threadId, threads.title)
+        .groupBy(records.threadId, threads.title, threads.threadKind)
         .orderBy(desc(sql`max(${records.startedAt})`))
         .all()
-        .filter((row): row is { id: string; title: string | null } => row.id !== null),
+        .filter((row): row is { id: string; title: string | null; threadKind: 'main' | 'side' | null } => row.id !== null),
       models: this.db
         .select({ provider: records.provider, modelId: records.modelId })
         .from(records)

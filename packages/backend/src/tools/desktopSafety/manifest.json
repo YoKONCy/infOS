@@ -1,0 +1,68 @@
+{
+  "id": "desktop-safety",
+  "name": "桌面操作护栏",
+  "version": "1.0.0",
+  "author": "infOS Team",
+  "description": "桌面操作的任务预批与分区设置（桌面版）。判断与审批在客户端完成。",
+  "type": "tool",
+  "entry": "index.ts",
+  "category": "core",
+  "platforms": ["windows"],
+  "userCopy": {
+    "desktop_plan": {
+      "label": "申请任务预批",
+      "description": "列出任务要操作的程序，请你一次批准。"
+    },
+    "desktop_safety": {
+      "label": "查看或调整桌面操作权限",
+      "description": "查看分区与信任名单；收紧立即生效，放宽需要你确认；可关闭桌面操作。"
+    }
+  },
+  "tools": [
+    {
+      "name": "desktop_plan",
+      "description": "多步桌面操作开始前调用：列出要操作的程序（进程名，如 notepad.exe、chrome.exe）和用途，用户一次批准后本任务内这些普通区程序不再逐个询问（1小时有效）。终端、脚本宿主、系统设置等高危区程序和禁区程序不在预批范围内，仍每次确认或禁止。",
+      "display": { "icon": "desktop", "color": "blue", "style": "desktop" },
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "programs": {
+            "type": "array",
+            "items": { "type": "string" },
+            "description": "要操作的程序进程名，1-20个"
+          },
+          "purpose": { "type": "string", "description": "用途，向用户说明这次任务要做什么" }
+        },
+        "required": ["programs", "purpose"]
+      }
+    },
+    {
+      "name": "desktop_safety",
+      "description": "桌面操作护栏设置。get读取分区（内置禁区/高危区类别、追加名单、信任名单、普通区模式）；change修改：forbid/confirm追加禁区/高危区、untrust撤销信任、normalMode调严时立即生效；trust信任、unforbid/unconfirm移出追加条目、normalMode调松属于放宽，会弹窗请用户确认，用户拒绝时只应用收紧部分。内置条目不能移出，高危区程序不能信任。disable关闭桌面操作总开关（只能关闭，打开只能由用户在设置页操作）。",
+      "display": { "icon": "desktop", "color": "blue", "style": "desktop" },
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "action": { "type": "string", "enum": ["get", "change", "disable"] },
+          "change": {
+            "type": "object",
+            "properties": {
+              "normalMode": {
+                "type": "string",
+                "enum": ["notify", "once", "always"],
+                "description": "普通区：notify只提醒、once每个程序问一次、always每次都问"
+              },
+              "trust": { "type": "array", "items": { "type": "string" } },
+              "untrust": { "type": "array", "items": { "type": "string" } },
+              "forbid": { "type": "array", "items": { "type": "string" } },
+              "unforbid": { "type": "array", "items": { "type": "string" } },
+              "confirm": { "type": "array", "items": { "type": "string" } },
+              "unconfirm": { "type": "array", "items": { "type": "string" } }
+            }
+          }
+        },
+        "required": ["action"]
+      }
+    }
+  ]
+}

@@ -1207,9 +1207,10 @@ async function submitButler(): Promise<void> {
 
 .sh-main-header {
   display: flex;
+  flex-wrap: wrap;
   align-items: center;
   justify-content: space-between;
-  gap: 16px;
+  gap: 8px 16px;
   padding: 14px 20px 12px;
   border-bottom: 1px solid var(--ui-border-subtle);
   background:
@@ -1224,6 +1225,7 @@ async function submitButler(): Promise<void> {
 
 .sh-main-room {
   display: flex;
+  flex: 1 1 180px;
   align-items: center;
   gap: 12px;
   min-width: 0;
@@ -1260,6 +1262,9 @@ async function submitButler(): Promise<void> {
   letter-spacing: 0.02em;
   color: var(--ui-text-primary);
   white-space: nowrap;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 
 .sh-main-fac-badge {
@@ -1284,12 +1289,14 @@ async function submitButler(): Promise<void> {
   max-width: 480px;
 }
 
-/* 右侧: 环境 chips + 成员堆叠 */
+/* 右侧: 环境 chips + 成员堆叠。窄窗口时整组换到房间名下方，不再越出中栏压住右侧「成员态势」。 */
 .sh-main-aside {
   display: flex;
+  flex-wrap: wrap;
   align-items: center;
-  gap: 14px;
-  flex-shrink: 0;
+  gap: 8px 14px;
+  min-width: 0;
+  margin-left: auto;
 }
 
 .sh-env-chips {
@@ -1425,6 +1432,7 @@ async function submitButler(): Promise<void> {
 
 .sh-right-header {
   display: flex;
+  flex-wrap: wrap;
   align-items: center;
   justify-content: space-between;
   gap: 8px;
@@ -1439,6 +1447,7 @@ async function submitButler(): Promise<void> {
 }
 
 .sh-right-title {
+  white-space: nowrap;
   font-size: 12px;
   font-weight: 700;
   color: var(--ui-text-primary);

@@ -5,6 +5,7 @@ import {
 } from '../../services/execution/agentInputService'
 import type { BuiltinTool } from '..'
 import { getAgentInputQuestions } from '@infos/shared'
+import { toolFailure } from '../../services/execution/toolResult'
 
 let service: AgentInputService | null = null
 
@@ -15,6 +16,8 @@ export function setAgentInputService(value: AgentInputService): void {
 export const askUserTool: BuiltinTool = {
   name: 'ask_user',
   async execute(args, ctx) {
+    if (ctx.conversation) return toolFailure('CONTINUOUS_CONVERSATION_REQUIRED',
+      __t('server.conversation', '请通过 conversation 发表问题并保存等待事项'))
     if (!service) throw new Error('Agent求助服务尚未初始化')
     const options = Array.isArray(args.options)
       ? args.options.map((value) => {

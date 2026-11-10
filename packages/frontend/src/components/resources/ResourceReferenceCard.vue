@@ -10,6 +10,7 @@ import { resolveResourceLink, openResourceLink } from '../../composables/resourc
 import { useResourceVisibility } from '../../composables/resources/useResourceVisibility'
 import { resourceLinkKind } from '../../lib/resourceLinks'
 import { useNotificationStore } from '../../stores'
+import { isMissingReference } from '../../lib/missingResourceReference'
 const props = withDefaults(
   defineProps<{
     source: string
@@ -26,6 +27,8 @@ const enabled = computed(() => visible.value && props.active)
 const item = shallowRef<MessageResource | null>(null)
 const pending = ref(false)
 const opening = ref(false)
+/** 后端确认找不到文件时的说明；有值时卡片显示为失效，不再提供打开入口。 */
+const missing = ref('')
 const notification = useNotificationStore()
 const name = computed(
   () => props.label || props.source.split(/[\\/]/).pop() || t('ui.resource-preview', '文件'),
@@ -42,16 +45,19 @@ watch(
     const key = JSON.stringify([source, agentId, threadId])
     if (lastKey !== key) {
       item.value = null
+      missing.value = ''
       lastKey = key
     }
-    if (!ready || item.value) return
+    if (!ready || item.value || missing.value) return
     controller = new AbortController()
     pending.value = true
     try {
       const resource = await resolveResourceLink(source, { agentId, threadId }, controller.signal)
       if (version === revision) item.value = resource
-    } catch {
-      // 元数据不可用时仍保留引用卡片，用户可以点击重新打开。
+    } catch (error) {
+      // 确认找不到文件时显示为失效；其他失败仍保留引用卡片，用户可以点击重新打开。
+      if (version === revision && isMissingReference(error))
+        missing.value = (error as Error).message
     } finally {
       if (version === revision) pending.value = false
     }
@@ -68,6 +74,7 @@ async function open() {
   try {
     await openResourceLink(props.source, props)
   } catch (error) {
+    if (isMissingReference(error)) missing.value = (error as Error).message
     notification.toast(
       (!props.agentId || !props.threadId) && !/^(?:resource:)?https?:\/\//i.test(props.source)
         ? t('ui.resource-preview', '请从所属会话打开文件')
@@ -84,6 +91,13 @@ async function open() {
 <template>
   <div ref="root" class="resource-reference">
     <ResourceCard v-if="item" :resource="item" :label="label" :active="enabled" />
+    <div v-else-if="missing" class="resource-reference__missing" role="note" :title="missing">
+      <span class="resource-reference__body">
+        <ResourceGlyph :kind="resourceLinkKind(source)" />
+        <strong>{{ name }}</strong>
+      </span>
+      <small>{{ missing }}</small>
+    </div>
     <button
       v-else
       type="button"
@@ -163,6 +177,18 @@ async function open() {
 .resource-reference__body > .resource-glyph {
   width: 24px;
   height: 27px;
+}
+.resource-reference__missing {
+  display: grid;
+  border: 1px dashed var(--ui-border-default);
+  background: var(--ui-bg-surface-soft);
+  color: var(--ui-text-tertiary);
+}
+.resource-reference__missing > small {
+  padding: 0 12px 12px;
+  font-size: 11px;
+  line-height: 1.5;
+  overflow-wrap: anywhere;
 }
 .resource-reference__fallback:focus-visible {
   outline: 2px solid var(--ui-accent-purple);

@@ -67,6 +67,22 @@
 .pet-conversation-picker__thread {
   flex: 1;
 }
+.pet-conversation-picker__bar .pet-conversation-picker__thread--main {
+  border-color: var(--pet-bubble-rim);
+  border-radius: 10px 10px 10px 3px;
+  background: color-mix(in srgb, var(--pet-pink) 9%, var(--pet-soft));
+  color: var(--pet-pink);
+}
+.pet-conversation-picker .pet-conversation-picker__main {
+  --main-thread-tone: var(--pet-pink);
+  --main-thread-surface: var(--pet-soft);
+  --main-thread-text: var(--pet-text);
+  --main-thread-muted: var(--pet-muted);
+  position: sticky;
+  top: 0;
+  z-index: 1;
+  margin-bottom: 3px;
+}
 .pet-conversation-picker__bar .pet-conversation-picker__new {
   justify-content: center;
   width: 30px;
@@ -104,12 +120,12 @@
 .pet-conversation-picker__list.is-agents {
   grid-template-columns: repeat(2, minmax(0, 1fr));
 }
-.pet-conversation-picker__list button {
+.pet-conversation-picker__list > button {
   min-height: 36px;
   background: transparent;
   border-color: transparent;
 }
-.pet-conversation-picker__list button > span {
+.pet-conversation-picker__list > button > span {
   flex: 1;
   min-width: 0;
   overflow: hidden;

@@ -1,4 +1,6 @@
 {
+  "据点回合处理失败": "Stronghold turn processing failed.",
+  "据点回复已保存，记事等待后台重试": "Stronghold reply saved. Memory recording will retry in the background.",
   "未配置主模型，管家回退规则引擎": "The main model is not configured, and the housekeeper rolls back the rule engine.",
   "管家 LLM 返回的 JSON 解析失败，回退规则引擎": "The JSON returned by the housekeeper LLM failed to parse, and the rule engine was rolled back.",
   "管家 LLM 理解失败，回退规则引擎: {0}": "Butler LLM failed to understand, fallback rule engine: {0}",

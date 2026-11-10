@@ -14,6 +14,10 @@ import {
 import { useAgentStore } from '../../../stores/useAgentStore'
 import { useNotificationStore } from '../../../stores/useNotificationStore'
 import SillyTavernFrameworkEditor from './SillyTavernFrameworkEditor.vue'
+import ExpressionTuningPanel from '../../expression/ExpressionTuningPanel.vue'
+import PromptWorkspaceHint from './PromptWorkspaceHint.vue'
+import PromptPerceptionImageSwitch from './PromptPerceptionImageSwitch.vue'
+import { usePromptExtraPanels } from '../../../composables/dashboard/usePromptExtraPanels'
 
 const store = useAgentStore()
 const notifications = useNotificationStore()
@@ -65,6 +69,7 @@ const {
   setSection,
   select,
   setMode,
+  syncSource,
   create,
   createIndependent,
   assignSelectedFramework,
@@ -81,8 +86,20 @@ const {
   restoreDefaults,
   exportBundle,
   importBundle,
+  confirm,
   load,
 } = usePromptWorkspace()
+// 表达调教和「组件」改的是同一份草稿，直接把这份草稿交给它。
+const expressionWorkspace = {
+  view,
+  bundle,
+  busy,
+  error,
+  issues,
+  save,
+  confirm,
+  displayBuiltinName,
+}
 const fileInput = ref<HTMLInputElement | null>(null)
 const dragging = ref(-1)
 const overrideFrom = ref('')
@@ -194,6 +211,11 @@ function submitActivation() {
   if (assignSelectedFramework(activation.agentId, activation.channel)) activationOpen.value = false
 }
 previewAgent.value = store.activeAgentId
+const {
+  expressionOpen,
+  openExpression,
+  openSection,
+} = usePromptExtraPanels({ section, setSection, syncSource })
 const sections: Array<{ id: PromptSection; label: string; icon: string }> = [
   {
     id: 'framework',
@@ -415,12 +437,16 @@ function addFrameworkOverride() {
           <PixelIcon name="edit" />
           {{ __t('ui.settings', '提示词') }}
           <span class="status-chip" :class="{ changed: dirty }">
-            {{ dirty ? __t('ui.settings', '未保存') : __t('ui.settings', '草稿') }}
+            {{ dirty ? __t('ui.settings', '未保存') : __t('ui.settings', '已保存') }}
           </span>
         </h2>
         <span class="eyebrow">PROMPT WORKSPACE</span>
       </div>
-      <div class="actions">
+      <PromptWorkspaceHint
+        v-if="expressionOpen"
+        
+      />
+      <div v-else class="actions">
         <PButton variant="secondary" size="sm" :disabled="busy || !view" @click="openIndependent">
           {{ __t('ui.settings', '＋ 新建框架') }}
         </PButton>
@@ -436,11 +462,11 @@ function addFrameworkOverride() {
         <PButton variant="secondary" size="sm" :disabled="busy" @click="validate">
           {{ __t('ui.settings', '校验') }}
         </PButton>
-        <PButton variant="secondary" size="sm" :disabled="busy || !view" @click="save()">
+        <PButton variant="ghost" size="sm" :disabled="busy || !view" @click="save()">
           {{ __t('ui.settings', '保存草稿') }}
         </PButton>
         <PButton size="sm" :disabled="busy || !view" @click="save(true)">
-          {{ __t('ui.settings', '发布') }}
+          {{ __t('ui.settings', '保存并生效') }}
         </PButton>
       </div>
       <input
@@ -456,13 +482,21 @@ function addFrameworkOverride() {
       <button
         v-for="tab in sections"
         :key="tab.id"
-        :class="{ active: section === tab.id }"
-        @click="setSection(tab.id)"
+        :class="{ active: !expressionOpen && section === tab.id }"
+        @click="openSection(tab.id)"
       >
         <PixelIcon :name="tab.icon" size="sm" />
         {{ tab.label }}
       </button>
-      <span class="release-label" :title="view?.activeReleaseId">
+      <button :class="{ active: expressionOpen }" data-expression-tab @click="openExpression">
+        <PixelIcon name="edit" size="sm" />
+        {{ __t('ui.chat', '表达调教') }}
+      </button>
+      <span
+        v-if="!expressionOpen"
+        class="release-label"
+        :title="view?.activeReleaseId"
+      >
         {{ __t('ui.settings', '已发布') }}
         {{ activeVersion ? new Date(activeVersion.createdAt).toLocaleString() : '—' }}
       </span>
@@ -473,9 +507,12 @@ function addFrameworkOverride() {
         {{ __t('ui.settings', '重新载入') }}
       </PButton>
     </div>
-    <div v-if="view?.recoveryError" class="error-banner" role="alert">{{ view.recoveryError }}</div>
+    <div v-if="view?.recoveryError" class="error-banner" role="alert">
+      {{ view.recoveryError }}
+    </div>
 
-    <div v-if="view" class="prompt-body" :inert="busy">
+    <ExpressionTuningPanel v-if="expressionOpen" :workspace="expressionWorkspace" />
+    <div v-else-if="view" class="prompt-body" :inert="busy">
       <template v-if="!['assignments', 'versions'].includes(section)">
         <aside class="resource-rail surface">
           <PInput v-model="search" :placeholder="__t('ui.settings', '搜索名称 / ID')" size="sm" />
@@ -536,6 +573,7 @@ function addFrameworkOverride() {
                 <PInput v-if="framework" v-model="framework.name" />
                 <PInput v-else-if="document" v-model="document.name" />
                 <code>{{ selectedId }}</code>
+                <PromptPerceptionImageSwitch v-if="framework" v-model="framework.perceptionImage" />
               </div>
               <div class="actions">
                 <PButton size="sm" variant="ghost" @click="create(true)">
@@ -586,7 +624,7 @@ function addFrameworkOverride() {
               class="code-editor source-editor"
               spellcheck="false"
               :aria-label="__t('ui.settings', '模板源码')"
-              @keydown.ctrl.s.prevent="save()"
+              @keydown.ctrl.s.prevent="save(true)"
             />
             <template v-else-if="document">
               <div class="document-meta">
@@ -600,7 +638,7 @@ function addFrameworkOverride() {
                 class="code-editor source-editor"
                 spellcheck="false"
                 :aria-label="__t('ui.settings', '模板正文')"
-                @keydown.ctrl.s.prevent="save()"
+                @keydown.ctrl.s.prevent="save(true)"
               />
               <label class="field">
                 {{ __t('ui.settings', '自定义变量') }}

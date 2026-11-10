@@ -1,12 +1,13 @@
 import { randomBytes, createDecipheriv } from 'node:crypto'
 import { mkdir, mkdtemp, readFile, readdir, rm, writeFile } from 'node:fs/promises'
 import path from 'node:path'
+import { gunzipSync } from 'node:zlib'
 import Database from 'better-sqlite3'
 import { serve } from '@hono/node-server'
 import { createApp } from '../../../src/app'
 import { ClientAccessRepository } from '../../../src/repositories/clientAccess.repo'
 import { ClientAccessService } from '../../../src/services/system/clientAccessService'
-import { DistributedSyncService } from '../../../src/services/distributed/distributedSyncService'
+import { DistributedSyncService, type FullSyncManifest } from '../../../src/services/distributed/distributedSyncService'
 import { CapabilityBridge } from '../../../src/capabilities/capabilityBridge'
 import { CapabilityDirectory } from '../../../src/kernel/capabilityDirectory'
 import { CapabilityHandleRegistry } from '../../../src/kernel/capabilityHandleRegistry'
@@ -112,12 +113,19 @@ export function decryptSnapshot(bytes: Buffer, keyBase64 = transferKey) {
     bytes.subarray(0, 12),
   )
   decipher.setAuthTag(bytes.subarray(12, 28))
-  return JSON.parse(
-    Buffer.concat([decipher.update(bytes.subarray(28)), decipher.final()]).toString(),
-  ) as {
-    manifest: { sourceServerId: string; snapshotId: string }
-    files: Record<string, string>
+  const payload = Buffer.concat([decipher.update(bytes.subarray(28)), decipher.final()])
+  if (!payload.subarray(0, 8).equals(Buffer.from('INFOSS3\n')))
+    return JSON.parse(payload.toString()) as { manifest: FullSyncManifest; files: Record<string, string> }
+  const raw = gunzipSync(payload.subarray(8))
+  const length = raw.readUInt32BE(0)
+  const manifest = JSON.parse(raw.subarray(4, 4 + length).toString()) as FullSyncManifest
+  let offset = 4 + length
+  const files: Record<string, string> = {}
+  for (const descriptor of manifest.files) {
+    files[descriptor.path] = raw.subarray(offset, offset + descriptor.sizeBytes).toString('base64')
+    offset += descriptor.sizeBytes
   }
+  return { manifest, files }
 }
 
 /** 对比实际磁盘内容，验证拒绝请求没有写入服务器、快照或回滚状态。 */

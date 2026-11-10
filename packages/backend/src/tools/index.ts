@@ -27,6 +27,8 @@ import codeSearcherManifest from './codeSearcher/manifest.json'
 import desktopAutomationManifest from './desktopAutomation/manifest.json'
 import eventMemoryManifest from './eventMemory/manifest.json'
 import factsManifest from './facts/manifest.json'
+import workContextManifest from './clearWorkContext/manifest.json'
+import { clearWorkContextTool } from './clearWorkContext'
 import knowledgeManifest from './knowledge/manifest.json'
 import fileOpsManifest from './fileOps/manifest.json'
 import fileSearchManifest from './fileSearch/manifest.json'
@@ -36,7 +38,8 @@ import { updatePlanTool } from './updatePlan'
 import askUserManifest from './askUser/manifest.json'
 import expandAdvancedToolsManifest from './expandAdvancedTools/manifest.json'
 import finishTaskManifest from './finishTask/manifest.json'
-import loadSkillManifest from './loadSkill/manifest.json'
+import conversationManifest from './conversation/manifest.json'
+import { conversationTool } from './conversation'
 import runScriptManifest from './runScript/manifest.json'
 import schedulerManifest from './scheduler/manifest.json'
 import screenVisionManifest from './screenVision/manifest.json'
@@ -56,6 +59,13 @@ import documentManifest from './document/manifest.json'
 import runtimeDebugManifest from './runtimeDebug/manifest.json'
 import { runtimeDebugTool } from './runtimeDebug'
 import { documentTool } from './document'
+import shellManifest from './shell/manifest.json'
+import desktopSafetyManifest from './desktopSafety/manifest.json'
+import homeManifest from './home/manifest.json'
+import { HOME_TOOLS } from './home'
+import { desktopPlanTool, desktopSafetyTool } from './desktopSafety'
+import { shellCardTool, shellLayoutTool, shellThemeTool, shellWindowTool } from './shell'
+import { shellFenceTool } from './shell/fence'
 
 const logger = createLogger('BuiltinTools')
 
@@ -64,6 +74,8 @@ export interface BuiltinTool {
   name: string
   /** 工具允许使用的通道；省略表示所有通道。 */
   allowedSources?: string[]
+  /** 聊天模式也提供（默认只在工作模式提供）。 */
+  chatEnabled?: boolean
   /**
    * 执行函数
    *
@@ -108,7 +120,6 @@ import { updateFlowStateTool } from './flowState'
 import { askUserTool } from './askUser'
 import { expandAdvancedToolsTool } from './expandAdvancedTools'
 import { finishTaskTool } from './finishTask'
-import { loadSkillTool } from './loadSkill'
 import {
   readFileTool,
   readImageTool,
@@ -160,7 +171,7 @@ import {
   getActiveWindowsTool,
   activateWindowTool,
 } from './systemInfo'
-import { automationExecuteTool, getMousePositionTool } from './desktopAutomation'
+import { automationExecuteTool, desktopDirectTool, getMousePositionTool } from './desktopAutomation'
 import { socialNotifyOwnerTool } from './socialOps/notifyOwner'
 import {
   strongholdMoveToRoomTool,
@@ -171,7 +182,7 @@ import {
   strongholdCallButlerTool,
 } from './strongholdOps'
 import { updateStateTool } from './updateState'
-import { queryEventNotesTool, reviseEventNoteTool, writeEventNoteTool } from './eventMemory'
+import { queryEventNotesTool } from './eventMemory'
 import {
   addFactObjectAliasTool,
   deleteFactTool,
@@ -185,10 +196,11 @@ import { searchKnowledgeTool } from './knowledge'
 
 /** 全部内置工具列表 */
 const ALL_BUILTIN_TOOLS: BuiltinTool[] = [
+  conversationTool,
+  ...HOME_TOOLS,
   // ── 生命周期 (始终允许) ──
   finishTaskTool,
   expandAdvancedToolsTool,
-  loadSkillTool,
   updateFlowStateTool,
   updatePlanTool,
   askUserTool,
@@ -260,6 +272,17 @@ const ALL_BUILTIN_TOOLS: BuiltinTool[] = [
   // ── 桌面自动化 (DesktopAutomationProvider 注入, GUI 环境) ──
   automationExecuteTool,
   getMousePositionTool,
+  desktopDirectTool,
+
+  // ── 桌面外壳 (阶段 3：infOS 自己的窗口与主题，ShellToolDeps 注入) ──
+  shellLayoutTool,
+  shellWindowTool,
+  shellThemeTool,
+  shellCardTool,
+  shellFenceTool,
+  // 阶段 2：桌面操作护栏（预批与分区设置）
+  desktopPlanTool,
+  desktopSafetyTool,
 
   // ── 社交操作 (SocialMessagingProvider 注入, 社交模式) ──
   // 注意：其余 7 个社交工具已迁移到 packages/apps/social/tools/，
@@ -275,9 +298,8 @@ const ALL_BUILTIN_TOOLS: BuiltinTool[] = [
   strongholdCallButlerTool,
 
   // ── 事件记忆 ──
-  writeEventNoteTool,
-  reviseEventNoteTool,
   queryEventNotesTool,
+  clearWorkContextTool,
 
   // ── 共享事实库 ──
   searchKnowledgeTool,
@@ -336,6 +358,7 @@ function officialSignature(name: string, style?: string): ToolDisplayMeta['signa
                   : [
                         'automation_execute',
                         'get_mouse_position',
+                        'desktop_direct',
                         'get_system_info',
                         'open_application',
                         'get_active_windows',
@@ -346,7 +369,6 @@ function officialSignature(name: string, style?: string): ToolDisplayMeta['signa
                       ? 'time-ticket'
                       : [
                             'finish_task',
-                            'load_skill',
                             'update_flow_state',
                             'update_state',
                             'interact_with_social',
@@ -434,6 +456,7 @@ for (const manifest of [
   codeSearcherManifest,
   desktopAutomationManifest,
   eventMemoryManifest,
+  workContextManifest,
   factsManifest,
   knowledgeManifest,
   fileOpsManifest,
@@ -443,7 +466,7 @@ for (const manifest of [
   askUserManifest,
   expandAdvancedToolsManifest,
   finishTaskManifest,
-  loadSkillManifest,
+  conversationManifest,
   runScriptManifest,
   schedulerManifest,
   skillResourcesManifest,
@@ -460,6 +483,9 @@ for (const manifest of [
   sendFileManifest,
   documentManifest,
   runtimeDebugManifest,
+  shellManifest,
+  desktopSafetyManifest,
+  homeManifest,
 ] satisfies ToolManifest[]) {
   for (const definition of collectManifestDefinitions(manifest)) {
     MANIFEST_DEFINITIONS.set(definition.name, definition)
@@ -485,6 +511,7 @@ export async function registerBuiltinTools(registry: ToolRegistry): Promise<void
       getToolDefinition(tool),
       (args, ctx) => tool.execute(args, ctx),
       tool.allowedSources,
+      tool.chatEnabled ? { chatEnabled: true } : undefined,
     )
   }
   logger.info(__t('logs.tools', '内置工具已注册: {0} 个', [ALL_BUILTIN_TOOLS.length]))
@@ -508,6 +535,8 @@ export type { ScreenshotProvider } from './screenVision'
 export { setWindowProvider } from './systemInfo'
 export type { WindowProvider } from './systemInfo'
 export { setDesktopAutomationProvider } from './desktopAutomation'
+export { setShellToolDeps, SHELL_TOOL_NAMES } from './shell'
+export { setDesktopSafetyProvider } from './desktopSafety'
 export type { DesktopAutomationProvider } from './desktopAutomation'
 export { setSocialMessagingProvider } from './socialOps/notifyOwner'
 export type { SocialMessagingProvider } from './socialOps/notifyOwner'

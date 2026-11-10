@@ -1,0 +1,9 @@
+{
+  "主题无法读取，已跳过: {0} — {1}": "Skipped unreadable theme: {0} — {1}",
+  "已导入主题: {0}": "Imported theme: {0}",
+  "已删除主题: {0}": "Deleted theme: {0}",
+  "已从备份恢复主题: {0}": "Restored theme from backup: {0}",
+  "主题备份处理失败: {0}，备份位置: {1} — {2}": "Failed to handle theme backup: {0}, backup location: {1} — {2}",
+  "已写入主题: {0}": "Theme written: {0}",
+  "主题资源删除失败，已保留: {0} — {1}": "Failed to delete theme asset, kept: {0} — {1}"
+}

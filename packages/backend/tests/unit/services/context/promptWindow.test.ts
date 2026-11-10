@@ -65,6 +65,73 @@ describe('逐请求自动滑动窗口', () => {
     expect(messages).toEqual(original)
   })
 
+  it('再次滑窗更新交接通知的来源，旧通知不会锁住已经退出的起点', () => {
+    const messages: ChatMessage[] = [
+      { role: 'system', content: '固定规则' },
+      { role: 'user', content: '旧材料'.repeat(2000) },
+      {
+        role: 'user',
+        content: '当前输入一',
+        cacheControl: { kind: 'current', replayAnchor: { key: 'input-1', messageId: 1 } },
+      },
+    ]
+    const count = () => tokenCounter.countMessages(messages)
+    expect(slidePromptWindow(messages, 1000, count).removedMessages).toBeGreaterThan(0)
+    const notice = messages.find(
+      (message) => message.cacheControl?.key === 'infos.work.sliding-window',
+    )
+    expect(notice?.cacheControl?.replayAnchor).toEqual({ key: 'input-1', messageId: 1 })
+    messages.push(
+      { role: 'user', content: '新增的大段材料'.repeat(2000) },
+      {
+        role: 'user',
+        content: '当前输入二',
+        cacheControl: { kind: 'current', replayAnchor: { key: 'input-2', messageId: 2 } },
+      },
+    )
+    expect(slidePromptWindow(messages, 1000, count).removedMessages).toBeGreaterThan(0)
+    expect(notice?.cacheControl?.replayAnchor).toEqual({ key: 'input-2', messageId: 2 })
+    expect(messages.some((message) => message.content === '当前输入一')).toBe(false)
+    expect(messages.at(-1)?.content).toBe('当前输入二')
+  })
+
+  it('旧轮框架快照随窗口退出，本轮槽位与输入保持完整', () => {
+    const oldSlot: ChatMessage = {
+      role: 'user',
+      content: '旧轮动态资料'.repeat(2000),
+      cacheControl: {
+        kind: 'snapshot',
+        key: 'prompt-slot:turn_context',
+        replayAnchor: { key: 'input-1', messageId: 1 },
+      },
+    }
+    const currentSlot: ChatMessage = {
+      role: 'user',
+      content: '本轮动态资料',
+      cacheControl: {
+        kind: 'snapshot',
+        key: 'prompt-slot:turn_context',
+        replayAnchor: { key: 'input-2', messageId: 2 },
+      },
+    }
+    const current: ChatMessage = {
+      role: 'user',
+      content: '当前请求',
+      cacheControl: { kind: 'current', replayAnchor: { key: 'input-2', messageId: 2 } },
+    }
+    const messages: ChatMessage[] = [
+      { role: 'system', content: '固定规则' },
+      oldSlot,
+      currentSlot,
+      current,
+    ]
+    const result = slidePromptWindow(messages, 1000, () => tokenCounter.countMessages(messages))
+    expect(result.usedTokens).toBeLessThanOrEqual(1000)
+    expect(messages).not.toContain(oldSlot)
+    expect(messages).toContain(currentSlot)
+    expect(messages).toContain(current)
+  })
+
   it('不会拆散未闭合的工具批次', () => {
     const pending: ChatMessage = {
       role: 'assistant',

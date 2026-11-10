@@ -22,7 +22,7 @@ describe('消息编辑展示块', () => {
     expect(result.model).toBe('test')
     expect(result.contentBlocks).toEqual([
       thinking,
-      { blockId: 'text-1', kind: 'narration', content: '新正文', sequence: 1 },
+      { blockId: 'text-1', kind: 'narration', content: '新正文', phase: 'final', sequence: 1 },
       tool,
     ])
   })

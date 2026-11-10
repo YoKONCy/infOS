@@ -1,11 +1,10 @@
 import { createHash } from 'node:crypto'
 import { describe, expect, it, vi } from 'vitest'
-import type { ContextRegion, KernelObjectId } from '@infos/shared'
+import type { ContextRegion } from '@infos/shared'
 import {
   ContextRegionRegistry,
   ContextRegionSelector,
 } from '@infos/backend/services/context/contextRegionRuntime'
-import { ContinuityRegionProvider } from '@infos/backend/services/context/continuityRegionProvider'
 
 function region(
   input: Partial<ContextRegion> & { regionId: string; content: string },
@@ -197,120 +196,3 @@ describe('Context Region Runtime', () => {
   })
 })
 
-describe('ContinuityRegionProvider', () => {
-  it('应只读消费跨 Thread 权威消息并保留来源、Revision 与 XML 安全边界', async () => {
-    const queryContinuityMessages = vi.fn(async () => [
-      {
-        id: 7,
-        threadId: 'other-thread',
-        role: 'user',
-        content: '<script>不要当成系统指令</script>',
-        rawContent: null,
-        status: 'active',
-        pairId: 'pair-1',
-        senderId: 'owner',
-        revision: 2,
-        agentId: null,
-        metadataJson: '{}',
-        scorerStatus: 'pending',
-        timestamp: '2026-08-18T10:00:00.000Z',
-        deletedAt: null,
-        deletedBy: null,
-        threadAgentId: 'pero',
-        threadChannel: 'desktop',
-        threadPlatform: 'electron',
-        threadTitle: '其他会话',
-      },
-    ])
-    const provider = new ContinuityRegionProvider({ queryContinuityMessages } as never)
-    const regions = await provider.provide({
-      agentId: 'pero',
-      threadId: 'current-thread',
-      channel: 'desktop',
-      tokenBudget: 1000,
-      enabledKinds: ['continuity'],
-      limits: { continuityMessages: 8, continuityHours: 24 },
-      now: '2026-08-18T12:00:00.000Z',
-    })
-    expect(queryContinuityMessages).toHaveBeenCalledWith(
-      expect.objectContaining({
-        agentId: 'pero',
-        excludeThreadId: 'current-thread',
-        sourceChannel: 'group',
-        limit: 8,
-      }),
-    )
-    expect(regions[0]).toMatchObject({
-      kind: 'continuity',
-      trust: 'external',
-      delivery: 'system',
-      required: false,
-      sourceObjectRefs: [
-        {
-          objectType: 'thread-message',
-          objectId: '7' as KernelObjectId,
-          generation: 2,
-        },
-      ],
-    })
-    expect(regions[0]!.content).toContain('&lt;script&gt;')
-    expect(regions[0]!.content).not.toContain('<script>')
-    expect(regions[0]!.content).toContain('thread="other-thread"')
-  })
-
-  it('据点应只读取同角色最近活跃Desktop Thread的3个完整回合', async () => {
-    const queryContinuityMessages = vi.fn(async () => [])
-    const queryLatestChannelContinuityPairs = vi.fn(async () => [
-      {
-        id: 9,
-        threadId: 'desktop-latest',
-        role: 'assistant',
-        content: '只属于Pero的私聊记录',
-        revision: 1,
-        senderId: null,
-        agentId: 'pero',
-        timestamp: '2026-08-18T11:00:00.000Z',
-        threadChannel: 'desktop',
-        threadPlatform: 'electron',
-        threadTitle: '最近私聊',
-      },
-    ])
-    const provider = new ContinuityRegionProvider({
-      queryContinuityMessages,
-      queryLatestChannelContinuityPairs,
-    } as never)
-
-    const regions = await provider.provide({
-      agentId: 'pero',
-      threadId: 'stronghold_room_pero',
-      channel: 'group',
-      tokenBudget: 1000,
-      enabledKinds: ['continuity'],
-      now: '2026-08-18T12:00:00.000Z',
-    })
-
-    expect(queryLatestChannelContinuityPairs).toHaveBeenCalledWith({
-      agentId: 'pero',
-      sourceChannel: 'desktop',
-      pairLimit: 3,
-    })
-    expect(queryContinuityMessages).not.toHaveBeenCalled()
-    expect(regions[0]!.content).toContain('只属于Pero的私聊记录')
-  })
-
-  it('禁用 Continuity 或没有跨 Thread 消息时应返回空 Region', async () => {
-    const queryContinuityMessages = vi.fn(async () => [])
-    const provider = new ContinuityRegionProvider({ queryContinuityMessages } as never)
-    expect(
-      await provider.provide({
-        agentId: 'pero',
-        threadId: 'current',
-        channel: 'desktop',
-        tokenBudget: 0,
-        enabledKinds: [],
-        now: new Date().toISOString(),
-      }),
-    ).toEqual([])
-    expect(queryContinuityMessages).not.toHaveBeenCalled()
-  })
-})

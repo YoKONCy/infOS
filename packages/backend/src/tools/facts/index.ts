@@ -1,10 +1,28 @@
 import type { BuiltinTool } from '../index'
+import type { ToolContext } from '../../services/agent/toolRegistry'
+import { t } from '../../lib/i18n'
 import type { FactsRepository } from '../../repositories/facts.repo'
 
 let facts: FactsRepository | null = null
+let assertMainWrite: ((ctx: ToolContext) => void) | undefined
 
-export function setFactsToolDeps(repository: FactsRepository): void {
+export function setFactsToolDeps(repository: FactsRepository, guard?: (ctx: ToolContext) => void): void {
   facts = repository
+  assertMainWrite = guard
+}
+
+function writeGuard(ctx: ToolContext): () => void {
+  const assertCurrent = () => {
+    ctx.signal?.throwIfAborted()
+    if (!assertMainWrite) throw new Error(t('server.agent', '此记忆操作仅限有效的主会话执行'))
+    assertMainWrite(ctx)
+  }
+  assertCurrent()
+  return assertCurrent
+}
+
+function operationId(ctx: ToolContext): string | undefined {
+  return ctx.toolCallId ? `${ctx.executionId ?? ctx.pairId ?? ctx.threadId}:${ctx.toolCallId}` : undefined
 }
 
 function requireFacts(): FactsRepository {
@@ -24,6 +42,7 @@ export const queryFactsTool: BuiltinTool = {
 export const writeFactTool: BuiltinTool = {
   name: 'write_fact',
   async execute(args, ctx) {
+    const assertCurrent = writeGuard(ctx)
     return JSON.stringify(
       await requireFacts().write({
         objectId: typeof args.objectId === 'string' ? args.objectId : undefined,
@@ -37,7 +56,8 @@ export const writeFactTool: BuiltinTool = {
         source: typeof args.source === 'string' ? args.source : undefined,
         confidence: typeof args.confidence === 'number' ? args.confidence : undefined,
         createdByAgentId: ctx.agentId,
-        operationId: typeof args.operationId === 'string' ? args.operationId : undefined,
+        operationId: operationId(ctx),
+        assertCurrent,
       }),
     )
   },
@@ -46,6 +66,7 @@ export const writeFactTool: BuiltinTool = {
 export const supersedeFactTool: BuiltinTool = {
   name: 'supersede_fact',
   async execute(args, ctx) {
+    const assertCurrent = writeGuard(ctx)
     return JSON.stringify(
       await requireFacts().supersede(String(args.objectId ?? ''), String(args.oldFactId ?? ''), {
         statement: String(args.newFact ?? ''),
@@ -54,7 +75,8 @@ export const supersedeFactTool: BuiltinTool = {
         source: typeof args.source === 'string' ? args.source : undefined,
         confidence: typeof args.confidence === 'number' ? args.confidence : undefined,
         createdByAgentId: ctx.agentId,
-        operationId: typeof args.operationId === 'string' ? args.operationId : undefined,
+        operationId: operationId(ctx),
+        assertCurrent,
       }),
     )
   },
@@ -62,10 +84,12 @@ export const supersedeFactTool: BuiltinTool = {
 
 export const deleteFactTool: BuiltinTool = {
   name: 'delete_fact',
-  async execute(args) {
+  async execute(args, ctx) {
+    const assertCurrent = writeGuard(ctx)
     await requireFacts().deleteFact(
       String(args.factId ?? ''),
-      typeof args.operationId === 'string' ? args.operationId : undefined,
+      operationId(ctx),
+      assertCurrent,
     )
     return JSON.stringify({ deleted: true })
   },
@@ -73,11 +97,13 @@ export const deleteFactTool: BuiltinTool = {
 
 export const addFactObjectAliasTool: BuiltinTool = {
   name: 'add_fact_object_alias',
-  async execute(args) {
+  async execute(args, ctx) {
+    const assertCurrent = writeGuard(ctx)
     await requireFacts().addAlias(
       String(args.objectId ?? ''),
       String(args.alias ?? ''),
-      typeof args.operationId === 'string' ? args.operationId : undefined,
+      operationId(ctx),
+      assertCurrent,
     )
     return JSON.stringify({ updated: true })
   },
@@ -85,11 +111,13 @@ export const addFactObjectAliasTool: BuiltinTool = {
 
 export const removeFactObjectAliasTool: BuiltinTool = {
   name: 'remove_fact_object_alias',
-  async execute(args) {
+  async execute(args, ctx) {
+    const assertCurrent = writeGuard(ctx)
     await requireFacts().removeAlias(
       String(args.objectId ?? ''),
       String(args.alias ?? ''),
-      typeof args.operationId === 'string' ? args.operationId : undefined,
+      operationId(ctx),
+      assertCurrent,
     )
     return JSON.stringify({ updated: true })
   },

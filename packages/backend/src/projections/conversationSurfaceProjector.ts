@@ -111,6 +111,7 @@ export class ConversationSurfaceProjector {
               {
                 source: content,
                 phase: 'committed',
+                final: block.phase === 'final',
               },
             ),
           )
@@ -145,6 +146,7 @@ export class ConversationSurfaceProjector {
             {
               source: messageContent,
               phase: 'committed',
+              final: true,
             },
           ),
         )
@@ -163,6 +165,12 @@ export class ConversationSurfaceProjector {
           }),
         )
       }
+    }
+    if (messageContent && !message.executionRecord && !nodes.some((node) => node.kind === 'markdown' &&
+      (node.props as MarkdownSurfaceProps).final === true)) {
+      nodes.push(this.node(surfaceId, 'markdown', 'stable', message.revision, 'published', {
+        source: messageContent, phase: 'committed', final: true,
+      } satisfies MarkdownSurfaceProps))
     }
     for (const attachment of message.attachments) {
       if (

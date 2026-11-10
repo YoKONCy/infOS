@@ -7,11 +7,21 @@ export const MODULE_TABLES: Partial<Record<BackupModule, string[]>> = {
   conversations: [
     'threads',
     'thread_messages',
+    'conversation_executions',
+    'flow_states',
+    'flow_state_revisions',
+    'work_context_clears',
+    'conversation_expectations',
+    'conversation_message_sources',
     'message_attachments',
     'thread_character_state_events',
+    'agent_experiences',
+    'group_chat_messages',
+    'group_chat_rooms',
     'social_messages',
   ],
   memory: [
+    'agent_character_state_events',
     'event_notes',
     'event_memory_relations',
     'event_note_coverages',
@@ -88,6 +98,8 @@ export function hasTable(db: Database.Database, name: string): boolean {
 
 /** 恢复只恢复任务记录，不能重放在途执行、审批或外部投递。 */
 export function sanitizeRestoredDatabase(db: Database.Database): void {
+  if (hasTable(db, 'conversation_executions'))
+    db.exec("UPDATE conversation_executions SET status='interrupted' WHERE status='running'")
   if (hasTable(db, 'threads'))
     db.exec("UPDATE threads SET execution_mode='manual', auto_execute_tools=0")
   if (hasTable(db, 'background_tasks'))
@@ -211,6 +223,9 @@ export function selectBackupRecords(
     ...tasks.filter((row) => row.target_thread_id).map((row) => String(row.target_thread_id)),
   ])
   if (threads.size) modules.add('conversations')
+  const experiences = get('agent_experiences').filter((row) => threads.has(String(row.thread_id)))
+  const sceneMessages = new Set(experiences.map((row) => Number(row.source_message_id)))
+  const sceneRooms = new Set(experiences.map((row) => String(row.room_id)))
   const docs = new Set(
     get('knowledge_documents')
       .filter(
@@ -231,7 +246,11 @@ export function selectBackupRecords(
       let rows = table === 'background_tasks' ? tasks : get(table)
       if (module === 'conversations')
         rows =
-          table === 'social_messages'
+          table === 'group_chat_messages'
+            ? rows.filter((row) => (!selection.agentIds.length && !selection.threadIds.length) || sceneMessages.has(Number(row.id)))
+            : table === 'group_chat_rooms'
+              ? rows.filter((row) => (!selection.agentIds.length && !selection.threadIds.length) || sceneRooms.has(String(row.id)))
+          : table === 'social_messages'
             ? rows.filter(
                 (row) =>
                   agentMatch(row) &&
@@ -435,7 +454,7 @@ export function mergeBackupRecords(
   for (const [table, rows] of tables)
     for (const row of rows)
       if (cloneRow(table, row))
-        for (const key of ['pair_id', 'call_id', 'tool_call_id']) {
+        for (const key of ['pair_id', 'call_id', 'tool_call_id', 'publication_id', 'execution_id']) {
           if (typeof row[key] === 'string' && row[key])
             strings.set(String(row[key]), importedId(String(row[key])))
         }
@@ -449,17 +468,42 @@ export function mergeBackupRecords(
       strings.set(String(row.id), importedId(String(row.id)))
   }
   const referenceTable: Record<string, string> = {
+    source_message_id: 'group_chat_messages',
+    sourceMessageId: 'group_chat_messages',
+    afterMessageId: 'group_chat_messages',
+    lastSceneMessageId: 'group_chat_messages',
+    experienceId: 'agent_experiences',
     message_id: 'thread_messages',
     messageId: 'thread_messages',
+    replacementMessageId: 'thread_messages',
+    replacedMessageId: 'thread_messages',
     model_config_id: 'ai_model_configs',
     modelConfigId: 'ai_model_configs',
     parent_id: 'thread_messages',
   }
   function rewrite(value: unknown, key = ''): unknown {
+    if (['messageRevisions', 'memorySourceRevisions'].includes(key) && value && typeof value === 'object' && !Array.isArray(value)) {
+      return Object.fromEntries(Object.entries(value).map(([id, revision]) => [
+        String(numbers.get('thread_messages')?.get(Number(id)) ?? id), revision,
+      ]))
+    }
+    if (key === 'historyRevisions' && Array.isArray(value)) {
+      return value.map((entry) => Array.isArray(entry)
+        ? [numbers.get('thread_messages')?.get(Number(entry[0])) ?? entry[0], entry[1]]
+        : entry)
+    }
     if (typeof value === 'string') {
+      const messageSource = /^message:(\d+)@(\d+)$/.exec(value)
+      if (messageSource) return `message:${numbers.get('thread_messages')?.get(Number(messageSource[1])) ?? messageSource[1]}@${messageSource[2]}`
+      if (value.startsWith('experience:')) {
+        const id = Number(value.slice('experience:'.length))
+        return `experience:${numbers.get('agent_experiences')?.get(id) ?? id}`
+      }
+      if (referenceTable[key] && /^\d+$/.test(value))
+        return String(numbers.get(referenceTable[key]!)?.get(Number(value)) ?? value)
       if (
         strings.has(value) &&
-        /^(?:id|.*_id|.*Id|.*Ids|agent|source|target|replaced_by|superseded_by)$/.test(key)
+        /^(?:id|ids|.*_id|.*Id|.*Ids|respondsTo|agent|source|target|replaced_by|superseded_by)$/.test(key)
       )
         return strings.get(value)
       if (key.endsWith('_json') || key === 'value' || key === 'env' || key === 'args') {
@@ -494,15 +538,45 @@ export function mergeBackupRecords(
         const row = Object.fromEntries(
           Object.entries(source).map(([key, value]) => [key, rewrite(value, key)]),
         ) as BackupRow
+        if (table === 'conversation_message_sources') row.source_message_id =
+          numbers.get('thread_messages')?.get(Number(source.source_message_id)) ?? source.source_message_id ?? null
+        if (table === 'conversation_executions') {
+          row.kernel_execution_id = null
+          if (row.status === 'running') row.status = 'interrupted'
+        }
         const numberMap = numbers.get(table)
         if (numberMap) row[keys[0]!.name] = numberMap.get(Number(source[keys[0]!.name]))!
         if (table === 'threads') {
+          const main = db.prepare("SELECT id FROM threads WHERE agent_id=? AND thread_kind='main'").get(row.agent_id) as { id: string } | undefined
+          if (row.thread_kind === 'main' && (policy.conflict === 'duplicate' || (main && main.id !== row.id))) row.thread_kind = 'side'
           row.model_config_id = null
           row.execution_mode = 'manual'
           row.auto_execute_tools = 0
         }
+        if (table === 'agent_character_state_events' && policy.conflict === 'duplicate' && !policy.agentTargets[String(source.agent_id)]) continue
+        if (table === 'group_chat_messages' && typeof row.metadata_json === 'string') {
+          const metadata = JSON.parse(row.metadata_json)
+          if (metadata.replyIntent) {
+            metadata.replyIntent.status = 'completed'
+            row.metadata_json = JSON.stringify(metadata)
+          }
+        }
         if (table === 'configs') {
           const key = String(row.key)
+          if (['proactive.settings', 'proactive.state'].includes(key)) {
+            const value = JSON.parse(String(row.value))
+            if (value && value.agents && typeof value.agents === 'object' && !Array.isArray(value.agents)) {
+              value.agents = Object.fromEntries(Object.entries(value.agents).map(([agentId, settings]) => [policy.agentTargets[agentId] ?? agentId, settings]))
+              // 逻辑导入恢复资料与设置，等待现场随新的实际执行重新登记。
+              if (key === 'proactive.state') {
+                for (const state of Object.values(value.agents)) {
+                  if (state && typeof state === 'object' && 'waiting' in state)
+                    delete (state as { waiting?: unknown }).waiting
+                }
+              }
+            }
+            row.value = JSON.stringify(value)
+          }
           if (/^model\.(?:main|task\.|agent\.)/.test(key) && /^\d+$/.test(String(row.value)))
             row.value = String(numbers.get('ai_model_configs')?.get(Number(row.value)) ?? row.value)
           if (key.startsWith('model.agent.')) {

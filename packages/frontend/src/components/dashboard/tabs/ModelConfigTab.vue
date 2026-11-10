@@ -25,6 +25,10 @@ import {
 import { watch, computed, ref, nextTick } from 'vue'
 import { modelEditorFieldLabel } from '../../../lib/modelEditor'
 import {
+  assistantPrefillEffectText,
+  assistantPrefillSupportOptions,
+} from '../../../lib/assistantPrefillCapability'
+import {
   useModelConfig,
   TASK_SLOTS,
   type LlmModel,
@@ -38,6 +42,7 @@ import { getApiBaseUrl } from '../../../api/transport'
 import IndexMaintenancePanel from '../IndexMaintenancePanel.vue'
 import ModelFallbackDialog from '../ModelFallbackDialog.vue'
 import ProviderConnectionsDialog from '../ProviderConnectionsDialog.vue'
+import MotionList from '../../motion/MotionList.vue'
 import {
   DEFAULT_DESKTOP_REACT_MAX_TURNS,
   usesReasoningLevels,
@@ -183,6 +188,19 @@ const connectionApiBase = computed(() =>
   editorForm.value.connectionOverride
     ? (editorForm.value.apiBase ?? '')
     : (selectedConnection.value?.apiBase ?? ''),
+)
+// 与后端共用同一套能力规则，提示当前组合下预填充是否真的会发送。
+const assistantPrefillEffect = computed(() =>
+  assistantPrefillEffectText({
+    provider: selectedConnection.value?.brand ?? editorForm.value.provider,
+    protocol: editorProtocol.value,
+    modelId: editorForm.value.modelId,
+    apiBase: connectionApiBase.value,
+    wireApi: editorForm.value.wireApi,
+    reasoningDialect: editorForm.value.reasoningDialect,
+    reasoningEffort: editorForm.value.reasoningEffort,
+    assistantPrefill: editorForm.value.assistantPrefill,
+  }),
 )
 const connectionSummaryBrand = computed(() =>
   resolveProviderBrand(selectedConnection.value?.brand, connectionApiBase.value),
@@ -417,7 +435,9 @@ function connectionName(model: LlmModel) {
 <template>
   <div class="model-config-layout p-8 h-full flex flex-col overflow-hidden">
     <!-- 头部 + 子选项卡 -->
-    <div class="flex items-start justify-between gap-4 mb-6 flex-shrink-0 relative group/header">
+    <div
+      class="flex flex-wrap items-start justify-between gap-4 mb-6 flex-shrink-0 relative group/header"
+    >
       <!-- 背景氛围光晕 -->
       <div
         class="absolute -right-20 -top-10 w-40 h-40 bg-sky-400/5 blur-[60px] rounded-full pointer-events-none group-hover/header:bg-sky-400/15 transition-all duration-1000"
@@ -454,7 +474,7 @@ function connectionName(model: LlmModel) {
           {{ currentTab === 'llm' ? 'LLM MODEL MANAGEMENT' : 'VECTOR CONFIGURATION' }}
         </p>
       </div>
-      <div class="flex gap-2 items-center">
+      <div class="flex flex-wrap gap-2 items-center whitespace-nowrap">
         <template v-if="currentTab === 'llm'">
           <PButton variant="ghost" @click="isGlobalOpen = true">
             <PixelIcon name="settings" size="xs" />
@@ -493,7 +513,7 @@ function connectionName(model: LlmModel) {
     </div>
 
     <!-- LLM 模型网格 -->
-    <div
+    <MotionList
       v-if="currentTab === 'llm'"
       class="model-card-grid grid content-start flex-1 overflow-y-auto pr-1 pt-2 model-scrollbar"
     >
@@ -677,7 +697,7 @@ function connectionName(model: LlmModel) {
           {{ modelTests[model.id]?.message }}
         </p>
       </PCard>
-    </div>
+    </MotionList>
 
     <!-- 向量模型配置 -->
     <div v-else class="flex-1 overflow-y-auto flex flex-col gap-6">
@@ -1162,6 +1182,25 @@ function connectionName(model: LlmModel) {
               <span class="text-[9px] text-slate-400 font-mono">NATIVE</span>
               <div class="model-param-control flex justify-end">
                 <PSwitch v-model="editorForm.returnNativeReasoning" />
+              </div>
+            </div>
+
+            <div class="model-param-row">
+              <div class="model-param-heading">
+                <span class="text-xs font-bold text-slate-700">
+                  {{ __t('ui.settings', '回答预填充能力') }}
+                </span>
+                <span class="text-[10px] text-slate-400">
+                  {{ __t('ui.settings', '走中转或不确定时保持自动；确认支持再手动开启') }}
+                </span>
+                <span class="text-[10px] text-slate-500">{{ assistantPrefillEffect }}</span>
+              </div>
+              <span class="text-[9px] text-slate-400 font-mono">PREFILL</span>
+              <div class="model-param-control">
+                <PSelect
+                  v-model="editorForm.assistantPrefill"
+                  :options="assistantPrefillSupportOptions()"
+                />
               </div>
             </div>
 

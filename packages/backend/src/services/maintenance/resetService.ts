@@ -2,8 +2,8 @@ import { t as __t } from '../../lib/i18n'
 /**
  * ResetService — 危险区域重置服务
  *
- * 提供三种分级重置，全部为物理删除且不可撤销，调用方必须做二次确认：
- * - clearLogs()     清空对话记录（Thread、消息、日志、群聊消息）
+ * 提供三种分级重置，入口要求确认短语：
+ * - clearLogs()     清空记录与侧线，保留主线身份并推进代次
  * - resetMemories() 重置 EventNote、Coverage、Reflection、DailyNotes 与 Facts 账本
  * - factoryReset()  恢复出厂设置（清空全部用户数据）
  *
@@ -15,11 +15,18 @@ import { t as __t } from '../../lib/i18n'
  */
 
 import type { DrizzleDb } from '../../database'
-import { sql } from 'drizzle-orm'
+import { sql, eq } from 'drizzle-orm'
 import {
   threads,
   threadMessages,
   threadCharacterStateEvents,
+  agentCharacterStateEvents,
+  agentExperiences,
+  conversationExecutions,
+  conversationExpectations,
+  conversationMessageSources,
+  flowStates,
+  flowStateRevisions,
   threadSummaries,
   conversationLogs,
   groupChatMessages,
@@ -47,6 +54,8 @@ import {
   notificationFeed,
   notificationDeviceReceipts,
   achievements,
+  configs,
+  homeRecords,
 } from '../../database/schema'
 import { createLogger } from '../../lib/logger'
 import { disposeExecutionOwner } from '../../tools/productivityRuntimeHolder'
@@ -65,27 +74,36 @@ export class ResetService {
   constructor(private readonly db: DrizzleDb) {}
 
   /** 清空对话记录（记忆与配置不受影响）。 */
-  async clearLogs(): Promise<ResetResult> {
+  async clearLogs(variables?: { key: string; value: string }): Promise<ResetResult> {
     await disposeExecutionOwner({})
     invalidatePromptReplay(undefined, true)
-    const cleared: Record<string, number> = {}
-    cleared.threads = this.clearTable(threads)
-    cleared.thread_messages = this.clearTable(threadMessages)
-    cleared.thread_character_state_events = this.clearTable(threadCharacterStateEvents)
-    cleared.thread_summaries = this.clearTable(threadSummaries)
-    cleared.conversation_logs = this.clearTable(conversationLogs)
-    cleared.group_chat_messages = this.clearTable(groupChatMessages)
-    cleared.message_attachments = this.clearTable(messageAttachments)
-    cleared.file_change_snapshots = this.clearTable(fileChangeSnapshots)
-    cleared.task_plan_mutations = this.clearTable(taskPlanMutations)
-    cleared.task_plans = this.clearTable(taskPlans)
-    // 通知正文同属对话派生数据，清空记录后不能再向离线手机补发。
-    cleared.conversation_notifications = this.db
-      .delete(durableNotifications)
-      .where(
+    const cleared = this.db.transaction((tx) => {
+      const counts: Record<string, number> = {}
+      counts.threads = tx.delete(threads).where(eq(threads.threadKind, 'side')).run().changes
+      tx.update(threads).set({
+        generation: sql`${threads.generation} + 1`, messageCount: 0, pairCount: 0, lastMessageAt: null,
+      }).run()
+      const tables = [
+        ['conversation_executions', conversationExecutions], ['conversation_expectations', conversationExpectations],
+        ['conversation_message_sources', conversationMessageSources],
+        ['thread_messages', threadMessages], ['thread_character_state_events', threadCharacterStateEvents],
+        ['agent_experiences', agentExperiences], ['flow_states', flowStates],
+        ['flow_state_revisions', flowStateRevisions], ['thread_summaries', threadSummaries],
+        ['conversation_logs', conversationLogs], ['group_chat_messages', groupChatMessages],
+        ['message_attachments', messageAttachments], ['file_change_snapshots', fileChangeSnapshots],
+        ['task_plan_mutations', taskPlanMutations], ['task_plans', taskPlans],
+      ] as const
+      for (const [name, table] of tables) counts[name] = tx.delete(table).run().changes
+      for (const name of ['expression_turn_versions', 'expression_state', 'expression_learning', 'expression_learning_batches'])
+        counts[name] = tx.run(sql.raw(`DELETE FROM ${name}`)).changes
+      // 通知正文同属对话派生数据，清空记录后不能再向离线手机补发。
+      counts.conversation_notifications = tx.delete(durableNotifications).where(
         sql`json_extract(${durableNotifications.metadataJson}, '$.target.kind') = 'conversation'`,
-      )
-      .run().changes
+      ).run().changes
+      if (variables) tx.insert(configs).values(variables)
+        .onConflictDoUpdate({ target: configs.key, set: { value: variables.value } }).run()
+      return counts
+    })
     logger.info(__t('logs.maintenance', '对话记录已清空: {0}', [JSON.stringify(cleared)]))
     return { operation: 'clear_logs', cleared }
   }
@@ -123,6 +141,7 @@ export class ResetService {
     // 先清空记忆/对话相关，再清空业务数据，最后清空配置与审批审计。
     // 使用显式表名映射，避免依赖 drizzle 内部 symbol 反射。
     const tables: Array<[string, Parameters<DrizzleDb['delete']>[0]]> = [
+      ['home_records', homeRecords],
       ['achievements', achievements],
       ['notification_device_receipts', notificationDeviceReceipts],
       ['notification_feed', notificationFeed],
@@ -147,6 +166,13 @@ export class ResetService {
       ['fact_objects', factObjects],
       ['threads', threads],
       ['thread_character_state_events', threadCharacterStateEvents],
+      ['agent_character_state_events', agentCharacterStateEvents],
+      ['agent_experiences', agentExperiences],
+      ['conversation_executions', conversationExecutions],
+      ['conversation_expectations', conversationExpectations],
+      ['conversation_message_sources', conversationMessageSources],
+      ['flow_states', flowStates],
+      ['flow_state_revisions', flowStateRevisions],
       ['thread_messages', threadMessages],
       ['thread_summaries', threadSummaries],
       ['conversation_logs', conversationLogs],
@@ -154,21 +180,19 @@ export class ResetService {
       ['message_attachments', messageAttachments],
       ['file_change_snapshots', fileChangeSnapshots],
     ]
-    const cleared: Record<string, number> = {}
-    for (const [name, table] of tables) cleared[name] = this.clearTable(table)
+    const cleared = this.db.transaction((tx) => {
+      const counts: Record<string, number> = {}
+      for (const [name, table] of tables) counts[name] = tx.delete(table).run().changes
+      for (const name of [
+        'expression_mark_rules', 'expression_marks', 'expression_replies',
+        'expression_turn_versions', 'expression_state', 'expression_learning',
+        'expression_learning_batches', 'expression_handbook_versions',
+        'expression_handbooks', 'expression_settings',
+      ]) counts[name] = tx.run(sql.raw(`DELETE FROM ${name}`)).changes
+      return counts
+    })
     logger.info(__t('logs.maintenance', '出厂重置完成: {0}', [JSON.stringify(cleared)]))
     return { operation: 'factory_reset', cleared }
   }
 
-  /** 清空单张表并返回删除行数。 */
-  private clearTable(table: Parameters<DrizzleDb['delete']>[0]): number {
-    try {
-      const result = this.db.delete(table).run()
-      return result.changes
-    } catch (error) {
-      // 单表失败不阻断整体重置，避免外键/锁定导致部分表永远无法清空
-      logger.warn(__t('logs.maintenance', '清空表失败（已跳过）: {0}', [(error as Error).message]))
-      return 0
-    }
-  }
 }

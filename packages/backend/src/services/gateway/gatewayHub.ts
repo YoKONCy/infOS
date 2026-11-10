@@ -180,6 +180,11 @@ export class GatewayHub {
     return this.nodes.size
   }
 
+  /** 有没有已认证、能显示聊天审批卡片的客户端（只收通知的连接不算）。 */
+  hasInteractiveClient(): boolean {
+    return [...this.nodes.values()].some((node) => node.authenticated && !node.notificationOnly)
+  }
+
   /** 桌宠显示状态只属于当前连接，过期或断线后自动失效，不作为持久化偏好。 */
   hasVisiblePet(agentId: string): boolean {
     const now = Date.now()

@@ -3,11 +3,18 @@ import type { ConversationExecutionPause } from '@infos/shared'
 const DESKTOP_TOOLS = new Set([
   'take_screenshot',
   'automation_execute',
+  'desktop_direct',
   'activate_window',
   'open_application',
+  'home_files',
+  'home_shelf',
+  'delete_file',
+  'write_file',
+  'edit_file',
+  'home_declare',
 ])
 const PAUSE_CODE =
-  /^DESKTOP_(WAITING|CANCELLED|INPUT_MONITOR_UNAVAILABLE|BRIDGE_CLOSED|RESULT_UNCERTAIN)$/
+  /^(?:DESKTOP_(WAITING|CANCELLED|INPUT_MONITOR_UNAVAILABLE|BRIDGE_CLOSED|RESULT_UNCERTAIN)|HOME_CONFIRMATION_REQUIRED)$/
 
 type DesktopObservation = {
   name: string

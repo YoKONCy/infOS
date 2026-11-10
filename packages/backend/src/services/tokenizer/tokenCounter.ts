@@ -11,9 +11,34 @@ export class O200kTokenCounter implements ContextTokenizer {
     o200kBase.pat_str,
   )
 
+  // 缓存精确文本的计数，复用每轮重复的模板、工具定义与历史消息。
+  // 同时限制条目数和字符总量，超大文本直接计算，避免计数缓存反过来抬高内存。
+  private readonly counts = new Map<string, number>()
+  private cachedCharacters = 0
+  private readonly maxCachedCharacters = 65_536
+  private readonly maxCachedEntries = 256
+
   countTokens(content: string): number {
     if (!content) return 0
-    return this.encoder.encode_ordinary(content).length
+    const cached = this.counts.get(content)
+    if (cached !== undefined) {
+      this.counts.delete(content)
+      this.counts.set(content, cached)
+      return cached
+    }
+    const count = this.encoder.encode_ordinary(content).length
+    if (content.length > this.maxCachedCharacters) return count
+    while (
+      this.counts.size >= this.maxCachedEntries ||
+      this.cachedCharacters + content.length > this.maxCachedCharacters
+    ) {
+      const oldest = this.counts.keys().next().value!
+      this.counts.delete(oldest)
+      this.cachedCharacters -= oldest.length
+    }
+    this.counts.set(content, count)
+    this.cachedCharacters += content.length
+    return count
   }
 
   countMessages(messages: ReadonlyArray<{ role: string; content: unknown }>): number {

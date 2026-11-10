@@ -12,10 +12,13 @@ import { AchievementRepository } from '@infos/backend/repositories/achievement.r
 let db: DrizzleDb
 let messages: ThreadRepository
 let records: AchievementRepository
-beforeEach(() => {
+beforeEach(async () => {
   db = createDrizzleConnection(':memory:')
   messages = new ThreadRepository(db)
   records = new AchievementRepository(db)
+  for (const [id, agentId] of [['first-thread', 'pero'], ['second-thread', 'penora'], ['atomic-thread', 'pero'], ['thread', 'pero']]) {
+    await messages.createThread({ id: id!, agentId: agentId!, channel: 'desktop' })
+  }
 })
 afterEach(() => closeDrizzleConnection(db))
 

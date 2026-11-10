@@ -15,6 +15,7 @@ vi.mock('@infos/backend/lib/logger', () => ({
 
 type SkillLoaderMock = {
   getManifest: ReturnType<typeof vi.fn>
+  loadSkillContent: ReturnType<typeof vi.fn>
 }
 
 type ToolRegistryMock = {
@@ -69,6 +70,7 @@ modes:
       'utf-8',
     )
     skillLoader = {
+      loadSkillContent: vi.fn(() => '先确认当天事件，再按第一人称写日记。'),
       getManifest: vi.fn((skillId: string) =>
         skillId === 'diary' ? createManifest('diary', ['memory.write']) : undefined,
       ),
@@ -157,8 +159,8 @@ modes:
       expect(resolved.toolsDescription).toContain('chat.send')
       expect(resolved.toolsDescription).toContain('memory.search')
       expect(resolved.toolsDescription).not.toContain('blocked.tool')
-      expect(resolved.skillMenuText).toContain('diary')
-      expect(resolved.skillMenuText).toContain('diary 描述')
+      expect(resolved.skillMenuText).toBe('')
+      expect(skillLoader.loadSkillContent).not.toHaveBeenCalled()
     })
 
     it('加载旧配置时应自动移除视觉Prompt并写回YAML', () => {
@@ -254,14 +256,14 @@ channels:
   })
 
   describe('isToolAllowed', () => {
-    it('应当始终允许 finish_task 和 load_skill', () => {
+    it('保留 finish_task 执行协议，移除 load_skill 的特殊准入', () => {
       const gate = new CapabilityGate([rootDir], skillLoader as never, toolRegistry as never)
 
       const finishAllowed = gate.isToolAllowed('unknown', 'desktop', 'finish_task')
       const loadAllowed = gate.isToolAllowed('unknown', 'desktop', 'load_skill')
 
       expect(finishAllowed).toBe(true)
-      expect(loadAllowed).toBe(true)
+      expect(loadAllowed).toBe(false)
     })
 
     it('应当基于模式白名单判断普通工具权限', () => {
@@ -275,49 +277,31 @@ channels:
     })
   })
 
-  describe('unlockSkillTools', () => {
-    it('Skill工具可绕过角色显式列表但不能绕过Channel上游列表', () => {
-      toolRegistry.getDefinitions.mockImplementation((channel?: string) =>
-        channel === 'desktop'
-          ? [
-              { name: 'chat.send', description: '发送聊天消息' },
-              { name: 'memory.write', description: '写入记忆' },
-            ]
-          : [],
-      )
+  describe('会话 Skill 选择', () => {
+    it('选中后直接提供完整指引，依赖工具继续受角色权限约束', () => {
       const gate = new CapabilityGate([rootDir], skillLoader as never, toolRegistry as never)
-
-      gate.unlockSkillTools('session-skill', 'diary')
-
-      expect(
-        gate.resolve('pero', 'desktop', 'session-skill').allowedTools.has('memory.write'),
-      ).toBe(true)
-      expect(
-        gate.resolve('pero', 'browser', 'session-skill').allowedTools.has('memory.write'),
-      ).toBe(false)
-      expect(gate.isSkillUnlockedTool('session-skill', 'memory.write')).toBe(true)
+      const resolved = gate.resolve('pero', 'desktop', 'selected', 'default', ['diary'])
+      expect(resolved.enabledSkills.map((skill) => skill.id)).toEqual(['diary'])
+      expect(resolved.skillMenuText).toContain('先确认当天事件，再按第一人称写日记。')
+      expect(resolved.allowedTools.has('memory.write')).toBe(false)
     })
 
-    it('应当把 Skill 依赖工具临时加入指定会话白名单，并在清理会话后移除', () => {
+    it('关闭后不再提供技能名称、说明或正文，也不继续读取正文', () => {
       const gate = new CapabilityGate([rootDir], skillLoader as never, toolRegistry as never)
-
-      gate.unlockSkillTools('session-1', 'diary')
-      const allowedAfterUnlock = gate.isToolAllowed('pero', 'desktop', 'memory.write', 'session-1')
-      gate.clearSession('session-1')
-      const allowedAfterClear = gate.isToolAllowed('pero', 'desktop', 'memory.write', 'session-1')
-
-      expect(allowedAfterUnlock).toBe(true)
-      expect(allowedAfterClear).toBe(false)
+      gate.resolve('pero', 'desktop', 'selected', 'default', ['diary'])
+      skillLoader.loadSkillContent.mockClear()
+      const resolved = gate.resolve('pero', 'desktop', 'selected', 'default', [])
+      expect(resolved.enabledSkills).toEqual([])
+      expect(resolved.skillMenuText).toBe('')
+      expect(skillLoader.loadSkillContent).not.toHaveBeenCalled()
     })
 
-    it('Skill 不存在或没有依赖工具时不应创建额外权限', () => {
-      skillLoader.getManifest.mockReturnValueOnce(undefined)
+    it('伪造选择不能扩大角色或请求作用域允许的技能范围', () => {
       const gate = new CapabilityGate([rootDir], skillLoader as never, toolRegistry as never)
-
-      gate.unlockSkillTools('session-2', 'missing')
-      const allowed = gate.isToolAllowed('pero', 'desktop', 'memory.write', 'session-2')
-
-      expect(allowed).toBe(false)
+      expect(gate.resolve('pero', 'browser', undefined, 'default', ['diary']).skillMenuText).toBe('')
+      expect(gate.resolve('pero', 'desktop', undefined, 'ambient', ['diary']).enabledSkills).toEqual([])
+      expect(gate.resolve('pero', 'desktop', undefined, 'default', ['missing']).enabledSkills).toEqual([])
+      expect(skillLoader.loadSkillContent).not.toHaveBeenCalled()
     })
   })
 

@@ -28,6 +28,8 @@ A 类维护跨领域架构，B 类维护具体子系统的调用链和运行契�
 | 社交应用 | [B21 社交能力](./B21_SOCIAL_CAPABILITIES.md)、[B04 状态卡片](./B04_SOCIAL_STATUS_CARDS.md)、[B05 NapCat 管理页](./B05_NAPCAT_WEBUI.md) |
 | 工具、资源与文档 | [B07 工具扩展](./B07_TOOLS_AND_EXTENSIONS.md)、[B12 消息资源](./B12_MESSAGE_RESOURCES.md)、[B24 文档工具](./B24_DOCUMENT_TOOLS.md) |
 | 会话与任务 | [B09 交互模式](./B09_THREAD_INTERACTION_MODE.md)、[B13 任务计划](./B13_TASK_PLANS.md)、[B19 执行模式](./B19_THREAD_EXECUTION_MODES.md)、[B20 主动工作](./B20_PROACTIVE_WORK.md)、[B26 对话队列](./B26_CONVERSATION_QUEUE.md) |
+| 桌面生活与外壳 | [B31 共同的家](./B31_COMMON_HOME.md)、[桌面感知](./B_PERCEPTION.md)、[桌面外壳](./P03_DESKTOP_SHELL.md)、[桌面预制件](./P11_DESKTOP_PREFABS.md) |
+| 角色资源与表达 | [角色卡](./P05_AGENT_CARD.md)、[表达调教](./B26_EXPRESSION.md)、[自定义主题](./P02_CUSTOM_THEME.md) |
 | 模型与上下文 | [B17 提示词工作区](./B17_PROMPT_WORKSPACE.md)、[B22 服务商连接](./B22_PROVIDER_CONNECTIONS.md)、[B16 用量账本](./B16_TOKEN_USAGE.md) |
 | 界面与通知 | [B15 背景](./B15_APP_BACKGROUND.md)、[B18 完成提醒](./B18_COMPLETION_ALERTS.md)、[B23 设备通知](./B23_DEVICE_NOTIFICATIONS.md)、[B25 国际化](./B25_I18N.md)、[B30 成就](./B30_ACHIEVEMENTS.md) |
 | 安全与诊断 | [B27 运行时安全](./B27_RUNTIME_SECURITY.md)、[B28 运行时调试](./B28_RUNTIME_DEBUG.md)、[B29 索引维护与诊断](./B29_INDEX_MAINTENANCE.md) |

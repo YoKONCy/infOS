@@ -243,8 +243,7 @@ function registerVoicePipelineHandler(ctx: AppContext): void {
  *
  * desktop 文本对话路径默认走 TTS；无有效 Seat 或 Provider 时安全跳过。
  */
-const speechGenerations = new Map<string, number>()
-const speechControllers = new Map<string, AbortController>()
+import { speechGenerations, speechControllers } from '../services/voice/speechPriority'
 
 async function synthesizeAndDeliverTts(
   ctx: AppContext,
@@ -372,6 +371,7 @@ function registerChatHandler(ctx: AppContext): void {
 
     let threadIdResolved = threadId
     let ownsTask = false
+    let ownedSignal: AbortSignal | undefined
     let completedTask = false
     const surfaceRef: { current: ConversationSurfaceSession | null } = { current: null }
     try {
@@ -394,14 +394,18 @@ function registerChatHandler(ctx: AppContext): void {
       }
 
       // 活动时间统一由 ConversationTurnService 在用户回合入口更新。
+      const resolvedThread = await ctx.threadService.getThread(threadIdResolved)
+      ctx.conversationQueue.assertHistoryStable(threadIdResolved)
 
       // ── 3. RuntimeStateService 注册任务（替代旧 TaskManager） ──
       ctx.runtimeStateService.registerTask(threadIdResolved, agentId)
+      ownedSignal = ctx.runtimeStateService.getAbortSignal(threadIdResolved)
       ownsTask = true
 
       // ── 4. 统一流式对话与 Surface 输出 ──
       const gen = ctx.conversationTurnService.streamTurn({
         threadId: threadIdResolved,
+        expectedGeneration: resolvedThread?.generation,
         agentId,
         content,
         signal: ctx.runtimeStateService.getAbortSignal(threadIdResolved),
@@ -412,6 +416,8 @@ function registerChatHandler(ctx: AppContext): void {
             agentId,
             execution.executionId,
             true,
+            resolvedThread?.threadKind === 'main',
+            resolvedThread?.generation,
           )
           ctx.conversationQueue.setLive(threadIdResolved, surfaceRef.current)
           await ctx.gatewayHub.pushSurface(surfaceRef.current.open())
@@ -514,7 +520,7 @@ function registerChatHandler(ctx: AppContext): void {
             )
           }
         } else if (chunk.event === 'narration_end' && surfaceRef.current) {
-          await ctx.gatewayHub.pushSurface(surfaceRef.current.completeNarration(chunk.data.blockId))
+            await ctx.gatewayHub.pushSurface(surfaceRef.current.completeNarration(chunk.data.blockId, chunk.data.phase === 'final'))
         } else if (chunk.event === 'tool_call_start' && surfaceRef.current) {
           await updateRunState('assembling')
           await ctx.gatewayHub.pushSurface(surfaceRef.current.startToolDraft(chunk.data.draftId))
@@ -609,12 +615,12 @@ function registerChatHandler(ctx: AppContext): void {
       }
     } finally {
       // AIOS: 注销任务（按 threadId）
-      if (ownsTask) {
+      if (ownsTask && ctx.runtimeStateService.getAbortSignal(threadIdResolved) === ownedSignal) {
         try {
           ctx.conversationQueue.afterTurn(threadIdResolved, { success: completedTask })
         } finally {
           ctx.conversationQueue.setLive(threadIdResolved)
-          ctx.runtimeStateService.unregisterTask(threadIdResolved)
+          ctx.runtimeStateService.unregisterTask(threadIdResolved, ownedSignal)
         }
       }
     }

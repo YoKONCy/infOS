@@ -19,9 +19,11 @@ import { defineStore } from 'pinia'
 import { ref, shallowRef, computed, onScopeDispose } from 'vue'
 import { chatApi } from '../api/modules/chatApi'
 import { threadsApi } from '../api/modules/threadsApi'
+import { ApiError } from '../api/errors'
 import type { ThreadChannel, ThreadAttachmentInfo } from '../api/modules/threadsApi'
 import { logger } from '../lib/logger'
 import { useCompositorStore } from './useCompositorStore'
+import { createPendingTurnTracker } from './threadPendingTurn'
 
 export interface RagFailureTrace {
   kind: 'embedding' | 'rag'
@@ -41,6 +43,10 @@ export interface ChatMessage {
   timestamp: string
   /** 对话对 ID，用于精确级联删除。 */
   pairId?: string | null
+  publicationId?: string | null
+  executionId?: string | null
+  executionRecord?: boolean
+  sourceMessages?: import('@infos/shared').ConversationSource[]
   revision?: number
   /** 当前流式消息对应的 Internal Surface。 */
   surfaceId?: string
@@ -58,6 +64,11 @@ export interface ChatMessage {
   attachments?: ThreadAttachmentInfo[]
   /** 是否为持久化的图片理解文字档案。 */
   imageTranscription?: boolean
+  /**
+   * 发送后立即显示的用户消息（尚未出现在服务端快照里）。
+   * afterId 是发送时最后一条持久消息的 ID，快照里出现更新的用户消息时由它接替。
+   */
+  localPending?: { afterId: number; queueId?: string; generation: number }
   /** 工具调用信息 */
   toolCalls?: Array<{
     name: string
@@ -88,6 +99,14 @@ export const useThreadStore = defineStore('thread', () => {
   // ── 状态 ──
   /** 当前 Thread ID */
   const threadId = ref<string>('')
+  const threadKind = ref<'main' | 'side'>('side')
+  const canFork = ref(false)
+  const threadGeneration = ref(1)
+  const selectedThreads = new Map<string, string>()
+  function rememberThread(agent: string, id: string): void {
+    selectedThreads.set(agent, id)
+    try { sessionStorage.setItem(`infos:conversation:${agent}`, id) } catch { /* 窗口内仍保留选择。 */ }
+  }
   /** 当前频道 */
   const channel = ref<ThreadChannel>('desktop')
   const interactionMode = ref<InteractionMode>('chat')
@@ -155,6 +174,26 @@ export const useThreadStore = defineStore('thread', () => {
     { generation: number; operation: Promise<ThreadLoadResult> }
   >()
 
+  const {
+    renderKey,
+    inheritStreamingRenderKey,
+    clearRenderKeys,
+    adoptPendingMessages,
+    beginPendingTurn,
+    cancelPendingTurn,
+  } = createPendingTurnTracker({
+    messages,
+    threadId,
+    threadKind,
+    threadGeneration,
+    agentId,
+    streamingMessageId,
+    generationState,
+    ragFailureTrace,
+    ragProgressMessage,
+    installLocalMessageSurface,
+  })
+
   // ── 动作 ──
 
   function installLocalMessageSurface(
@@ -165,6 +204,7 @@ export const useThreadStore = defineStore('thread', () => {
     return compositor.installLocalMessage({
       localId,
       threadId: threadId.value,
+      threadGeneration: threadGeneration.value,
       principalId: agentId.value,
       content,
       attachments,
@@ -192,6 +232,10 @@ export const useThreadStore = defineStore('thread', () => {
       rawContent: message.rawContent,
       timestamp: message.timestamp,
       pairId: message.pairId,
+      publicationId: message.publicationId,
+      executionId: message.executionId,
+      executionRecord: message.executionRecord,
+      sourceMessages: message.sourceMessages,
       revision: message.revision,
       surfaceId: `conversation-message:${message.messageId}`,
       senderId: message.senderId ?? message.agentId ?? undefined,
@@ -302,12 +346,18 @@ export const useThreadStore = defineStore('thread', () => {
       const thread = threadResponse.data?.thread
       const projection = projectionResponse.data
       if (!thread || !projection) throw new Error('服务端未返回 Conversation Projection')
+      if (projection.threadGeneration !== undefined && projection.threadGeneration < thread.generation)
+        return loadThreadProjection(nextThreadId, currentAgentId, signal)
       if (thread.agentId !== currentAgentId || projection.principalId !== currentAgentId) {
         throw new Error(
           `会话归属不匹配：${thread.id} 属于 ${thread.agentId}，不是 ${currentAgentId}`,
         )
       }
       threadId.value = thread.id
+      threadKind.value = thread.threadKind
+      canFork.value = thread.canFork
+      threadGeneration.value = projection.threadGeneration ?? thread.generation
+      rememberThread(thread.agentId, thread.id)
       agentId.value = thread.agentId
       channel.value = thread.channel
       interactionMode.value = thread.interactionMode
@@ -339,7 +389,16 @@ export const useThreadStore = defineStore('thread', () => {
         const current = existing.get(message.id)
         return current && current.revision === message.revision ? current : message
       })
-      messages.value = restoreStreamingShell(persisted, thread.id, thread.agentId, sameConversation)
+      // 回合进行中，快照还没包含的本地用户消息要留在原位，排在「正在思考」占位之前。
+      const pending = sameConversation
+        ? adoptPendingMessages(persisted, generationState.value !== 'idle')
+        : []
+      messages.value = restoreStreamingShell(
+        [...persisted, ...pending],
+        thread.id,
+        thread.agentId,
+        sameConversation,
+      )
       return { status: 'loaded', threadId: thread.id }
     } catch (err) {
       if (generation !== loadGeneration) return { status: 'superseded' }
@@ -377,6 +436,7 @@ export const useThreadStore = defineStore('thread', () => {
       })
       const projection = response.data
       if (!projection || projection.threadId !== threadId.value) return 0
+      if (projection.threadGeneration !== undefined && projection.threadGeneration !== threadGeneration.value) return 0
       compositor.mergeSnapshot(projection)
       const existing = new Map(messages.value.map((message) => [message.id, message]))
       const older = projection.messages.map(fromProjection).map((message) => {
@@ -415,9 +475,19 @@ export const useThreadStore = defineStore('thread', () => {
     historyError.value = null
     const operation = (async (): Promise<ThreadLoadResult> => {
       try {
-        const res = await threadsApi.getLatest({ agentId: currentAgentId, channel: nextChannel })
+        let selected = selectedThreads.get(currentAgentId)
+        try { selected ??= sessionStorage.getItem(`infos:conversation:${currentAgentId}`) ?? undefined } catch { /* 使用窗口内选择。 */ }
+        let latest
+        if (selected) {
+          try {
+            const candidate = (await threadsApi.get(selected, { pageSize: 1 })).data?.thread
+            if (candidate?.agentId === currentAgentId && candidate.channel === nextChannel) latest = candidate
+          } catch (error) {
+            if (!(error instanceof ApiError) || error.code !== 'NOT_FOUND') throw error
+          }
+        }
+        latest ??= (await threadsApi.getLatest({ agentId: currentAgentId, channel: nextChannel })).data?.thread
         if (generation !== latestGeneration) return { status: 'superseded' }
-        const latest = res.data?.thread
         if (!latest) throw new Error('服务端未返回最近会话')
         if (latest.agentId !== currentAgentId) throw new Error('服务端返回了其他 Agent 的最新会话')
 
@@ -488,34 +558,52 @@ export const useThreadStore = defineStore('thread', () => {
     const existing = new Map<string, ChatMessage>(
       messages.value.map((message) => [message.id, message]),
     )
+    const deleted = new Set(snapshot.deletedMessageIds ?? [])
     const projected = snapshot.messages.map(fromProjection).map((message) => {
       const current = existing.get(message.id)
       return current && current.revision === message.revision ? current : message
     })
-    const firstProjectedId = Number(projected[0]?.id)
+    adoptPendingMessages(projected, false)
+    const firstProjectedId = Number(projected.find((message) => !message.executionRecord)?.id)
     const retainedHistory = Number.isSafeInteger(firstProjectedId)
       ? messages.value.filter(
           (message) =>
-            Number.isSafeInteger(Number(message.id)) && Number(message.id) < firstProjectedId,
+            (Number.isSafeInteger(Number(message.id)) && Number(message.id) < firstProjectedId) ||
+            (message.executionRecord && Boolean(message.sourceMessages?.length) &&
+              message.sourceMessages!.every((source) => source.messageId < firstProjectedId)),
         )
       : []
-    return [...retainedHistory, ...projected]
+    return [...retainedHistory, ...projected].filter((message) => !deleted.has(message.id))
   }
 
   function applyProjection(snapshot: import('@infos/shared').ConversationProjectionSnapshot): void {
     compositor.mergeSnapshot(snapshot)
     if (snapshot.threadId !== threadId.value || snapshot.principalId !== agentId.value) return
+    if (snapshot.threadGeneration !== undefined && snapshot.threadGeneration < threadGeneration.value) return
+    if (snapshot.threadGeneration !== undefined && snapshot.threadGeneration > threadGeneration.value) {
+      messages.value = []
+      threadGeneration.value = snapshot.threadGeneration
+    }
     messages.value = mergeProjectionMessages(snapshot)
-    historyCursor.value = messages.value[0]?.id
-    hasMoreHistory.value = messages.value.length < (snapshot.totalMessages ?? messages.value.length)
+    historyCursor.value = messages.value.find((message) => !message.executionRecord)?.id
+    const formalCount = messages.value.filter((message) => !message.executionRecord).length
+    hasMoreHistory.value = formalCount < (snapshot.totalMessages ?? formalCount)
   }
 
   /** 应用实时 Surface 帧，并在 commit 时把临时消息原子归一为持久消息 Shell。 */
   function applySurfaceFrame(frame: SurfaceFrame): void {
+    if (frame.threadId === threadId.value && frame.threadGeneration !== undefined) {
+      if (frame.threadGeneration < threadGeneration.value) return
+      if (frame.threadGeneration > threadGeneration.value) {
+        messages.value = []
+        threadGeneration.value = frame.threadGeneration
+        compositor.invalidateThreadGeneration(frame.threadId, frame.threadGeneration)
+      }
+    }
     const owner =
       frame.operation.type === 'surface.open'
         ? frame.operation
-        : frame.operation.type === 'surface.commit'
+        : frame.operation.type === 'surface.commit' || frame.operation.type === 'surface.publish' || frame.operation.type === 'surface.settled'
           ? frame.operation.snapshot
           : compositor.get(frame.surfaceId)
     compositor.enqueue(frame)
@@ -529,7 +617,16 @@ export const useThreadStore = defineStore('thread', () => {
       )
       return
     }
+    if (frame.operation.type === 'surface.publish' || frame.operation.type === 'surface.settled') {
+      const shell = messages.value.find((message) => message.id === streamingMessageId.value)
+      compositor.mergeSnapshot(frame.operation.snapshot)
+      messages.value = mergeProjectionMessages(frame.operation.snapshot)
+      if (frame.operation.type === 'surface.publish' && shell && !/^\d+$/.test(shell.id))
+        messages.value.push(shell)
+      return
+    }
     if (frame.operation.type !== 'surface.commit') return
+    inheritStreamingRenderKey(frame.operation.message.messageId)
     compositor.mergeSnapshot(frame.operation.snapshot)
     messages.value = mergeProjectionMessages(frame.operation.snapshot)
     const committedMessageId = frame.operation.message.messageId
@@ -561,6 +658,7 @@ export const useThreadStore = defineStore('thread', () => {
       `local-error:${shell.id}`) as import('@infos/shared').SurfaceId
     compositor.install({
       surfaceId,
+      threadGeneration: threadGeneration.value,
       generation: existing?.generation ?? `local:${shell.id}`,
       threadId: threadId.value,
       principalId: agentId.value,
@@ -586,11 +684,11 @@ export const useThreadStore = defineStore('thread', () => {
   function finishStreaming() {
     compositor.flush()
     const list = messages.value
-    if (list.length === 0) return
-
-    const last = list[list.length - 1]!
-    const updated = { ...last, isStreaming: false }
-    messages.value = [...list.slice(0, -1), updated]
+    if (list.length) {
+      const last = list[list.length - 1]!
+      const updated = { ...last, isStreaming: false }
+      messages.value = [...list.slice(0, -1), updated]
+    }
 
     generationState.value = 'idle'
     ragProgressMessage.value = null
@@ -605,7 +703,11 @@ export const useThreadStore = defineStore('thread', () => {
     isLoadingHistory.value = false
     navigationTarget.value = null
     messages.value = []
+    clearRenderKeys()
     threadId.value = ''
+    threadKind.value = 'side'
+    canFork.value = false
+    threadGeneration.value = 1
     interactionMode.value = 'chat'
     executionMode.value = 'manual'
     generationState.value = 'idle'
@@ -681,7 +783,12 @@ export const useThreadStore = defineStore('thread', () => {
         return changed && changed.revision !== message.revision ? fromProjection(changed) : message
       })
     }
-    return { message: target, threadId: requestThread, projection: response.data }
+    const saved = response.data.messages.find((message) => message.messageId === target.id)
+    return {
+      message: saved ? fromProjection(saved) : { ...target, content: newContent, revision: (target.revision ?? 1) + 1 },
+      threadId: requestThread,
+      projection: response.data,
+    }
   }
 
   /**
@@ -708,6 +815,7 @@ export const useThreadStore = defineStore('thread', () => {
     threadId.value = newThreadId
     channel.value = newChannel
     agentId.value = newAgentId
+    rememberThread(newAgentId, newThreadId)
   }
 
   /** 向后端申请并切换到新 Thread */
@@ -726,6 +834,9 @@ export const useThreadStore = defineStore('thread', () => {
       // 创建期间若用户选了其他会话，只保留新建结果，不抢回当前页面。
       if (generation !== latestGeneration) return nextThread.id
       startThread(nextThread.id, nextThread.channel || nextChannel, currentAgentId)
+      threadKind.value = nextThread.threadKind
+      canFork.value = nextThread.canFork
+      threadGeneration.value = nextThread.generation
       interactionMode.value = nextThread.interactionMode
       executionMode.value = resolveExecutionMode(
         nextThread.executionMode,
@@ -751,8 +862,21 @@ export const useThreadStore = defineStore('thread', () => {
     if (document.hidden || isGenerating.value || isLoadingHistory.value || !threadId.value) return
     void refreshCurrentThread()
   }
+  const onThreadReset = (event: Event) => {
+    const data = (event as CustomEvent<{ threadId: string; generation: number }>).detail
+    if (!data?.threadId || !Number.isSafeInteger(data.generation)) return
+    compositor.invalidateThreadGeneration(data.threadId, data.generation)
+    if (threadId.value !== data.threadId) return
+      if (data.generation < threadGeneration.value) return
+    threadGeneration.value = data.generation
+    generationState.value = 'idle'
+    streamingMessageId.value = null
+    inputText.value = ''
+    void loadThreadProjection(data.threadId, agentId.value)
+  }
   if (typeof window !== 'undefined' && typeof document !== 'undefined') {
     window.addEventListener('focus', syncOnForeground)
+    window.addEventListener('infos:thread-reset', onThreadReset)
     window.addEventListener('online', syncOnForeground)
     window.addEventListener('pageshow', syncOnForeground)
     window.addEventListener('infos:gateway-ready', syncOnForeground)
@@ -760,6 +884,7 @@ export const useThreadStore = defineStore('thread', () => {
     document.addEventListener('visibilitychange', syncOnForeground)
     onScopeDispose(() => {
       window.removeEventListener('focus', syncOnForeground)
+      window.removeEventListener('infos:thread-reset', onThreadReset)
       window.removeEventListener('online', syncOnForeground)
       window.removeEventListener('pageshow', syncOnForeground)
       window.removeEventListener('infos:gateway-ready', syncOnForeground)
@@ -770,6 +895,9 @@ export const useThreadStore = defineStore('thread', () => {
 
   return {
     threadId,
+    threadKind,
+    canFork,
+    threadGeneration,
     channel,
     interactionMode,
     executionMode,
@@ -788,6 +916,9 @@ export const useThreadStore = defineStore('thread', () => {
     hasMoreHistory,
     historyError,
     installLocalMessageSurface,
+    renderKey,
+    beginPendingTurn,
+    cancelPendingTurn,
     addMessage,
     setMessages,
     applyProjection,

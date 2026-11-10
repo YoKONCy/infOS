@@ -45,7 +45,7 @@
     },
     {
       "name": "get_active_windows",
-      "description": "列出当前所有可见的窗口及其进程名。",
+      "description": "列出当前所有可见的窗口：windowId（传给 take_screenshot 的 windowId 或 activate_window 的 target）、进程名、标题、位置；infOS 自己的窗口另有 infosWindowId（main、panel:<页面ID>、card:<卡片ID>）。",
       "display": { "label": "活动窗口", "icon": "layout", "color": "purple", "style": "system" },
       "parameters": { "type": "object", "properties": {} }
     },
@@ -56,7 +56,7 @@
       "parameters": {
         "type": "object",
         "properties": {
-          "target": { "type": "string", "description": "窗口标题关键词或进程名" }
+          "target": { "type": "string", "description": "get_active_windows 返回的 windowId（推荐），或能唯一匹配的窗口标题；匹配到多个窗口时会要求改用 windowId" }
         },
         "required": ["target"]
       }

@@ -275,6 +275,10 @@ export class AgentInputService {
       if (request.taskId === taskId) this.cancel(request.id, '任务已调整或停止，旧问题已取消。')
   }
 
+  cancelThread(threadId: string, message: string): void {
+    for (const request of this.list({ threadId, status: 'pending' })) this.cancel(request.id, message)
+  }
+
   private cancel(id: string, message: string): void {
     const request = this.get(id)
     if (!request || request.status !== 'pending') return

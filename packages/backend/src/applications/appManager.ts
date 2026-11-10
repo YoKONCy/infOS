@@ -215,6 +215,7 @@ export interface AppManager {
       hostAgentId: string
       appId: string
       instanceId: string
+      realmId: string
       correlationId: string
       mode: string
       summary: string
@@ -328,6 +329,7 @@ export class AppManagerImpl implements AppManager {
     hostAgentId: string
     appId: string
     instanceId: string
+    realmId: string
     correlationId: string
     mode: string
     summary: string
@@ -669,6 +671,7 @@ export class AppManagerImpl implements AppManager {
       })
       // 8.构造运行时上下文
       const appLogger = createAppLogger(appId, instanceId)
+      const realmId = realm.descriptor.realmId
       const ctx: AppRuntimeContext = {
         instanceId,
         appId,
@@ -689,6 +692,7 @@ export class AppManagerImpl implements AppManager {
             hostAgentId: currentAgentId,
             appId,
             instanceId,
+            realmId,
             correlationId: request.correlationId,
             mode: request.mode,
             summary: request.summary,

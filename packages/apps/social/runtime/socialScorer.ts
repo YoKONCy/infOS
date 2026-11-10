@@ -23,6 +23,7 @@ import { t as __t } from './i18n'
 
 import type { TriviumDB } from 'triviumdb'
 import type { SocialStoragePort } from '@infos/shared'
+import { isMemoryBackgroundEnabled } from '@infos/shared'
 import type {
   LlmService,
   MdpEngine,
@@ -143,7 +144,7 @@ export class SocialScorerService {
    * - 未总结正文 Token >= charThreshold（默认 50k）
    */
   async shouldProcess(agentId: string): Promise<boolean> {
-    if (this.socialMessageRepo.memoryBackground?.enabled === false) return false
+    if (!isMemoryBackgroundEnabled(this.socialMessageRepo.memoryBackground, agentId)) return false
     if (!(await this.socialMessageRepo.memoryAvailable(agentId)) || !(await this.getModelConfig()))
       return false
     const stats = await this.socialMessageRepo.getUnsummarizedStats(agentId)
@@ -158,7 +159,7 @@ export class SocialScorerService {
   }
 
   async checkAndProcess(agentId: string, signal?: AbortSignal): Promise<void> {
-    if (this.socialMessageRepo.memoryBackground?.enabled === false) return
+    if (!isMemoryBackgroundEnabled(this.socialMessageRepo.memoryBackground, agentId)) return
     signal?.throwIfAborted()
     const stats = await this.socialMessageRepo.getUnsummarizedStats(agentId)
     if (stats.count === 0) return
@@ -202,7 +203,7 @@ export class SocialScorerService {
    * 4. 标记原始消息为已总结
    */
   async processBatch(agentId: string, cancellation?: AbortSignal): Promise<void> {
-    if (this.socialMessageRepo.memoryBackground?.enabled === false) return
+    if (!isMemoryBackgroundEnabled(this.socialMessageRepo.memoryBackground, agentId)) return
     if (this.controllers.has(agentId)) return
     if (!(await this.socialMessageRepo.memoryAvailable(agentId))) return
     const version = await this.socialMessageRepo.getDataVersion(agentId)
@@ -212,7 +213,7 @@ export class SocialScorerService {
       controller.signal,
       ...(cancellation ? [cancellation] : []),
       ...(this.socialMessageRepo.memoryBackground
-        ? [this.socialMessageRepo.memoryBackground.signal]
+        ? [this.socialMessageRepo.memoryBackground.agentSignal?.(agentId) ?? this.socialMessageRepo.memoryBackground.signal]
         : []),
     ])
     try {

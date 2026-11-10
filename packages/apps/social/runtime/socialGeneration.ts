@@ -98,7 +98,11 @@ export async function runSocialGeneration(
   if (current) current.cacheControl = { kind: 'current', currentKeys: opts.replayCurrentKeys ?? [] }
   const replay =
     opts.replayScope && opts.replayCurrentKeys?.length
-      ? preparePromptReplay(opts.replayScope, input, { model, tools: canonicalTools(opts.tools) })
+      ? preparePromptReplay(opts.replayScope, input, {
+          model,
+          tools: canonicalTools(opts.tools),
+          promptPlan: input[0]?.promptPlan ?? {},
+        })
       : undefined
   const prepared = replay?.messages ?? input
   if (opts.replayScope)

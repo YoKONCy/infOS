@@ -23,6 +23,11 @@ import { isDevelopmentRuntime } from '../utils/runtimeMode'
 import { logger } from '../utils/logger'
 import { guardTransparentWindowMaterial, resolveWindowBackground } from './windowConfig'
 import { desktopTabs } from './desktopTabs'
+import { detachedPanels } from './detachedPanels'
+import { desktopCards } from './desktopCards'
+import { createDesktopCardWindow } from './desktopCardWindow'
+import { desktopLayer } from './desktopLayer'
+import { readCustomTheme } from './customThemeReader'
 import { isSelectedBackendUrl } from '../services/clientConnection'
 
 // ─── 窗口配置表 ─────────────────────────────────────────
@@ -102,6 +107,17 @@ const WINDOW_CONFIGS: Record<string, WindowConfig> = {
     resizable: true,
     hasShadow: true,
   },
+  panel: {
+    // 桌面外壳面板：路由与位置由 detachedPanels 按页面指定
+    route: '/panel',
+    width: 900,
+    height: 700,
+    transparent: false,
+    alwaysOnTop: false,
+    skipTaskbar: true,
+    resizable: true,
+    hasShadow: true,
+  },
 }
 
 export class WindowManager {
@@ -135,6 +151,24 @@ export class WindowManager {
 
   private constructor() {
     desktopTabs.configure(() => this.createDashboardWindow())
+    detachedPanels.configure({
+      createWindow: (route, options) => this.createOrFocus(null, 'panel', options, route),
+      mainWindow: () => this.dashboardWin,
+      showMainPage: (pageId) => desktopTabs.openHome(pageId),
+      isMain: (sender) => desktopTabs.isHost(sender),
+    })
+    // 阶段 4：角色设计的桌面卡片（沙箱窗口，见 desktopCardWindow.ts）。
+    desktopCards.configure({
+      createWindow: (card, bounds) =>
+        createDesktopCardWindow(card, bounds, (id) => desktopCards.readHtml(id)),
+      mainWindow: () => this.dashboardWin,
+      openPage: (pageId) => {
+        detachedPanels.focus(pageId)
+      },
+      themeMode: () => desktopTabs.getTheme(),
+      readCustomTheme: () => readCustomTheme(this.dashboardWin),
+      desktopLayer,
+    })
     let configuredUiOrigin: string | undefined
     try {
       const configuredUi =
@@ -270,6 +304,7 @@ export class WindowManager {
     existing: BrowserWindow | null,
     configKey: string,
     extraOpts?: Partial<Electron.BrowserWindowConstructorOptions>,
+    route?: string,
   ): BrowserWindow {
     // 如果已存在且未销毁，聚焦并返回
     if (existing && !existing.isDestroyed()) {
@@ -346,7 +381,7 @@ export class WindowManager {
         'WindowManager',
         __t('electron.logs.windows', '{0} 已就绪 ({1})', [configKey, source]),
       )
-      if (configKey === 'pet') win.showInactive()
+      if (configKey === 'pet' || configKey === 'panel') win.showInactive()
       else win.show()
     }
 
@@ -411,7 +446,7 @@ export class WindowManager {
       }
     })
 
-    this.loadWindowContent(win, cfg.route)
+    this.loadWindowContent(win, route ?? cfg.route)
     return win
   }
 
@@ -575,6 +610,9 @@ export class WindowManager {
       win.on('closed', () => {
         if (this.dashboardWin === win) this.dashboardWin = null
       })
+      // 主窗口显示后恢复上次摘出的桌面面板。
+      detachedPanels.restoreWhenReady(win)
+      desktopCards.restoreWhenReady(win)
     }
     return this.dashboardWin
   }
@@ -660,6 +698,10 @@ export class WindowManager {
   /** 销毁所有窗口 */
   public destroyAll(): void {
     this.destroyingAll = true
+    // 面板随应用关闭，但保留布局以便下次启动恢复。
+    detachedPanels.shutdown()
+    // 临时卡片随应用删除，收藏的卡片下次启动恢复。
+    desktopCards.shutdown()
     clearTimeout(this.launcherReleaseTimer)
     this.stopMouseTracking()
     BrowserWindow.getAllWindows().forEach((win) => {

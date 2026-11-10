@@ -5,10 +5,11 @@ import { invoke, isElectron, listen } from '../../utils/ipcAdapter'
 import { useNotificationStore } from '../../stores'
 import { resolveArcaUiUrl } from '../../applications/openArcaSurface'
 import { resolvePictoriaUiUrl } from '../../applications/openPictoriaSurface'
+import { ensureNapCatInstalled } from '../../applications/openNapCatSurface'
 import { useAgentStore } from '../../stores/useAgentStore'
 
 /** 桌面外壳只投影主进程状态，不另建应用和后台任务的权威状态。 */
-export function useDesktopTabs() {
+export function useDesktopTabs(options: { openHomeSection?: (id: string) => Promise<void> } = {}) {
   const enabled = isElectron()
   const notification = useNotificationStore()
   const state = ref<DesktopTabsState>({
@@ -256,6 +257,17 @@ export function useDesktopTabs() {
       if (appId === 'infos.tarot') {
         await request('desktop-tabs:open-tarot', { replaceId })
         return
+      }
+      if (appId === 'infos.napcat') {
+        const installed = await ensureNapCatInstalled({
+          isInstalled: () => invoke('check-napcat'),
+          warn: (message) => notification.toast(message, { type: 'warning', duration: 10_000 }),
+          openInstallPage: async () => {
+            if (replaceId) await request('desktop-tabs:close', replaceId)
+            await options.openHomeSection?.('social')
+          },
+        })
+        if (!installed) return
       }
       const url =
         appId === 'infos.arca'

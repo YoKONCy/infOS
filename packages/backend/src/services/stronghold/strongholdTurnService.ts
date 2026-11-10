@@ -1,212 +1,232 @@
 import { t as __t } from '../../lib/i18n'
-/**
- * strongholdTurnService — 领域服务
- *
- * 封装本领域的核心职责与外部依赖，向上层提供可预测的调用契约。
- * 非直观的状态转换、失败恢复与安全边界应在本模块内完成，避免泄漏实现细节。
- */
 import type { ConfigRepository } from '../../repositories/config.repo'
-import type { AgentService } from '../agent/agentService'
-import type { ContextCompiler } from '../context/contextCompiler'
 import type { GatewayHub } from '../gateway/gatewayHub'
-import {
-  DEFAULT_MEMORY_RUNTIME_CONFIG,
-  loadMemoryRuntimeConfig,
-} from '../memory/memoryRuntimeConfig'
-import type { ThreadService } from '../thread/threadService'
+import { loadMemoryRuntimeConfig } from '../memory/memoryRuntimeConfig'
+import type { ThreadService, ThreadInfo } from '../thread/threadService'
 import type { GroupChatService } from './groupChatService'
 import type { StrongholdService } from './strongholdService'
-import type { ReActYield } from '../agent/reactLoop'
 import type { AgentManager } from '../agent/agentManager'
+import type { CompletedTurn, PreparedTurn, ConversationTurnService } from '../conversation/conversationTurnService'
+import type { EventNoteDraftCommitter } from '../memory/eventNoteDraftCommitter'
+import type { KernelScheduler, KernelScheduledExecutionContext } from '../../kernel/kernelScheduler'
 import { createLogger } from '../../lib/logger'
 import { canonicalValue } from '../llm/promptCache'
 
 const logger = createLogger('StrongholdTurnService')
+type SceneOptions = {
+  allowSummon?: boolean
+  summonedBy?: string
+  summonReason?: string
+  roundId?: string
+  expectedThread?: { threadId: string; generation: number }
+  sourceMessageId?: number
+  autonomous?: boolean
+  signal?: AbortSignal
+}
+type SceneOutcome = { summonedAgentIds: string[]; summonReason?: string; reply?: string; deferred?: boolean }
 
-/** 据点Agent回合用例层；统一编排Context、LLM、消息事实、Scorer与Surface事件。 */
+/** 据点组织场景输入和公共投递，复用角色统一执行生命周期。 */
 export class StrongholdTurnService {
   constructor(
     private readonly stronghold: StrongholdService,
     private readonly groupChat: GroupChatService,
     private readonly threads: ThreadService,
-    private readonly context: ContextCompiler,
-    private readonly agents: AgentService,
+    private readonly turns: ConversationTurnService,
+    private readonly scheduler: KernelScheduler,
+    private readonly memories: EventNoteDraftCommitter,
     private readonly config: ConfigRepository,
     private readonly gateway: GatewayHub,
     private readonly agentManager: AgentManager,
+    private readonly allowsAutonomy: (agentId: string) => boolean = () => false,
+    private readonly claimAttention?: (threadId: string, agentId: string) => { signal: AbortSignal; release(): void } | null,
   ) {}
 
-  async execute(
-    roomId: string,
-    agentId: string,
-    pairId?: string,
-    options: {
-      allowSummon?: boolean
-      summonedBy?: string
-      summonReason?: string
-      roundId?: string
-    } = {},
-  ): Promise<{ summonedAgentIds: string[]; summonReason?: string }> {
-    if (pairId && !(await this.groupChat.isPairActive(roomId, pairId))) {
-      return { summonedAgentIds: [] }
-    }
-    const room = await this.stronghold.getRoom(roomId)
-    if (!room) throw new Error(`房间 ${roomId} 不存在`)
-    const memoryConfig = this.config
-      ? await loadMemoryRuntimeConfig(this.config)
-      : DEFAULT_MEMORY_RUNTIME_CONFIG
-    const history = await this.groupChat.getVisibleHistoryPairs(
-      agentId,
-      memoryConfig.channels.group.contextPairs,
-      true,
-    )
-    const ownerName = this.config ? ((await this.config.get('owner.name')) ?? '用户') : '用户'
-    const perspective = this.groupChat.convertPerspective(history, agentId, ownerName)
-    const threadId = `stronghold_${roomId}_${agentId}`
-    let thread = await this.threads.getThread(threadId)
-    if (!thread) {
-      thread = await this.threads.createThread({
-        id: threadId,
-        agentId,
-        channel: 'group',
-        platform: 'stronghold',
-        platformIdentifier: `${roomId}:${agentId}`,
-        title: `${room.name} - ${agentId}`,
-      })
-    }
-    const retrievalQuery =
-      [...perspective].reverse().find((message) => message.role === 'user')?.content ?? ''
-    const compiled = await this.context.compile(thread.id, agentId, {
-      retrievalQuery,
-      appendThreadMessages: false,
-    })
-    const roomAgents = (await this.stronghold.getRoomAgents(roomId)).sort()
-    const memberProfiles = this.formatRoomMemberProfiles(agentId, roomAgents)
-    const summonedAgentIds: string[] = []
-    let summonReason: string | undefined
-    const environment = JSON.parse(room.environmentJson ?? '{}') as Record<string, unknown>
-    const roundId = options.roundId ?? pairId ?? `${roomId}:${Date.now()}`
-    const push = (action: string, payload: Record<string, unknown>) =>
-      this.gateway.broadcast({
-        protocolVersion: 1,
-        type: 'push',
-        id: '',
-        sourceId: 'backend',
-        targetId: 'broadcast',
-        payload: { action, roomId, roundId, pairId, agentId, ...payload },
-        timestamp: Date.now(),
-      })
-    await push('stronghold_agent_started', {})
-    let reply = ''
-    const stream = this.agents.chatStreamWithCompiledMessages({
-      agentId,
-      channel: 'group',
-      threadId,
-      messages: [
-        ...compiled.messages.filter((message) => message.role === 'system'),
-        ...perspective.map((message, index) => ({
-          ...message,
-          role: message.role === 'system' ? ('user' as const) : message.role,
-          cacheControl: { kind: 'history' as const, reply: history[index]?.content },
-        })),
-        ...compiled.messages.filter((message) => message.role !== 'system'),
-        {
-          role: 'user',
-          content:
-            `当前据点房间：${room.name}\n` +
-            `房间说明：${room.description ?? '无'}\n` +
-            `房间环境：${JSON.stringify(canonicalValue(environment))}\n` +
-            `当前在场角色ID列表：${roomAgents.join('、') || '无'}\n` +
-            `${memberProfiles}\n` +
-            `公开档案只描述其他角色允许共享的稳定信息，不代表对方当前想法，也不要逐项复述。\n` +
-            `你只能将这些ID用于据点工具参数。\n` +
-            `如果你在本回合移动房间，本次回复仍会发送到当前房间；新房间上下文从下一回合开始生效。` +
-            (options.allowSummon === false
-              ? options.summonedBy
-                ? `\n你是由${options.summonedBy}传唤加入本轮的角色，本次禁止继续传唤其他角色。` +
-                  (options.summonReason ? `\n传唤原因：${options.summonReason}` : '')
-                : '\n你是本轮后续发言角色，本次禁止继续传唤其他角色。'
-              : ''),
-        },
-        {
-          role: 'user',
-          cacheControl: { kind: 'current', currentKeys: [] },
-          content:
-            `当前据点回合由系统调度你发言。历史中的每条消息均以真实发言者名称作为XML标签：` +
-            `<${ownerName}>表示主人，<${agentId}>表示你自己，其他角色名标签表示对应角色。` +
-            `不要把最近一条其他角色消息误认为主人的新发言；请根据标签判断回应对象。` +
-            `请根据据点群聊上下文发言，保持角色人设；不需要发言时回复空。`,
-        },
-      ],
-      pairId,
-      disabledTools: options.allowSummon === false ? ['stronghold_summon_agents'] : undefined,
-      onToolCalls: (toolCalls) => {
-        for (const call of toolCalls) {
-          if (call.name !== 'stronghold_summon_agents' || call.isError) continue
-          try {
-            const result = JSON.parse(call.result) as {
-              success?: boolean
-              queued_agent_ids?: unknown[]
-            }
-            if (!result.success || !Array.isArray(result.queued_agent_ids)) continue
-            const requestedReason = call.args.reason
-            if (typeof requestedReason === 'string' && requestedReason.trim()) {
-              summonReason = requestedReason.trim().slice(0, 500)
-            }
-            for (const id of result.queued_agent_ids) {
-              if (typeof id === 'string') summonedAgentIds.push(id)
-            }
-          } catch {
-            logger.warn(__t('logs.stronghold', '忽略无法解析的据点传唤工具结果'), {
-              agentId,
-              roomId,
-            })
-          }
+  async execute(roomId: string, agentId: string, pairId?: string, options: SceneOptions = {}): Promise<SceneOutcome> {
+    options.signal?.throwIfAborted()
+    if (options.autonomous && !this.allowsAutonomy(agentId)) return { summonedAgentIds: [] }
+    if (pairId && !(await this.groupChat.isPairActive(roomId, pairId))) return { summonedAgentIds: [] }
+    const thread = await this.threads.getMainThread(agentId)
+    if (options.expectedThread && (thread.id !== options.expectedThread.threadId ||
+      thread.generation !== options.expectedThread.generation)) throw new Error('THREAD_GENERATION_STALE')
+    let outcome: SceneOutcome = { summonedAgentIds: [] }
+    let failure: unknown
+    const scheduled = await this.scheduler.submit({
+      principalId: agentId, threadId: thread.id, channel: 'group', class: options.autonomous ? 'resident' : 'interactive',
+      resourceKey: `agent:${agentId}`,
+      budget: { maxDurationMs: 30 * 60_000, maxLlmCalls: 64, maxToolCalls: 128, maxConcurrentIo: 4 },
+      run: async (execution) => {
+        if (options.autonomous && !this.allowsAutonomy(agentId)) return
+        const attention = this.claimAttention?.(thread.id, agentId)
+        if (this.claimAttention && !attention) {
+          outcome = { summonedAgentIds: [], deferred: true }
+          return
+        }
+        try {
+          outcome = await this.executeScene(roomId, thread, pairId, options, {
+            ...execution,
+            signal: AbortSignal.any([execution.signal, ...(options.signal ? [options.signal] : []), ...(attention ? [attention.signal] : [])]),
+          })
+        } catch (error) {
+          failure = error
+          throw error
+        } finally {
+          attention?.release()
         }
       },
     })
-    for await (const event of stream) {
-      if (event.event === 'narration_delta') {
-        reply += event.data.delta
-        await push('stronghold_agent_delta', { delta: event.data.delta })
-      } else if (event.event === 'model_retry' && event.data.discardedTextCharacters) {
-        reply = reply.slice(0, -event.data.discardedTextCharacters)
-        await push('stronghold_agent_delta', { replace: reply })
-      } else if (event.event === 'tool_call_ready') {
-        await push('stronghold_agent_tool_started', { toolName: event.data.name })
-      } else if (event.event === 'tool_result') {
-        await push('stronghold_agent_tool_completed', {
-          result: this.describeToolResult(event),
-        })
-      }
+    const cancel = () => { void this.scheduler.cancel(scheduled.descriptor.executionId).catch(() => {}) }
+    options.signal?.addEventListener('abort', cancel, { once: true })
+    if (options.signal?.aborted) cancel()
+    try {
+      const terminal = await this.scheduler.waitForTerminal(scheduled.descriptor.executionId)
+      options.signal?.throwIfAborted()
+      if (failure) throw failure
+      if (terminal.state !== 'completed') throw new Error(`STRONGHOLD_EXECUTION_${terminal.state.toUpperCase()}`)
+      return outcome
+    } finally {
+      options.signal?.removeEventListener('abort', cancel)
     }
-    if (!reply?.trim()) throw new Error('角色本轮没有生成可见回复')
-    if (pairId && !(await this.groupChat.isPairActive(roomId, pairId))) {
+  }
+
+  private async executeScene(
+    roomId: string,
+    thread: ThreadInfo,
+    requestedPairId: string | undefined,
+    options: SceneOptions,
+    execution: KernelScheduledExecutionContext,
+  ): Promise<SceneOutcome> {
+    const agentId = thread.agentId
+    const pairId = requestedPairId ?? `scene_${crypto.randomUUID()}`
+    await this.threads.assertGeneration(thread.id, thread.generation)
+    if (requestedPairId && !(await this.groupChat.isPairActive(roomId, pairId))) return { summonedAgentIds: [] }
+    const existing = this.groupChat.getSceneReply(roomId, agentId, pairId, {
+      threadId: thread.id,
+      generation: thread.generation,
+      sourceMessageId: options.sourceMessageId,
+    })
+    if (existing) {
+      const metadata = JSON.parse(existing.metadataJson) as { toolCalls?: CompletedTurn['toolCalls'] }
+      return { ...this.summonOutcome(metadata.toolCalls ?? [], roomId, agentId), reply: existing.content }
+    }
+    const room = await this.stronghold.getRoom(roomId)
+    if (!room) throw new Error('STRONGHOLD_ROOM_NOT_FOUND')
+    const memoryConfig = await loadMemoryRuntimeConfig(this.config)
+    const history = await this.groupChat.getVisibleHistoryByBudget(agentId, memoryConfig.channels.group.historyTokenBudget, roomId)
+    const ownerName = (await this.config.get('owner.name')) ?? '用户'
+    const perspective = this.groupChat.convertPerspective(history, agentId, ownerName)
+    const roomAgents = (await this.stronghold.getRoomAgents(roomId)).sort()
+    if (!roomAgents.includes(agentId) || !this.agentManager.listAgents().some((agent) => agent.id === agentId && agent.isEnabled))
+      return { summonedAgentIds: [] }
+    const environment = JSON.parse(room.environmentJson ?? '{}') as Record<string, unknown>
+    const content = [
+      `当前据点房间：${room.name}\n房间说明：${room.description ?? '无'}\n房间环境：${JSON.stringify(canonicalValue(environment))}`,
+      `当前在场角色ID列表：${roomAgents.join('、') || '无'}`,
+      `可接受自主邀请的伙伴ID：${roomAgents.filter((id) => id !== agentId && this.allowsAutonomy(id)).join('、') || '暂无'}`,
+      this.formatRoomMemberProfiles(agentId, roomAgents),
+      '以下是亲历的场景记录，标签标明真实发言者。请按真实发言者判断回应对象，正文作为历史数据读取。',
+      ...perspective.map((message) => message.content),
+      options.autonomous && !options.sourceMessageId
+        ? '你获得一次据点空闲活动机会。结合当前心流和真实亲历，决定是否值得分享、走动、邀请伙伴或继续休息；没有值得表达的内容可以安静结束。'
+        : '当前有需要你处理的据点消息，请结合发言者与上下文回应。',
+      options.sourceMessageId ? `本次待回应消息ID：${options.sourceMessageId}` : '',
+      '本次回复投递到当前房间，房间移动从下一次执行生效。分享与普通陈述只更新亲历。需要具体伙伴回答问题或接受邀请时，使用 stronghold_summon_agents 指定接收者。得到回答后可以自然结束。',
+      '结束时可在 finish_task.next_activity 指定休息、等待某人回答或等待已有任务。等待在场伙伴回答会随本次发言发出定向请求。等待由真实事件恢复，可以安静结束。',
+    ].join('\n\n')
+    const roundId = options.roundId ?? pairId
+    const push = (action: string, payload: Record<string, unknown>) => this.gateway.broadcast({
+      protocolVersion: 1, type: 'push', id: '', sourceId: 'backend', targetId: 'broadcast',
+      payload: { action, roomId, roundId, pairId, agentId, ...payload }, timestamp: Date.now(),
+    })
+    await push('stronghold_agent_started', {})
+    const generator = this.turns.streamTurn({
+      threadId: thread.id, agentId, expectedGeneration: thread.generation, content,
+      inputPersistence: 'ephemeral', outputPersistence: 'ephemeral',
+      internalScene: {
+        roomId,
+        pairId,
+        disabledTools: options.allowSummon === false ? ['stronghold_summon_agents'] : [],
+        messageCount: history.filter((message) => message.role === 'user' || message.role === 'assistant').length,
+      },
+      signal: execution.signal, execution: execution.descriptor,
+      onUsage: execution.consume, beginIo: execution.beginIo,
+    })
+    let streamed = ''
+    let completed: CompletedTurn & PreparedTurn
+    try {
+      let step = await generator.next()
+      while (!step.done) {
+        const event = step.value
+        if (event.event === 'narration_delta') {
+          streamed += event.data.delta
+          await push('stronghold_agent_delta', { delta: event.data.delta })
+        } else if (event.event === 'model_retry' && event.data.discardedTextCharacters) {
+          streamed = streamed.slice(0, -event.data.discardedTextCharacters)
+          await push('stronghold_agent_delta', { replace: streamed })
+        } else if (event.event === 'tool_call_ready') {
+          await push('stronghold_agent_tool_started', { toolName: event.data.name })
+        } else if (event.event === 'tool_result') {
+          const result = event.data && typeof event.data === 'object' && 'result' in event.data
+            ? event.data.result : ''
+          await push('stronghold_agent_tool_completed', { result: String(result ?? '').slice(0, 160) })
+        }
+        execution.signal.throwIfAborted()
+        step = await generator.next()
+      }
+      completed = step.value
+    } finally {
+      await generator.return(undefined as never)
+    }
+    const finalBlocks = completed.contentBlocks.filter((block) => block.kind === 'narration' && block.phase === 'final')
+    const finish = [...completed.toolCalls].reverse().find((call) => call.name === 'finish_task' && !call.isError)
+    const silent = finish && !String(finish.args.reply ?? '').trim() && !finalBlocks.length
+    const reply = silent ? '' : finalBlocks.length
+      ? finalBlocks.map((block) => block.kind === 'narration' ? block.content : '').join('\n')
+      : completed.reply
+    if (!reply.trim()) {
+      await push('stronghold_agent_completed', { silent: true })
       return { summonedAgentIds: [] }
     }
-    const message = await this.groupChat.sendMessage({
-      roomId,
-      senderId: agentId,
-      content: reply,
-      role: 'assistant',
-      pairId,
+    await this.threads.assertGeneration(thread.id, thread.generation)
+    if (requestedPairId && !(await this.groupChat.isPairActive(roomId, pairId))) return { summonedAgentIds: [] }
+    if (options.autonomous && !this.allowsAutonomy(agentId)) return { summonedAgentIds: [] }
+    const summons = this.summonOutcome(completed.toolCalls, roomId, agentId)
+    const message = await this.groupChat.sendMessage({ roomId, senderId: agentId, content: reply, role: 'assistant', pairId,
+      mentions: summons.summonedAgentIds, requestReplies: summons.summonedAgentIds.length > 0,
+      execution: { threadId: thread.id, generation: thread.generation, executionId: execution.descriptor.executionId,
+        sourcePairId: requestedPairId, sourceMessageId: options.sourceMessageId },
+      metadata: { rawContent: completed.rawContent, toolCalls: completed.toolCalls, contentBlocks: completed.contentBlocks, contextManifest: completed.contextManifest },
     })
-    if (retrievalQuery) {
-      await this.threads.saveMessagePair({
-        threadId,
-        agentId,
-        userContent: retrievalQuery,
-        assistantContent: reply,
-        pairId,
-      })
-    }
-    await push('stronghold_agent_completed', {
-      messageId: message.id,
-      content: reply,
-      role: 'assistant',
-      timestamp: message.timestamp,
+    await this.memories.commit({
+      toolCalls: completed.toolCalls, agentId, threadId: thread.id, pairId, channel: 'group',
+      assistantMessageId: message.id, assistantTimestamp: message.timestamp ?? new Date(),
+      sceneRoomId: roomId, expectedGeneration: thread.generation,
+    }).catch((error) => {
+      logger.warn(__t('logs.stronghold', '据点回复已保存，记事等待后台重试'), { roomId, agentId, error })
     })
+    await push('stronghold_agent_completed', { messageId: message.id, content: reply, role: 'assistant', timestamp: message.timestamp })
     logger.info(__t('logs.stronghold', '据点Agent回合已完成'), { roomId, agentId })
+    return { ...summons, reply }
+  }
+
+  private summonOutcome(toolCalls: CompletedTurn['toolCalls'], roomId: string, agentId: string): SceneOutcome {
+    const summonedAgentIds: string[] = []
+    let summonReason: string | undefined
+    for (const call of toolCalls) {
+      if (call.name === 'finish_task' && !call.isError) {
+        const next = call.args.next_activity as { kind?: unknown; senderId?: unknown } | undefined
+        if (next?.kind === 'wait_message' && typeof next.senderId === 'string' && next.senderId !== 'user' && next.senderId !== agentId)
+          summonedAgentIds.push(next.senderId)
+      }
+      if (call.name !== 'stronghold_summon_agents' || call.isError) continue
+      try {
+        const result = JSON.parse(call.result) as { success?: boolean; queued_agent_ids?: unknown[] }
+        if (!result.success || !Array.isArray(result.queued_agent_ids)) continue
+        summonedAgentIds.push(...result.queued_agent_ids.filter((id): id is string => typeof id === 'string'))
+        if (typeof call.args.reason === 'string') summonReason = call.args.reason.trim().slice(0, 500)
+      } catch {
+        logger.warn(__t('logs.stronghold', '忽略无法解析的据点传唤工具结果'), { agentId, roomId })
+      }
+    }
     return { summonedAgentIds: [...new Set(summonedAgentIds)], summonReason }
   }
 
@@ -246,9 +266,4 @@ export class StrongholdTurnService {
       .replaceAll("'", '&apos;')
   }
 
-  private describeToolResult(event: ReActYield): string {
-    if (event.event !== 'tool_result' || !event.data || typeof event.data !== 'object') return ''
-    const data = event.data as Record<string, unknown>
-    return String(data.output ?? data.result ?? '').slice(0, 160)
-  }
 }

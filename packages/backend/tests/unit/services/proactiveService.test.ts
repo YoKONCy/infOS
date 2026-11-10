@@ -18,6 +18,7 @@ type Target = {
   purpose: string
   status: string
   interactionMode: string
+  generation?: number
 }
 function fixture(store = new Map<string, string>()) {
   const enabled = ['nana', 'pero']
@@ -31,6 +32,7 @@ function fixture(store = new Map<string, string>()) {
         purpose: 'conversation',
         status: 'active',
         interactionMode: 'minimal',
+        generation: 1,
       },
     ]),
   )
@@ -48,6 +50,10 @@ function fixture(store = new Map<string, string>()) {
       return thread
     }),
     isBusy: vi.fn((_agentId: string) => false),
+    getThread: vi.fn(async (id: string) => [...threads.values()].find((thread) => thread.id === id) ?? null),
+    groupMessages: vi.fn(async (_roomId: string, _afterId: number, _senderId?: string) => [] as Array<{ id: number; senderId: string }>),
+    resumeGroupWait: vi.fn(async (_messageId: number, _agentId: string) => true),
+    runStronghold: vi.fn(async (_agentId: string, _signal: AbortSignal) => '据点发言'),
     run: vi.fn(
       async (_input: {
         signal: AbortSignal
@@ -69,7 +75,91 @@ function fixture(store = new Map<string, string>()) {
   return { service, deps, store, enabled, threads }
 }
 
-describe('全局互斥主动行为', () => {
+describe('角色主动行为与全局继承', () => {
+  it('两项设置独立继承，移除角色覆盖后实时采用全局默认', async () => {
+    const f = fixture()
+    await f.service.initialize(f.deps)
+    expect(f.service.getAgentSettings('pero')).toEqual({ mode: 'off', strongholdActivity: false })
+    await f.service.configureAgent('pero', { mode: 'autonomous', strongholdActivity: false })
+    await f.service.configure({ mode: 'companion', strongholdActivity: true })
+    expect(f.service.getAgentSettings('pero')).toEqual({ mode: 'autonomous', strongholdActivity: false })
+    expect(f.service.getAgentSettings('nana')).toEqual({ mode: 'companion', strongholdActivity: true })
+    await f.service.configureAgent('pero', { mode: null })
+    expect(f.service.getAgentSettings('pero')).toEqual({ mode: 'companion', strongholdActivity: false })
+    await f.service.configureAgent('pero', { strongholdActivity: null })
+    expect(f.service.getAgentSettings('pero')).toEqual({ mode: 'companion', strongholdActivity: true })
+    expect(f.service.getState().settings.agents?.pero).toBeUndefined()
+  })
+
+  it('并发保存不同角色时保留双方覆盖', async () => {
+    const f = fixture()
+    await f.service.initialize(f.deps)
+    await Promise.all([
+      f.service.configureAgent('pero', { mode: 'autonomous' }),
+      f.service.configureAgent('nana', { strongholdActivity: true }),
+    ])
+    expect(f.service.getState().settings.agents).toEqual({ pero: { mode: 'autonomous' }, nana: { strongholdActivity: true } })
+  })
+
+  it('全局关闭时仍按角色选择的陪伴间隔安排唤醒', async () => {
+    const f = fixture()
+    await f.service.initialize(f.deps)
+    await f.service.configure({ companionIntervalMinutes: 1 })
+    await f.service.configureAgent('pero', { mode: 'companion' })
+    await vi.advanceTimersByTimeAsync(60_100)
+    expect(f.deps.run.mock.calls.map(([input]) => input.thread.agentId)).toEqual(['pero'])
+    expect(f.service.getState().settings.mode).toBe('off')
+  })
+
+  it('静默后延长空闲等待，减少没有新情况时的推理', async () => {
+    const f = fixture()
+    f.enabled.splice(1)
+    f.deps.run.mockResolvedValue('')
+    await f.service.initialize(f.deps)
+    await f.service.configure({ mode: 'autonomous', autonomousIntervalMinutes: 1 })
+    await vi.advanceTimersByTimeAsync(60_100)
+    expect(f.deps.run).toHaveBeenCalledTimes(1)
+    await vi.advanceTimersByTimeAsync(60_000)
+    expect(f.deps.run).toHaveBeenCalledTimes(1)
+    await vi.advanceTimersByTimeAsync(60_000)
+    expect(f.deps.run).toHaveBeenCalledTimes(2)
+  })
+
+  it('据点自由活动独立启用，使用事件与空闲调度，不占私聊主动回合计数', async () => {
+    const f = fixture()
+    f.enabled.splice(0, 1)
+    await f.service.initialize(f.deps)
+    await f.service.configure({ strongholdActivity: true, autonomousIntervalMinutes: 1, maxDailyRuns: 1 })
+    await vi.advanceTimersByTimeAsync(2 * 60_000 + 100)
+    expect(f.deps.runStronghold.mock.calls.map(([id]) => id)).toEqual(['pero', 'pero'])
+    expect(f.deps.run).not.toHaveBeenCalled()
+    expect(f.service.getState().dailyRuns).toBe(0)
+  })
+
+  it('条件等待阻止空闲唤醒，只在对应房间的新回答到达后派发一次', async () => {
+    const f = fixture()
+    await f.service.initialize(f.deps)
+    await f.service.configure({ mode: 'autonomous', autonomousIntervalMinutes: 1 })
+    await f.service.configureAgent('nana', { strongholdActivity: true })
+    f.deps.groupMessages.mockResolvedValue([{ id: 10, senderId: 'pero' }])
+    const context = {
+      source: 'group', channel: 'group', agentId: 'pero', threadId: 'pero-first', sessionId: 'pero-first',
+      generation: 1, pairId: 'question-1', sceneRoomId: 'living',
+    }
+    await expect(f.service.recordNextActivity({ kind: 'wait_message', senderId: 'nana' }, context, false)).rejects.toThrow('ACTIVITY_MESSAGE_REQUIRED')
+    expect(f.service.getState().activities?.pero).toBeUndefined()
+    await f.service.recordNextActivity({ kind: 'wait_message', senderId: 'nana' }, context)
+    await vi.advanceTimersByTimeAsync(3 * 60_000)
+    expect(f.deps.run.mock.calls.map(([input]) => input.thread.agentId)).toEqual(['nana'])
+    expect(f.deps.runStronghold.mock.calls.map(([id]) => id)).toEqual(['nana', 'nana'])
+    await f.service.notifyGroupMessage('bedroom', 11, 'nana')
+    expect(f.service.getState().activities?.pero).toBe('wait_message')
+    await f.service.notifyGroupMessage('living', 11, 'nana')
+    expect(f.deps.resumeGroupWait).toHaveBeenCalledWith(11, 'pero', expect.objectContaining({ threadId: 'pero-first', generation: 1 }))
+    expect(f.service.getState().activities?.pero).toBe('rest')
+    await f.service.notifyGroupMessage('living', 11, 'nana')
+    expect(f.deps.resumeGroupWait).toHaveBeenCalledTimes(1)
+  })
   it('默认关闭；无需选择角色或会话，开启后轮转所有已启用角色', async () => {
     const f = fixture()
     await f.service.initialize(f.deps)
@@ -78,7 +168,7 @@ describe('全局互斥主动行为', () => {
     await f.service.configure({ mode: 'autonomous', autonomousIntervalMinutes: 1 })
     await vi.advanceTimersByTimeAsync(2 * 60_000 + 100)
     expect(f.deps.run.mock.calls.map(([input]) => input.thread.agentId)).toEqual(['nana', 'pero'])
-    expect(f.deps.run.mock.calls[0]![0].content).toContain('联网搜索')
+    expect(f.deps.run.mock.calls[0]![0].content).toContain('通过现有工具取得资料与回执')
     expect(f.service.getState().settings.mode).toBe('autonomous')
     expect(f.service.getState().agentId).toBeNull()
   })
@@ -147,7 +237,7 @@ describe('全局互斥主动行为', () => {
     expect(f.deps.run.mock.lastCall?.[0].thread.id).toBe('nana-recreated')
   })
 
-  it('全局切换取消旧回合，旧角色 API 不能创建独立开关', async () => {
+  it('策略切换取消旧回合，角色 API 只覆盖指定角色', async () => {
     const f = fixture()
     await f.service.initialize(f.deps)
     f.deps.run.mockImplementationOnce(
@@ -160,14 +250,19 @@ describe('全局互斥主动行为', () => {
     await f.service.start('nana')
     expect(f.service.listStates(['nana', 'pero'])).toEqual([
       { agentId: 'nana', enabled: true },
-      { agentId: 'pero', enabled: true },
+      { agentId: 'pero', enabled: false },
     ])
     await vi.advanceTimersByTimeAsync(60_100)
-    await f.service.configure({ mode: 'autonomous' })
+    await f.service.configureAgent('nana', { mode: 'autonomous' })
     expect(f.deps.run.mock.calls[0]![0].signal.aborted).toBe(true)
     await vi.advanceTimersByTimeAsync(60_100)
     expect(f.deps.run).toHaveBeenCalledTimes(2)
+    await f.service.configure({ mode: 'autonomous' })
     await f.service.stop('pero')
+    expect(f.service.getAgentSettings('pero').mode).toBe('off')
+    expect(f.service.getState().settings.mode).toBe('autonomous')
+    await f.service.configure({ mode: 'off' })
+    await f.service.configureAgent('nana', { mode: null })
     expect(f.service.getState().settings.mode).toBe('off')
     await vi.advanceTimersByTimeAsync(120_000)
     expect(f.deps.run).toHaveBeenCalledTimes(2)

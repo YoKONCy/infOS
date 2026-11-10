@@ -1,4 +1,10 @@
 {
+  "角色状态已由其他场景更新，请重试": "Character state was updated in another scene. Please retry.",
+  "会话已重置，本次执行已过期": "The conversation was reset. This execution has expired.",
+  "仅主会话支持清空重置": "Only the main conversation supports resetting.",
+  "主会话只能清空重置": "Use reset to clear the main conversation.",
+  "主会话无法创建检查点分支": "The main conversation cannot be forked from a checkpoint.",
+  "仅主会话支持查看亲历记录": "Experiences are available in the main conversation.",
   "附件不能超过 100MB": "Attachments cannot exceed 100 MB",
   "APPLICATION_CAPABILITY_UNAVAILABLE: 应用未就绪或操作未声明": "APPLICATION_CAPABILITY_UNAVAILABLE: The application is not ready or the operation is not declared",
   "APPLICATION_SESSION_PROJECTION_UNSUPPORTED: 会话工具尚未实现": "APPLICATION_SESSION_PROJECTION_UNSUPPORTED: Session tool has not been implemented yet",
@@ -1165,5 +1171,10 @@
   "数据迁移锁获取失败: {0}；原因: {1}": "Data migration lock acquisition failed: {0}; reason: {1}",
   "数据目录已有后端进程正在使用: {0}": "The data directory is already in use by another backend process: {0}",
   "启动存储不可用: {0}；步骤: {1}；原因: {2}": "Startup storage is unavailable: {0}; step: {1}; reason: {2}",
-  "预填充配置无效，正文最多 8000 个字符": "Invalid prefill settings. Content must be 8000 characters or fewer."
+  "预填充配置无效，正文最多 8000 个字符": "Invalid prefill settings. Content must be 8000 characters or fewer.",
+  "动态填充深度只能为 0 或 1": "Dynamic context depth must be 0 or 1.",
+  "此会话不支持创建分支": "This conversation does not support branching.",
+  "请选择已保存的角色回复创建分支": "Choose a saved character reply to create a branch.",
+  "会话附件复制失败，请稍后重试": "Could not copy conversation attachments. Please try again later.",
+  "来源记录已变化，请重新创建分支": "The source history has changed. Please create the branch again."
 }

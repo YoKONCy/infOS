@@ -95,7 +95,7 @@ export function usePetTexts(opts: UsePetTextsOptions) {
   function applyStateTexts(payload: Record<string, unknown>): void {
     const updateAgentId = payload.agentId
     if (typeof updateAgentId === 'string' && updateAgentId !== activeAgentId.value) return
-    if (payload.threadId !== characterStates.threadFor(activeAgentId.value)) return
+    if (payload.scope !== 'agent' && payload.threadId !== characterStates.threadFor(activeAgentId.value)) return
     const targetAgentId = typeof updateAgentId === 'string' ? updateAgentId : activeAgentId.value
     // 撤回推送是完整替换，空台词池也必须生效，不能与已撤回内容继续合并。
     if (payload.replace === true) {

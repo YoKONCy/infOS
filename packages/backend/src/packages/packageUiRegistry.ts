@@ -1,4 +1,7 @@
 import type { PackagePanel, PackageUiSlot } from '@infos/shared'
+import { invalidSettingsEntry, isSettingsAction, settingsActionResult } from './packageSettingsEntry'
+
+export { readLocalPageUrl } from './packageSettingsEntry'
 
 export const PACKAGE_UI_SLOTS: PackageUiSlot[] = [
   'dashboard.overview',
@@ -11,9 +14,15 @@ export const PACKAGE_UI_SLOTS: PackageUiSlot[] = [
 export class PackageUiRegistry {
   private panels = new Map<
     string,
-    { panel: PackagePanel; action?: (id: string) => Promise<unknown> }
+    {
+      panel: PackagePanel
+      action?: (id: string, payload?: Record<string, unknown>) => Promise<unknown>
+    }
   >()
-  register(panel: PackagePanel, action?: (id: string) => Promise<unknown>): () => void {
+  register(
+    panel: PackagePanel,
+    action?: (id: string, payload?: Record<string, unknown>) => Promise<unknown>,
+  ): () => void {
     if (
       !PACKAGE_UI_SLOTS.includes(panel.slot) ||
       typeof panel.id !== 'string' ||
@@ -21,6 +30,9 @@ export class PackageUiRegistry {
       panel.title.length > 200 ||
       !panel.title ||
       this.panels.has(panel.id) ||
+      invalidSettingsEntry(panel) ||
+      (action !== undefined && typeof action !== 'function') ||
+      (panel.settings !== undefined && !action) ||
       (panel.text !== undefined && typeof panel.text !== 'string') ||
       (panel.fields !== undefined &&
         (!Array.isArray(panel.fields) ||
@@ -58,18 +70,28 @@ export class PackageUiRegistry {
       .filter((entry) => entry.panel.slot === slot)
       .map((entry) => structuredClone(entry.panel))
   }
-  async invoke(panelId: string, actionId: string): Promise<unknown> {
+  async invoke(
+    panelId: string,
+    actionId: string,
+    payload?: Record<string, unknown>,
+  ): Promise<unknown> {
     const entry = this.panels.get(panelId)
-    if (!entry?.action || !entry.panel.actions?.some((item) => item.id === actionId))
+    const settingsAction = isSettingsAction(entry?.panel, actionId)
+    if (
+      !entry?.action ||
+      (!settingsAction && !entry.panel.actions?.some((item) => item.id === actionId))
+    )
       throw new Error('PACKAGE_ACTION_UNAVAILABLE')
     let timer: ReturnType<typeof setTimeout> | undefined
     try {
-      return await Promise.race([
-        entry.action(actionId),
+      const result = await Promise.race([
+        entry.action(actionId, payload === undefined ? undefined : structuredClone(payload)),
         new Promise<never>((_, reject) => {
           timer = setTimeout(() => reject(new Error('PACKAGE_ACTION_TIMEOUT')), 10_000)
         }),
       ])
+      if (this.panels.get(panelId) !== entry) throw new Error('PACKAGE_ACTION_UNAVAILABLE')
+      return settingsAction ? settingsActionResult(actionId, result) : result
     } finally {
       if (timer) clearTimeout(timer)
     }

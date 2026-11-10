@@ -55,8 +55,8 @@ describe('记忆运行配置', () => {
 
     expect(config).toMatchObject({
       channels: {
-        desktop: { contextPairs: 12, enableAutoRag: false },
-        group: { contextPairs: 18, enableAutoRag: true, retrievalLimit: 5 },
+        desktop: { historyTokenBudget: 16384, contextPairs: 12, enableAutoRag: false },
+        group: { historyTokenBudget: 16384, contextPairs: 18, enableAutoRag: true, retrievalLimit: 5 },
       },
       advanced: {
         enableSaPpr: false,
@@ -143,6 +143,7 @@ describe('ModelRoleResolver', () => {
       returnNativeReasoning: false,
       wireApi: 'chat_completions',
       reasoningDialect: 'auto',
+      assistantPrefill: 'auto',
       enableVision: false,
       enableAudioInput: false,
     })

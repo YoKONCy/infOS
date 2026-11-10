@@ -40,7 +40,9 @@ function loadRuntime(): Promise<NutModule> {
   return runtimePromise
 }
 
-export async function listWindows(): Promise<Array<{ processName: string; title: string }>> {
+export async function listWindows(): Promise<
+  Array<{ processName: string; title: string; windowId?: string; pid?: number }>
+> {
   if (process.platform === 'win32') return windowsDesktop.windows()
   const nut = await loadRuntime()
   const result: Array<{ processName: string; title: string }> = []

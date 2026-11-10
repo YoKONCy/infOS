@@ -15,7 +15,7 @@ export class MemoryForgottenError extends Error {
 export class PrivacyPolicy {
   private blocked = new Set<string>()
   private sources = new Set<string>()
-  private cutoffs = new Map<string, number>()
+  private cutoffs = new Map<string, { maxMessageId: number; maxExperienceId: number }>()
   private busy = new Set<'memory' | 'fact' | 'knowledge'>()
   private pending = new Set<string>()
   generation = 0
@@ -44,7 +44,7 @@ export class PrivacyPolicy {
         .filter((row) => row.kind === 'memory-cutoff')
         .map((row) => [
           row.target_id,
-          Number((JSON.parse(row.metadata_json) as { maxMessageId: number }).maxMessageId),
+          { maxMessageId: Number(JSON.parse(row.metadata_json).maxMessageId), maxExperienceId: Number(JSON.parse(row.metadata_json).maxExperienceId ?? 0) },
         ]),
     )
     this.generation++
@@ -65,18 +65,22 @@ export class PrivacyPolicy {
     return this.blocked.has(`${kind}:${id}`) || this.blocked.has(`${kind}-block:${id}`)
   }
   sourceKey(agentId: string, threadId: string, pairId: string): string {
+    const stableSource = pairId.replace(/^(message:\d+)@\d+$/, '$1')
     return createHash('sha256')
-      .update(JSON.stringify([agentId, threadId, pairId]))
+      .update(JSON.stringify([agentId, threadId, stableSource]))
       .digest('hex')
   }
   sourceForgotten(agentId: string, threadId: string, pairId: string): boolean {
     if (this.sources.has(this.sourceKey(agentId, threadId, pairId))) return true
     const cutoff = this.cutoffs.get(agentId)
     if (cutoff === undefined) return false
+    const messageSource = /^message:(\d+)@\d+$/.exec(pairId)
+    if (messageSource) return Number(messageSource[1]) <= cutoff.maxMessageId
+    if (pairId.startsWith('experience:')) return Number(pairId.slice('experience:'.length)) <= cutoff.maxExperienceId
     const row = this.db
       .prepare('SELECT min(id) AS value FROM thread_messages WHERE thread_id=? AND pair_id=?')
       .get(threadId, pairId) as { value: number | null }
-    return row.value !== null && row.value <= cutoff
+    return row.value !== null && row.value <= cutoff.maxMessageId
   }
   forgottenPairIds(agentId: string, threadId: string): string[] {
     const pairs = this.db
@@ -84,6 +88,13 @@ export class PrivacyPolicy {
         'SELECT DISTINCT pair_id AS id FROM thread_messages WHERE thread_id=? AND pair_id IS NOT NULL',
       )
       .all(threadId) as Array<{ id: string }>
+    const messages = this.db.prepare("SELECT m.id,m.revision FROM thread_messages m JOIN threads t ON t.id=m.thread_id WHERE m.thread_id=? AND t.thread_kind='main'")
+      .all(threadId) as Array<{ id: number; revision: number }>
+    pairs.push(...messages.map((message) => ({ id: `message:${message.id}@${message.revision ?? 1}` })))
+    if (this.db.prepare("SELECT 1 FROM sqlite_master WHERE type='table' AND name='agent_experiences'").get()) {
+      const experiences = this.db.prepare('SELECT id FROM agent_experiences WHERE thread_id=? AND agent_id=?').all(threadId, agentId) as Array<{ id: number }>
+      pairs.push(...experiences.map((item) => ({ id: `experience:${item.id}` })))
+    }
     return pairs
       .filter((pair) => this.sourceForgotten(agentId, threadId, pair.id))
       .map((pair) => pair.id)
@@ -95,28 +106,31 @@ export class PrivacyPolicy {
     note: Pick<EventNote, 'id' | 'agentId' | 'origin'>,
   ): string | undefined {
     const cutoff = this.cutoffs.get(note.agentId)
-    if (cutoff !== undefined) {
-      const ids = note.origin.messageIds.map(Number).filter((id) => Number.isFinite(id) && id > 0)
-      const previous = ids.length
-        ? Math.min(...ids)
-        : (
-            this.db
-              .prepare(
+    for (const source of [note.origin, ...(note.origin.sources ?? [])]) {
+      if (cutoff !== undefined) {
+        const ids = source.messageIds.map(Number).filter((id) => Number.isFinite(id) && id > 0)
+        const previous = ids.length
+          ? Math.min(...ids)
+          : (
+              this.db.prepare(
                 'SELECT max(id) AS value FROM thread_messages WHERE thread_id=? AND pair_id IN (SELECT value FROM json_each(?))',
-              )
-              .get(note.origin.threadId, JSON.stringify(note.origin.pairIds)) as {
-              value: number | null
-            }
-          ).value
-      if (previous !== null && previous <= cutoff) return '该来源已在重置时遗忘，已阻止再次炼化'
-    }
-    if (
-      this.deleted('memory', note.id) ||
-      note.origin.pairIds.some((pairId) =>
-        this.sources.has(this.sourceKey(note.agentId, note.origin.threadId, pairId)),
+              ).get(source.threadId, JSON.stringify(source.pairIds)) as { value: number | null }
+            ).value
+        if (previous !== null && previous <= cutoff.maxMessageId) {
+          return '该来源已在重置时遗忘，已阻止再次炼化'
+        }
+        if (source.experienceIds?.some((id) => Number(id) <= cutoff.maxExperienceId)) {
+          return '该来源已在重置时遗忘，已阻止再次炼化'
+        }
+      }
+      if (
+        this.deleted('memory', note.id) ||
+        source.pairIds.some((pairId) =>
+          this.sources.has(this.sourceKey(note.agentId, source.threadId, pairId)),
+        )
       )
-    )
-      return '该记忆或来源已被永久删除，已阻止后台重新写入'
+        return '该记忆或来源已被永久删除，已阻止后台重新写入'
+    }
     return undefined
   }
   assertMemory(note: Pick<EventNote, 'id' | 'agentId' | 'origin'>): void {

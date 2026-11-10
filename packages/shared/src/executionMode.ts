@@ -49,8 +49,12 @@ export const EXECUTION_MODE_OPTIONS: ReadonlyArray<{
 }> = [
   { value: 'manual', label: '手动审批', description: '需要确认的操作由你审批' },
   { value: 'auto', label: '自动执行', description: '终端与工作区外删除仍由你确认' },
-  { value: 'auto_approve', label: '自动审批', description: '终端与工作区外删除由审批模型判断' },
-  { value: 'full', label: '完整权限', description: '已开放工具直接执行，不进行审批或风险拦截' },
+  {
+    value: 'auto_approve',
+    label: '自动审批',
+    description: '其他审批由审批模型判断，终端与高危操作仍由你确认',
+  },
+  { value: 'full', label: '完整权限', description: '已开放工具直接执行，终端与高危操作仍由你确认' },
 ]
 
 /** 兼容旧版布尔设置及尚未补齐字段的历史记录。 */

@@ -1,4 +1,8 @@
 {
+  "角色状态版本": "Character state revision",
+  "持续目标": "Ongoing goals",
+  "持续承诺": "Ongoing commitments",
+  "关系状态": "Relationship state",
   "文档知识召回": "Document knowledge recall",
   "事实召回": "Fact recall",
   "本轮上下文": "Turn context",
@@ -72,5 +76,22 @@
   "生成类型": "generation type",
   "预览随机种子": "preview random seed",
   "infOS 默认": "infOS default",
-  "社交默认": "social default"
+  "社交默认": "social default",
+  "世界书": "Worldbook",
+  "回溯协议": "Retrospection protocol",
+  "回溯协议·区块一": "Retrospection protocol · Part 1",
+  "回溯协议·区块二": "Retrospection protocol · Part 2",
+  "回溯协议·区块三": "Retrospection protocol · Part 3",
+  "回溯协议·收束": "Retrospection protocol · Closing",
+  "回溯协议·输出约定": "Retrospection protocol · Output rules",
+  "表达层·总装": "Expression · Assembly",
+  "表达层·在场": "Expression · Presence",
+  "表达层·说话": "Expression · Speech",
+  "表达层·思考": "Expression · Thinking",
+  "表达层·做事": "Expression · Work",
+  "表达层·思考方法": "Expression · Thinking methods",
+  "表达层·收束": "Expression · Closing",
+  "表达层·手册": "Expression · Handbook",
+  "表达规则": "Expression rules",
+  "表达·手册": "Expression handbook"
 }

@@ -8,6 +8,8 @@
 
 ## 1. 三层架构
 
+角色连续交互由唯一主 Thread 锚定，SideThread 承载局部交互。角色状态、长记忆、会话现场、据点事实与 Execution 分别持有权威，具体调用链、事务边界和恢复入口见 [主侧会话与角色持续状态](./B26_MAIN_SIDE_THREADS.md)。
+
 ```
 ┌─────────────────────────────────────────────────────────┐
 │  Router 层 (routers/)                                    │
@@ -47,6 +49,16 @@ SQLite 访问由 `repositories/` 下各领域 Repository 和 Drizzle Schema 承�
 
 主库在 `database/connection.ts` 使用 `journal_mode=WAL` 与 `synchronous=FULL`，事务提交同步 WAL，以增加系统崩溃或断电时已提交记录的持久性；代价是每次提交增加同步磁盘写入。Steam 自动云存档建立在已提交数据及一致性快照之上，触发、缓存与恢复边界见 [Steam 集成](./M04_STEAM_INTEGRATION.md#5-steam-cloud-自动完整快照同步)。
 
+### 4.1 结构迁移与执行记录
+
+`database/schemaMigrations.ts` 统一承接启动和 CLI 的结构迁移。旧单基线库先登记基线执行记录，再由 Drizzle 执行后续 SQL。已有迁移记录的库先对齐重排记录，最后执行待追加的迁移。
+
+对齐时先按 SQL 的 SHA-256 摘要认领全部已执行项，兼容 LF 与 CRLF。剩余项再按 journal 的 `when` 匹配尚未认领的执行记录，兼容旧 SQL 文件摘要变化。摘要匹配优先于时间匹配，确保重排项旧时间上的新增迁移仍能补执行。执行记录保留原始摘要，重排仅更新 `created_at`。
+
+最后一个已执行项之前的真实缺口在同一事务内补执行并登记，失败时连同时间调整一起回滚。其后的新增迁移交由 Drizzle 的迁移事务执行。已发布的 SQL 以既有执行记录为准，后续结构或数据变更应追加迁移文件。
+
+早期 `0025_main_side_threads` 曾在同名文件中扩展交流执行结构。兼容入口对已登记的该项按实际列、表和索引补齐 DDL，包括消息的 `publication_id / execution_id` 及交流执行、消息来源和追问记录。补齐在记录对齐事务中完成，先于表达学习等后续迁移。该入口限定此项历史 DDL，后续演进继续追加标准迁移。
+
 ---
 
 ## 5. DI 容器
@@ -58,6 +70,16 @@ SQLite 访问由 `repositories/` 下各领域 Repository 和 Drizzle Schema 承�
 ## 6. LLM Provider 模式
 
 `services/llm/types.ts` 定义 Provider 接口，`llmService.ts` 根据解析后的请求协议和接口类型选择 OpenAI 兼容 Chat Completions、OpenAI Responses、Gemini 或 Anthropic 实现。服务商品牌、连接认证和请求协议分别配置；连接继承规则见 [服务商连接](./B22_PROVIDER_CONNECTIONS.md)。
+
+### 6.1 上游提示词缓存
+
+缓存优化只稳定现有输入，不增加模型请求、不为命中缓存保留额外旧内容。实际是否自动缓存及如何收费由服务商决定；需要显式缓存标记的服务不会由本实现主动开启。维护约束：
+
+- 系统段只放固定规则；时间、心情、RAG、环境放在靠近当前输入的 `turn_context`。工具与 Schema 键由 `canonicalTools` 稳定排序。
+- 工作模式从首个请求起列出 `finish_task`，消除业务工具执行后追加该定义的菜单变化。是否允许调用仍由执行侧门控决定；提前拒绝也先确认参数草稿、保留失败内容块，再返回工具错误，不结束执行。聊天、极简模式维持原菜单。高级工具展开、Skill 加载和错误熔断仍可改变菜单，不能为保持前缀而绕过权限或错误恢复。
+- Anthropic / OpenAI Chat Completions / Responses 均不发送 `cache_control`、`prompt_cache_key` 等缓存控制字段；官方端点和中转一致。没有缓存探测、预热或不支持字段后的自动重发，也没有模型卡片缓存开关。
+- 稳定前缀不等于任意重排上下文：系统规则优先级、普通消息时间顺序、工具调用与结果配对、最新状态及裁剪边界必须保持。现有工作轨迹续接与历史窗口按原规则工作，不因缓存优化额外延长历史。
+- 缓存读写用量按 [B16](./B16_TOKEN_USAGE.md) 口径入账，用量卡片显示命中率。每次请求另记 `prompt_hash`、`prefix_hash`、`tools_hash`，可用 B16 的自查 SQL 定位前缀变化。
 
 ---
 

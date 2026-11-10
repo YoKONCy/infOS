@@ -4,8 +4,8 @@ import { t as __t } from '../lib/i18n'
  *
  * 负责:
  * 1. 扫描 skills/ 目录加载 SKILL.md 的 frontmatter (Manifest)
- * 2. 按需加载完整 Skill 指令 (L2 渐进式加载)
- * 3. 按需加载参考文件 (L3)
+ * 2. 为会话选中的 Skill 读取并缓存完整指令
+ * 3. 提供技能包内参考文件的只读访问
  *
  * 文件结构
  *
@@ -184,9 +184,7 @@ export class SkillLoader {
   }
 
   /**
-   * 加载完整 Skill 指令 (L2: 渐进式加载)
-   *
-   * 由 load_skill NIT 工具调用。返回 SKILL.md 的 markdown body。
+   * 为上下文装配和管理接口读取完整 Skill 正文。
    */
   loadSkillContent(skillId: string): string | null {
     // 缓存命中
@@ -194,28 +192,25 @@ export class SkillLoader {
       return this.contentCache.get(skillId)!
     }
 
-    // 懒加载: 在各 skillDir 中查找
-    for (const dir of this.skillDirs) {
-      const skillPath = path.join(dir, skillId, 'SKILL.md')
-      if (!existsSync(skillPath)) continue
-
-      try {
-        const raw = readSkillText(skillPath)
-        const match = RE_FRONTMATTER.exec(raw)
-        const body = match?.[2]?.trim() ?? raw.trim()
-        this.contentCache.set(skillId, body)
-        logger.debug(__t('logs.capabilities', 'Skill 内容已加载: {0}', [skillId]))
-        return body
-      } catch {
-        logger.warn(__t('logs.capabilities', '加载 Skill 内容失败: {0}', [skillId]))
-      }
+    // 与当前生效清单使用同一目录，避免同 ID 的用户技能读到旧内置正文。
+    const manifest = this.manifests.get(skillId)
+    if (!manifest) return null
+    try {
+      const raw = readSkillText(path.join(manifest.rootPath, 'SKILL.md'))
+      const match = RE_FRONTMATTER.exec(raw)
+      const body = match?.[2]?.trim() ?? raw.trim()
+      this.contentCache.set(skillId, body)
+      logger.debug(__t('logs.capabilities', 'Skill 内容已加载: {0}', [skillId]))
+      return body
+    } catch {
+      logger.warn(__t('logs.capabilities', '加载 Skill 内容失败: {0}', [skillId]))
     }
 
     return null
   }
 
   /**
-   * 加载参考文件 (L3: 极少使用)
+   * 读取技能包内参考文件。
    */
   loadReference(skillId: string, filename: string): string | null {
     for (const dir of this.skillDirs) {
@@ -379,7 +374,7 @@ export class SkillLoader {
   }
 
   /**
-   * 加载 Skill 内容并注入参数 (L2+)
+   * 读取 Skill 内容并替换显式提供的参数。
    *
    * 参数通过 `{{param_name}}` 模板变量注入到 SKILL.md body 中。
    * 未提供的参数保留原始占位符。

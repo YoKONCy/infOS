@@ -100,6 +100,8 @@ export const schedulerApi = {
   proactive: () => apiClient.get<ProactiveState>('/scheduler/proactive'),
   configureProactive: (settings: Partial<ProactiveSettings>) =>
     apiClient.put<ProactiveState>('/scheduler/proactive', settings),
+  configureAgentProactive: (agentId: string, settings: { mode?: ProactiveSettings['mode'] | null; strongholdActivity?: boolean | null }) =>
+    apiClient.put<ProactiveState>(`/scheduler/proactive/agents/${encodeURIComponent(agentId)}`, settings),
   checkProactive: () => apiClient.post<ProactiveState>('/scheduler/proactive/check'),
   activity: (agentId: string) =>
     apiClient.get<CompanionActivity>(`/scheduler/activity?agentId=${encodeURIComponent(agentId)}`),

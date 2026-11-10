@@ -56,6 +56,13 @@ export function prependConversationTime(
   anchor: string | undefined,
 ): ChatMessage['content'] {
   if (!anchor) return content
+  // 已带同一标记的正文（如工作轨迹保存的当前输入原件）不重复添加。
+  if (
+    Array.isArray(content)
+      ? content[0]?.type === 'text' && content[0].text === anchor
+      : content?.startsWith(`${anchor}\n`)
+  )
+    return content
   return Array.isArray(content)
     ? [{ type: 'text', text: anchor }, ...content]
     : `${anchor}\n${content ?? ''}`

@@ -14,7 +14,7 @@ import { t as __t } from '../../lib/i18n'
  * @module packages/backend/src/services/stronghold/strongholdService
  */
 
-import { eq, sql } from 'drizzle-orm'
+import { and, eq, sql } from 'drizzle-orm'
 import { v4 as uuidv4 } from 'uuid'
 import { AppError } from '../../lib/appError'
 import {
@@ -356,45 +356,22 @@ export class StrongholdService {
       })
     }
 
-    // Upsert
-    const existing = await this.db
-      .select()
-      .from(agentLocations)
-      .where(eq(agentLocations.agentId, agentId))
-      .get()
-
-    if (existing) {
-      await this.db
-        .update(agentLocations)
-        .set({
-          roomId,
-          updatedAt: sql`(datetime('now', 'localtime'))`,
+    // 位置与成员资格一起提交，消息事务据此固定实际在场者。
+    const location = this.db.transaction((tx) => {
+      const membership = tx.select().from(groupChatMembers).where(and(
+        eq(groupChatMembers.agentId, agentId),
+        eq(groupChatMembers.roomId, roomId),
+      )).get()
+      tx.delete(groupChatMembers).where(eq(groupChatMembers.agentId, agentId)).run()
+      tx.insert(groupChatMembers).values({ roomId, agentId, role: membership?.role ?? 'member' }).run()
+      return tx.insert(agentLocations)
+        .values({ agentId, roomId })
+        .onConflictDoUpdate({
+          target: agentLocations.agentId,
+          set: { roomId, updatedAt: sql`datetime('now', 'localtime')` },
         })
-        .where(eq(agentLocations.agentId, agentId))
-
-      // 角色只能位于一个房间：同步移除旧房间群聊成员，避免调度离场角色。
-      if (existing.roomId !== roomId) {
-        const oldMembers = await this.db
-          .select()
-          .from(groupChatMembers)
-          .where(eq(groupChatMembers.roomId, existing.roomId))
-          .all()
-        const oldMembership = oldMembers.find((member) => member.agentId === agentId)
-        if (oldMembership) {
-          await this.db.delete(groupChatMembers).where(eq(groupChatMembers.id, oldMembership.id))
-        }
-      }
-    } else {
-      await this.db.insert(agentLocations).values({ agentId, roomId })
-    }
-
-    const location = await this.db
-      .select()
-      .from(agentLocations)
-      .where(eq(agentLocations.agentId, agentId))
-      .get()
-
-    await this.ensureRoomMember(roomId, agentId)
+        .returning().get()!
+    })
 
     logger.debug(__t('logs.stronghold', 'Agent {0} 移动到房间 {1}', [agentId, room.name]))
     return location!

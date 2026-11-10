@@ -223,6 +223,7 @@
   transform: rotate(180deg);
 }
 .overview-agent-menu {
+  --motion-origin: top right;
   position: absolute;
   z-index: 50;
   right: 0;

@@ -42,6 +42,7 @@ export interface SurfaceNode<TProps extends object = object> {
 }
 
 export interface MarkdownSurfaceProps {
+  final?: boolean
   source: string
   phase: 'preview' | 'committed'
 }
@@ -184,6 +185,8 @@ export interface ApprovalSurfaceProps {
 }
 
 export interface SurfaceDescriptor {
+  threadGeneration?: number
+  processCollapsed?: boolean
   generationStats?: ConversationGenerationStats
   surfaceId: SurfaceId
   generation: string
@@ -253,6 +256,7 @@ export interface ProgrammableIslandSurfaceProps {
 export type SurfaceOperation =
   | {
       type: 'surface.open'
+      processCollapsed?: boolean
       threadId: string
       principalId: string
       nodes?: SurfaceNode[]
@@ -286,6 +290,10 @@ export type SurfaceOperation =
       surface: ConversationSurfaceDescriptor
     }
   | {
+      type: 'surface.publish' | 'surface.settled'
+      snapshot: ConversationProjectionSnapshot
+    }
+  | {
       type: 'surface.fail'
       code: string
       message: string
@@ -297,6 +305,8 @@ export type SurfaceOperation =
 
 /** 单条实时 Surface 帧；sequence 在同一 generation 内严格递增。 */
 export interface SurfaceFrame {
+  threadId?: string
+  threadGeneration?: number
   protocolVersion: 1
   surfaceId: SurfaceId
   generation: string
@@ -356,6 +366,10 @@ export type ConversationContentBlock =
     }
 
 export interface ConversationMessageProjection {
+  executionRecord?: boolean
+  sourceMessages?: import('../conversation').ConversationSource[]
+  publicationId?: string | null
+  executionId?: string | null
   executionPause?: ConversationExecutionPause
   generationStats?: ConversationGenerationStats
   messageId: string
@@ -439,6 +453,9 @@ export interface StrongholdProjectionSnapshot {
 
 /** 从领域表重建的权威 Conversation 读模型快照。 */
 export interface ConversationProjectionSnapshot {
+  /** 独立撤回的墓碑用于同步客户端已经加载的较早历史。 */
+  deletedMessageIds?: string[]
+  threadGeneration?: number
   protocolVersion: 1
   threadId: string
   principalId: string

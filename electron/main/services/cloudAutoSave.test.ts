@@ -28,8 +28,8 @@ vi.mock('./steam', () => ({
   getSteamUser: () => ({ steamId: '76561198000000001' }),
   getSteamCloudApi: () => fixture.cloud,
 }))
-vi.mock('./cloudSync', () => ({
-  cloudSyncService: { captureSnapshot: fixture.capture, stageSnapshot: fixture.stage },
+vi.mock('./cloudSnapshotTransport', () => ({
+  cloudSnapshotTransport: { captureSnapshot: fixture.capture, stageSnapshot: fixture.stage },
 }))
 import { SteamCloudAutoSave, cloudDataFingerprint, isCloudSaveChange } from './cloudAutoSave'
 
@@ -75,6 +75,17 @@ describe('Steam 自动云存档生命周期', () => {
     expect(isCloudSaveChange('cloud-cache/steam-1/state.json')).toBe(false)
     expect(isCloudSaveChange('.backup-state/work/infos.db')).toBe(false)
     expect(isCloudSaveChange('kernel/node-identity.json')).toBe(false)
+    expect(isCloudSaveChange('client-language.txt')).toBe(false)
+    expect(isCloudSaveChange('principals/pero/workspace/client-language.txt')).toBe(true)
+    expect(isCloudSaveChange('tools/NapCat/node.exe')).toBe(false)
+    expect(isCloudSaveChange('data/tools/NapCat/napcat/static/app.js')).toBe(false)
+    expect(isCloudSaveChange('tools/NapCat/napcat/logs/current.log')).toBe(false)
+    expect(isCloudSaveChange('tools/NapCat/napcat/config/onebot11_10001.json')).toBe(true)
+    expect(isCloudSaveChange('tools/NapCat/napcat/plugins/custom/index.js')).toBe(true)
+    expect(isCloudSaveChange('tools/NapCat/napcat/config/plugins/builtin.json')).toBe(true)
+    expect(isCloudSaveChange('tools/NapCat/guild1.db-wal')).toBe(true)
+    expect(isCloudSaveChange('tools/NapCat/.infos-quick-login-account')).toBe(true)
+    expect(isCloudSaveChange('principals/pero/workspace/tools/NapCat/node.exe')).toBe(true)
   })
 
   it('文件轮询检测已提交的 WAL 变化，同时忽略保存服务自己的检查点', async () => {
@@ -85,6 +96,10 @@ describe('Steam 自动云存档生命周期', () => {
     expect(changed).not.toBe(before)
     await mkdir(path.join(fixture.root, 'cloud-cache'), { recursive: true })
     await writeFile(path.join(fixture.root, 'cloud-cache', 'checkpoint'), 'not business data')
+    expect(await cloudDataFingerprint(fixture.root)).toBe(changed)
+    await writeFile(path.join(fixture.root, 'client-language.txt'), 'en-US')
+    expect(await cloudDataFingerprint(fixture.root)).toBe(changed)
+    await rm(path.join(fixture.root, 'client-language.txt'))
     expect(await cloudDataFingerprint(fixture.root)).toBe(changed)
   })
   it('退出前重新捕获最后的正文，而不是只复用启动时的检查点', async () => {
@@ -111,6 +126,35 @@ describe('Steam 自动云存档生命周期', () => {
     expect(state.checkpoint?.pending).toBe(true)
     expect(await store.readCheckpoint(state.checkpoint!.snapshot)).toEqual(expected)
     expect(files.size).toBe(0)
+  })
+
+  it('退出等待在途快照完成，再保存退出前的最终正文', async () => {
+    let enter!: (signal: AbortSignal) => void
+    let release!: (bytes: Buffer) => void
+    const entered = new Promise<AbortSignal>((resolve) => { enter = resolve })
+    const inFlight = new Promise<Buffer>((resolve) => { release = resolve })
+    const final = Buffer.from('final snapshot after all writers stopped')
+    fixture.capture
+      .mockImplementationOnce(async (signal: AbortSignal) => {
+        enter(signal)
+        return inFlight
+      })
+      .mockResolvedValueOnce(final)
+    await manager.prepareStartup()
+    manager.start()
+    const signal = await entered
+    const closing = manager.stopAndSave()
+    try {
+      expect(signal.aborted).toBe(false)
+      release(Buffer.from('snapshot already in progress'))
+      await closing
+      const store = storage()
+      expect(await store.readRemote(store.current()!)).toEqual(final)
+      expect((await store.readState()).checkpoint?.pending).toBe(false)
+    } finally {
+      release(Buffer.from('snapshot already in progress'))
+      await closing
+    }
   })
 
   it('冲突选择暂不同步后继续保护本机正文，但不覆盖云端', async () => {

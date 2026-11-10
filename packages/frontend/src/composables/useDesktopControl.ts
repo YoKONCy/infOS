@@ -37,7 +37,12 @@ export function useDesktopControl() {
     if (!isElectron()) return
     try {
       const off = await listen('desktop-control:changed', (payload) => {
-        if (!disposed) state.value = payload as DesktopControlState
+        if (disposed) return
+        const next = payload as DesktopControlState
+        state.value = next
+        // 别的卡片改了总开关时，主进程广播里带着 enabled，这里跟着更新
+        if (typeof next.enabled === 'boolean')
+          settings.value = { ...settings.value, enabled: next.enabled, stopShortcut: next.stopShortcut }
       })
       if (disposed) {
         off()

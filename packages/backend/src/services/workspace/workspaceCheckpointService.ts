@@ -50,6 +50,8 @@ export interface RewindFilePreview {
 }
 
 export interface RewindPreview {
+  scope?: 'message' | 'execution'
+  messageIds?: number[]
   threadId: string
   agentId?: string
   wholeThread: boolean
@@ -228,6 +230,10 @@ export class WorkspaceCheckpointService {
       id: target.id,
     })
     return this.buildPreview(threadId, pairIds, false, target.id, pairCount)
+  }
+
+  async previewExecutions(threadId: string, messageId: number, executionIds: string[]): Promise<RewindPreview> {
+    return this.buildPreview(threadId, executionIds, false, messageId)
   }
 
   async previewThread(threadId: string): Promise<RewindPreview | null> {

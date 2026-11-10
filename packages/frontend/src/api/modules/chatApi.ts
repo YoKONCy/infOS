@@ -14,6 +14,7 @@ import type {
 import { apiClient } from '../client'
 import { streamRequest } from '../stream'
 import type { SseEvents } from '../stream'
+import { createClientUuid } from '../../lib/clientPlatform'
 
 export interface ChatWorkspaceContext {
   filePath?: string
@@ -24,6 +25,8 @@ export interface ChatWorkspaceContext {
 }
 
 export interface RewindPreview {
+  scope?: 'message' | 'execution'
+  messageIds?: number[]
   threadId: string
   agentId?: string
   wholeThread: boolean
@@ -95,6 +98,10 @@ async function historyRequest<T>(
 }
 
 export const chatApi = {
+  regenerate: (threadId: string, messageId: number, revision: number) =>
+    apiClient.post<ConversationQueueSnapshot>(`/chat/threads/${encodeURIComponent(threadId)}/regenerate`, {
+      messageId, revision, clientMessageId: createClientUuid(),
+    }),
   queueLive: (threadId: string) =>
     apiClient.request<ConversationSurfaceDescriptor | null>(
       `/chat/queue/${encodeURIComponent(threadId)}/live`,
@@ -172,12 +179,12 @@ export const chatApi = {
       true,
     ),
 
-  previewRewind: (threadId: string, input: { messageId?: number; wholeThread?: boolean }) =>
+  previewRewind: (threadId: string, input: { messageId?: number; wholeThread?: boolean; preserveInputAttachments?: boolean; restoreFiles?: boolean }) =>
     apiClient.post<RewindPreview>(`/chat/threads/${threadId}/rewind-preview`, input),
 
   rewind: (
     threadId: string,
-    input: { messageId?: number; wholeThread?: boolean; preserveInputAttachments?: boolean },
+    input: { messageId?: number; wholeThread?: boolean; preserveInputAttachments?: boolean; restoreFiles?: boolean },
   ) =>
     historyRequest(
       threadId,

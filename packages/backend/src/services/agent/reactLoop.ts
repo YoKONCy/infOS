@@ -1,4 +1,5 @@
 import { t as __t } from '../../lib/i18n'
+import { perceptionActive, perceptionReadOnly } from '../conversation/perceptionContext'
 import { packageRequestMessages } from '../../packages/packageAgentFlow'
 /**
  * ReAct Loop — 推理-行动循环
@@ -61,12 +62,17 @@ import {
   type FileObservation,
 } from '../context/fileWorkingContext'
 import { modelToolObservation } from '../execution/toolObservation'
-import { persistentWorkMessage } from '../context/workContext'
+import { persistentWorkMessage, workMessagesAfterClear, closeWorkToolGroups } from '../context/workContext'
 import { executionOwnerState } from '../../tools/productivityRuntimeHolder'
 import { desktopPauseFromObservation } from '../execution/desktopPause'
 import { appendPromptSnapshot, canonicalTools } from '../llm/promptCache'
-import { compileModelRequest, promptPlanOf } from '../prompt/requestCompiler'
+import {
+  compileModelRequest,
+  promptPlanOf,
+  resolveEffectivePromptPlan,
+} from '../prompt/requestCompiler'
 import { PrefillContinuationGate } from '../prompt/prefillContinuation'
+import { logPrefillOutcome, thinkingStatusMessage } from './prefillStatus'
 
 const logger = createLogger('ReActLoop')
 
@@ -311,11 +317,17 @@ const MODE_MAX_TURNS: Record<string, number> = {
   scheduler: 1,
 }
 
-/** 首轮菜单同时供实际执行和预算预览使用，避免隐藏工具被重复计算。 */
+/**
+ * 首轮菜单同时供实际执行和预算预览使用，避免隐藏工具被重复计算。
+ * stableFinishTask：工作模式从首个请求起列出 finish_task，避免该工具解锁时改变菜单，
+ * 帮助上游复用前缀；权限刷新与错误恢复仍可改变菜单，调用条件仍由执行侧门控决定。
+ */
 export function initialReActTools(
   tools: ToolDefinition[],
   hasTask = false,
   messages: ChatMessage[] = [],
+  stableFinishTask = false,
+  resident: ReadonlySet<string> = new Set(),
 ): ToolDefinition[] {
   const available = availableToolDefinitions(tools)
   // 仅识别工具调用与成功回传的配对记录，用户正文不能伪造菜单展开状态。
@@ -334,7 +346,9 @@ export function initialReActTools(
       )
     })
   return available.filter(
-    (tool) => (expanded || !isAdvancedTool(tool.name)) && (tool.name !== 'finish_task' || hasTask),
+    (tool) =>
+      (expanded || !isAdvancedTool(tool.name) || resident.has(tool.name)) &&
+      (tool.name !== 'finish_task' || hasTask || stableFinishTask),
   )
 }
 
@@ -347,6 +361,10 @@ import type { ConversationContentBlock } from '@infos/shared'
 /** ReAct产出的结构化事件。 */
 export type SseEvent =
   | { event: 'context_budget'; data: LiveContextBudget }
+  | {
+      event: 'conversation_message'
+      data: { messageId: number; content: string }
+    }
   | {
       event: 'model_retry'
       data: {
@@ -468,6 +486,8 @@ export interface ToolExecutor {
     args: Record<string, unknown>,
     source: string,
     context?: {
+      sceneRoomId?: string
+      conversation?: import('@infos/shared').ConversationActions
       threadId?: string
       channel?: string
       /**
@@ -489,6 +509,8 @@ export interface ToolExecutor {
       processId?: import('@infos/shared').KernelProcessId
       deadline?: string
       pairId?: string
+      generation?: number
+      characterStateVersion?: { revision: number }
       toolCallId?: string
       disabledTools?: string[]
       interactionMode?: import('@infos/shared').InteractionMode
@@ -537,6 +559,7 @@ export interface CancelChecker {
  * @yields 流式文本片段 / SSE 事件 (Thinking 块已过滤)
  */
 export async function* runReActLoop(params: {
+  workContextBase?: ChatMessage[]
   packageHooks?: import('../../packages/packageAgentFlow').PackageFlowEmitter
   onExecutionMessages?: (messages: ChatMessage[]) => void
   llmService: LlmService
@@ -546,10 +569,10 @@ export async function* runReActLoop(params: {
   onRequestCompiled?: (request: import('../prompt/requestCompiler').ModelRequestSnapshot) => void
   messages: ChatMessage[]
   tools: ToolDefinition[] | undefined
+  /** 本次执行常驻的高级工具（如「桌面操作」总开关打开时的操作工具），整轮保持不变。 */
+  residentTools?: ReadonlySet<string>
   toolExecutor: ToolExecutor | undefined
-  refreshToolDefinitions?: () => ToolDefinition[]
   prepareToolDefinitions?: (definitions: ToolDefinition[]) => Promise<ToolDefinition[]>
-  clearDynamicCapabilities?: () => void
   source: string
   sessionId?: string
   /**
@@ -563,6 +586,8 @@ export async function* runReActLoop(params: {
    * - channel: 当前对话通道（desktop/social/group）
    */
   threadContext?: {
+    sceneRoomId?: string
+    conversation?: import('@infos/shared').ConversationActions
     browserScope?: import('@infos/shared').AgentBrowserScope
     requestedBy?: 'user' | 'agent'
     threadId?: string
@@ -573,6 +598,8 @@ export async function* runReActLoop(params: {
     processId?: import('@infos/shared').KernelProcessId
     deadline?: string
     pairId?: string
+    generation?: number
+    characterStateVersion?: { revision: number }
     disabledTools?: string[]
     interactionMode?: import('@infos/shared').InteractionMode
     executionMode?: import('@infos/shared').ExecutionMode
@@ -630,6 +657,8 @@ export async function* runReActLoop(params: {
 > {
   const { llmService, modelConfig, messages, source, toolExecutor } = params
   const executionMessages: ChatMessage[] = []
+  const publishedMessages: ChatMessage[] = []
+  const workContextBase = params.workContextBase ?? messages.slice()
   const appendMessage = (message: ChatMessage): void => {
     messages.push(message)
     if (params.onExecutionMessages) {
@@ -667,7 +696,14 @@ export async function* runReActLoop(params: {
 
   // 第七阶段修复（批次 B1）：构造透传给 ToolExecutor 的完整运行时上下文
   // 把 agentId / sessionId 与 threadContext 合并，确保工具权限校验拿到正确的 Agent 身份
-  const advancedToolAccess: AdvancedToolAccess = { names: new Set(), expanded: false }
+  const residentTools = params.residentTools ?? new Set<string>()
+  /** 仍需展开才可见的包内工具；常驻工具不计入，展开前后都在清单里。 */
+  const gated = (name: string) => isAdvancedTool(name) && !residentTools.has(name)
+  const advancedToolAccess: AdvancedToolAccess = {
+    names: new Set(),
+    expanded: false,
+    resident: residentTools,
+  }
   const loopGuard = new ToolLoopGuard()
   const toolRuntimeContext = {
     ...params.threadContext,
@@ -699,18 +735,34 @@ export async function* runReActLoop(params: {
     ),
   )
   const finishTaskTool = allAvailableTools.find((tool) => tool.name === 'finish_task')
-  let advancedTools = allAvailableTools.filter((tool) => isAdvancedTool(tool.name))
+  const advancedTools = allAvailableTools.filter((tool) => gated(tool.name))
   advancedToolAccess.names = new Set(advancedTools.map((tool) => tool.name))
-  let currentTools = initialReActTools(allAvailableTools, !!params.threadContext?.taskId, messages)
+  // 工作模式首轮即包含 finish_task，避免它在业务工具执行后追加而改变提示词前缀。
+  const stableFinishTask = !!params.threadContext?.conversation || params.threadContext?.interactionMode === 'work'
+  let currentTools = initialReActTools(
+    allAvailableTools,
+    !!params.threadContext?.taskId,
+    messages,
+    stableFinishTask,
+    residentTools,
+  )
   let preparedTools: ToolDefinition[] | undefined
-  advancedToolAccess.expanded = currentTools.some((tool) => isAdvancedTool(tool.name))
-  let finishTaskAvailable = !!params.threadContext?.taskId
+  advancedToolAccess.expanded = currentTools.some((tool) => gated(tool.name))
+  let finishTaskAvailable = !!params.threadContext?.taskId || !!params.threadContext?.conversation || source === 'group'
   /** 是否已经向用户流式输出过可见正文（Thinking 不计入）。 */
   let hasVisibleReply = false
   // 完整原始转写：保留每一轮未过滤的 LLM 输出 (含 Thinking 块) + 工具调用/返回摘要，
   // 供「对话调试详情」查看内部构造 (区别于给用户看的、已剥离 Thinking 的可见回复)。
   let rawTranscript = ''
   let modelRequestCount = 0
+  // 有效预填充计划在执行开始时按实际模型确定一次；请求编译、拼回和审计都使用它。
+  const promptPlan = resolveEffectivePromptPlan(
+    params.promptPlan ?? promptPlanOf(messages),
+    modelConfig,
+  )
+  // once 预填充只有在某次回复真正带出正文后才算用掉；纯工具调用轮次不消耗。
+  let prefillConsumed = false
+  let prefillNoticeSent = false
   const readableCallIds = new Set<string>()
   let consecutiveTruncations = 0
   let contextRetryBudget: number | undefined
@@ -830,16 +882,22 @@ export async function* runReActLoop(params: {
       }
 
       // 推送状态: 思考中
+      // 预填充因模型能力被跳过时，首轮状态里带上简短原因。
+      const thinkingMessage = thinkingStatusMessage(
+        !prefillNoticeSent ? promptPlan.assistantPrefillSkipped : undefined,
+        modelConfig.modelId,
+      )
+      prefillNoticeSent = true
       yield {
         event: 'status',
-        data: { state: 'thinking', message: __t('server.agent', '正在思考...'), turn: turn + 1 },
+        data: { state: 'thinking', message: thinkingMessage, turn: turn + 1 },
       }
 
-      const promptPlan = params.promptPlan ?? promptPlanOf(messages)
-      const assistantPrefill = compileModelRequest([], turn, promptPlan).prefill
+      const prefillIteration = prefillConsumed ? 1 : 0
+      const assistantPrefill = compileModelRequest([], prefillIteration, promptPlan).prefill
       let prefillGate = new PrefillContinuationGate(assistantPrefill)
       const compileRequestMessages = (input: ChatMessage[]): ChatMessage[] =>
-        compileModelRequest(input, turn, promptPlan).messages
+        compileModelRequest(input, prefillIteration, promptPlan).messages
       let turnText = ''
       let generatedTurnText = ''
       let visibleTurnText = ''
@@ -992,6 +1050,10 @@ export async function* runReActLoop(params: {
           turn: turn + 1,
           executionId: params.threadContext?.executionId,
           realmId: params.threadContext?.realmId,
+          interactionMode: params.threadContext?.interactionMode ?? 'work',
+          background: Boolean(params.threadContext?.taskId),
+          realmExecution: Boolean(params.threadContext?.realmId),
+          taskId: params.threadContext?.taskId,
         },
         (candidate) =>
           maxInputTokens <= 0 ||
@@ -1024,6 +1086,7 @@ export async function* runReActLoop(params: {
             })),
           ) ?? [],
         prefill: assistantPrefill ? promptPlan.assistantPrefill : undefined,
+        prefillSkipped: promptPlan.assistantPrefillSkipped,
       })
       if (llmMessages !== originalModelMessages) currentInputTokens = undefined
       if (
@@ -1448,11 +1511,9 @@ export async function* runReActLoop(params: {
 
           // 收集文本
           generatedTurnText += choice.delta.content ?? ''
-          // 等待真实正文或工具参数后才拼回预填充，失败或空响应不能伪装成成功回答；
+          // 只在真实正文里拼回预填充；工具参数、失败或空响应不拼回，否则未闭合的开标签会进入历史。
           // 以思考开标签结尾的预填充还要等上游确实续写，避免整轮回答被吞进思考区。
-          const content =
-            prefillGate.push(choice.delta.content ?? '') +
-            (choice.delta.toolCalls?.length ? prefillGate.startToolCall() : '')
+          const content = prefillGate.push(choice.delta.content ?? '')
           if (content) {
             turnText += content
 
@@ -1548,7 +1609,7 @@ export async function* runReActLoop(params: {
                     draftId: target.draftId,
                     turn: turn + 1,
                     nameDelta: nameDelta || undefined,
-                    argumentsDelta: previewDelta || undefined,
+                    argumentsDelta: perceptionActive() ? undefined : previewDelta || undefined,
                     receivedChars: nextReceivedChars,
                   },
                 }
@@ -1711,6 +1772,8 @@ export async function* runReActLoop(params: {
 
       yield* completeReasoning()
       yield* flushResponseFilters()
+      logPrefillOutcome(prefillGate.outcome, turn + 1)
+      if (assistantPrefill && generatedTurnText.trim()) prefillConsumed = true
       if (
         modelConfig.maxTokens &&
         tokenCounter.countTokens(visibleOutput()) > modelConfig.maxTokens
@@ -1912,7 +1975,7 @@ export async function* runReActLoop(params: {
           reasoningContent: turnReasoningContent,
           ...(turnNativeReasoning.length ? { nativeReasoning: turnNativeReasoning } : {}),
         })
-        if (!turnText.trim() && turn === 0) {
+        if (!turnText.trim() && turn === 0 && !perceptionReadOnly()) {
           const fallback = '⚠️ AI 没有返回有效内容。请检查网络连接或 API Key 配置。'
           const blockId = `narration-${turn + 1}-fallback`
           contentBlocks.push({
@@ -1955,6 +2018,8 @@ export async function* runReActLoop(params: {
       })
 
       let shouldTerminate = false
+      let clearAfterBatch: string | undefined
+      let notebookAfterClear: string | undefined
 
       // ── 执行 FC tool_calls ──
       for (const tc of collectedCalls) {
@@ -2127,7 +2192,7 @@ export async function* runReActLoop(params: {
         let observedDesktopPause: import('@infos/shared').ConversationExecutionPause | undefined
         const fileFacts: FileObservation[] = []
         if (
-          isAdvancedTool(fnName) &&
+          gated(fnName) &&
           (!advancedToolAccess.expanded || !advancedToolAccess.names.has(fnName))
         ) {
           result = {
@@ -2317,41 +2382,10 @@ export async function* runReActLoop(params: {
           callId: tc.id,
         })
 
-        if (fnName === 'load_skill' && !result.isError && params.refreshToolDefinitions) {
-          const refreshed = availableToolDefinitions(params.refreshToolDefinitions()).filter(
-            (tool) => !params.threadContext?.taskId || tool.name !== 'run_script',
-          )
-          const refreshedAdvanced = refreshed.filter((tool) => isAdvancedTool(tool.name))
-          advancedTools = refreshedAdvanced
-          advancedToolAccess.names = new Set(refreshedAdvanced.map((tool) => tool.name))
-          currentTools = refreshed.filter(
-            (tool) =>
-              !isAdvancedTool(tool.name) &&
-              tool.name !== 'finish_task' &&
-              !currentTools.some((current) => current.name === tool.name),
-          )
-          currentTools = [
-            ...new Map(
-              [
-                ...allAvailableTools.filter(
-                  (tool) => !isAdvancedTool(tool.name) && tool.name !== 'finish_task',
-                ),
-                ...currentTools,
-                ...(advancedToolAccess.expanded ? refreshedAdvanced : []),
-                ...(finishTaskAvailable && finishTaskTool ? [finishTaskTool] : []),
-              ].map((tool) => [tool.name, tool]),
-            ).values(),
-          ]
-          logger.info(
-            __t('logs.agent', 'Skill加载后已刷新工具定义，当前可见 {0} 个工具', [
-              currentTools.length,
-            ]),
-          )
-        }
-
         if (!finishTaskAvailable && finishTaskTool && !isTaskCoordinationTool(fnName)) {
           finishTaskAvailable = true
-          currentTools = [...currentTools, finishTaskTool]
+          if (!currentTools.some((tool) => tool.name === 'finish_task'))
+            currentTools = [...currentTools, finishTaskTool]
           logger.debug(__t('logs.agent', '真实工具 {0} 已执行，下一轮开放 finish_task', [fnName]))
         }
 
@@ -2749,6 +2783,16 @@ export async function* runReActLoop(params: {
           throw error
         }
 
+        if (!result.isError && result.metadata?.workContextCleared === true && fnName === 'clear_work_context') {
+          clearAfterBatch = tc.id
+          notebookAfterClear = typeof result.metadata.notebookContext === 'string' ? result.metadata.notebookContext : undefined
+        }
+        if (!result.isError && result.metadata?.conversationMessage) {
+          const publication = result.metadata.conversationMessage as { content: string }
+          publishedMessages.push({ role: 'assistant', content: publication.content })
+          hasVisibleReply = true
+          yield { event: 'conversation_message', data: result.metadata.conversationMessage as { messageId: number; content: string } }
+        }
         if (result.shouldTerminate) {
           // finish_task.reply始终作为独立最终交付；仅与本轮已显示正文完全重复时去重。
           if (fnName === 'finish_task') {
@@ -2771,7 +2815,7 @@ export async function* runReActLoop(params: {
               yield { event: 'narration_start', data: { blockId, turn: turn + 1 } }
               yield { event: 'narration_delta', data: { blockId, turn: turn + 1, delta: reply } }
               yield { event: 'narration_end', data: { blockId, turn: turn + 1, phase: 'final' } }
-            } else if (!reply && !hasVisibleReply) {
+            } else if (!reply && !hasVisibleReply && !params.threadContext?.conversation && source !== 'group') {
               logger.warn(
                 __t(
                   'logs.agent',
@@ -2783,6 +2827,16 @@ export async function* runReActLoop(params: {
           shouldTerminate = true
           break
         }
+      }
+
+      if (clearAfterBatch) {
+        const batch = closeWorkToolGroups(workMessagesAfterClear(messages, clearAfterBatch))
+        const base = workContextBase.filter((message) => !message.cacheControl?.workContext &&
+          !message.cacheControl?.key?.startsWith('context-region:notebook:') &&
+          !message.cacheControl?.key?.startsWith('infos.work.'))
+        const notebook: ChatMessage[] = notebookAfterClear ? [{ role: 'user', content: notebookAfterClear,
+          cacheControl: { kind: 'snapshot', key: `context-region:notebook:${params.agentId}` } }] : []
+        messages.splice(0, messages.length, ...structuredClone(base), ...publishedMessages, ...notebook, ...batch)
       }
 
       if (params.cancelChecker?.isHandoffRequested?.(controlSessionId)) {

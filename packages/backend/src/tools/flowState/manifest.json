@@ -3,7 +3,7 @@
   "name": "flowState",
   "displayName": "心流维护",
   "version": "1.0.0",
-  "description": "维护当前会话的私有临时心流状态。",
+  "description": "维护角色当前的关注、理解和行动意图，主会话与据点共用。",
   "type": "tool",
   "entry": "index.ts",
   "category": "system",
@@ -12,24 +12,24 @@
   "tools": [
     {
       "name": "update_flow_state",
-      "description": "维护当前会话的私有临时目标和要点，仅在内容变化时更新；省略保留，空字符串清空。",
+      "description": "维护此刻的关注、理解和行动意图，可引用实际文件路径、工具和已有任务标识。主会话与据点共用同一心流，侧会话独立。仅在思路变化时更新；省略保留，空字符串清空。主动记录的要点写入记事本。",
       "parameters": {
         "type": "object",
         "properties": {
           "current_goal": {
             "type": "string",
-            "description": "当前会话正在持续推进的目标，最多 8000 字。"
+            "description": "此刻关注的事情和行动意图，最多 8000 字。"
           },
           "private_facts": {
             "type": "string",
-            "description": "当前会话的私有临时要点，不向用户展示，最多 8000 字。"
+            "description": "与当前思路有关的私下理解，可附实际路径或操作引用，最多 8000 字。"
           }
         },
         "additionalProperties": false
       },
       "display": {
         "label": "更新心流",
-        "description": "记录当前目标和临时要点，帮助助手保持任务思路。",
+        "description": "更新角色当前的关注和思路。",
         "icon": "thought",
         "color": "purple",
         "style": "system"

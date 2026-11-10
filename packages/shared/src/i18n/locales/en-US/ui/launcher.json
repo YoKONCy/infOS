@@ -30,5 +30,14 @@
   "待确认": "Needs attention",
   "未就绪": "Not ready",
   "连接失败": "Connection failed",
-  "查看诊断": "View diagnostics"
+  "查看诊断": "View diagnostics",
+  "未配置模型": "No model configured",
+  "模型检查未完成": "Model check unavailable",
+  "{0} 个模型": "{0} models",
+  "{0} 个 Agent": "{0} agents",
+  "待初始化": "Awaiting setup",
+  "正常": "Ready",
+  "无法连接后端服务": "Cannot connect to the backend",
+  "数据库连接失败": "Database connection failed",
+  "记忆系统未就绪": "Memory system is not ready"
 }

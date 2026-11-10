@@ -14,9 +14,9 @@ export function editedMessageMetadata(raw: string | null, content: string): stri
       if (block.kind !== 'narration') return [block]
       if (replaced) return []
       replaced = true
-      return [{ ...block, content }]
+      return [{ ...block, content, phase: 'final' }]
     })
-    if (!replaced) blocks.push({ blockId: 'edited-body', kind: 'narration', turn: 0, content })
+    if (!replaced) blocks.push({ blockId: 'edited-body', kind: 'narration', phase: 'final', turn: 0, content })
     metadata.contentBlocks = blocks.map((block, sequence) => ({ ...block, sequence }))
   }
   return JSON.stringify(metadata)

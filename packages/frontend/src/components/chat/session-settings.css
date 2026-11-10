@@ -1,0 +1,98 @@
+/* 会话设置面板各分区共用的版式：标题行、取值、说明与折叠动画。 */
+.session-item {
+  --item-accent: var(--ui-accent-sky);
+  padding: 10px 11px 9px;
+}
+.session-item + .session-item {
+  border-top: 1px solid var(--ui-border-subtle);
+}
+.session-item__head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  min-height: 14px;
+  margin-bottom: 8px;
+  color: var(--ui-text-secondary);
+  font: 11px/1 var(--ui-font-pixel);
+}
+.session-item__value {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  margin: 0;
+  padding: 0;
+  border: 0;
+  background: none;
+  color: var(--item-accent);
+  font: 11px/1 var(--ui-font-pixel);
+  font-weight: 400;
+}
+.session-item__value :deep(.effort-glyph) {
+  width: 12px;
+  height: 12px;
+}
+.session-item__value.is-muted {
+  color: var(--ui-text-tertiary);
+}
+.session-item__cycle {
+  min-height: 26px;
+  padding: 3px 6px;
+  border: 1px solid var(--ui-border-subtle);
+  border-radius: 0;
+  background: var(--ui-bg-surface-soft);
+  cursor: pointer;
+}
+.session-item__cycle :deep(.effort-glyph) {
+  width: 16px;
+  height: 16px;
+}
+.session-item__cycle:hover:not(:disabled) {
+  border-color: var(--item-accent);
+  color: var(--item-accent);
+}
+.session-item__cycle:focus-visible {
+  outline: 1px solid var(--item-accent);
+  outline-offset: 2px;
+}
+.session-item__cycle:disabled {
+  cursor: not-allowed;
+}
+.session-item__desc {
+  margin: 9px 0 0;
+  color: var(--ui-text-tertiary);
+  font: 11px/1.4 var(--ui-font-sans);
+}
+/* 各档说明叠在同一网格内预留完整高度，切换文字时保持后续分区的位置。 */
+.session-item__descriptions {
+  display: grid;
+}
+.session-item__descriptions > .session-item__desc {
+  grid-area: 1 / 1;
+  visibility: hidden;
+}
+.session-item__descriptions > .is-current {
+  visibility: visible;
+}
+/* 用 grid 行高从 0fr 过渡到 1fr，内容高度变化时无需测量。 */
+.session-collapse {
+  display: grid;
+  grid-template-rows: 0fr;
+  transition: grid-template-rows 240ms cubic-bezier(0.2, 0.9, 0.3, 1);
+}
+.session-collapse.is-open {
+  grid-template-rows: 1fr;
+}
+.session-collapse > * {
+  min-height: 0;
+  overflow: hidden;
+}
+@media (prefers-reduced-motion: reduce) {
+  .session-collapse {
+    transition: none;
+  }
+}
+:global([data-motion='off']) .session-collapse,
+:global([data-motion='reduced']) .session-collapse {
+  transition: none;
+}

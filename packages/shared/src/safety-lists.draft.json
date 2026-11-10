@@ -1,0 +1,880 @@
+{
+  "schemaVersion": 2,
+  "status": "DRAFT",
+  "note": "维护者草案。FINAL 仅表示名单审阅完成，不代表安全验证通过。禁区优先；高危每次由用户本人确认，不可信任或预批；只有普通区可加入信任。识别失败或名单无效按高危处理。类别说明供维护者阅读，界面标签由 i18n 翻译。",
+  "programs": {
+    "forbidden": {
+      "凭据与密码管理器": {
+        "purpose": "保护凭据、凭据库与密码管理器。",
+        "risk": "凭据披露或更改不能由桌面自动化代办。",
+        "sources": ["https://attack.mitre.org/techniques/T1555/004/"],
+        "entries": [
+          "credwiz.exe",
+          "1Password.exe",
+          "Bitwarden.exe",
+          "KeePass.exe",
+          "KeePassXC.exe",
+          "cmdkey.exe",
+          "vaultcmd.exe"
+        ]
+      },
+      "提权与安全中心": {
+        "purpose": "保护 UAC 同意界面与 Windows 安全中心。",
+        "risk": "禁止助手代替用户同意提权或操作安全中心。",
+        "entries": ["consent.exe", "SecHealthUI.exe", "SecurityHealthHost.exe"]
+      }
+    },
+    "mustConfirm": {
+      "终端与命令行": {
+        "purpose": "识别交互终端、控制台宿主与 Linux 子系统。",
+        "risk": "能够执行任意命令，始终逐次人工确认。",
+        "sources": ["https://attack.mitre.org/techniques/T1059/"],
+        "appliesTo": [
+          "pwsh 需安装 PowerShell 7；Windows Terminal、WSL 与 bash 依赖系统版本或可选组件。"
+        ],
+        "entries": [
+          "cmd.exe",
+          "powershell.exe",
+          "pwsh.exe",
+          "powershell_ise.exe",
+          "WindowsTerminal.exe",
+          "conhost.exe",
+          "OpenConsole.exe",
+          "wsl.exe",
+          "bash.exe"
+        ]
+      },
+      "第三方终端": {
+        "purpose": "覆盖常见的可选第三方终端。",
+        "risk": "与系统终端具有相同命令执行风险。",
+        "appliesTo": ["Git for Windows、MSYS2 或 Cygwin 安装组件；不是 Windows 默认组件。"],
+        "entries": ["mintty.exe"]
+      },
+      "脚本宿主与代理执行": {
+        "purpose": "覆盖系统脚本宿主与代理执行入口。",
+        "risk": "可在终端进程之外执行脚本、程序或组件。",
+        "sources": [
+          "https://lolbas-project.github.io/",
+          "https://attack.mitre.org/techniques/T1218/"
+        ],
+        "appliesTo": ["具体程序依赖 Windows 版本、体系结构和已安装组件。"],
+        "entries": [
+          "wscript.exe",
+          "cscript.exe",
+          "mshta.exe",
+          "rundll32.exe",
+          "regsvr32.exe",
+          "cmstp.exe",
+          "forfiles.exe",
+          "pcalua.exe",
+          "odbcconf.exe",
+          "hh.exe",
+          "verclsid.exe",
+          "mavinject.exe",
+          "pcwrun.exe",
+          "scriptrunner.exe",
+          "infdefaultinstall.exe"
+        ]
+      },
+      ".NET 与开发组件": {
+        "purpose": "覆盖 .NET 注册、编译及开发组件入口。",
+        "risk": "可加载和执行托管代码，不能视为普通工具。",
+        "sources": ["https://attack.mitre.org/techniques/T1218/"],
+        "appliesTo": ["依赖 .NET Framework、Windows SDK 或 Visual Studio 组件；不保证默认安装。"],
+        "entries": ["msbuild.exe", "installutil.exe", "regasm.exe", "regsvcs.exe"]
+      },
+      "PowerShell 替代宿主": {
+        "purpose": "覆盖能承载 PowerShell 的系统辅助程序。",
+        "risk": "更换宿主不会降低脚本执行风险。",
+        "sources": ["https://lolbas-project.github.io/"],
+        "appliesTo": ["Runscripthelper 见特定 Windows 10 组件；App-V 宿主依赖版本及可选组件。"],
+        "entries": ["runscripthelper.exe", "SyncAppvPublishingServer.exe"]
+      },
+      "WMI 管理入口": {
+        "purpose": "覆盖 WMI 命令、图形管理和对象编译。",
+        "risk": "能执行程序或改变系统管理对象。",
+        "sources": ["https://attack.mitre.org/techniques/T1047/"],
+        "appliesTo": ["WMIC 在新版 Windows 中弃用，可能未启用或已移除。"],
+        "entries": ["wmic.exe", "wbemtest.exe", "mofcomp.exe"]
+      },
+      "身份与远程执行": {
+        "purpose": "覆盖更换身份启动和远程命令入口。",
+        "risk": "可以跨身份或设备执行代码。",
+        "sources": ["https://lolbas-project.github.io/"],
+        "appliesTo": ["OpenSSH 需相应 Windows 版本或可选组件；远程服务须单独配置。"],
+        "entries": ["runas.exe", "winrs.exe", "ssh.exe", "scp.exe", "sftp.exe", "ftp.exe"]
+      },
+      "敏感系统管理": {
+        "purpose": "覆盖注册表、环境、任务、服务、网络和启动配置。",
+        "risk": "会改变持久配置或系统安全边界。",
+        "entries": [
+          "regedit.exe",
+          "regedt32.exe",
+          "mmc.exe",
+          "reg.exe",
+          "regini.exe",
+          "setx.exe",
+          "schtasks.exe",
+          "sc.exe",
+          "net.exe",
+          "netsh.exe",
+          "bcdedit.exe",
+          "bitsadmin.exe"
+        ]
+      },
+      "系统设置与管理": {
+        "purpose": "覆盖系统设置、任务管理和恢复界面。",
+        "risk": "可改变系统状态或启动其他程序。",
+        "entries": [
+          "SystemSettings.exe",
+          "control.exe",
+          "Taskmgr.exe",
+          "msconfig.exe",
+          "SystemPropertiesAdvanced.exe",
+          "SystemPropertiesProtection.exe",
+          "rstrui.exe",
+          "UserAccountControlSettings.exe"
+        ]
+      },
+      "证书管理工具": {
+        "purpose": "覆盖命令行证书管理与请求。",
+        "risk": "可能改变证书存储和信任链。",
+        "sources": ["https://attack.mitre.org/techniques/T1553/004/"],
+        "entries": ["certutil.exe", "certreq.exe"]
+      },
+      "可选证书工具": {
+        "purpose": "覆盖 SDK 中的证书管理工具。",
+        "risk": "能够增加、删除或导出证书。",
+        "appliesTo": ["Windows SDK 工具，不是系统内置 certmgr.msc 图形入口。"],
+        "entries": ["certmgr.exe"]
+      },
+      "磁盘驱动与权限": {
+        "purpose": "覆盖磁盘、设备驱动及文件权限管理。",
+        "risk": "可能破坏数据或改变访问控制。",
+        "entries": ["diskpart.exe", "pnputil.exe", "icacls.exe", "takeown.exe"]
+      },
+      "安装、卸载与关机": {
+        "purpose": "覆盖安装、卸载和会话结束。",
+        "risk": "会改变程序、系统或未保存工作。",
+        "entries": ["msiexec.exe", "shutdown.exe", "logoff.exe"]
+      }
+    }
+  },
+  "launchAliases": {
+    "终端启动别名": {
+      "purpose": "将显示名称与启动别名映射到真实宿主。",
+      "risk": "别名不能绕过终端审批。",
+      "entries": [
+        {
+          "name": "Windows Terminal",
+          "program": "WindowsTerminal.exe"
+        },
+        {
+          "name": "wt.exe",
+          "program": "WindowsTerminal.exe"
+        }
+      ]
+    },
+    "管理控制台启动入口": {
+      "purpose": "说明启动器最后由 MMC 承载。",
+      "risk": "最终分区受 MMC 规则限制，用户追加禁用 MMC 时同样拒绝。",
+      "entries": [
+        {
+          "name": "eventvwr.exe",
+          "program": "mmc.exe"
+        }
+      ]
+    }
+  },
+  "launchFiles": {
+    "管理控制台文件": {
+      "purpose": "识别 .msc 文件及其 MMC 宿主。",
+      "risk": "管理文件不是进程；使用宿主的最终分区。",
+      "appliesTo": ["组策略和本地安全策略等控制台依赖 Windows 版本或管理组件。"],
+      "entries": [
+        {
+          "name": "gpedit.msc",
+          "host": "mmc.exe"
+        },
+        {
+          "name": "taskschd.msc",
+          "host": "mmc.exe"
+        },
+        {
+          "name": "services.msc",
+          "host": "mmc.exe"
+        },
+        {
+          "name": "certmgr.msc",
+          "host": "mmc.exe"
+        },
+        {
+          "name": "certlm.msc",
+          "host": "mmc.exe"
+        },
+        {
+          "name": "eventvwr.msc",
+          "host": "mmc.exe"
+        },
+        {
+          "name": "devmgmt.msc",
+          "host": "mmc.exe"
+        },
+        {
+          "name": "diskmgmt.msc",
+          "host": "mmc.exe"
+        },
+        {
+          "name": "secpol.msc",
+          "host": "mmc.exe"
+        }
+      ]
+    },
+    "系统脚本文件": {
+      "purpose": "识别可选系统脚本与其宿主。",
+      "risk": "脚本文件执行与终端执行同等高危。",
+      "sources": ["https://lolbas-project.github.io/lolbas/Scripts/Syncappvpublishingserver/"],
+      "appliesTo": ["App-V 发布组件脚本，是否存在取决于系统版本和组件。"],
+      "entries": [
+        {
+          "name": "SyncAppvPublishingServer.vbs",
+          "host": "wscript.exe"
+        }
+      ]
+    }
+  },
+  "backgroundComponents": {
+    "服务后台组件": {
+      "purpose": "单独记录服务控制管理器，不作为服务 GUI 别名。",
+      "risk": "无法对应到可信交互窗口时按高危处理。",
+      "entries": ["services.exe"]
+    }
+  },
+  "fileLaunchRules": {
+    "程序与安装包": {
+      "purpose": "识别可执行文件与安装包的启动。",
+      "risk": "能执行代码或改变软件，逐次确认。",
+      "entries": [
+        ".exe",
+        ".com",
+        ".scr",
+        ".msi",
+        ".msp",
+        ".msix",
+        ".msixbundle",
+        ".appx",
+        ".appxbundle",
+        ".cpl"
+      ]
+    },
+    "脚本与控制台文件": {
+      "purpose": "识别脚本及管理控制台文件的打开。",
+      "risk": "打开文件可能直接执行代码。",
+      "entries": [
+        ".bat",
+        ".cmd",
+        ".ps1",
+        ".psm1",
+        ".psd1",
+        ".vbs",
+        ".vbe",
+        ".js",
+        ".jse",
+        ".wsf",
+        ".wsh",
+        ".hta",
+        ".chm"
+      ]
+    },
+    "快捷方式": {
+      "purpose": "识别快捷方式的启动，并解析目标继续分区。",
+      "risk": "快捷方式可能间接指向禁区或执行入口，解析失败仍是高危。",
+      "entries": [".lnk", ".url"]
+    },
+    "证书文件": {
+      "purpose": "识别证书文件的打开与导入。",
+      "risk": "证书导入可能改变信任关系。",
+      "entries": [".cer", ".crt", ".der", ".p7b", ".p7c", ".pfx", ".p12"]
+    },
+    "管理控制台扩展名": {
+      "purpose": "识别未逐一列出的管理控制台文件及其 MMC 宿主。",
+      "risk": "自定义控制台也受 MMC 最终规则限制。",
+      "host": "mmc.exe",
+      "entries": [".msc"]
+    }
+  },
+  "windowTitles": {
+    "凭据与安全页面": {
+      "purpose": "补充由通用设置宿主承载的禁区页面。",
+      "risk": "同一页面不能因宿主通用而降为高危或普通区。",
+      "entries": [
+        {
+          "match": "exact",
+          "value": "凭据管理器",
+          "zone": "forbidden",
+          "programs": ["control.exe", "rundll32.exe", "SystemSettings.exe", "explorer.exe"]
+        },
+        {
+          "match": "exact",
+          "value": "認證管理員",
+          "zone": "forbidden",
+          "programs": ["control.exe", "rundll32.exe", "SystemSettings.exe", "explorer.exe"]
+        },
+        {
+          "match": "exact",
+          "value": "Credential Manager",
+          "zone": "forbidden",
+          "programs": ["control.exe", "rundll32.exe", "SystemSettings.exe", "explorer.exe"]
+        },
+        {
+          "match": "exact",
+          "value": "存储的用户名和密码",
+          "zone": "forbidden",
+          "programs": ["control.exe", "rundll32.exe", "SystemSettings.exe", "explorer.exe"]
+        },
+        {
+          "match": "exact",
+          "value": "儲存的使用者名稱和密碼",
+          "zone": "forbidden",
+          "programs": ["control.exe", "rundll32.exe", "SystemSettings.exe", "explorer.exe"]
+        },
+        {
+          "match": "exact",
+          "value": "Stored User Names and Passwords",
+          "zone": "forbidden",
+          "programs": ["control.exe", "rundll32.exe", "SystemSettings.exe", "explorer.exe"]
+        },
+        {
+          "match": "exact",
+          "value": "Windows 安全中心",
+          "zone": "forbidden",
+          "programs": ["control.exe", "rundll32.exe", "SystemSettings.exe", "explorer.exe"]
+        },
+        {
+          "match": "exact",
+          "value": "Windows 安全性",
+          "zone": "forbidden",
+          "programs": ["control.exe", "rundll32.exe", "SystemSettings.exe", "explorer.exe"]
+        },
+        {
+          "match": "exact",
+          "value": "Windows Security",
+          "zone": "forbidden",
+          "programs": ["control.exe", "rundll32.exe", "SystemSettings.exe", "explorer.exe"]
+        }
+      ]
+    },
+    "高危标题兜底": {
+      "purpose": "识别运行框及敏感操作的常见标题。",
+      "risk": "标题仅为保守兜底，不能证明实际目标资源；可能误报。",
+      "entries": [
+        {
+          "match": "exact",
+          "value": "运行",
+          "zone": "mustConfirm"
+        },
+        {
+          "match": "exact",
+          "value": "Run",
+          "zone": "mustConfirm"
+        },
+        {
+          "match": "contains",
+          "value": "hosts",
+          "zone": "mustConfirm"
+        },
+        {
+          "match": "contains",
+          "value": "环境变量",
+          "zone": "mustConfirm"
+        },
+        {
+          "match": "contains",
+          "value": "Environment Variables",
+          "zone": "mustConfirm"
+        },
+        {
+          "match": "contains",
+          "value": "证书",
+          "zone": "mustConfirm"
+        },
+        {
+          "match": "contains",
+          "value": "Certificate",
+          "zone": "mustConfirm"
+        },
+        {
+          "match": "contains",
+          "value": "启动应用",
+          "zone": "mustConfirm"
+        },
+        {
+          "match": "contains",
+          "value": "Startup apps",
+          "zone": "mustConfirm"
+        },
+        {
+          "match": "contains",
+          "value": "删除文件",
+          "zone": "mustConfirm"
+        },
+        {
+          "match": "contains",
+          "value": "Delete File",
+          "zone": "mustConfirm"
+        },
+        {
+          "match": "contains",
+          "value": "永久删除",
+          "zone": "mustConfirm"
+        },
+        {
+          "match": "contains",
+          "value": "替换或跳过文件",
+          "zone": "mustConfirm"
+        },
+        {
+          "match": "contains",
+          "value": "Replace or Skip Files",
+          "zone": "mustConfirm"
+        }
+      ]
+    }
+  },
+  "hotkeys": {
+    "系统入口快捷键": {
+      "purpose": "覆盖运行框、管理菜单和任务管理器快捷键。",
+      "risk": "可以切换至高危执行和管理入口。",
+      "entries": [
+        {
+          "program": "*",
+          "key": "Win+R",
+          "scope": "any"
+        },
+        {
+          "program": "*",
+          "key": "Win+X",
+          "scope": "any"
+        },
+        {
+          "program": "*",
+          "key": "Ctrl+Shift+Esc",
+          "scope": "any"
+        }
+      ]
+    },
+    "资源管理器动作": {
+      "purpose": "按动作保护删除、系统文件夹改名及桌面关机入口。",
+      "risk": "普通改名不应升级；无法识别动作位置时保守确认。",
+      "entries": [
+        {
+          "program": "explorer.exe",
+          "key": "Delete",
+          "scope": "any"
+        },
+        {
+          "program": "explorer.exe",
+          "key": "Shift+Delete",
+          "scope": "any"
+        },
+        {
+          "program": "explorer.exe",
+          "key": "F2",
+          "scope": "system-folder"
+        },
+        {
+          "program": "explorer.exe",
+          "key": "Alt+F4",
+          "scope": "desktop"
+        }
+      ]
+    }
+  },
+  "highRiskTools": {
+    "终端与脚本执行": {
+      "purpose": "统一桌面与工具执行的人工审批底线。",
+      "risk": "任何执行模式、任务预批和自动审核均不能代替用户逐次批准。",
+      "entries": [
+        "terminal_execute",
+        "terminal_create",
+        "terminal_write",
+        "remote_terminal_create",
+        "remote_terminal_write"
+      ]
+    }
+  },
+  "sensitiveResources": {
+    "files": {
+      "hosts 文件": {
+        "purpose": "保护此类文件的写入、删除和配置变更；不限制普通读取。",
+        "risk": "修改可能改变系统行为或护栏设置，逐次人工确认。",
+        "zone": "mustConfirm",
+        "actions": ["write", "delete", "configure"],
+        "entries": [
+          {
+            "platform": "win32",
+            "path": "%SystemRoot%/System32/drivers/etc/hosts"
+          },
+          {
+            "platform": "linux",
+            "path": "/etc/hosts"
+          }
+        ]
+      },
+      "开机启动项与计划任务": {
+        "purpose": "保护此类文件的写入、删除和配置变更；不限制普通读取。",
+        "risk": "修改可能改变系统行为或护栏设置，逐次人工确认。",
+        "zone": "mustConfirm",
+        "actions": ["write", "delete", "configure"],
+        "entries": [
+          {
+            "platform": "win32",
+            "path": "%APPDATA%/Microsoft/Windows/Start Menu/Programs/Startup"
+          },
+          {
+            "platform": "win32",
+            "path": "%ProgramData%/Microsoft/Windows/Start Menu/Programs/StartUp"
+          },
+          {
+            "platform": "win32",
+            "path": "%SystemRoot%/System32/Tasks"
+          },
+          {
+            "platform": "darwin",
+            "path": "~/Library/LaunchAgents"
+          },
+          {
+            "platform": "darwin",
+            "path": "/Library/LaunchAgents"
+          },
+          {
+            "platform": "darwin",
+            "path": "/Library/LaunchDaemons"
+          },
+          {
+            "platform": "linux",
+            "path": "~/.config/autostart"
+          },
+          {
+            "platform": "linux",
+            "path": "/etc/systemd"
+          },
+          {
+            "platform": "linux",
+            "path": "/etc/cron.d"
+          },
+          {
+            "platform": "linux",
+            "path": "/etc/crontab"
+          }
+        ]
+      },
+      "环境变量与 Shell 启动脚本": {
+        "purpose": "保护此类文件的写入、删除和配置变更；不限制普通读取。",
+        "risk": "修改可能改变系统行为或护栏设置，逐次人工确认。",
+        "zone": "mustConfirm",
+        "actions": ["write", "delete", "configure"],
+        "entries": [
+          {
+            "platform": "win32",
+            "path": "%USERPROFILE%/Documents/WindowsPowerShell"
+          },
+          {
+            "platform": "win32",
+            "path": "%USERPROFILE%/Documents/PowerShell"
+          },
+          {
+            "platform": "linux",
+            "path": "~/.bashrc"
+          },
+          {
+            "platform": "linux",
+            "path": "~/.bash_profile"
+          },
+          {
+            "platform": "linux",
+            "path": "~/.profile"
+          },
+          {
+            "platform": "linux",
+            "path": "~/.zshrc"
+          },
+          {
+            "platform": "linux",
+            "path": "~/.zprofile"
+          },
+          {
+            "platform": "linux",
+            "path": "/etc/environment"
+          },
+          {
+            "platform": "linux",
+            "path": "/etc/profile"
+          },
+          {
+            "platform": "win32",
+            "path": "%DOCUMENTS%/WindowsPowerShell"
+          },
+          {
+            "platform": "win32",
+            "path": "%DOCUMENTS%/PowerShell"
+          }
+        ]
+      },
+      "infOS 客户端安全设置": {
+        "purpose": "保护此类文件的写入、删除和配置变更；不限制普通读取。",
+        "risk": "修改可能改变系统行为或护栏设置，逐次人工确认。",
+        "zone": "mustConfirm",
+        "actions": ["write", "delete", "configure"],
+        "entries": [
+          {
+            "platform": "win32",
+            "path": "%APPDATA%/萌动链接：PeroperoChat！/desktop-control.json"
+          },
+          {
+            "platform": "win32",
+            "path": "%APPDATA%/萌动链接：PeroperoChat！/desktop-startup.json"
+          },
+          {
+            "platform": "win32",
+            "path": "%APPDATA%/萌动链接：PeroperoChat！/desktop-safety.json"
+          },
+          {
+            "platform": "win32",
+            "path": "%APPDATA%/萌动链接：PeroperoChat！/desktop-safety.accepted.json"
+          },
+          {
+            "platform": "win32",
+            "path": "%APPDATA%/萌动链接：PeroperoChat！/infos-settings.key"
+          },
+          {
+            "platform": "win32",
+            "path": "%APPDATA%/萌动链接：PeroperoChat！/desktop-home.json"
+          },
+          {
+            "platform": "win32",
+            "path": "%APPDATA%/萌动链接：PeroperoChat！/desktop-bridge"
+          },
+          {
+            "platform": "darwin",
+            "path": "~/Library/Application Support/萌动链接：PeroperoChat！/desktop-control.json"
+          },
+          {
+            "platform": "darwin",
+            "path": "~/Library/Application Support/萌动链接：PeroperoChat！/desktop-startup.json"
+          },
+          {
+            "platform": "darwin",
+            "path": "~/Library/Application Support/萌动链接：PeroperoChat！/desktop-safety.json"
+          },
+          {
+            "platform": "darwin",
+            "path": "~/Library/Application Support/萌动链接：PeroperoChat！/desktop-safety.accepted.json"
+          },
+          {
+            "platform": "darwin",
+            "path": "~/Library/Application Support/萌动链接：PeroperoChat！/infos-settings.key"
+          },
+          {
+            "platform": "darwin",
+            "path": "~/Library/Application Support/萌动链接：PeroperoChat！/desktop-home.json"
+          },
+          {
+            "platform": "darwin",
+            "path": "~/Library/Application Support/萌动链接：PeroperoChat！/desktop-bridge"
+          },
+          {
+            "platform": "linux",
+            "path": "~/.config/萌动链接：PeroperoChat！/desktop-control.json"
+          },
+          {
+            "platform": "linux",
+            "path": "~/.config/萌动链接：PeroperoChat！/desktop-startup.json"
+          },
+          {
+            "platform": "linux",
+            "path": "~/.config/萌动链接：PeroperoChat！/desktop-safety.json"
+          },
+          {
+            "platform": "linux",
+            "path": "~/.config/萌动链接：PeroperoChat！/desktop-safety.accepted.json"
+          },
+          {
+            "platform": "linux",
+            "path": "~/.config/萌动链接：PeroperoChat！/infos-settings.key"
+          },
+          {
+            "platform": "linux",
+            "path": "~/.config/萌动链接：PeroperoChat！/desktop-home.json"
+          },
+          {
+            "platform": "linux",
+            "path": "~/.config/萌动链接：PeroperoChat！/desktop-bridge"
+          }
+        ]
+      },
+      "证书文件存储": {
+        "purpose": "保护证书存储对应的文件位置，其他存储同时由注册表和宿主规则覆盖。",
+        "risk": "修改可能改变证书和信任材料，逐次人工确认。",
+        "zone": "mustConfirm",
+        "actions": ["write", "delete", "configure"],
+        "entries": [
+          {
+            "platform": "win32",
+            "path": "%APPDATA%/Microsoft/SystemCertificates"
+          },
+          {
+            "platform": "win32",
+            "path": "%ProgramData%/Microsoft/SystemCertificates"
+          },
+          {
+            "platform": "linux",
+            "path": "/etc/ssl"
+          },
+          {
+            "platform": "linux",
+            "path": "/usr/local/share/ca-certificates"
+          },
+          {
+            "platform": "linux",
+            "path": "/etc/pki"
+          },
+          {
+            "platform": "darwin",
+            "path": "/Library/Keychains"
+          },
+          {
+            "platform": "darwin",
+            "path": "~/Library/Keychains"
+          }
+        ]
+      },
+      "Windows 凭据库": {
+        "purpose": "保护当前用户与系统凭据库文件，读写均拒绝。",
+        "risk": "此处直接包含凭据材料，不能以只读或高危批准替代禁区。",
+        "zone": "forbidden",
+        "actions": ["read", "write", "delete", "configure"],
+        "entries": [
+          {
+            "platform": "win32",
+            "path": "%LOCALAPPDATA%/Microsoft/Vault"
+          },
+          {
+            "platform": "win32",
+            "path": "%LOCALAPPDATA%/Microsoft/Credentials"
+          },
+          {
+            "platform": "win32",
+            "path": "%APPDATA%/Microsoft/Credentials"
+          },
+          {
+            "platform": "win32",
+            "path": "%ProgramData%/Microsoft/Vault"
+          }
+        ]
+      },
+      "系统与程序目录": {
+        "purpose": "保护此类文件的写入、删除和配置变更；不限制普通读取。",
+        "risk": "修改可能改变系统行为或护栏设置，逐次人工确认。",
+        "zone": "mustConfirm",
+        "actions": ["write", "delete", "configure"],
+        "entries": [
+          {
+            "platform": "win32",
+            "path": "%SystemRoot%"
+          },
+          {
+            "platform": "win32",
+            "path": "%ProgramFiles%"
+          },
+          {
+            "platform": "win32",
+            "path": "%ProgramFiles(x86)%"
+          },
+          {
+            "platform": "win32",
+            "path": "%ProgramData%"
+          },
+          {
+            "platform": "darwin",
+            "path": "/System"
+          },
+          {
+            "platform": "darwin",
+            "path": "/Library"
+          },
+          {
+            "platform": "linux",
+            "path": "/etc"
+          },
+          {
+            "platform": "linux",
+            "path": "/usr"
+          },
+          {
+            "platform": "linux",
+            "path": "/bin"
+          },
+          {
+            "platform": "linux",
+            "path": "/sbin"
+          },
+          {
+            "platform": "linux",
+            "path": "/boot"
+          }
+        ]
+      }
+    },
+    "registry": {
+      "环境变量与 PATH": {
+        "purpose": "标记用户与系统持久环境变量。",
+        "risk": "配置变更可能改变程序查找与执行行为。",
+        "zone": "mustConfirm",
+        "actions": ["write", "delete", "configure"],
+        "entries": [
+          "HKCU/Environment",
+          "HKLM/SYSTEM/CurrentControlSet/Control/Session Manager/Environment"
+        ]
+      },
+      "开机启动注册表": {
+        "purpose": "标记用户与系统开机启动配置。",
+        "risk": "变更可持久启动程序。",
+        "zone": "mustConfirm",
+        "actions": ["write", "delete", "configure"],
+        "entries": [
+          "HKCU/Software/Microsoft/Windows/CurrentVersion/Run",
+          "HKCU/Software/Microsoft/Windows/CurrentVersion/RunOnce",
+          "HKLM/Software/Microsoft/Windows/CurrentVersion/Run",
+          "HKLM/Software/Microsoft/Windows/CurrentVersion/RunOnce"
+        ]
+      },
+      "证书注册表存储": {
+        "purpose": "覆盖用户与计算机证书存储的注册表位置。",
+        "risk": "变更可影响系统信任。",
+        "zone": "mustConfirm",
+        "actions": ["write", "delete", "configure"],
+        "entries": [
+          "HKCU/Software/Microsoft/SystemCertificates",
+          "HKLM/Software/Microsoft/SystemCertificates"
+        ]
+      },
+      "其他注册表位置": {
+        "purpose": "对其余标准注册表根键实行相同底线。",
+        "risk": "注册表变更均属于敏感系统配置。",
+        "zone": "mustConfirm",
+        "actions": ["write", "delete", "configure"],
+        "entries": ["HKCU", "HKLM", "HKCR", "HKU", "HKCC"]
+      }
+    },
+    "certificateStores": {
+      "Windows 证书存储": {
+        "purpose": "标记 CurrentUser 与 LocalMachine 下的逻辑证书存储。",
+        "risk": "证书安装、删除和配置均逐次确认，不能当作普通文件路径。",
+        "zone": "mustConfirm",
+        "actions": ["write", "delete", "configure"],
+        "entries": ["CurrentUser", "LocalMachine"]
+      }
+    }
+  }
+}

@@ -1,13 +1,13 @@
-import Database from 'better-sqlite3'
-import { drizzle } from 'drizzle-orm/better-sqlite3'
+import type Database from 'better-sqlite3'
 import { readFileSync } from 'node:fs'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
-import type { DrizzleDb } from '@infos/backend/database'
+import { createDrizzleConnection, closeDrizzleConnection } from '@infos/backend/database'
 import { DEFAULT_CHARACTER_STATE } from '@infos/shared'
 import { PetStateService } from '@infos/backend/services/agent/petStateService'
 
 let sqlite: Database.Database
 let service: PetStateService
+let db: ReturnType<typeof createDrizzleConnection>
 const migration = readFileSync(
   new URL('../../../../src/database/migrations/0016_thread_character_states.sql', import.meta.url),
   'utf8',
@@ -19,32 +19,27 @@ const scope = (pairId = 'p1', threadId = 't1', toolCallId?: string) => ({
 })
 
 beforeEach(() => {
-  sqlite = new Database(':memory:')
+  db = createDrizzleConnection(':memory:')
+  sqlite = (db as unknown as { $client: Database.Database }).$client
   sqlite.exec(`
-    CREATE TABLE threads (id TEXT PRIMARY KEY, agent_id TEXT, channel TEXT, status TEXT, platform TEXT, platform_identifier TEXT);
-    CREATE TABLE thread_messages (
-      id INTEGER PRIMARY KEY AUTOINCREMENT, thread_id TEXT, role TEXT, status TEXT,
-      agent_id TEXT, pair_id TEXT, timestamp TEXT, metadata_json TEXT
-    );
-    INSERT INTO threads VALUES ('t1','pero','desktop','active',NULL,NULL),('t2','pero','desktop','active',NULL,NULL);
-    INSERT INTO thread_messages(thread_id,role,status,agent_id,pair_id) VALUES
-      ('t1','user','active','pero','p1'),('t1','user','active','pero','p2'),
-      ('t1','user','active','pero','p3'),('t2','user','active','pero','p1');
+    INSERT INTO threads(id,agent_id,channel,status) VALUES ('t1','pero','desktop','active'),('t2','pero','desktop','active');
+    INSERT INTO threads(id,agent_id,channel,thread_kind) VALUES ('main','pero','desktop','main');
+    INSERT INTO thread_messages(thread_id,role,status,agent_id,pair_id,content) VALUES
+      ('t1','user','active','pero','p1','原文'),('t1','user','active','pero','p2','原文'),
+      ('t1','user','active','pero','p3','原文'),('t2','user','active','pero','p1','原文');
   `)
-  sqlite.exec(migration)
-  service = new PetStateService(drizzle(sqlite) as DrizzleDb)
+  service = new PetStateService(db)
 })
 afterEach(() => {
   vi.useRealTimers()
-  sqlite.close()
+  closeDrizzleConnection(db)
 })
 
-describe('会话角色状态的隔离与撤回', () => {
+describe('角色共享状态的来源与撤回', () => {
   it('据点状态归属对应房间会话，删除群聊轮次后不能迟到写回', async () => {
     sqlite.exec(`
-      CREATE TABLE group_chat_messages (id INTEGER PRIMARY KEY, room_id TEXT, pair_id TEXT);
-      INSERT INTO group_chat_messages VALUES (1,'room','p1');
-      INSERT INTO threads VALUES ('stronghold_room_pero','pero','group','active','stronghold','room:pero');
+      INSERT INTO group_chat_messages(id,room_id,pair_id,sender_id,content,role) VALUES (1,'room','p1','user','聊天','user');
+      INSERT INTO threads(id,agent_id,channel,status,platform,platform_identifier) VALUES ('stronghold_room_pero','pero','group','active','stronghold','room:pero');
     `)
     await service.update('pero', { mood: '期待' }, scope('p1', 'stronghold_room_pero'))
     sqlite.exec('DELETE FROM group_chat_messages')
@@ -55,12 +50,12 @@ describe('会话角色状态的隔离与撤回', () => {
     ).rejects.toThrow('已撤回')
   })
 
-  it('同一角色的两条会话互不影响，无会话时不返回全局状态', async () => {
+  it('主侧会话读取同一角色状态，其他角色仍有独立权威', async () => {
     await service.update('pero', { mood: '期待', mind: '会话一' }, scope())
     await service.update('pero', { mood: '平静', mind: '会话二' }, scope('p1', 't2'))
-    expect(await service.get('pero', 't1')).toMatchObject({ mood: '期待', mind: '会话一' })
+    expect(await service.get('pero', 't1')).toMatchObject({ mood: '平静', mind: '会话二' })
     expect(await service.get('pero', 't2')).toMatchObject({ mood: '平静', mind: '会话二' })
-    expect(await service.get('pero')).toBeNull()
+    expect(await service.get('pero')).toMatchObject({ mood: '平静', mind: '会话二' })
     expect(await service.get('nana', 't1')).toBeNull()
   })
 
@@ -91,7 +86,7 @@ describe('会话角色状态的隔离与撤回', () => {
     await service.update('pero', { mood: '期待' }, scope())
     await service.update('pero', { mood: '专注' }, scope('p1', 't2'))
     await service.clearThread('t1')
-    expect(await service.get('pero', 't1')).toMatchObject(DEFAULT_CHARACTER_STATE)
+    expect(await service.get('pero', 't1')).toMatchObject({ mood: '专注' })
     expect((await service.get('pero', 't2'))?.mood).toBe('专注')
     sqlite.prepare("UPDATE threads SET status='deleted' WHERE channel='desktop'").run()
     await service.clearChannel('desktop')
@@ -164,10 +159,10 @@ describe('会话角色状态的隔离与撤回', () => {
     expect(JSON.parse(state!.idleMessagesJson)).toEqual([])
   })
 
-  it('迁移从各自有效历史恢复，不把旧全局状态复制到所有会话', async () => {
+  it('旧会话状态保留为兼容资料，新角色状态从空事件流开始', async () => {
     sqlite.exec('DROP TABLE thread_character_state_events')
     const insert = sqlite.prepare(
-      "INSERT INTO thread_messages(thread_id,role,status,agent_id,pair_id,metadata_json) VALUES (?,'assistant',?,'pero',?,?)",
+      "INSERT INTO thread_messages(thread_id,role,status,agent_id,pair_id,metadata_json,content) VALUES (?,'assistant',?,'pero',?,?,'原文')",
     )
     const metadata = JSON.stringify({
       toolCalls: [{ name: 'update_state', callId: 'legacy', args: { mood: '期待' } }],
@@ -177,7 +172,7 @@ describe('会话角色状态的隔离与撤回', () => {
     insert.run('t2', 'active', 'p2', JSON.stringify({ toolCalls: ['无效旧记录'] }))
     insert.run('t2', 'active', 'p3', '{无效JSON')
     sqlite.exec(migration)
-    expect((await service.get('pero', 't1'))?.mood).toBe('期待')
+    expect(await service.get('pero', 't1')).toMatchObject(DEFAULT_CHARACTER_STATE)
     expect(await service.get('pero', 't2')).toMatchObject(DEFAULT_CHARACTER_STATE)
   })
 })

@@ -51,7 +51,7 @@
     },
     {
       "name": "remote_terminal_create",
-      "description": "在指定的已配对能力节点上创建长时 Shell 会话并返回终端 ID；Linux 节点默认使用 Bash",
+      "description": "在指定的已配对能力节点上创建长时 Shell 会话并返回终端 ID；Linux 节点默认使用 Bash高危操作：除可识别的只读查询外，执行命令在任何执行模式（包括自动审批、完整权限）下都要用户本人逐次确认，审批模型不能代替；调用前先向用户说明要做什么、为什么。",
       "display": {
         "label": "创建远程终端",
         "icon": "terminal",
@@ -141,7 +141,7 @@
     },
     {
       "name": "remote_terminal_write",
-      "description": "向指定远程终端标准输入写入文本",
+      "description": "向指定远程终端标准输入写入文本高危操作：除可识别的只读查询外，执行命令在任何执行模式（包括自动审批、完整权限）下都要用户本人逐次确认，审批模型不能代替；调用前先向用户说明要做什么、为什么。",
       "display": {
         "label": "写入远程终端",
         "icon": "pencil",

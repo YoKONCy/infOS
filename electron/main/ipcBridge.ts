@@ -42,6 +42,15 @@ import { toggleWindowMaximized } from './windows/windowState'
 import { isApplicationFocused } from './services/notificationVisibility'
 import { desktopTabs } from './windows/desktopTabs'
 import { desktopToasts } from './windows/desktopToasts'
+import { detachedPanels } from './windows/detachedPanels'
+import { backendLauncher } from './services/desktopStartup'
+import {
+  registerAgentCardSaveHandler,
+  registerDesktopExtensionHandlers,
+  registerDesktopHomeHandlers,
+  resumeDesktopControl,
+  updateDesktopControlConfirmed,
+} from './ipcDesktopExtensions'
 import type {
   DesktopTabBounds,
   PetConversationTarget,
@@ -61,6 +70,12 @@ import {
 } from './services/desktopAwareness'
 import { getSteamUser, getSubscribedItems, getWorkshopInstallations } from './services/steam'
 import { steamCloudAutoSave } from './services/cloudAutoSave'
+import { restartForResources } from './services/resourceRecovery'
+import {
+  ensurePortableDaemon,
+  getPortableDaemonStatus,
+  probeBusinessHealth,
+} from './services/portableDaemon'
 import { completionAlerts } from './services/completionAlerts'
 import { steamAchievements } from './services/steamAchievements'
 import { registerPictoriaSurface } from './services/pictoriaSurface'
@@ -135,7 +150,7 @@ async function getDevelopmentInfo(): Promise<Record<string, unknown>> {
 function registerPetControlHandlers(): void {
   const assertTrusted = (sender: Electron.WebContents, petOnly = false) => {
     if (sender === windowManager.petWin?.webContents) return
-    if (!petOnly && desktopTabs.isHost(sender)) return
+    if (!petOnly && (desktopTabs.isHost(sender) || detachedPanels.isPanel(sender))) return
     throw new Error('仅桌宠与主应用可以管理桌宠输入')
   }
   ipcMain.handle('pet-controls:get', (event) => {
@@ -152,13 +167,14 @@ function registerPetControlHandlers(): void {
   })
   ipcMain.handle('desktop-control:resume', (event) => {
     assertTrusted(event.sender)
-    return desktopControl.resume()
+    return resumeDesktopControl()
   })
   ipcMain.handle('desktop-control:update', (event, patch: unknown) => {
     assertTrusted(event.sender)
     if (!patch || typeof patch !== 'object') throw new Error('桌面设置格式不正确')
-    return desktopControl.update(patch)
+    return updateDesktopControlConfirmed(patch)
   })
+  registerDesktopHomeHandlers(assertTrusted)
   ipcMain.handle('desktop-control:capture', (event, active: unknown) => {
     assertTrusted(event.sender)
     desktopControl.setShortcutCapturing(event.sender, active === true)
@@ -191,7 +207,7 @@ function registerPetControlHandlers(): void {
   })
   ipcMain.handle('pet-controls:open-section', (event, section: unknown) => {
     assertTrusted(event.sender)
-    if (!['tasks', 'voice_config', 'agent_config'].includes(String(section)))
+    if (!['tasks', 'voice_config', 'agent_config', 'cards'].includes(String(section)))
       throw new Error('不支持的页面')
     windowManager.createDashboardWindow()
     desktopTabs.openHome(String(section))
@@ -265,6 +281,7 @@ function trustedClient(url: string): boolean {
 function trustedWindow(sender: Electron.WebContents): boolean {
   return (
     desktopTabs.isHost(sender) ||
+    detachedPanels.isPanel(sender) ||
     [
       windowManager.launcherWin,
       windowManager.petWin,
@@ -366,7 +383,11 @@ export function registerIpcHandlers(): void {
   })
   logger.info('IPC', __t('electron.logs.ipcBridge.ts', '正在注册 IPC 通道...'))
   const assertCompletionSettingsSender = (sender: Electron.WebContents) => {
-    if (sender !== windowManager.petWin?.webContents && !desktopTabs.isHost(sender)) {
+    if (
+      sender !== windowManager.petWin?.webContents &&
+      !desktopTabs.isHost(sender) &&
+      !detachedPanels.isPanel(sender)
+    ) {
       throw new Error('仅主应用与桌宠可以管理完成提醒')
     }
   }
@@ -388,6 +409,7 @@ export function registerIpcHandlers(): void {
   })
 
   registerWindowHandlers()
+  registerDesktopExtensionHandlers()
   registerPetControlHandlers()
   registerDesktopTabHandlers()
   registerNavigationHandlers()
@@ -726,7 +748,6 @@ function registerNavigationHandlers(): void {
 function registerBackendHandlers(): void {
   ipcMain.handle('resource-recovery:restart', async (event) => {
     if (event.senderFrame !== event.sender.mainFrame) throw new Error('RESOURCE_HOST_REQUIRED')
-    const { restartForResources } = await import('./services/resourceRecovery')
     const result = await dialog.showMessageBox({
       type: 'question',
       message: __t('electron.ui.resource-recovery', '重启应用以切换资源？'),
@@ -740,9 +761,10 @@ function registerBackendHandlers(): void {
     if (result.response === 0) await restartForResources()
   })
   ipcMain.handle('start-backend', async () => {
-    const { ensurePortableDaemon, getPortableDaemonStatus } =
-      await import('./services/portableDaemon')
-    const ready = await ensureSelectedBackend(ensurePortableDaemon)
+    // 本进程已打开过用户的后端启动程序时只探测，不再启动便携 Daemon（避免两个后端抢端口）。
+    const ready = await ensureSelectedBackend(
+      backendLauncher.wasStarted ? probeBusinessHealth : ensurePortableDaemon,
+    )
     return isRemoteConnection()
       ? { ready, running: false, mode: 'remote' }
       : getPortableDaemonStatus()
@@ -757,7 +779,6 @@ function registerBackendHandlers(): void {
   })
 
   ipcMain.handle('get-backend-logs', async () => {
-    const { getPortableDaemonStatus } = await import('./services/portableDaemon')
     return getPortableDaemonStatus()
   })
 }
@@ -787,6 +808,7 @@ function registerSkillHandlers(): void {
 }
 
 function registerExportHandlers(): void {
+  registerAgentCardSaveHandler()
   ipcMain.handle('export-agent-package', async (event, input: unknown) => {
     const payload = input as {
       format?: unknown
@@ -1039,22 +1061,26 @@ function registerAssetHandlers(): void {
 // NapCat QQ 机器人
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 function registerNapCatHandlers(): void {
+  // 社交配置页摘成桌面面板后同样可以管理 NapCat。
+  const assertNapCatSender = (sender: Electron.WebContents) => {
+    if (!detachedPanels.isPanel(sender)) desktopTabs.assertHost(sender)
+  }
   void getNapCatDashboard()
     .then(({ initializeNapCatDashboard }) => initializeNapCatDashboard())
     .catch(() => logger.warn('NapCat', __t('electron.logs.ipcBridge.ts', '管理页入口初始化失败')))
   ipcMain.handle('start-napcat', async (event) => {
-    desktopTabs.assertHost(event.sender)
+    assertNapCatSender(event.sender)
     const { startNapCatWithDashboard } = await getNapCatDashboard()
     return startNapCatWithDashboard()
   })
   ipcMain.handle('open-napcat-dashboard', async (event) => {
-    desktopTabs.assertHost(event.sender)
+    assertNapCatSender(event.sender)
     const { openNapCatDashboard } = await getNapCatDashboard()
     return openNapCatDashboard()
   })
 
   ipcMain.handle('stop-napcat', async (event) => {
-    desktopTabs.assertHost(event.sender)
+    assertNapCatSender(event.sender)
     const { stopNapCat } = await getNapCatService()
     await stopNapCat()
   })

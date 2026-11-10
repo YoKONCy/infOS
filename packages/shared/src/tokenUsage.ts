@@ -60,7 +60,7 @@ export interface TokenUsageFilters {
   modelId?: string
 }
 export interface TokenUsageFilterOptions {
-  threads: Array<{ id: string; title: string | null }>
+  threads: Array<{ id: string; title: string | null; threadKind?: 'main' | 'side' | null }>
   models: Array<{ provider: string; modelId: string }>
 }
 

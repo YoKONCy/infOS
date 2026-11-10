@@ -346,6 +346,8 @@ function openSource(): void {
           </PButton>
         </div>
         <div v-if="showSource" class="source-body">
+          <p v-if="source?.withdrawn" class="source-hint">{{ __t('ui.chat', '来源已撤回，记忆保留。') }}</p>
+          <p v-else-if="source?.revised" class="source-hint">{{ __t('ui.chat', '来源已编辑，以下显示当前记录。') }}</p>
           <p v-if="sourceError" class="source-error">{{ sourceError }}</p>
           <p v-else-if="sourceLoading" class="source-hint">
             {{ __t('ui.settings', '加载来源对话...') }}

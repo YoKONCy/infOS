@@ -12,6 +12,9 @@ import {
 import { isElectron } from '../../utils/ipcAdapter'
 import { logger } from '../../lib/logger'
 import { t } from '../../i18n'
+import { configApi } from '../../api/modules/configApi'
+import { modelApi } from '../../api/modules/modelApi'
+import { useAgentStore } from '../../stores'
 
 const props = defineProps<{
   ready: boolean
@@ -19,9 +22,14 @@ const props = defineProps<{
   navigate: (tab: string) => Promise<void>
 }>()
 const emit = defineEmits<{ active: [value: boolean] }>()
-const steps = computed(getDesktopSteps)
+const agentStore = useAgentStore()
+const hasAssignedModel = ref(false)
+const steps = computed(() => getDesktopSteps(hasAssignedModel.value))
 const visible = ref(false)
 const pending = ref<OnboardingFlow | null>(null)
+const setupVisible = ref(false)
+const setupCollapsed = ref(false)
+let selectedChoice = ''
 let runId = ''
 let previousTab = 'chat'
 let previousFocus: HTMLElement | null = null
@@ -94,6 +102,7 @@ async function start() {
     starting ||
     visible.value ||
     finishing ||
+    setupVisible.value ||
     disposed
   )
     return
@@ -107,6 +116,25 @@ async function start() {
   previousFocus = document.activeElement instanceof HTMLElement ? document.activeElement : null
   emit('active', true)
   try {
+    selectedChoice = ''
+    hasAssignedModel.value = false
+    try {
+      const agentKey = `model.agent.${agentStore.activeAgentId.trim().toLowerCase()}`
+      const [assignments, models] = await Promise.all([
+        configApi.batch(['model.main', agentKey]),
+        modelApi.list(),
+      ])
+      const ids = new Set((models.data ?? []).map((model) => String(model.id)))
+      hasAssignedModel.value = [assignments.data?.[agentKey], assignments.data?.['model.main']].some(
+        (id) => !!id && ids.has(id),
+      )
+    } catch {
+      // 无法确认配置时保留选择，让用户自行决定是否设置。
+    }
+    if (disposed || controller.signal.aborted || !props.ready) {
+      emit('active', false)
+      return
+    }
     await props.navigate('chat')
     await nextTick()
     if (document.fonts) await document.fonts.ready
@@ -141,6 +169,7 @@ async function reload() {
     if (runId && (flow.stage !== 'desktop' || runId !== flow.runId)) {
       run?.abort()
       visible.value = false
+      setupVisible.value = false
       emit('active', false)
     }
     pending.value = flow.stage === 'desktop' ? flow : null
@@ -160,17 +189,41 @@ async function reload() {
   }
   void start()
 }
+function choose(value: string) {
+  selectedChoice = value
+}
 async function finish() {
+  if (selectedChoice === 'setup-model') {
+    visible.value = false
+    setupVisible.value = true
+    setupCollapsed.value = false
+    emit('active', false)
+    try {
+      await props.navigate('model_config')
+    } catch {
+      setupVisible.value = false
+      await complete('chat')
+    }
+    return
+  }
+  await complete('chat')
+}
+async function skip() {
+  selectedChoice = ''
+  await complete(previousTab)
+}
+async function complete(target: string) {
   if (finishing || !runId) return
   finishing = true
   run?.abort()
   visible.value = false
+  setupVisible.value = false
   pending.value = null
   emit('active', false)
   try {
     await completeOnboarding(runId)
     if (!disposed) {
-      await props.navigate(previousTab)
+      await props.navigate(target)
       await nextTick()
       if (previousFocus?.isConnected) previousFocus.focus({ preventScroll: true })
     }
@@ -208,6 +261,100 @@ onBeforeUnmount(() => {
     :steps="steps"
     :prepare-step="prepare"
     @finish="finish"
-    @skip="finish"
+    @skip="skip"
+    @choice="choose"
   />
+  <Teleport to="body">
+    <aside
+      v-if="setupVisible"
+      class="setup-guide"
+      :aria-label="t('ui.onboarding', '模型配置小提示')"
+    >
+      <header>
+        <strong>{{ t('ui.onboarding', 'Pero · 模型配置小提示') }}</strong>
+        <button type="button" @click="setupCollapsed = !setupCollapsed">
+          {{ setupCollapsed ? t('ui.onboarding', '展开步骤') : t('ui.onboarding', '收起步骤') }}
+        </button>
+      </header>
+      <template v-if="!setupCollapsed">
+        <p>
+          {{
+            t('ui.onboarding', '准备好服务商提供的地址、API Key 和模型 ID，我们一起设置吧！部分服务不需要密钥，以服务商说明为准。')
+          }}
+        </p>
+        <ol>
+          <li>
+            {{ t('ui.onboarding', '点「服务商连接」→「新建」，选择品牌模板，填写连接信息后点「创建连接」。') }}
+          </li>
+          <li>
+            {{ t('ui.onboarding', '关闭连接窗口，点「添加模型」，选择刚才的连接，填写或获取模型 ID，再点「添加」。') }}
+          </li>
+          <li>
+            {{ t('ui.onboarding', '在模型卡片点「测试」。成功后点「设为主模型」；如果已经显示「主模型」，就不用再点啦。') }}
+          </li>
+        </ol>
+        <p>{{ t('ui.onboarding', '如果服务商指定了协议，请在连接和模型里按它的说明选择哦。') }}</p>
+        <p class="setup-guide__hint">{{ t('ui.onboarding', 'API Key 像密码一样，请不要分享给别人哦。') }}</p>
+      </template>
+      <button type="button" class="setup-guide__done" @click="complete('chat')">
+        {{ t('ui.onboarding', '返回聊天') }}
+      </button>
+    </aside>
+  </Teleport>
 </template>
+
+<style scoped>
+.setup-guide {
+  position: fixed;
+  z-index: 10001;
+  right: 18px;
+  bottom: 18px;
+  width: min(340px, calc(100vw - 36px));
+  max-height: min(70vh, 620px);
+  overflow-y: auto;
+  padding: 16px;
+  border: 1px solid var(--ui-border-default);
+  border-top: 3px solid var(--ui-accent-primary);
+  border-radius: var(--ui-radius-md);
+  background: var(--ui-bg-elevated);
+  color: var(--ui-text-primary);
+  box-shadow: var(--ui-shadow-lg);
+  font: 500 13px/1.65 var(--ui-font-sans);
+}
+.setup-guide header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+.setup-guide header strong {
+  color: var(--ui-accent-primary);
+}
+.setup-guide p {
+  margin: 10px 0;
+}
+.setup-guide ol {
+  display: grid;
+  gap: 8px;
+  margin: 0;
+  padding-left: 20px;
+}
+.setup-guide__hint {
+  color: var(--ui-text-secondary);
+}
+.setup-guide button {
+  border: 0;
+  background: transparent;
+  color: var(--ui-accent-primary);
+  cursor: pointer;
+  font: inherit;
+}
+.setup-guide__done {
+  padding: 5px 0;
+  font-weight: 700;
+}
+.setup-guide button:focus-visible {
+  outline: 2px solid var(--ui-accent-primary);
+  outline-offset: 2px;
+}
+</style>

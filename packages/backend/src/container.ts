@@ -1,4 +1,24 @@
+import { speakPerceptionLine } from './services/perception/perceptionSpeech'
+import { isWatchAlongMainThread } from './services/companion/watchAlongTurn'
+import { companionTurnOptions, watchAlongSpeakingModel } from './services/perception/watchAlongWiring'
+import type { ExpressionService } from './services/expression/service'
+import { createExpression } from './services/expression/expressionWiring'
 import { t as __t } from './lib/i18n'
+import type { HomeService } from './services/home/homeService'
+import {
+  createHome,
+  deliverHomeCards,
+  homeSessionCleanup,
+  wireHomeConfirmation,
+  wireHomeNativeTrash,
+} from './services/home/homeWiring'
+import {
+  desktopControlEnabledProbe,
+  desktopDirectChannel,
+  startShellCapabilities,
+  wireDesktopSafety,
+  wireShellTools,
+} from './capabilities/desktopShellWiring'
 import { RuntimeDebugService } from './services/debug/runtimeDebugService'
 import { setRuntimeDebugService } from './tools/runtimeDebug'
 import { PackageManagementService } from './packages/packageManagementService'
@@ -107,7 +127,7 @@ import { EventMemoryFallbackService } from './services/memory/eventMemoryFallbac
 import { memoryPersonaResolver } from './services/memory/memoryPersona'
 import { MemoryBackgroundControl } from './services/memory/memoryBackgroundControl'
 import { MemoryAgentScope } from './services/memory/memoryAgentScope'
-import { EMBEDDING_ENABLED_KEY, MEMORY_BACKGROUND_ENABLED_KEY } from '@infos/shared'
+import { EMBEDDING_ENABLED_KEY } from '@infos/shared'
 import { LlmBackgroundEventExtractor } from './services/memory/llmBackgroundEventExtractor'
 import { EventReflectionService } from './services/memory/eventReflectionService'
 import { LlmEventReflectionModel } from './services/memory/llmEventReflectionModel'
@@ -140,6 +160,7 @@ import { ProactiveService as CompanionSchedulerService } from './services/compan
 
 // ── Service (AIOS: Thread + Context 域) ──
 import { ThreadService } from './services/thread/threadService'
+import { ThreadForkService } from './services/thread/threadForkService'
 import { ThreadModelService } from './services/thread/threadModelService'
 import { BackgroundScheduler } from './services/task/backgroundTaskService'
 import { TaskControlService } from './services/task/taskControlService'
@@ -148,7 +169,9 @@ import { setTaskToolRuntime } from './tools/taskControl/runtime'
 import { ContextCompiler } from './services/context/contextCompiler'
 import { ToolContextService } from './services/context/toolContextService'
 import { ContextRegionRegistry } from './services/context/contextRegionRuntime'
-import { ContinuityRegionProvider } from './services/context/continuityRegionProvider'
+import { NotebookContextProvider } from './services/memory/notebook'
+import { WorkContextClearRepository } from './repositories/workContextClear.repo'
+import { setWorkContextClearDeps } from './tools/clearWorkContext'
 import { ConversationTurnService } from './services/conversation/conversationTurnService'
 import { AchievementRepository } from './repositories/achievement.repo'
 import { AchievementService } from './services/system/achievementService'
@@ -218,7 +241,9 @@ import {
   setEventMemoryToolDeps,
   setFactsToolDeps,
   setRemoteShellCapabilityRuntime,
+  SHELL_TOOL_NAMES,
 } from './tools'
+import { DESKTOP_SHELL_CAPABILITY } from './capabilities/shellCapabilityRuntime'
 import { setSchedulerService } from './tools/scheduler'
 // AIOS(Phase4): WorkspaceService（Principal Workspace 文件操作 + containment 检查）
 import { WorkspaceCheckpointService } from './services/workspace/workspaceCheckpointService'
@@ -246,6 +271,7 @@ import { StrongholdService } from './services/stronghold/strongholdService'
 import { ButlerService } from './services/stronghold/butlerService'
 import { GroupChatService } from './services/stronghold/groupChatService'
 import { GroupChatDispatcher } from './services/stronghold/groupChatDispatcher'
+import { StrongholdRoundService } from './services/stronghold/strongholdRoundService'
 import { createEnvelope } from './services/gateway/types'
 import { SqliteSocialStoragePort } from './applications/sqliteSocialStoragePort'
 // 注意：社交系统（SocialBridge/ImageCacheManager/StickerService/平台适配器/SocialMessageRepository）
@@ -253,7 +279,7 @@ import { SqliteSocialStoragePort } from './applications/sqliteSocialStoragePort'
 
 import { setSkillResourceLoader } from './tools/skillResources'
 import { setScreenshotProvider } from './tools/screenVision'
-import { setApplicationProvider, setWindowProvider } from './tools/systemInfo'
+import { setApplicationProvider, setWindowProvider, type WindowInfo } from './tools/systemInfo'
 import { setDesktopAutomationProvider } from './tools/desktopAutomation'
 import { setButlerService, setStrongholdService } from './tools/strongholdOps'
 import { setFinishTaskDeps } from './tools/finishTask'
@@ -279,6 +305,7 @@ import { setImageReadResourceService } from './tools/fileOps'
 import { IntegrationService } from './services/integrations/integrationService'
 import { PdfParserService } from './services/integrations/pdfParserService'
 import { ChatBackgroundService } from './services/system/chatBackgroundService'
+import { ThemeService } from './services/theme/themeService'
 import { UserAvatarService } from './services/system/userAvatarService'
 import { tokenCounter } from './services/tokenizer/tokenCounter'
 
@@ -321,9 +348,11 @@ export interface AppConfig {
  * 禁止全局单例或函数内 import (避免循环依赖问题)。
  */
 export interface AppContext {
+  home: HomeService
   clientAccess: ClientAccessService
   webFrontend: WebFrontendService
   // ── 基础设施 ──
+  expression: ExpressionService
   db: DrizzleDb
   pathResolver: PathResolver
   assetRegistry: AssetRegistry
@@ -401,6 +430,7 @@ export interface AppContext {
 
   // ── Service (AIOS: Thread + Context 域) ──
   threadService: ThreadService
+  threadForkService: ThreadForkService
   threadModelService: ThreadModelService
   flowStateService: FlowStateService
   taskPlanService: TaskPlanService
@@ -417,6 +447,7 @@ export interface AppContext {
   htmlPreviewService: HtmlPreviewService
   browserTools: BrowserToolRuntime
   chatBackgroundService: ChatBackgroundService
+  themeService: ThemeService
   userAvatarService: UserAvatarService
   /** M05: 统一任务中心（派发/队列/状态机/恢复） */
   backgroundTaskService: BackgroundScheduler
@@ -466,6 +497,7 @@ export interface AppContext {
   // ── 据点/群聊 ──
   strongholdService: StrongholdService
   strongholdTurnService: StrongholdTurnService
+  strongholdRoundService: StrongholdRoundService
   butlerService: ButlerService
   groupChatService: GroupChatService
   groupChatDispatcher: GroupChatDispatcher
@@ -575,6 +607,12 @@ export async function createAppContext(config: AppConfig): Promise<AppContext> {
   // ── 2. 数据库 ──
   const db = createDrizzleConnection(config.databasePath)
   const kernelLifecycle = new LifecycleScope('kernel')
+  const home = createHome(
+    db,
+    config.dataDir,
+    (agentId) => workspaceService.getWorkspaceRoot(agentId),
+    kernelLifecycle,
+  )
   const localNodeId = (process.env.INFOS_NODE_ID ??
     `infos-node-${createHash('sha256')
       .update(`${os.hostname()}|${config.runtimeEnv.dataDir}`)
@@ -664,7 +702,7 @@ export async function createAppContext(config: AppConfig): Promise<AppContext> {
     (request) => !!clientAccess.authenticate(request),
   )
   const memoryBackground = new MemoryBackgroundControl()
-  memoryBackground.setEnabled((await configRepo.get(MEMORY_BACKGROUND_ENABLED_KEY)) !== 'false')
+  memoryBackground.configure(await configRepo.listAll('memory.background.'))
   const weatherService = new WeatherService(configRepo)
   kernelLifecycle.defer(() => weatherService.dispose())
   await weatherService.initialize()
@@ -698,6 +736,8 @@ export async function createAppContext(config: AppConfig): Promise<AppContext> {
   const mcpConfigService = new McpConfigService(mcpRepo, mcpManager)
   // AIOS: Thread 仓储（替代旧 Session 持久层）
   const threadRepo = new ThreadRepository(db, kernelOutboxRepo)
+  const workContextClears = new WorkContextClearRepository(db)
+  threadRepo.conversations.recover()
   const flowStateRepo = new FlowStateRepository(db)
   const fileSnapshotRepo = new FileSnapshotRepository(db)
   const workspaceCheckpointService = new WorkspaceCheckpointService(
@@ -710,9 +750,9 @@ export async function createAppContext(config: AppConfig): Promise<AppContext> {
   const eventNoteRepo = new EventNoteRepository(db)
   const factsRepo = new FactsRepository(db, storeRegistry)
   const privacyPolicy = new PrivacyPolicy(sqlite)
-  factsRepo.setPrivacyPolicy(privacyPolicy, (id) => privacyDeletionService.deleteFact(id))
+  factsRepo.setPrivacyPolicy(privacyPolicy, (id, assertCurrent) => privacyDeletionService.deleteFact(id, assertCurrent))
   eventNoteRepo.setPrivacyPolicy(privacyPolicy)
-  setFactsToolDeps(factsRepo)
+  setFactsToolDeps(factsRepo, (ctx) => threadRepo.assertMainMemoryWrite(ctx.threadId, ctx.agentId, ctx.generation))
   await factsRepo.replayPending()
 
   // M05: 统一任务中心 Repository（background_tasks 持久实体）
@@ -788,6 +828,7 @@ export async function createAppContext(config: AppConfig): Promise<AppContext> {
     factsRepo,
   )
   const agentManager = new AgentManager(pathResolver, configRepo)
+  agentManager.setRegistrationHandler((agentId) => { threadRepo.ensureMainThread(agentId) })
 
   // ── 7. Service — Agent 域 ──
   const gatewayHub = new GatewayHub(
@@ -898,6 +939,7 @@ export async function createAppContext(config: AppConfig): Promise<AppContext> {
   capabilityDirectory.registerDefinition(AUDIO_OUTPUT_CAPABILITY)
   capabilityDirectory.registerDefinition(COMPLETION_ALERT_CAPABILITY)
   capabilityDirectory.registerDefinition(SYSTEM_SHELL_CAPABILITY)
+  capabilityDirectory.registerDefinition(DESKTOP_SHELL_CAPABILITY)
   const capabilityBridge = new CapabilityBridge(
     capabilityDirectory,
     capabilityHandles,
@@ -909,8 +951,9 @@ export async function createAppContext(config: AppConfig): Promise<AppContext> {
   const inboundRouteRepo = new InboundRouteRepository(db)
   const inboundRouteService = new InboundRouteService(inboundRouteRepo)
 
+  setWorkContextClearDeps(workContextClears, toolContextService)
   const contextRegionRegistry = new ContextRegionRegistry()
-  contextRegionRegistry.register(new ContinuityRegionProvider(threadRepo))
+  contextRegionRegistry.register(new NotebookContextProvider(workspaceService))
   contextRegionRegistry.register(new ObserverContextRegionProvider(agentStateRepository))
   const contextCompiler = new ContextCompiler(
     threadService,
@@ -927,10 +970,17 @@ export async function createAppContext(config: AppConfig): Promise<AppContext> {
   threadService.setPromptVariableCleanup((threadId) =>
     promptWorkspace.variableStore.removeThread(threadId),
   )
+  threadService.setPromptVariableReset((threadId, reset) =>
+    promptWorkspace.variableStore.resetThread(threadId, reset),
+  )
+  for (const agent of agentManager.listAgents()) await threadService.getMainThread(agent.id)
   contextCompiler.setWeatherService(weatherService)
   contextCompiler.setPetStateService(petStateService)
   contextCompiler.setPetVisibilityProvider((agentId) => gatewayHub.hasVisiblePet(agentId))
   threadService.setPlanLifecycle(taskPlanService)
+  threadService.setFlowStateLifecycle(flowStateService)
+  threadService.setActivityInvalidator((threadId, sourceIds) => companionSchedulerService.discardThreadActivity(threadId, sourceIds))
+  threadService.setHomeSessionCleanup(homeSessionCleanup(home))
   threadService.setCharacterStateLifecycle(petStateService)
   contextCompiler.setTaskPlanService(taskPlanService)
 
@@ -969,6 +1019,17 @@ export async function createAppContext(config: AppConfig): Promise<AppContext> {
   )
   const packageProcesses = new PackageProcessSupervisor(kernelScheduler)
   const packageHookBus = new PackageHookBus()
+  const { expression, internalFlow } = createExpression({
+    sqlite,
+    home,
+    contextCompiler,
+    modelRoles,
+    llmService,
+    mdpEngine,
+    packageHookBus,
+    lifecycle: kernelLifecycle,
+    logger,
+  })
   const packageUi = new PackageUiRegistry()
   const packageAssets = new PackageAssets()
   const packageWebUi = new PackageWebUi(
@@ -1152,6 +1213,12 @@ export async function createAppContext(config: AppConfig): Promise<AppContext> {
   )
   void desktopCapabilities.start()
   kernelLifecycle.defer(() => desktopCapabilities.stop())
+  const shellCapabilities = startShellCapabilities(
+    capabilityDirectory,
+    capabilityHandles,
+    localNodeId,
+    kernelLifecycle,
+  )
 
   const userPackagesDir = pathResolver.resolve('@data/packages')
   packageInstaller.migrateInstallDirectory(
@@ -1195,7 +1262,7 @@ export async function createAppContext(config: AppConfig): Promise<AppContext> {
 
   const imageUnderstandingService = new ImageUnderstandingService(configRepo, modelRepo, llmService)
   const eventMemoryService = new EventMemoryService(eventNoteRepo, storeRegistry, embeddingService)
-  eventMemoryService.setPackageHooks(packageHookBus)
+  eventMemoryService.setPackageHooks(internalFlow)
   eventMemoryService.setBackgroundPolicy(memoryBackground)
   eventMemoryService.setPrivacyPolicy(privacyPolicy)
   const contextRnn = new ContextRnnRuntime(
@@ -1209,6 +1276,16 @@ export async function createAppContext(config: AppConfig): Promise<AppContext> {
     eventNoteRepo,
     threadRepo,
   )
+  const stopMemoryEvents = kernelEventBus.subscribe(async (event) => {
+    if (event.type === 'conversation.execution.settled') {
+      await eventNoteDraftCommitter.consumeExecution((event.payload as { executionId: string }).executionId)
+      return
+    }
+    if (event.type !== 'conversation.message.committed' && event.type !== 'stronghold.message.committed') return
+    const messageId = (event.payload as { messageId?: number }).messageId
+    if (typeof messageId === 'number') await eventNoteDraftCommitter.consumeMessage(messageId, event.type === 'stronghold.message.committed')
+  })
+  kernelLifecycle.defer(() => { stopMemoryEvents() })
   setEventMemoryToolDeps(eventMemoryService)
   const memoryAgents = new MemoryAgentScope((id) => Boolean(agentManager.getAgent(id)))
   await eventNoteRepo.retireOrphanBackgroundWork(agentManager.listAgents().map((agent) => agent.id))
@@ -1254,6 +1331,7 @@ export async function createAppContext(config: AppConfig): Promise<AppContext> {
     knowledge: knowledgeService,
     stores: storeRegistry,
     invalidateMemory: async () => {
+      expression.store.invalidateMaterials()
       eventMemoryService.invalidateForDeletion()
       eventReflection.invalidateForDeletion()
       await dailyNotes.invalidateForDeletion()
@@ -1263,13 +1341,20 @@ export async function createAppContext(config: AppConfig): Promise<AppContext> {
     listAgentIds: () => agentManager.listAgents().map((agent) => agent.id),
     resetSqlite: () => new ResetService(db).resetMemories(),
     forgetSocial: (agentId) => socialStorage.forgetLongMemory(agentId),
-    retractCharacterState: (threadId, pairIds) => petStateService.rollbackPairs(threadId, pairIds),
+    retractCharacterState: async (threadId, sourceKeys) => {
+      const executionIds = sourceKeys.flatMap((key) => {
+        const match = /^message:(\d+)@\d+$/.exec(key)
+        return match ? threadRepo.conversations.invalidate(Number(match[1])) : [key]
+      })
+      await petStateService.rollbackPairs(threadId, [...new Set(executionIds)])
+    },
+    retractSceneState: (roomId, pairId) => petStateService.rollbackRoomPair(roomId, pairId),
   })
   kernelLifecycle.defer(() => privacyDeletionService.stop())
 
   // AIOS: AgentService — 新版接线（仅依赖新服务）
   const agentService = new AgentService({
-    packageHooks: packageHookBus,
+    packageHooks: internalFlow,
     llmService,
     configRepo,
     agentManager,
@@ -1296,6 +1381,7 @@ export async function createAppContext(config: AppConfig): Promise<AppContext> {
       realmId?: string,
       capabilitySessionId?: string,
       interactionMode: import('@infos/shared').InteractionMode = 'work',
+      enabledSkills: readonly string[] = [],
     ) => {
       if (realmId) {
         return [
@@ -1306,10 +1392,17 @@ export async function createAppContext(config: AppConfig): Promise<AppContext> {
           ...applicationRealms.toolDefinitions(realmId),
         ].filter((tool) => !disabledTools.includes(tool.name))
       }
+      const hasSkills = interactionMode !== 'minimal' && capabilityScope === 'default' &&
+        capabilityGate.resolve(agentId, channel, capabilitySessionId).enabledSkills
+          .some((skill) => enabledSkills.includes(skill.id))
       const registryTools = knowledgeRecallService
         .tools(toolRegistry.getDefinitions(channel))
         .filter((tool) => !applicationRealms.isPrivateTool(tool.name))
         .filter((tool) => isToolAllowedInInteractionMode(tool.name, interactionMode, toolRegistry))
+        .filter((tool) =>
+          !['skill_list_resources', 'skill_read_resource'].includes(tool.name) ||
+          hasSkills,
+        )
         .map((tool) =>
           spokenReplyToolDefinition(
             tool,
@@ -1342,7 +1435,6 @@ export async function createAppContext(config: AppConfig): Promise<AppContext> {
     },
     resolveToolDefinitions: (definitions, agentId, threadId) =>
       toolRegistry.resolveDefinitions(definitions, agentId, threadId),
-    clearDynamicCapabilities: (scopeId) => capabilityGate.clearSession(scopeId),
     // 取消检测 → RuntimeStateService
     cancelChecker: runtimeStateService,
     // 角色对话模型：角色专用配置优先，未指派时回退主模型。
@@ -1350,6 +1442,9 @@ export async function createAppContext(config: AppConfig): Promise<AppContext> {
     getModelConfig: modelRoles.bind('main'),
     getModelConfigById: (id) => modelRoles.resolveById(id),
     isDesktopOperationAvailable: (operation) => desktopCapabilities.isOperationAvailable(operation),
+    isDesktopControlEnabled: desktopControlEnabledProbe(desktopCapabilities),
+    shellToolNames: SHELL_TOOL_NAMES,
+    isShellAvailable: () => shellCapabilities.isAvailable(),
   })
 
   // AIOS: chatResetService 已废弃（旧版清日志功能，新版可基于 ThreadService 重写）
@@ -1379,7 +1474,7 @@ export async function createAppContext(config: AppConfig): Promise<AppContext> {
   const enabledMemoryAgents = () =>
     agentManager
       .listAgents()
-      .filter((agent) => agent.isEnabled)
+      .filter((agent) => agent.isEnabled && memoryBackground.isAgentEnabled(agent.id))
       .map((agent) => agent.id)
   // 时钟不占用模型任务的调度名额，长时间关系维护也不能阻塞在线时长落盘。
   const memoryRuntimeClock = setInterval(() => {
@@ -1408,7 +1503,7 @@ export async function createAppContext(config: AppConfig): Promise<AppContext> {
       if (!memoryBackground.enabled) return
       const agentIds = agentManager
         .listAgents()
-        .filter((agent) => agent.isEnabled)
+        .filter((agent) => agent.isEnabled && memoryBackground.isAgentEnabled(agent.id))
         .map((agent) => agent.id)
       await eventMemoryFallback.tick(agentIds, signal)
     },
@@ -1430,7 +1525,7 @@ export async function createAppContext(config: AppConfig): Promise<AppContext> {
         await eventReflection.enqueueDailyBackfill()
       }
       await eventReflection.drain()
-      for (const agent of agentManager.listAgents().filter((item) => item.isEnabled)) {
+      for (const agent of agentManager.listAgents().filter((item) => item.isEnabled && memoryBackground.isAgentEnabled(item.id))) {
         if (!memoryBackground.enabled) break
         eventReflection.validateAndRepair(agent.id)
       }
@@ -1454,7 +1549,7 @@ export async function createAppContext(config: AppConfig): Promise<AppContext> {
       const now = new Date()
       if (now.getHours() !== 21) return
       const date = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-${String(now.getDate()).padStart(2, '0')}`
-      const agents = agentManager.listAgents().filter((item) => item.isEnabled)
+      const agents = agentManager.listAgents().filter((item) => item.isEnabled && memoryBackground.isAgentEnabled(item.id))
       let sourceIncomplete = false
       try {
         await eventMemoryFallback.tick(agents.map((agent) => agent.id))
@@ -1754,12 +1849,17 @@ export async function createAppContext(config: AppConfig): Promise<AppContext> {
   toolExecutor.setScreenshotResourceService(resourceService)
   appManager.setResourcePort(resourceService.socialPort())
   await attachmentService.initialize()
+  const threadForkService = new ThreadForkService(
+    db, attachmentService, promptWorkspace.variableStore, taskPlanService,
+  )
   privacyDeletionService.setAttachmentCleaner((id, storageKey) =>
     attachmentService.purgeDeleted(id, storageKey),
   )
   await privacyDeletionService.initialize()
   kernelLifecycle.defer(() => attachmentService.dispose())
   const chatBackgroundService = new ChatBackgroundService(pathResolver, configRepo)
+  const themeService = new ThemeService(pathResolver.resolve('@data/themes'))
+  wireShellTools(shellCapabilities, themeService)
   const userAvatarService = new UserAvatarService(pathResolver, configRepo)
   const conversationProjection = new ConversationProjectionService(
     threadService,
@@ -1818,6 +1918,7 @@ export async function createAppContext(config: AppConfig): Promise<AppContext> {
     )
   })
   approvalService.setWaitGuard((threadId) => runtimeStateService.suspendTimeout(threadId))
+  wireHomeConfirmation(home, runtimeStateService, approvalService, gatewayHub)
   approvalService.onResolved((request) => {
     if (!request.taskId) conversationProjection.invalidate(request.threadId)
     void gatewayHub.pushBusiness(
@@ -1872,6 +1973,7 @@ export async function createAppContext(config: AppConfig): Promise<AppContext> {
     toolContextService,
     taskPlanService,
     productivityRuntime,
+    getBackgroundTask: (taskId) => backgroundTaskRepo.findById(taskId),
     onReplyReady: async (reply) => {
       if (reply.completedSuccessfully) {
         // 先落盘手机通知；桌面能力调用保持异步，不阻塞对话结算。
@@ -1936,6 +2038,7 @@ export async function createAppContext(config: AppConfig): Promise<AppContext> {
     const result = await conversationTurnService.executeTurn({
       threadId: thread.id,
       agentId: request.hostAgentId,
+      realmId: request.realmId,
       content:
         `【AgentApplication 临时通信】\n应用：${request.appId}\n模式：${request.mode}\n请求：${request.summary}\n` +
         `辅助上下文：${JSON.stringify(request.context ?? {})}\n请判断后给出简洁、可执行的结构化建议。`,
@@ -2014,6 +2117,10 @@ export async function createAppContext(config: AppConfig): Promise<AppContext> {
     taskDeliveryService.enqueue(event),
   )
   const unsubscribeCompletionAlerts = backgroundTaskService.onEvent(({ type, task }) => {
+    if (['background_task_completed', 'background_task_failed', 'background_task_cancelled'].includes(type)) {
+      void companionSchedulerService.notifyTask(task).catch((error) =>
+        logger.warn(__t('logs.companion', '保存主动行为活动时间失败'), { error }))
+    }
     if (
       type !== 'background_task_completed' ||
       task.status !== 'completed' ||
@@ -2176,19 +2283,59 @@ export async function createAppContext(config: AppConfig): Promise<AppContext> {
   const isEnabledAgent = (agentId: string) =>
     Boolean(agentManager.getAgent(agentId)) && agentManager.enabledAgents.has(agentId.toLowerCase())
   const strongholdService = new StrongholdService(db, isRegisteredAgent)
-  const groupChatService = new GroupChatService(db, isEnabledAgent, (roomId, pairId) =>
-    petStateService.rollbackRoomPair(roomId, pairId),
+  const groupChatService = new GroupChatService(db, isEnabledAgent, async (roomId, pairId) => {
+    await petStateService.rollbackRoomPair(roomId, pairId)
+    await flowStateService.rollbackScene(roomId, pairId)
+    await companionSchedulerService.discardSceneActivity(roomId, pairId)
+  },
   )
+  const allowsStrongholdAutonomy = (agentId: string) => isEnabledAgent(agentId) &&
+    companionSchedulerService.getAgentSettings(agentId).strongholdActivity && !companionSchedulerService.perceptionPermit.stopped
   const strongholdTurnService = new StrongholdTurnService(
     strongholdService,
     groupChatService,
     threadService,
-    contextCompiler,
-    agentService,
+    conversationTurnService,
+    kernelScheduler,
+    eventNoteDraftCommitter,
     configRepo,
     gatewayHub,
     agentManager,
+    allowsStrongholdAutonomy,
+    (threadId, agentId) => {
+      if (runtimeStateService.getTaskInfo(threadId)) return null
+      runtimeStateService.registerTask(threadId, agentId)
+      const signal = runtimeStateService.getAbortSignal(threadId)!
+      return { signal, release: () => runtimeStateService.unregisterTask(threadId, signal) }
+    },
   )
+  const groupChatDispatcher = new GroupChatDispatcher(groupChatService)
+  const strongholdRoundService = new StrongholdRoundService(
+    groupChatService, strongholdService, groupChatDispatcher, strongholdTurnService,
+    agentManager, threadService, gatewayHub,
+    allowsStrongholdAutonomy,
+  )
+  kernelLifecycle.defer(() => strongholdRoundService.stop())
+  const stopStrongholdEvents = kernelEventBus.subscribe(async (event) => {
+    if (event.type !== 'stronghold.message.committed') return
+    const payload = event.payload as { messageId?: unknown }
+    const message = groupChatService.getMessageEvent(Number(payload?.messageId))
+    if (message) {
+      await companionSchedulerService.notifyGroupMessage(message.roomId, message.id, message.senderId, message.pairId ?? undefined)
+      if (message.role === 'assistant') await companionSchedulerService.noteSceneActivity(message.senderId, message.id)
+    }
+    strongholdRoundService.resumePending()
+  })
+  kernelLifecycle.defer(() => { stopStrongholdEvents() })
+  kernelScheduler.registerPeriodic({
+    name: 'stronghold-round-recovery',
+    displayName: __t('server.container.ts', '据点回复恢复'),
+    description: __t('server.container.ts', '恢复尚未完成的据点回复，按原轮次和主线代次继续投递'),
+    intervalMs: 1000,
+    class: 'maintenance',
+    shouldRun: () => strongholdRoundService.hasPending(),
+    handler: async () => strongholdRoundService.resumePending(),
+  })
   const backgroundTaskProjection = new BackgroundTaskProjectionService(
     backgroundTaskService,
     conversationProjection,
@@ -2240,13 +2387,13 @@ export async function createAppContext(config: AppConfig): Promise<AppContext> {
     },
   })
   await backupService.initialize()
-  kernelLifecycle.defer(() => backupService.imports.shutdown())
+  kernelLifecycle.defer(() => backupService.shutdown())
   const distributedSyncService = new DistributedSyncService(
     config.dataDir,
     db,
     localNodeId,
     storeRegistry,
-    (destination) => backupService.captureForSync(destination),
+    (destination, signal) => backupService.captureForSync(destination, signal),
   )
   const logQueryService = new LogQueryService()
   const conversationQueue = new ConversationQueueService(
@@ -2263,11 +2410,15 @@ export async function createAppContext(config: AppConfig): Promise<AppContext> {
             item.descriptor.threadId === threadId &&
             !['completed', 'failed', 'cancelled', 'timed_out'].includes(item.state),
         ),
+    (agentId, threadId) => companionSchedulerService.notifyActivity(agentId, threadId),
   )
   kernelLifecycle.defer(() => conversationQueue.stop())
+  kernelLifecycle.defer(deliverHomeCards(home, conversationQueue))
 
   return {
     db,
+    home,
+    expression,
     pathResolver,
     assetRegistry,
     assetFileAuthority,
@@ -2309,6 +2460,7 @@ export async function createAppContext(config: AppConfig): Promise<AppContext> {
     agentManager,
     async cleanupDeletedAgent(agentId: string): Promise<void> {
       memoryAgents.invalidate(agentId)
+      // 书库中的世界书保留，只移除该角色的绑定。
       await Promise.all([
         backgroundTaskRepo.deleteResidentsForAgent(agentId),
         eventNoteRepo.retireAgentBackgroundWork(agentId),
@@ -2333,6 +2485,7 @@ export async function createAppContext(config: AppConfig): Promise<AppContext> {
     schedulerService,
     // AIOS: Thread + Context 域
     threadService,
+    threadForkService,
     threadModelService,
     flowStateService,
     toolContextService,
@@ -2349,6 +2502,7 @@ export async function createAppContext(config: AppConfig): Promise<AppContext> {
     browserTools,
     documentService,
     chatBackgroundService,
+    themeService,
     userAvatarService,
     // M05: 统一任务中心
     backgroundTaskService,
@@ -2385,7 +2539,8 @@ export async function createAppContext(config: AppConfig): Promise<AppContext> {
     strongholdTurnService,
     butlerService,
     groupChatService,
-    groupChatDispatcher: new GroupChatDispatcher(groupChatService),
+    groupChatDispatcher,
+    strongholdRoundService,
 
     // 注意：社交桥接（SocialBridge）已迁移到 packages/apps/social/runtime/socialBridge.ts
     // 由 SocialAppRuntime 独立管理，不再通过主 AppContext 暴露
@@ -2459,7 +2614,7 @@ export async function createAppContext(config: AppConfig): Promise<AppContext> {
 
     async reloadMemoryBackgroundConfig(): Promise<void> {
       await eventMemoryFallback.checkpointRuntime(enabledMemoryAgents())
-      memoryBackground.setEnabled((await configRepo.get(MEMORY_BACKGROUND_ENABLED_KEY)) !== 'false')
+      memoryBackground.configure(await configRepo.listAll('memory.background.'))
       await eventMemoryFallback.checkpointRuntime(enabledMemoryAgents())
       if (!memoryBackground.enabled) {
         await dailyNotes.pauseBackground()
@@ -2583,6 +2738,7 @@ export async function initAppContext(ctx: AppContext): Promise<void> {
   // 复用容器已创建并注入 AgentManager 的同一实例，保证写入与读取走同一份数据
   setFinishTaskDeps({
     petStateUpdater: ctx.petStateService,
+    nextActivity: (activity, context, publishingReply) => ctx.companionSchedulerService.recordNextActivity(activity, context, publishingReply),
     gatewayBroadcast: async (action: string, payload: Record<string, unknown>) => {
       ctx.gatewayHub.broadcast(createEnvelope('push', { action, ...payload }, 'broadcast'))
     },
@@ -2592,6 +2748,18 @@ export async function initAppContext(ctx: AppContext): Promise<void> {
   //桌面工具保留原 Tool ABI与日志，执行统一委托 Electron Capability。
   setScreenshotProvider({
     capture: async (input = {}, context) => {
+      const watch = input.watch && typeof input.watch === 'object'
+        ? input.watch as Record<string, unknown>
+        : undefined
+      if (watch?.action === 'start' && watch.companion === true) {
+        const thread = context?.threadId ? await ctx.threadService.getThread(context.threadId) : null
+        if (!isWatchAlongMainThread(thread, context?.agentId ?? ''))
+          throw new AppError('INVALID_PARAMETER', {
+            message: __t('server.conversation', '手动陪看请在角色主会话中开启'),
+          })
+        if (context?.generation !== undefined)
+          await ctx.threadService.assertGeneration(thread.id, context.generation)
+      }
       const result = (await ctx.desktopCapabilities.invoke(
         'screenCapture',
         {
@@ -2600,6 +2768,8 @@ export async function initAppContext(ctx: AppContext): Promise<void> {
             agentId: context?.agentId,
             threadId: context?.threadId,
             taskId: context?.taskId,
+            // 家的声明与授权按任务区分：普通回合用 pairId，与 home_* 工具一致。
+            homeTaskId: context?.taskId ?? context?.pairId,
           },
         },
         {
@@ -2641,7 +2811,7 @@ export async function initAppContext(ctx: AppContext): Promise<void> {
           principalId: 'system',
           correlationId: `desktop-windows:${Date.now()}`,
         },
-      )) as Array<{ processName: string; title: string; handle?: number }>,
+      )) as WindowInfo[],
     activateWindow: async (target, context) =>
       String(
         await ctx.desktopCapabilities.invoke(
@@ -2652,6 +2822,10 @@ export async function initAppContext(ctx: AppContext): Promise<void> {
               agentId: context?.agentId,
               threadId: context?.threadId,
               taskId: context?.taskId,
+              // 家的声明与授权按任务区分：普通回合用 pairId，与 home_* 工具一致。
+              homeTaskId: context?.taskId ?? context?.pairId,
+              // 手动模式下切换窗口也要用户点一次。
+              executionMode: context?.executionMode,
             },
           },
           {
@@ -2672,6 +2846,10 @@ export async function initAppContext(ctx: AppContext): Promise<void> {
             agentId: context?.agentId,
             threadId: context?.threadId,
             taskId: context?.taskId,
+            // 家的声明与授权按任务区分：普通回合用 pairId，与 home_* 工具一致。
+            homeTaskId: context?.taskId ?? context?.pairId,
+            // 手动模式下启动程序也要用户点一次。
+            executionMode: context?.executionMode,
           },
         },
         {
@@ -2685,6 +2863,8 @@ export async function initAppContext(ctx: AppContext): Promise<void> {
         targetType: 'window' | 'path' | 'aumid'
       },
   })
+  wireDesktopSafety(ctx)
+  wireHomeNativeTrash(ctx)
   setDesktopAutomationProvider({
     execute: async (args, context) => {
       const keyboard = ['type', 'hotkey', 'key_down', 'key_up', 'notification'].includes(
@@ -2698,6 +2878,10 @@ export async function initAppContext(ctx: AppContext): Promise<void> {
             agentId: context.agentId,
             threadId: context.threadId,
             taskId: context.taskId,
+            // 家的声明与授权按任务区分：普通回合用 pairId，与 home_* 工具一致。
+            homeTaskId: context.taskId ?? context.pairId,
+            // 执行模式接上桌面操作：手动模式下客户端对每个动作都请用户确认。
+            executionMode: context.executionMode,
           },
         },
         {
@@ -2710,6 +2894,7 @@ export async function initAppContext(ctx: AppContext): Promise<void> {
         context.signal,
       )
     },
+    direct: desktopDirectChannel(ctx),
     getMousePosition: async () =>
       (await ctx.desktopCapabilities.invoke(
         'mousePosition',
@@ -2726,7 +2911,8 @@ export async function initAppContext(ctx: AppContext): Promise<void> {
   // （由 SocialAppRuntime 在创建 SocialBridge 后自动注入）
 
   // 1.8 注入据点服务到工具层 (始终可用，群聊模式由 CapabilityGate 门控)
-  setStrongholdService(ctx.strongholdService)
+  setStrongholdService(ctx.strongholdService, (agentId) => ctx.agentManager.enabledAgents.has(agentId.toLowerCase()) &&
+    ctx.companionSchedulerService.getAgentSettings(agentId).strongholdActivity && !ctx.companionSchedulerService.perceptionPermit.stopped)
   setButlerService(ctx.butlerService)
   logger.info(__t('logs.container.ts', '据点工具已注入 (StrongholdService)'))
 
@@ -2778,15 +2964,17 @@ export async function initAppContext(ctx: AppContext): Promise<void> {
     logger.warn(__t('logs.container.ts', 'MCP 连接出错 (非致命): {0}', [err]))
   }
 
-  // 6. 全局策略覆盖所有启用角色；执行会话在每次唤醒时自动取得。
+  // 6. 角色实时继承全局默认值，私聊与据点共享空闲调度。
   await ctx.companionSchedulerService.initialize({
     listAgents: () =>
       ctx.agentManager
         .listAgents()
         .filter((agent) => agent.isEnabled)
         .map((agent) => agent.id),
+    activeAgent: () => ctx.runtimeStateService.getActiveAgent() || ctx.agentManager.defaultAgentId,
     resolveThread: (agentId) =>
-      ctx.threadService.getOrCreateLatest(agentId, 'desktop', 'conversation'),
+      ctx.threadService.getMainThread(agentId),
+    getThread: (threadId) => ctx.threadService.getThread(threadId),
     isBusy: (agentId) =>
       ctx.runtimeStateService.listActiveTasks().some((item) => item.agentId === agentId) ||
       ctx.kernelScheduler
@@ -2797,9 +2985,57 @@ export async function initAppContext(ctx: AppContext): Promise<void> {
             !['completed', 'failed', 'cancelled', 'timed_out'].includes(item.state) &&
             item.descriptor.class !== 'maintenance',
         ),
-    changed: (state) =>
-      ctx.gatewayHub.broadcast(createEnvelope('push', { action: 'proactive_state', ...state })),
-    run: async ({ mode, thread, content, signal }) => {
+    changed: async (state) => {
+      await ctx.gatewayHub.broadcast(createEnvelope('push', { action: 'proactive_state', ...state }))
+      for (const execution of ctx.kernelScheduler.list()) {
+        if (execution.descriptor.channel === 'group' && execution.descriptor.class === 'resident' &&
+          !['completed', 'failed', 'cancelled', 'timed_out'].includes(execution.state) &&
+          (!ctx.companionSchedulerService.getAgentSettings(execution.descriptor.principalId).strongholdActivity || ctx.companionSchedulerService.perceptionPermit.stopped))
+          await ctx.kernelScheduler.cancel(execution.descriptor.executionId)
+      }
+    },
+    runStronghold: async (agentId, signal) => {
+      const room = await ctx.strongholdService.getAgentLocation(agentId)
+      if (!room) return null
+      const result = await ctx.strongholdRoundService.runIdle(room.id, agentId, signal)
+      return result.reply ?? null
+    },
+    groupMessages: (roomId, afterMessageId, senderId, sourcePairId) => ctx.groupChatService.getMessageEvents(roomId, afterMessageId, senderId, sourcePairId),
+    resumeGroupWait: async (messageId, agentId, wait) => {
+      const accepted = await ctx.groupChatService.requestRepliesTo(messageId, [agentId], true, wait)
+      ctx.strongholdRoundService.resumePending()
+      return accepted
+    },
+    getTask: (taskId) => ctx.backgroundTaskService.getTask(taskId),
+    currentRoom: async (agentId) => (await ctx.strongholdService.getAgentLocation(agentId))?.id,
+    activitySourceActive: async (wait) => {
+      if (wait.roomId) return ctx.groupChatService.isPairActive(wait.roomId, wait.sourcePairId)
+      const source = ctx.threadService.conversations.get(wait.sourcePairId)
+      return Boolean(source && source.threadId === wait.threadId && source.generation === wait.generation &&
+        ['running', 'completed', 'waiting'].includes(source.status))
+    },
+    resumeTaskWait: async (wait, task) => {
+      // 已有 resume 交付负责接续原会话，共用其持久投递身份。
+      if (task.completionAction === 'resume') return
+      const deliveryId = `activity-task:${wait.threadId}:${wait.generation}:${wait.sourcePairId}:${task.id}`
+      const content = '【等待的任务结果已到达】\n以下为真实任务资料，请按当前场景处理结果。\n' +
+        JSON.stringify({ taskId: task.id, status: task.status, result: task.result, error: task.errorMessage })
+      if (wait.roomId) {
+        const message = await ctx.groupChatService.sendMessage({
+          roomId: wait.roomId, senderId: 'system', role: 'system', content,
+          pairId: deliveryId, deliveryKey: deliveryId,
+          audienceScope: { agentId: task.agentId, threadId: wait.threadId, generation: wait.generation, sourcePairId: wait.sourcePairId },
+        })
+        await ctx.groupChatService.requestRepliesTo(message.id, [task.agentId], false, wait)
+        ctx.strongholdRoundService.resumePending()
+      } else {
+        await ctx.conversationQueue.enqueue(deliveryId, { threadId: wait.threadId, agentId: task.agentId,
+          expectedGeneration: wait.generation, content, taskResultEvent: { deliveryId, taskId: task.id } })
+      }
+    },
+    run: async ({ mode, thread, content, signal, snapshot, instruction, watching }) => {
+      const speakingModel =
+        mode === 'companion' ? await watchAlongSpeakingModel(ctx.configRepo) : undefined
       let reply: string | null = null
       let failure: unknown
       signal.throwIfAborted()
@@ -2813,7 +3049,8 @@ export async function initAppContext(ctx: AppContext): Promise<void> {
         resourceKey: `agent:${thread.agentId}`,
         budget: {
           maxDurationMs: 30 * 60_000,
-          maxLlmCalls: 64,
+          // 感知回合只说话，最多 3 次；自主行动要跑工具，不能卡这么紧。
+          maxLlmCalls: mode === 'companion' ? 3 : 64,
           maxToolCalls: 128,
           maxConcurrentIo: 4,
         },
@@ -2822,9 +3059,19 @@ export async function initAppContext(ctx: AppContext): Promise<void> {
             .executeTurn({
               threadId: thread.id,
               agentId: thread.agentId,
+              expectedGeneration: thread.generation,
               content,
               inputPersistence: 'ephemeral',
               proactive: true,
+              ...companionTurnOptions({
+                mode,
+                threadId: thread.id,
+                content,
+                instruction,
+                snapshot,
+                watching,
+                speakingModel,
+              }),
               signal: AbortSignal.any([signal, execution.signal]),
               execution: execution.descriptor,
               onUsage: execution.consume,
@@ -2863,6 +3110,7 @@ export async function initAppContext(ctx: AppContext): Promise<void> {
               }
             }
             try {
+              signal.throwIfAborted()
               await ctx.gatewayHub.broadcast(
                 createEnvelope('push', {
                   action: 'proactive_message',
@@ -2879,6 +3127,9 @@ export async function initAppContext(ctx: AppContext): Promise<void> {
             } catch (error) {
               logger.warn(__t('logs.container.ts', '主动回复已保存，实时推送失败'), { error })
             }
+            // 跟看的话也要念出来；语音和聊天共用通道，用户说话优先，没配语音就只有文字。
+            if (watching)
+              void speakPerceptionLine(ctx, result.spokenReply || reply, thread.agentId, thread.id, () => !signal.aborted, signal).catch(() => {})
           }
         },
       })

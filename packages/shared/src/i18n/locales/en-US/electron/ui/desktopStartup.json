@@ -1,0 +1,9 @@
+{
+  "选择后端启动程序": "Choose backend launcher",
+  "启动脚本或程序": "Launch scripts or programs",
+  "启用后端启动程序": "Enable backend launcher",
+  "客户端启动时将运行此程序：{0}": "This program will run when the client starts: {0}",
+  "只有在你本人打开这个开关时才确认。不认识这个程序请点取消。": "Confirm only if you turned this switch on yourself. If you don't recognize this program, click Cancel.",
+  "启用": "Enable",
+  "取消": "Cancel"
+}

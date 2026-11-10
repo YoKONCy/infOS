@@ -182,7 +182,7 @@ export function createStrongholdRouter(ctx: AppContext) {
     }
 
     // 1. 保存消息。用户发言创建 pairId，让本轮所有异步回复可被精确级联删除。
-    const pairId = (body.role ?? 'user') === 'user' ? randomUUID() : undefined
+    const pairId = (body.role ?? 'user') !== 'system' ? randomUUID() : undefined
     const msg = await ctx.groupChatService.sendMessage({
       roomId,
       senderId: body.senderId ?? 'user',
@@ -190,11 +190,8 @@ export function createStrongholdRouter(ctx: AppContext) {
       role: body.role ?? 'user',
       mentions: body.mentions,
       pairId,
+      requestReplies: true,
     })
-    if (pairId) {
-      await ctx.groupChatService.recordPairVisibility(roomId, pairId, validRoomAgents)
-    }
-
     // 2. 系统消息不触发 Agent；用户消息同步完成调度决策，生成仍在后台执行。
     if (msg.role === 'system') {
       return c.json(
@@ -207,20 +204,10 @@ export function createStrongholdRouter(ctx: AppContext) {
       )
     }
 
-    const history = await ctx.groupChatService.getHistory(roomId, 10)
-    const dispatch = await ctx.groupChatDispatcher.decideNextTurn(roomId, history)
-
-    // 统一构造本轮串行队列：多@严格按mention顺序；@全体保持随机顺序。
-    const requested = dispatch.agentIds.includes('@all')
-      ? [...validRoomAgents].sort(() => Math.random() - 0.5)
-      : dispatch.agentIds.filter((agentId) => validRoomAgents.includes(agentId))
-    const queue = [...new Set(requested)]
-    if (queue.length === 0 && validRoomAgents.length > 0) queue.push(validRoomAgents[0]!)
-    const initialQueue = [...queue]
-    const isAllMention = dispatch.agentIds.includes('@all')
-    const allowAutoFollowUp = initialQueue.length === 1 && !isAllMention
-    if (queue.length === 0) {
-      const reason = validRoomAgents.length === 0 ? '当前房间没有已启用的角色' : dispatch.reason
+    const intent = await ctx.strongholdRoundService.prepare(msg.id)
+    const initialQueue = intent?.initialQueue ?? []
+    if (!initialQueue.length) {
+      const reason = intent?.reason ?? __t('server.routers', '当前房间没有已启用的角色')
       logger.info(__t('logs.routers', '调度决定: 无人接话 ({0})', [reason]))
       return c.json(
         {
@@ -232,124 +219,15 @@ export function createStrongholdRouter(ctx: AppContext) {
       )
     }
 
-    const roundId = pairId ?? randomUUID()
-    const broadcastRound = (action: string, payload: Record<string, unknown> = {}) =>
-      ctx.gatewayHub.broadcast({
-        protocolVersion: 1,
-        type: 'push',
-        id: '',
-        sourceId: 'backend',
-        targetId: 'broadcast',
-        payload: { action, roomId, roundId, pairId, ...payload },
-        timestamp: Date.now(),
-      })
-    await broadcastRound('stronghold_round_started', { agentIds: initialQueue })
-    logger.info(__t('logs.routers', '调度决定: {0} ({1})', [queue.join(' -> '), dispatch.reason]))
-    setImmediate(async () => {
-      const completed = new Set<string>()
-      let allowSummon = allowAutoFollowUp
-      let summonedBy: string | undefined
-      let summonReason: string | undefined
-      let autoFollowUpChecked = false
-      while (queue.length > 0) {
-        if (pairId && !(await ctx.groupChatService.isPairActive(roomId, pairId))) break
-        const agentId = queue.shift()!
-        if (completed.has(agentId)) continue
-        // 每次执行前重新验证物理位置与启用状态，防止排队期间移动或被禁用。
-        const currentRoomAgents = await ctx.strongholdService.getRoomAgents(roomId)
-        const enabled = ctx.agentManager
-          .listAgents()
-          .some((candidate) => candidate.id === agentId && candidate.isEnabled)
-        if (!enabled || !currentRoomAgents.includes(agentId)) continue
-        completed.add(agentId)
-        try {
-          const result = await ctx.strongholdTurnService.execute(roomId, agentId, pairId, {
-            allowSummon,
-            summonedBy,
-            summonReason,
-            roundId,
-          })
-          // 只有初始单回复者可扩展一次队列；被传唤者和多@成员均禁止递归。
-          if (allowSummon && result.summonedAgentIds.length > 0) {
-            summonedBy = agentId
-            summonReason = result.summonReason
-            for (const summonedId of result.summonedAgentIds) {
-              if (
-                !completed.has(summonedId) &&
-                !queue.includes(summonedId) &&
-                validRoomAgents.includes(summonedId)
-              ) {
-                queue.push(summonedId)
-                await broadcastRound('stronghold_agent_queued', { agentId: summonedId })
-              }
-            }
-          }
-
-          // 首位自然回复者完成后，用最新历史重新判定一次是否由其他 Agent 接话。
-          // 该判定最多追加一人，且只执行一次，避免自动接话或传唤形成递归链。
-          if (!autoFollowUpChecked && allowAutoFollowUp) {
-            autoFollowUpChecked = true
-            try {
-              const followUpHistory = await ctx.groupChatService.getHistory(roomId, 10)
-              const followUpDispatch = await ctx.groupChatDispatcher.decideNextTurn(
-                roomId,
-                followUpHistory,
-              )
-              const followUpRoomAgents = await ctx.strongholdService.getRoomAgents(roomId)
-              const currentlyEnabledAgentIds = new Set(
-                ctx.agentManager
-                  .listAgents()
-                  .filter((candidate) => candidate.isEnabled)
-                  .map((candidate) => candidate.id),
-              )
-              const eligibleFollowUpAgents = followUpRoomAgents.filter(
-                (candidateId) =>
-                  currentlyEnabledAgentIds.has(candidateId) &&
-                  !completed.has(candidateId) &&
-                  !queue.includes(candidateId),
-              )
-              const followUpRequested = followUpDispatch.agentIds.includes('@all')
-                ? [...eligibleFollowUpAgents].sort(() => Math.random() - 0.5)
-                : followUpDispatch.agentIds.filter((candidateId) =>
-                    eligibleFollowUpAgents.includes(candidateId),
-                  )
-              const followUpAgentId = [...new Set(followUpRequested)][0]
-              if (followUpAgentId) {
-                queue.push(followUpAgentId)
-                await broadcastRound('stronghold_agent_queued', { agentId: followUpAgentId })
-                logger.info(
-                  __t('logs.routers', '自动接话调度: {0} ({1})', [
-                    followUpAgentId,
-                    followUpDispatch.reason,
-                  ]),
-                )
-              }
-            } catch (followUpError) {
-              const followUpReason =
-                followUpError instanceof Error ? followUpError.message : String(followUpError)
-              logger.error(__t('logs.routers', '自动接话调度失败: {0}', [followUpReason]))
-            }
-          }
-        } catch (err) {
-          const reason = err instanceof Error ? err.message : String(err)
-          logger.error(__t('logs.routers', 'Agent {0} 群聊发言失败: {1}', [agentId, reason]))
-          await broadcastRound('stronghold_agent_failed', { agentId, error: reason })
-          if (!pairId || (await ctx.groupChatService.isPairActive(roomId, pairId))) {
-            await ctx.groupChatService.sendMessage({
-              roomId,
-              senderId: 'system',
-              content: `${agentId} 暂时无法回复：${reason}`,
-              role: 'system',
-              pairId,
-            })
-          }
-        }
-        allowSummon = false
+    const roundId = pairId!
+    if (msg.role === 'user') {
+      for (const agentId of initialQueue) {
+        const target = intent?.targets.find((entry) => entry.agentId === agentId)
+        await ctx.companionSchedulerService.notifyActivity(agentId, target?.threadId, roomId).catch((error) =>
+          logger.warn(__t('logs.companion', '保存主动行为活动时间失败'), { error }))
       }
-      await broadcastRound('stronghold_round_completed', {
-        completedAgentIds: [...completed],
-      })
-    })
+    }
+    void ctx.strongholdRoundService.kick(msg.id)
 
     return c.json(
       {
@@ -364,8 +242,8 @@ export function createStrongholdRouter(ctx: AppContext) {
           replyQueued: true,
           agentId: initialQueue[0],
           agentIds: initialQueue,
-          allAgentIds: dispatch.agentIds.includes('@all') ? initialQueue : undefined,
-          reason: dispatch.reason,
+          allAgentIds: intent?.allMention ? initialQueue : undefined,
+          reason: intent?.reason,
         },
       },
       201,

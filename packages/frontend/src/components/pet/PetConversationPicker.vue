@@ -6,12 +6,15 @@ import { agentApi, type AgentListItem } from '../../api/modules/agentApi'
 import { threadsApi, type ThreadInfo } from '../../api/modules/threadsApi'
 import { getApiBaseUrl } from '../../api/transport'
 import PetHudIcon from './PetHudIcon.vue'
+import MainThreadCard from '../chat/MainThreadCard.vue'
+import { threadDisplayName } from '../../utils/threadPresentation'
 
 const props = defineProps<{
   agentId: string
   petName: string
   threadId?: string | null
   threadTitle?: string
+  threadKind?: 'main' | 'side'
   switching?: boolean
 }>()
 const emit = defineEmits<{
@@ -25,6 +28,8 @@ const tr = (source: string, values: readonly unknown[] = []) =>
 const opened = ref<'agents' | 'threads' | null>(null)
 const agents = ref<AgentListItem[]>([])
 const threads = ref<ThreadInfo[]>([])
+const mainThread = computed(() => threads.value.find((thread) => thread.threadKind === 'main'))
+const sideThreads = computed(() => threads.value.filter((thread) => thread.threadKind !== 'main'))
 const page = ref(1)
 const total = ref(0)
 const loading = ref(false)
@@ -38,9 +43,9 @@ const blocked = computed(() => props.switching || choosing.value)
 const currentAgent = computed(() => agents.value.find((agent) => agent.id === props.agentId))
 const title = computed(() =>
   props.threadId
-    ? threads.value.find((thread) => thread.id === props.threadId)?.title ||
-      props.threadTitle ||
-      tr('未命名会话')
+    ? threadDisplayName(threads.value.find((thread) => thread.id === props.threadId) ?? {
+        threadKind: props.threadKind, title: props.threadTitle,
+      })
     : tr('选择会话'),
 )
 let generation = 0
@@ -83,7 +88,7 @@ async function load(more = false) {
     await nextTick()
     if (!more && version === generation)
       list.value
-        ?.querySelector<HTMLElement>('[aria-pressed="true"]')
+        ?.querySelector<HTMLElement>('[aria-current="true"], [aria-pressed="true"]')
         ?.focus({ preventScroll: true })
   } catch {
     if (version === generation && !disposed) failed.value = true
@@ -187,13 +192,14 @@ onBeforeUnmount(() => {
         ref="threadButton"
         type="button"
         class="pet-conversation-picker__thread"
+        :class="{ 'pet-conversation-picker__thread--main': threadKind === 'main' }"
         :disabled="blocked"
         :title="title"
         :aria-label="tr('切换会话')"
         :aria-expanded="opened === 'threads'"
         @click="toggle('threads')"
       >
-        <PetHudIcon name="chat" size="xs" />
+        <PetHudIcon :name="threadKind === 'main' ? 'heart' : 'chat'" size="xs" />
         <span>{{ title }}</span>
         <PetHudIcon name="chevron-down" size="xs" />
       </button>
@@ -235,8 +241,16 @@ onBeforeUnmount(() => {
             </button>
           </template>
           <template v-else>
+            <MainThreadCard
+              v-if="mainThread"
+              class="pet-conversation-picker__main"
+              compact
+              :active="mainThread.id === threadId"
+              :disabled="blocked"
+              @select="mainThread && choose(mainThread.id)"
+            />
             <button
-              v-for="thread in threads"
+              v-for="thread in sideThreads"
               :key="thread.id"
               type="button"
               :disabled="blocked"
@@ -245,7 +259,7 @@ onBeforeUnmount(() => {
             >
               <PetHudIcon name="chat" size="xs" />
               <span class="pet-conversation-picker__summary">
-                <strong>{{ thread.title || tr('未命名会话') }}</strong>
+                <strong>{{ threadDisplayName(thread) }}</strong>
                 <small>
                   {{ tr('{0} 条消息', [thread.messageCount]) }}
                   <time>{{ date(thread) }}</time>

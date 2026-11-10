@@ -3,6 +3,7 @@ import { t as __t } from '../../i18n/index'
 
 import { computed, onBeforeUnmount, ref, watch } from 'vue'
 import { PButton, PDialog, PInput, PSelect, PixelIcon } from '../pixel'
+import MotionList from '../motion/MotionList.vue'
 import BrandSelect from '../brands/BrandSelect.vue'
 import BrandIcon from '../brands/BrandIcon.vue'
 import ProviderConnectionChecks from './ProviderConnectionChecks.vue'
@@ -240,7 +241,7 @@ onBeforeUnmount(() => {
             {{ __t('ui.settings', '新建') }}
           </PButton>
         </div>
-        <div
+        <MotionList
           class="provider-list__items"
           role="group"
           tabindex="0"
@@ -278,10 +279,10 @@ onBeforeUnmount(() => {
               aria-hidden="true"
             />
           </button>
-          <p v-if="!connections.length" class="provider-list__empty">
+          <p v-if="!connections.length" key="empty" class="provider-list__empty">
             {{ __t('ui.settings', '暂无连接') }}
           </p>
-        </div>
+        </MotionList>
       </aside>
       <section
         class="provider-detail"

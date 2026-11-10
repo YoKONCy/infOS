@@ -167,6 +167,8 @@ function formatAuditTime(value: string): string {
       </PButton>
       <PButton
         v-if="
+          !['high', 'critical'].includes(request.riskLevel) &&
+          !request.toolName.startsWith('remote_terminal_') &&
           !['terminal_execute', 'terminal_create', 'terminal_write', 'delete_file'].includes(
             request.toolName,
           )

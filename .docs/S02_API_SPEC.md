@@ -6,6 +6,8 @@
 
 ## 1. 统一响应信封
 
+主侧会话的领域契约见 [主侧会话与角色持续状态](./B26_MAIN_SIDE_THREADS.md)。相关入口包括 `POST /api/chat/threads/latest`（兼容路径，返回唯一主线）、`POST /api/chat/threads`（创建侧线）、`POST /api/chat/threads/:id/reset`（清空主线）、`GET /api/chat/threads/:id/experiences`（亲历来源）和 `POST /api/chat/threads/:id/fork`（侧线检查点复制）。Thread 响应包含主侧类型、代次与操作能力，服务端独立校验生命周期。
+
 JSON 业务接口使用以下信封。Router 应优先使用项目级响应工厂；`apiContractMiddleware` 为适用的 API 响应补齐默认 `message`，并拦截未注册业务码。SSE、文件与资源响应使用各自的格式。
 
 ```typescript
@@ -189,6 +191,12 @@ throw new AppError('NOT_FOUND', { message: t('errors.backend', '目标会话不�
 - 内部工具调用与结果使用 `callId` 关联，并投影为 Surface 节点；具体字段以共享类型和投影实现为准。
 - `done` 是成功结束的显式事件，前端收到 EOF 但未收到 `done` 时不得视作成功。
 - Provider 节点的能力协议与 SSE 业务流分离；能力调用消息的类型必须由 shared 包统一定义。
+
+主线交流按独立消息、逻辑执行和待回应事项持久化，完整来源及恢复合同见[主侧会话参考](./B26_MAIN_SIDE_THREADS.md)。Projection 消息提供可选 `publicationId`、`executionId`、`sourceMessages`，独立过程记录标记 `executionRecord`。`surface.publish` 同步执行中的正式发言，`surface.settled` 结算含零条发言的执行。
+
+`rewind-preview / rewind` 接受 `preserveInputAttachments` 和 `restoreFiles`。主线预检返回 `scope` 与明确的 `messageIds`，普通撤回处理指定消息，重新生成按输入的消费关系定位回复，文件恢复单独选择。侧线继续返回既有分支回滚清单。
+
+主线的独立重新生成入口为 `POST /api/chat/threads/:id/regenerate`，请求体包含 `messageId`、`revision` 和 UUID `clientMessageId`，返回 `ConversationQueueSnapshot`。服务端核验源消息，派发时再次核验修订，将这次用户操作记录为执行触发资料。该入口支持角色主动发言，用户原始输入按真实来源保存。
 
 ---
 

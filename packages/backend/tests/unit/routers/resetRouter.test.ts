@@ -23,8 +23,18 @@ function makeRouter(service: ReturnType<typeof createMockService>) {
     '/',
     createResetRouter({
       resetService: service,
+      home: { closeAllSessions: vi.fn() },
       privacyDeletionService: { resetMemories: service.resetMemories },
       knowledgeService: { clear: service.clearKnowledge },
+      agentManager: { listAgents: () => [] },
+      runtimeStateService: { listActiveTasks: () => [] },
+      kernelScheduler: { list: () => [] },
+      approvalService: { list: () => [] },
+      agentInputService: { list: () => [] },
+      promptWorkspace: { variableStore: {
+        clearConversationScopes: async (commit: (configuration: { key: string; value: string }) => Promise<unknown>) =>
+          commit({ key: 'prompt.variables.st.v1', value: '{}' }),
+      } },
     } as never),
   )
   return app

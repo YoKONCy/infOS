@@ -3,6 +3,7 @@ import { createDrizzleConnection, closeDrizzleConnection } from '@infos/backend/
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 import { ThreadRepository } from '@infos/backend/repositories/thread.repo'
 import { AttachmentRepository } from '@infos/backend/repositories/attachment.repo'
+import { ThreadService } from '@infos/backend/services/thread/threadService'
 
 let sqlite: Database.Database
 let db: ReturnType<typeof createDrizzleConnection>
@@ -14,6 +15,38 @@ describe('ThreadRepository 最近会话用途隔离', () => {
   })
 
   afterEach(() => closeDrizzleConnection(db))
+
+  it('按消息条数读取正式聊天，在数量截取前排除工具、系统和已删除消息', async () => {
+    sqlite.exec(`
+      INSERT INTO threads (id, agent_id, channel, thread_kind) VALUES ('count-main', 'pero', 'desktop', 'main');
+      INSERT INTO thread_messages (id, thread_id, role, content, status) VALUES
+        (1, 'count-main', 'user', '第一条正式消息', 'active'),
+        (2, 'count-main', 'assistant', '第二条正式消息', 'active'),
+        (3, 'count-main', 'tool', '工具过程', 'active'),
+        (4, 'count-main', 'system', '系统记录', 'active'),
+        (5, 'count-main', 'user', '已删除消息', 'deleted');
+    `)
+    const service = new ThreadService(new ThreadRepository(db))
+    const messages = await service.getActiveMessages('count-main', 2, { conversationOnly: true })
+    expect(messages.map((message) => ({ id: message.id, content: message.content }))).toEqual([
+      { id: 1, content: '第一条正式消息' },
+      { id: 2, content: '第二条正式消息' },
+    ])
+  })
+
+  it('会话技能默认关闭，选择独立保存，归档会话拒绝改写', async () => {
+    const repo = new ThreadRepository(db)
+    const first = await repo.createThread({ id: 'skills-one', agentId: 'pero', channel: 'desktop' })
+    await repo.createThread({ id: 'skills-two', agentId: 'pero', channel: 'desktop' })
+    expect(first.enabledSkillsJson).toBe('[]')
+    expect(await repo.updateEnabledSkills('skills-one', '["writing"]')).toBe(true)
+    expect((await repo.getThread('skills-one'))?.enabledSkillsJson).toBe('["writing"]')
+    expect((await repo.getThread('skills-two'))?.enabledSkillsJson).toBe('[]')
+    sqlite.prepare("UPDATE threads SET status = 'archived' WHERE id = ?").run('skills-one')
+    expect(await repo.updateEnabledSkills('skills-one', '[]')).toBe(false)
+    expect(await repo.getThread('skills-one')).toBeUndefined()
+    expect(sqlite.prepare('SELECT enabled_skills_json AS skills FROM threads WHERE id = ?').get('skills-one')).toEqual({ skills: '["writing"]' })
+  })
 
   it('历史时间索引从会话起点读取，仅返回用户时间且遵守会话、删除状态和追加边界', async () => {
     sqlite.exec(`
@@ -56,6 +89,38 @@ describe('ThreadRepository 最近会话用途隔离', () => {
     expect(
       (await repo.queryActiveMessagePairs('work', 1)).map((message) => message.content),
     ).toEqual(['新任务'])
+  })
+
+  it('工作历史续接到已提交起点，追加消息后保持边界并补齐起点所在对话对', async () => {
+    const repo = new ThreadRepository(db)
+    await repo.createThread({ id: 'pinned-work', agentId: 'pero', channel: 'desktop' })
+    const insert = sqlite.prepare(
+      'INSERT INTO thread_messages (id, thread_id, role, content, pair_id) VALUES (?, ?, ?, ?, ?)',
+    )
+    for (let id = 1; id <= 24; id++)
+      insert.run(
+        id,
+        'pinned-work',
+        id % 2 === 1 ? 'user' : 'assistant',
+        `消息${id}`,
+        `p${Math.ceil(id / 2)}`,
+      )
+    const service = new ThreadService(repo)
+    // 一个 Token 的冷预算只读最新一页；续接必须越过这页，读到第 3 轮。
+    const cold = await service.getWorkingMessagePairs('pinned-work', 1)
+    expect(cold.map((message) => message.id)).toEqual(
+      Array.from({ length: 16 }, (_, index) => index + 9),
+    )
+    const pinned = await service.getWorkingMessagePairs('pinned-work', 1, 6)
+    expect(pinned.map((message) => message.id)).toEqual(
+      Array.from({ length: 20 }, (_, index) => index + 5),
+    )
+    insert.run(25, 'pinned-work', 'user', '追加输入', 'p13')
+    insert.run(26, 'pinned-work', 'assistant', '追加回复', 'p13')
+    const appended = await service.getWorkingMessagePairs('pinned-work', 1, 6)
+    expect(appended.map((message) => message.id)).toEqual(
+      Array.from({ length: 22 }, (_, index) => index + 5),
+    )
   })
 
   it('编辑同步正文块，旧 revision 与已删除消息不能被覆盖', async () => {
@@ -146,8 +211,38 @@ describe('ThreadRepository 最近会话用途隔离', () => {
 
     const latest = await repo.getOrCreateLatestThread('nana', 'desktop', 'conversation')
 
-    expect(latest.id).toBe('conversation-old')
+    expect(latest.threadKind).toBe('main')
+    expect(latest.id).not.toBe('conversation-old')
+    expect((await repo.getThread('conversation-old'))?.threadKind).toBe('side')
     expect(latest.purpose).toBe('conversation')
+  })
+
+  it('主线创建幂等，原会话保持侧线，整条删除受服务端保护', async () => {
+    const repo = new ThreadRepository(db)
+    const old = await repo.createThread({ id: 'legacy-side', agentId: 'pero', channel: 'desktop' })
+    const [first, second] = await Promise.all([repo.ensureMainThread('pero'), repo.ensureMainThread('pero')])
+    expect(first.id).toBe(second.id)
+    expect(first.id).not.toBe(old.id)
+    expect(first.messageCount).toBe(0)
+    expect((await repo.getThread(old.id))?.threadKind).toBe('side')
+    await expect(repo.softDeleteThread(first.id)).rejects.toMatchObject({ code: 'FORBIDDEN' })
+    expect((await repo.getThread(first.id))?.status).toBe('active')
+    expect(await repo.softDeleteThread(old.id)).toMatchObject({ deleted: true })
+  })
+
+  it('主线重置保留身份和设置，旧代次写入被拒绝，新代次继续正常追加', async () => {
+    const repo = new ThreadRepository(db)
+    const main = await repo.ensureMainThread('pero')
+    await repo.updateEnabledSkills(main.id, '["writing"]')
+    const source = await repo.appendMessage({ threadId: main.id, role: 'user', content: '旧消息', pairId: 'old', expectedGeneration: 1 })
+    expect(await repo.resetMainThread(main.id)).toBe(2)
+    const reset = await repo.getThread(main.id)
+    expect(reset).toMatchObject({ id: main.id, generation: 2, messageCount: 0, pairCount: 0, enabledSkillsJson: '["writing"]' })
+    await expect(repo.appendMessage({ threadId: main.id, role: 'assistant', content: '迟到结果', pairId: 'old', expectedGeneration: 1 })).rejects.toMatchObject({ code: 'CONFLICT' })
+    const fresh = await repo.appendMessage({ threadId: main.id, role: 'user', content: '新消息', pairId: 'new', expectedGeneration: 2 })
+    expect(fresh.id).toBeGreaterThan(source.id)
+    expect((await repo.queryActiveMessages({ threadId: main.id })).map((message) => message.content)).toEqual(['新消息'])
+    expect((await repo.getThread(main.id))?.messageCount).toBe(1)
   })
 
   it('Continuity 查询应只返回同 Agent 其他 conversation Thread 的活跃对话消息', async () => {

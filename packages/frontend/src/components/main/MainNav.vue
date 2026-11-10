@@ -21,6 +21,8 @@ import { useSelectionIndicator } from '../../composables/ui/useSelectionIndicato
 import { useMainNav, type MainNavItem } from '../../composables/main/useMainNav'
 import { useApprovalStore } from '../../stores'
 import InfosLogo from '../brands/InfosLogo.vue'
+import NavDetachMenu from '../shell/NavDetachMenu.vue'
+import { useDetachedPanels } from '../../composables/shell/useDetachedPanels'
 
 const props = withDefaults(
   defineProps<{ showThemeToggle?: boolean; expanded?: boolean; tutorial?: boolean }>(),
@@ -48,6 +50,9 @@ const {
 } = useMainNav()
 const isNavCollapsed = computed(() => !props.expanded && !props.tutorial && collapsed.value)
 const approvalStore = useApprovalStore()
+// 桌面外壳：右键摘出到桌面，已摘出的页面显示标记（仅 Electron）
+const shell = useDetachedPanels()
+const detachMenu = ref<InstanceType<typeof NavDetachMenu> | null>(null)
 const navigationRoot = ref<HTMLElement | null>(null)
 const selection = useSelectionIndicator(
   navigationRoot,
@@ -81,7 +86,7 @@ function itemClasses(item: MainNavItem): string[] {
       <div class="main-nav-logo">
         <InfosLogo variant="mark" />
       </div>
-      <div v-if="!isNavCollapsed" class="main-nav-brand-text">
+      <div v-if="!isNavCollapsed" class="main-nav-brand-text motion-enter-fade">
         <InfosLogo class="main-nav-wordmark" variant="wordmark" />
         <span class="main-nav-brand-sub">PeroperoChat</span>
       </div>
@@ -165,7 +170,9 @@ function itemClasses(item: MainNavItem): string[] {
           :class="{ 'main-nav-group-title--expanded': tutorial || isGroupExpanded(group.id) }"
           @click="group.collapsible && toggleGroup(group.id)"
         >
-          <span v-if="!isNavCollapsed" class="main-nav-group-label">{{ group.title }}</span>
+          <span v-if="!isNavCollapsed" class="main-nav-group-label motion-enter-fade">
+            {{ group.title }}
+          </span>
           <PixelIcon
             v-if="group.collapsible"
             :name="tutorial || isGroupExpanded(group.id) ? 'chevron-up' : 'chevron-down'"
@@ -180,6 +187,7 @@ function itemClasses(item: MainNavItem): string[] {
             v-for="item in group.items"
             :key="item.id"
             :data-motion-item="item.id"
+            class="motion-enter-fade"
             :data-onboarding-nav="item.id"
             :class="itemClasses(item)"
             :disabled="item.disabled"
@@ -188,10 +196,11 @@ function itemClasses(item: MainNavItem): string[] {
             @pointerenter="prefetchTab(item.id)"
             @focus="prefetchTab(item.id)"
             @click="navigateTab(item.id)"
+            @contextmenu="detachMenu?.open($event, item.id)"
           >
             <PixelIcon :name="item.icon" size="sm" class="main-nav-item-icon" />
 
-            <span v-if="!isNavCollapsed" class="main-nav-item-label">
+            <span v-if="!isNavCollapsed" class="main-nav-item-label motion-enter-fade">
               {{ item.label }}
             </span>
             <!-- 全局审批角标：在任意 Tab 都可见，不归属于工作区。 -->
@@ -202,6 +211,15 @@ function itemClasses(item: MainNavItem): string[] {
             >
               {{ approvalStore.pendingCount }}
             </span>
+
+            <PixelIcon
+              v-if="shell.isDetached(item.id)"
+              name="external-link"
+              size="xs"
+              class="main-nav-detached"
+              :class="{ 'main-nav-detached--collapsed': isNavCollapsed }"
+              :title="__t('ui.desktop-shell', '已摘出到桌面')"
+            />
 
             <!-- 收起态 Tooltip -->
             <span v-if="isNavCollapsed" class="main-nav-tooltip">{{ item.label }}</span>
@@ -222,17 +240,30 @@ function itemClasses(item: MainNavItem): string[] {
         @click="toggleTheme"
       >
         <PixelIcon :name="theme === 'light' ? 'moon' : 'sun'" size="sm" />
-        <span v-if="!isNavCollapsed" class="main-nav-item-label">
+        <span v-if="!isNavCollapsed" class="main-nav-item-label motion-enter-fade">
           {{
             theme === 'light' ? __t('ui.navigation', '深色模式') : __t('ui.navigation', '浅色模式')
           }}
         </span>
       </button>
     </div>
+    <NavDetachMenu ref="detachMenu" />
   </aside>
 </template>
 
 <style scoped>
+.main-nav-detached {
+  margin-left: auto;
+  flex-shrink: 0;
+  color: var(--ui-text-tertiary);
+}
+
+.main-nav-detached--collapsed {
+  position: absolute;
+  right: 3px;
+  bottom: 3px;
+}
+
 .main-nav-approval-badge {
   position: absolute;
   top: 4px;

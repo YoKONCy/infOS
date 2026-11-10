@@ -138,6 +138,18 @@ tags: report, brief
       expect(second).toBe(first)
     })
 
+    it('同 ID 用户技能覆盖内置技能后，清单与完整正文来自同一份资源', () => {
+      mkdirSync(join(userDir, 'diary'), { recursive: true })
+      writeFileSync(
+        join(userDir, 'diary', 'SKILL.md'),
+        '---\nname: diary\ndescription: 用户自定义流程\n---\n先整理心情，再记录当天见闻。',
+        'utf-8',
+      )
+      const loader = new SkillLoader([builtinDir, userDir], userDir)
+      expect(loader.getManifest('diary')?.description).toBe('用户自定义流程')
+      expect(loader.loadSkillContent('diary')).toBe('先整理心情，再记录当天见闻。')
+    })
+
     it('loadSkillContentWithParams 应当替换已提供参数并保留未提供占位符', () => {
       const loader = new SkillLoader([builtinDir], userDir)
 
@@ -191,7 +203,7 @@ description: 生成图像
       const content = loader.loadSkillContent('diary')
 
       expect(loader.getManifest('diary')).toBeUndefined()
-      expect(content).toBe('无 frontmatter 内容')
+      expect(content).toBeNull()
     })
   })
 

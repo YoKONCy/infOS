@@ -1,5 +1,11 @@
 // 按模块、语言分别维护词库；此入口只装配当前运行端需要的资源。
 import { registerCatalog } from '../index'
+import homeCardsCn from '../locales/zh-CN/electron/ui/home-cards.json'
+import homeCardsTw from '../locales/zh-TW/electron/ui/home-cards.json'
+import homeCardsEn from '../locales/en-US/electron/ui/home-cards.json'
+registerCatalog('home.cards', 'zh-CN', homeCardsCn)
+registerCatalog('home.cards', 'zh-TW', homeCardsTw)
+registerCatalog('home.cards', 'en-US', homeCardsEn)
 import cloudUiCn from '../locales/zh-CN/electron/ui/cloudSync.json'
 import cloudUiTw from '../locales/zh-TW/electron/ui/cloudSync.json'
 import cloudUiEn from '../locales/en-US/electron/ui/cloudSync.json'
@@ -246,3 +252,45 @@ import resourceVersionsEn from '../locales/en-US/electron/ui/resource-recovery.j
 registerCatalog('electron.ui.resource-recovery', 'zh-CN', resourceVersionsZh)
 registerCatalog('electron.ui.resource-recovery', 'zh-TW', resourceVersionsTw)
 registerCatalog('electron.ui.resource-recovery', 'en-US', resourceVersionsEn)
+import desktopShellUiZh from '../locales/zh-CN/electron/ui/desktopShell.json'
+import desktopShellUiTw from '../locales/zh-TW/electron/ui/desktopShell.json'
+import desktopShellUiEn from '../locales/en-US/electron/ui/desktopShell.json'
+registerCatalog('electron.ui.desktopShell', 'zh-CN', desktopShellUiZh)
+registerCatalog('electron.ui.desktopShell', 'zh-TW', desktopShellUiTw)
+registerCatalog('electron.ui.desktopShell', 'en-US', desktopShellUiEn)
+import desktopStartupUiZh from '../locales/zh-CN/electron/ui/desktopStartup.json'
+import desktopStartupUiTw from '../locales/zh-TW/electron/ui/desktopStartup.json'
+import desktopStartupUiEn from '../locales/en-US/electron/ui/desktopStartup.json'
+registerCatalog('electron.ui.desktopStartup', 'zh-CN', desktopStartupUiZh)
+registerCatalog('electron.ui.desktopStartup', 'zh-TW', desktopStartupUiTw)
+registerCatalog('electron.ui.desktopStartup', 'en-US', desktopStartupUiEn)
+import desktopStartupLogsZh from '../locales/zh-CN/electron/logs/desktopStartup.json'
+import desktopStartupLogsTw from '../locales/zh-TW/electron/logs/desktopStartup.json'
+import desktopStartupLogsEn from '../locales/en-US/electron/logs/desktopStartup.json'
+registerCatalog('electron.logs.desktopStartup', 'zh-CN', desktopStartupLogsZh)
+registerCatalog('electron.logs.desktopStartup', 'zh-TW', desktopStartupLogsTw)
+registerCatalog('electron.logs.desktopStartup', 'en-US', desktopStartupLogsEn)
+import desktopGuardUiZh from '../locales/zh-CN/electron/ui/desktopGuard.json'
+import desktopGuardUiTw from '../locales/zh-TW/electron/ui/desktopGuard.json'
+import desktopGuardUiEn from '../locales/en-US/electron/ui/desktopGuard.json'
+registerCatalog('electron.ui.desktopGuard', 'zh-CN', desktopGuardUiZh)
+registerCatalog('electron.ui.desktopGuard', 'zh-TW', desktopGuardUiTw)
+registerCatalog('electron.ui.desktopGuard', 'en-US', desktopGuardUiEn)
+import desktopGuardLogsZh from '../locales/zh-CN/electron/logs/desktopGuard.json'
+import desktopGuardLogsTw from '../locales/zh-TW/electron/logs/desktopGuard.json'
+import desktopGuardLogsEn from '../locales/en-US/electron/logs/desktopGuard.json'
+registerCatalog('electron.logs.desktopGuard', 'zh-CN', desktopGuardLogsZh)
+registerCatalog('electron.logs.desktopGuard', 'zh-TW', desktopGuardLogsTw)
+registerCatalog('electron.logs.desktopGuard', 'en-US', desktopGuardLogsEn)
+import homeUiZh from '../locales/zh-CN/electron/ui/home.json'
+import homeUiTw from '../locales/zh-TW/electron/ui/home.json'
+import homeUiEn from '../locales/en-US/electron/ui/home.json'
+registerCatalog('electron.ui.home', 'zh-CN', homeUiZh)
+registerCatalog('electron.ui.home', 'zh-TW', homeUiTw)
+registerCatalog('electron.ui.home', 'en-US', homeUiEn)
+import homeLogsZh from '../locales/zh-CN/electron/logs/home.json'
+import homeLogsTw from '../locales/zh-TW/electron/logs/home.json'
+import homeLogsEn from '../locales/en-US/electron/logs/home.json'
+registerCatalog('electron.logs.home', 'zh-CN', homeLogsZh)
+registerCatalog('electron.logs.home', 'zh-TW', homeLogsTw)
+registerCatalog('electron.logs.home', 'en-US', homeLogsEn)

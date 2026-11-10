@@ -12,6 +12,7 @@ import type { VirtualWorkspace } from '../services/execution/virtualWorkspace'
 import type { ApprovalService } from '../services/execution/approvalService'
 import { releaseFileEditReferences } from '../services/execution/fileEditing'
 import { releaseToolObservations } from '../services/execution/toolObservation'
+import { isNotebookPath } from '../services/memory/notebook'
 
 export interface ProductivityRuntime {
   sessions: ExecutionSessionManager
@@ -36,6 +37,12 @@ export function clearProductivityRuntime(): void {
 export function getProductivityRuntime(): ProductivityRuntime {
   if (!runtime) throw new Error('生产力执行运行时尚未初始化')
   return runtime
+}
+
+/** 记事本受限入口在运行时尚未就绪时关闭，预览与实际执行共用路径判断。 */
+export async function isNotebookToolPathAllowed(agentId: string, requested: unknown, directory = false): Promise<boolean> {
+  if (!runtime) return false
+  return isNotebookPath(runtime.workspace.getWorkspaceRoot(agentId), requested, directory)
 }
 
 export function taskTerminals(taskId: string) {

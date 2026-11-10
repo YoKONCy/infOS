@@ -3,21 +3,12 @@
  *
  * 决定哪个 Agent 在群聊中接话。
  *
- * 采用两层策略:
- *
- * Layer 1: 规则预筛 (零 LLM 开销)
- *   - 被 @mention 的 Agent → 必定回复
- *   - @全体成员 (@all) → 返回哨兵 agentId='@all'，由路由层展开为随机顺序串行回复
- *   - 连续 3+ 条 Agent 发言 → 冷却期
- *   - 用户短回复 ("嗯", "好") → 降低触发概率
- *
- * Layer 2: 可选轻量判定
- *   - 基于 Agent 性格的积极度权重 (配置驱动)
- *   - 随机概率 (30% 其他 Agent 接话)
+ * 规则选人，无模型判定。定向请求派发给接收者，用户普通发言优先接续最近交谈者。
+ * 分享和普通角色发言积累亲历，邀请由发言执行中的结构化结果发起。
  *
  * 调度结果:
  *   - 返回 agent_id → 由调用方执行 AgentService.chat()
- *   - 返回 '@all' → 由调用方按随机顺序执行所有在场 Agent
+ *   - 返回 '@all' → 由调用方依次执行所有在场 Agent
  *   - 返回 null → 无人接话
  *
  * @module packages/backend/src/services/stronghold/groupChatDispatcher
@@ -65,6 +56,7 @@ export class GroupChatDispatcher {
     }
 
     const lastMsg = history[history.length - 1]!
+    if (lastMsg.role === 'system') return { agentIds: [], reason: '系统消息只更新场景记录' }
 
     // ─── Layer 1: 规则预筛 ───
 
@@ -75,39 +67,14 @@ export class GroupChatDispatcher {
     // 规则 B: 用户发言 → 只要房间内有候选 Agent，就必须有人回复。
     // 短消息（如“你好”“在吗”）同样是明确互动，不应随机静默。
     if (lastMsg.senderId === 'user') {
+      const previous = [...history].reverse().find((message) => candidates.includes(message.senderId))
       return {
-        agentIds: [this.pickRandom(candidates)],
-        reason: '用户发言，随机选择 Agent 回复',
+        agentIds: [previous?.senderId ?? candidates[0]!],
+        reason: '用户发言，接续当前交谈者',
       }
     }
 
-    // 规则 C: Agent 连续发言冷却
-    const streak = this.countAgentStreak(history, candidates)
-    if (streak >= 3) {
-      return { agentIds: [], reason: `Agent 已连续发言 ${streak} 次，冷却中` }
-    }
-
-    // ─── Layer 2: 轻量判定 ───
-
-    // 30% 概率让另一个 Agent 接话
-    if (lastMsg.senderId && candidates.includes(lastMsg.senderId)) {
-      if (Math.random() < 0.3) {
-        const others = candidates.filter((a) => a !== lastMsg.senderId)
-        if (others.length > 0) {
-          return {
-            agentIds: [this.pickRandom(others)],
-            reason: '30% 概率触发其他 Agent 接话',
-          }
-        }
-      }
-    }
-
-    // 系统消息后不触发
-    if (lastMsg.role === 'system') {
-      return { agentIds: [], reason: '系统消息后不自动触发' }
-    }
-
-    return { agentIds: [], reason: '未满足触发条件' }
+    return { agentIds: [], reason: '普通发言只更新亲历，等待定向请求' }
   }
 
   // ── 内部方法 ──
@@ -135,21 +102,4 @@ export class GroupChatDispatcher {
     return null
   }
 
-  /** 计算 Agent 连续发言次数 */
-  private countAgentStreak(history: MessageRow[], candidates: string[]): number {
-    let streak = 0
-    for (let i = history.length - 1; i >= 0; i--) {
-      if (candidates.includes(history[i]!.senderId)) {
-        streak++
-      } else {
-        break
-      }
-    }
-    return streak
-  }
-
-  /** 随机选择 */
-  private pickRandom(arr: string[]): string {
-    return arr[Math.floor(Math.random() * arr.length)]!
-  }
 }

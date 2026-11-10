@@ -29,10 +29,11 @@ import type {
 import type { SkillLoader } from './skillLoader'
 import type { ToolRegistry } from '../services/agent/toolRegistry'
 import type { InteractionMode } from '@infos/shared'
-import { isToolAllowedInInteractionMode, MINIMAL_TOOLS } from '../tools/interactionMode'
+import { isToolAllowedInInteractionMode } from '../tools/interactionMode'
 import { isSystemProtocolTool } from '../tools/systemProtocolTools'
 import { compareToolNames } from '../services/agent/toolOrder'
 import { createLogger } from '../lib/logger'
+import { AppError } from '../lib/appError'
 
 const logger = createLogger('CapabilityGate')
 
@@ -52,7 +53,9 @@ const EMPTY_CAPABILITY: ResolvedCapability = {
 }
 
 /** 旧请求范围只作兼容，和 Thread 极简模式共用同一集合。 */
-const AMBIENT_ALLOWED_TOOLS = MINIMAL_TOOLS
+const AMBIENT_ALLOWED_TOOLS = new Set([
+  'conversation', 'finish_task', 'update_flow_state', 'take_screenshot', 'query_event_notes',
+])
 
 /** 到期跟进允许重新读取现状和提出建议，不允许外部写入、命令执行或动态解锁。 */
 const FOLLOW_UP_ALLOWED_TOOLS = new Set([
@@ -88,8 +91,6 @@ export class CapabilityGate {
   /** Agent 能力配置 (agentId → config) */
   private configs = new Map<string, AgentCapabilityConfig>()
 
-  /** 会话级临时解锁工具 (sessionId → Set<toolName>) */
-  private sessionOverrides = new Map<string, Set<string>>()
   private sessionToolPolicies = new Map<
     string,
     (agentId: string, channel: string, sessionId?: string) => boolean
@@ -217,13 +218,15 @@ export class CapabilityGate {
    *
    * @param agentId    Agent ID
    * @param channel    Thread channel（desktop/social/group）
-   * @param sessionId  可选，会话级临时解锁工具（如 load_skill 解锁）
+   * @param sessionId 可选，用于解析执行会话所属 Thread 及运行时工具可见性。
+   * @param selectedSkills 会话勾选的技能；省略时只查询可选清单，不读取正文。
    */
   resolve(
     agentId: string,
     channel: string,
     sessionId?: string,
     scope: CapabilityScope = 'default',
+    selectedSkills?: readonly string[],
   ): ResolvedCapability {
     const config = this.configs.get(agentId)
     // 第七阶段修复（批次 B3）：fail-closed
@@ -269,16 +272,6 @@ export class CapabilityGate {
       }
     }
 
-    // 合并 Skill 临时解锁的工具
-    if (sessionId) {
-      const overrides = this.sessionOverrides.get(sessionId)
-      if (overrides) {
-        for (const tool of overrides) {
-          if (channelTools.has(tool)) allowedTools.add(tool)
-        }
-      }
-    }
-
     // 请求级作用域只能在 Channel 权限基础上做交集，禁止借由作用域扩权。
     for (const [name, allows] of this.sessionToolPolicies) {
       allowedTools.delete(name)
@@ -296,22 +289,23 @@ export class CapabilityGate {
         allowedTools.delete(name)
     }
     if (scope !== 'default') {
-      const allowed = scope === 'follow_up' ? FOLLOW_UP_ALLOWED_TOOLS : AMBIENT_ALLOWED_TOOLS
+      // 感知回合先只允许正式说话；过滤后的取图入口接通后再单独开放。
+      const allowed = scope === 'perception' ? new Set<string>() : scope === 'follow_up' ? FOLLOW_UP_ALLOWED_TOOLS : AMBIENT_ALLOWED_TOOLS
       for (const tool of allowedTools) {
         if (!allowed.has(tool)) allowedTools.delete(tool)
       }
     }
 
-    // 2. Skill 清单 (只加载 manifest，不加载完整内容)
+    // 2. 角色与 Channel 决定可选范围，会话选择只取交集。
     const enabledSkills: SkillManifest[] = []
     const enabledSkillIds = scope === 'default' ? channelConfig.skills : []
     const discoverAllSkills = enabledSkillIds.includes('*')
     const skillIds = discoverAllSkills
       ? this.skillLoader.getAllManifests().map((skill) => skill.id)
       : enabledSkillIds
-    for (const skillId of skillIds) {
+    for (const skillId of new Set(skillIds)) {
       const manifest = this.skillLoader.getManifest(skillId)
-      if (manifest) {
+      if (manifest && (selectedSkills === undefined || selectedSkills.includes(skillId))) {
         enabledSkills.push(manifest)
       }
     }
@@ -320,13 +314,18 @@ export class CapabilityGate {
     enabledSkills.sort((a, b) => (a.id < b.id ? -1 : a.id > b.id ? 1 : 0))
     const toolsDescription = this.buildToolsDescription(allowedTools)
 
-    // 4. Skill 菜单文本 (L1, ~50 tokens)
-    const skillMenuText =
-      enabledSkills.length > 0
-        ? '你拥有以下技能，在需要时可以使用：\n' +
-          enabledSkills.map((s) => `- ${s.name}: ${s.description}`).join('\n') +
-          '\n如需使用，请先调用 load_skill 加载详情。'
-        : ''
+    // 4. 已选技能直接提供完整正文，作为数据插入提示词，不递归解释模板。
+    const skillMenuText = selectedSkills === undefined
+      ? ''
+      : enabledSkills.map((skill) => {
+          const content = this.skillLoader.loadSkillContent(skill.id)
+          if (content === null)
+            throw new AppError('NOT_FOUND', {
+              message: __t('server.agent', '无法读取 Skill：{0}', [skill.id]),
+            })
+          return `## ${skill.name} (${skill.id})\n${skill.description}\n技能目录：${skill.rootPath}\n\n${content}`
+        })
+        .join('\n\n')
 
     return {
       allowedTools,
@@ -433,46 +432,6 @@ export class CapabilityGate {
       }
     }
     return false
-  }
-
-  /**
-   * Skill 临时解锁工具 (load_skill 时调用)
-   *
-   * 将 Skill 的 requiredTools 加入会话白名单。
-   * 会话结束后通过 clearSession 回收。
-   */
-  unlockSkillTools(sessionId: string, skillId: string): void {
-    const manifest = this.skillLoader.getManifest(skillId)
-    if (!manifest) return
-    const tools = [...new Set([...manifest.requiredTools, ...manifest.allowedTools])]
-    if (!tools.length) return
-
-    let overrides = this.sessionOverrides.get(sessionId)
-    if (!overrides) {
-      overrides = new Set()
-      this.sessionOverrides.set(sessionId, overrides)
-    }
-
-    for (const tool of tools) {
-      overrides.add(tool)
-    }
-
-    logger.info(
-      __t('logs.capabilities', 'Skill {0} 临时解锁工具: [{1}] (session={2})', [
-        skillId,
-        tools.join(', '),
-        sessionId,
-      ]),
-    )
-  }
-
-  isSkillUnlockedTool(sessionId: string, toolName: string): boolean {
-    return this.sessionOverrides.get(sessionId)?.has(toolName) === true
-  }
-
-  /** 清除会话临时权限 */
-  clearSession(sessionId: string): void {
-    this.sessionOverrides.delete(sessionId)
   }
 
   /** 获取 Agent 是否有能力配置 */

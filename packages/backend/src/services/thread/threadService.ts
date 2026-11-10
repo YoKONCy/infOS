@@ -36,6 +36,9 @@ import { disposeExecutionOwner } from '../../tools/productivityRuntimeHolder'
 import { publicWorkMetadata, workContextText } from '../context/workContext'
 import { tokenCounter } from '../tokenizer/tokenCounter'
 import { buildConversationTimeAnchors } from '../context/conversationTime'
+import { inheritedThreadSettingsFor } from './threadSettingsInheritance'
+
+export { inheritThreadSettings, type InheritedThreadSettings } from './threadSettingsInheritance'
 
 const logger = createLogger('ThreadService')
 
@@ -48,6 +51,11 @@ export interface ThreadInfo {
   id: string
   agentId: string
   channel: ThreadChannel
+  threadKind: 'main' | 'side'
+  generation: number
+  canDelete: boolean
+  canFork: boolean
+  canReset: boolean
   platform?: string
   platformIdentifier?: string
   title: string
@@ -62,6 +70,8 @@ export interface ThreadInfo {
   contextPolicy: string | null
   /** 当前 Thread 明确禁用的工具名；仅作为 Channel 白名单的减法层。 */
   disabledTools: string[]
+  /** 当前会话选用的技能；仍与角色、Channel 和执行作用域取交集。 */
+  enabledSkills: string[]
   interactionMode: InteractionMode
   /** 是否跳过普通工具的审批请求。 */
   autoExecuteTools: boolean
@@ -80,6 +90,8 @@ export interface ThreadMessageInfo {
   content: string
   rawContent: string | null
   pairId: string | null
+  publicationId?: string | null
+  executionId?: string | null
   senderId: string | null
   agentId: string | null
   revision: number
@@ -98,6 +110,51 @@ export interface ThreadCoverageInvalidator {
 }
 
 export class ThreadService {
+  get conversations() {
+    return this.threadRepo.conversations
+  }
+
+  getLastConversationMessage(executionId: string): ThreadMessageInfo | undefined {
+    const message = this.conversations.publications(executionId).at(-1)
+    return message ? this.toMessageInfo(message) : undefined
+  }
+
+  getDeletedMessageIds(threadId: string): number[] {
+    return this.threadRepo.deletedMessageIds(threadId)
+  }
+
+  async getRegenerationSource(threadId: string, messageId: number, revision: number) {
+    const thread = await this.threadRepo.getThread(threadId)
+    const message = this.threadRepo.getMessage(messageId)
+    if (thread?.threadKind !== 'main' || !message || message.threadId !== threadId ||
+        message.status !== 'active' || message.revision !== revision ||
+        !['user', 'assistant'].includes(message.role))
+      throw new AppError('CONFLICT', { message: __t('server.conversation', '消息已变化，请重新选择后再生成') })
+    const sourceIds = message.role === 'user' ? [messageId] :
+      ((JSON.parse(message.metadataJson ?? '{}').sourceMessages ?? []) as import('@infos/shared').ConversationSource[])
+        .map((source) => source.messageId)
+    const sources: import('@infos/shared').ConversationSource[] = []
+    let attachmentSource = message.role === 'user' ? message : undefined
+    for (const id of new Set(sourceIds)) {
+      const source = this.threadRepo.getMessage(id)
+      if (source?.threadId === threadId && source.status === 'active') {
+        sources.push({ messageId: id, revision: source.revision ?? 1 })
+        if (source.role === 'user' && (!attachmentSource || source.id > attachmentSource.id)) attachmentSource = source
+      }
+    }
+    const attachments = attachmentSource ? JSON.parse(attachmentSource.metadataJson ?? '{}').attachments : []
+    return {
+      message: this.toMessageInfo(message), sources, attachmentMessageId: attachmentSource?.id,
+      replacementMessageIds: message.role === 'user' ? this.conversations.dependentPublications(messageId) : [messageId],
+      attachmentIds: Array.isArray(attachments) ? attachments.flatMap((attachment) =>
+        typeof attachment?.id === 'string' ? [attachment.id as string] : []) : [],
+    }
+  }
+
+  private onHomeSessionClosed?: (threadId: string) => void
+  setHomeSessionCleanup(cleanup: (threadId: string) => void) {
+    this.onHomeSessionClosed = cleanup
+  }
   private characterStateLifecycle?: {
     rollbackPairs(threadId: string, pairIds: string[]): Promise<void>
     clearThread(threadId: string): Promise<void>
@@ -109,6 +166,12 @@ export class ThreadService {
     this.characterStateLifecycle = lifecycle
   }
   private clearPromptVariables?: (threadId: string) => Promise<void>
+  private resetPromptVariables?: (
+    threadId: string, reset: (variables: { key: string; value: string }) => Promise<number>,
+  ) => Promise<number>
+  setPromptVariableReset(reset: NonNullable<ThreadService['resetPromptVariables']>): void {
+    this.resetPromptVariables = reset
+  }
   setPromptVariableCleanup(cleanup: (threadId: string) => Promise<void>): void {
     this.clearPromptVariables = cleanup
   }
@@ -118,6 +181,14 @@ export class ThreadService {
   }
   setPlanLifecycle(lifecycle: NonNullable<ThreadService['planLifecycle']>): void {
     this.planLifecycle = lifecycle
+  }
+  private flowStateLifecycle?: { rollbackPairs(threadId: string, executionIds: string[]): Promise<void> }
+  setFlowStateLifecycle(lifecycle: NonNullable<ThreadService['flowStateLifecycle']>): void {
+    this.flowStateLifecycle = lifecycle
+  }
+  private activityInvalidator?: (threadId: string, sourceIds?: string[]) => Promise<void>
+  setActivityInvalidator(invalidate: NonNullable<ThreadService['activityInvalidator']>): void {
+    this.activityInvalidator = invalidate
   }
   constructor(
     private threadRepo: ThreadRepository,
@@ -145,6 +216,7 @@ export class ThreadService {
     interactionMode?: InteractionMode
   }): Promise<ThreadInfo> {
     const id = params.id ?? `thread_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`
+    const inherited = await inheritedThreadSettingsFor(this.threadRepo, params)
     const row = await this.threadRepo.createThread({
       id,
       agentId: params.agentId,
@@ -154,7 +226,8 @@ export class ThreadService {
       title: params.title,
       contextPolicy: params.contextPolicy ?? null,
       purpose: params.purpose,
-      interactionMode: params.interactionMode,
+      ...inherited,
+      interactionMode: params.interactionMode ?? inherited?.interactionMode,
     })
     logger.info(
       __t('logs.thread', 'Thread 已创建: id={0}, agent={1}, channel={2}', [
@@ -192,6 +265,13 @@ export class ThreadService {
     if (!success) throw new AppError('NOT_FOUND', { message: `Thread 不存在: ${threadId}` })
   }
 
+  async updateEnabledSkills(threadId: string, enabledSkills: string[]): Promise<void> {
+    const unique = [...new Set(enabledSkills)].sort()
+    if (!(await this.threadRepo.updateEnabledSkills(threadId, JSON.stringify(unique))))
+      throw new AppError('NOT_FOUND', { message: '会话不存在或已归档' })
+    invalidatePromptReplay(threadId, true)
+  }
+
   async updateAutoExecuteTools(threadId: string, autoExecuteTools: boolean): Promise<void> {
     const success = await this.threadRepo.updateAutoExecuteTools(threadId, autoExecuteTools)
     if (!success) throw new AppError('NOT_FOUND', { message: `Thread 不存在: ${threadId}` })
@@ -220,6 +300,39 @@ export class ThreadService {
   }
 
   /** 获取 Thread 详情 */
+  async getMainThread(agentId: string): Promise<ThreadInfo> {
+    return this.toThreadInfo(await this.threadRepo.ensureMainThread(agentId))
+  }
+
+  workContextBoundary(threadId: string, generation: number) {
+    return this.threadRepo.workContextBoundary(threadId, generation)
+  }
+
+  assertGeneration(threadId: string, generation: number): Promise<void> {
+    return this.threadRepo.assertGeneration(threadId, generation)
+  }
+
+  async listExperiences(threadId: string, limit = 60, options: { conversationOnly?: boolean } = {}) {
+    const thread = await this.getThread(threadId)
+    if (!thread?.canReset) throw new AppError('FORBIDDEN', { message: '仅主会话支持查看亲历记录' })
+    return options.conversationOnly
+      ? this.threadRepo.queryExperiences(threadId, limit, undefined, { conversationOnly: true })
+      : this.threadRepo.queryExperiences(threadId, limit)
+  }
+
+  async resetMainThread(threadId: string): Promise<ThreadInfo> {
+    const thread = await this.getThread(threadId)
+    if (!thread?.canReset) throw new AppError('FORBIDDEN', { message: '仅主会话支持清空重置' })
+    const reset = (variables?: { key: string; value: string }) => this.threadRepo.resetMainThread(threadId, variables)
+    if (this.resetPromptVariables) await this.resetPromptVariables(threadId, reset)
+    else await reset()
+    await this.activityInvalidator?.(threadId)
+    this.onHomeSessionClosed?.(threadId)
+    invalidatePromptReplay(threadId, true)
+    await disposeExecutionOwner({ threadId })
+    return (await this.getThread(threadId))!
+  }
+
   async getThread(threadId: string): Promise<ThreadInfo | null> {
     const row = await this.threadRepo.getThread(threadId)
     return row ? this.toThreadInfo(row) : null
@@ -234,6 +347,7 @@ export class ThreadService {
     excludeChannels?: string[]
     /** M05: 按用途过滤；不传时返回全部用途 */
     purpose?: import('../../repositories/thread.repo').ThreadPurpose
+    threadKind?: 'main' | 'side'
     page?: number
     pageSize?: number
   }): Promise<{ items: ThreadInfo[]; total: number }> {
@@ -260,6 +374,8 @@ export class ThreadService {
     pairId?: string,
     metadataJson?: string,
     execution?: KernelExecutionDescriptor,
+    expectedGeneration?: number,
+    publicationId?: string,
   ): Promise<ThreadMessageInfo> {
     const row = await this.threadRepo.appendMessage({
       threadId,
@@ -268,10 +384,9 @@ export class ThreadService {
       pairId,
       metadataJson,
       execution,
+      expectedGeneration,
+      publicationId,
     })
-
-    // 用户消息同样计入消息总数，保持与 syncThreadStats 的统计口径一致
-    await this.threadRepo.updateMessageCount(threadId, 0)
 
     // 首次对话自动设置标题：取消息内容前 20 字（去除换行）
     const thread = await this.threadRepo.getThread(threadId)
@@ -297,12 +412,17 @@ export class ThreadService {
     threadId: string
     content: string
     rawContent?: string
-    pairId: string
+    pairId?: string
+    publicationId?: string
+    executionId?: string
+    sourceMessages?: import('@infos/shared').ConversationSource[]
+    respondsTo?: string[]
     agentId: string
     metadataJson?: string
     scorerStatus?: 'pending' | 'analyzed' | 'failed' | 'skipped'
     status?: 'active' | 'failed' | 'interrupted'
     execution?: KernelExecutionDescriptor
+    expectedGeneration?: number
   }): Promise<ThreadMessageInfo> {
     const row = await this.threadRepo.appendMessage({
       threadId: params.threadId,
@@ -311,15 +431,21 @@ export class ThreadService {
       content: params.content,
       rawContent: params.rawContent,
       pairId: params.pairId,
+      publicationId: params.publicationId,
+      executionId: params.executionId,
+      sourceMessages: params.sourceMessages,
+      respondsTo: params.respondsTo,
       agentId: params.agentId,
       metadataJson: params.metadataJson,
       scorerStatus: params.scorerStatus,
       status: params.status,
       execution: params.execution,
+      expectedGeneration: params.expectedGeneration,
     })
-
-    // 更新 Thread 计数
-    await this.threadRepo.updateMessageCount(params.threadId, 1)
+    if (params.executionId) {
+      const replaced = JSON.parse(row.metadataJson ?? '{}').replacedMessageIds as number[] | undefined
+      for (const id of replaced ?? []) await this.invalidateConversationSource(id, params.threadId)
+    }
 
     logger.debug(
       __t('logs.thread', 'Agent 回复已追加: thread={0}, msgId={1}', [params.threadId, row.id]),
@@ -333,6 +459,7 @@ export class ThreadService {
     content: string
     metadataJson?: string
     pairId?: string
+    expectedGeneration?: number
   }): Promise<ThreadMessageInfo> {
     const row = await this.threadRepo.appendMessage({
       threadId: params.threadId,
@@ -340,8 +467,8 @@ export class ThreadService {
       content: params.content,
       metadataJson: params.metadataJson,
       pairId: params.pairId,
+      expectedGeneration: params.expectedGeneration,
     })
-    await this.threadRepo.updateMessageCount(params.threadId, 0)
     logger.debug(
       __t('logs.thread', '系统消息已追加: thread={0}, msgId={1}', [params.threadId, row.id]),
     )
@@ -381,9 +508,39 @@ export class ThreadService {
    *
    * 返回最近 N 条 active 消息，时间正序。
    */
-  async getActiveMessages(threadId: string, limit = 20): Promise<ThreadMessageInfo[]> {
-    const rows = await this.threadRepo.queryActiveMessages({ threadId, limit })
+  async getActiveMessages(threadId: string, limit = 20, options: { conversationOnly?: boolean } = {}): Promise<ThreadMessageInfo[]> {
+    const rows = await this.threadRepo.queryActiveMessages(options.conversationOnly
+      ? { threadId, limit, roles: ['user', 'assistant'], orderById: true }
+      : { threadId, limit })
     return rows.map((r) => this.toMessageInfo(r))
+  }
+
+  /** 可信事件引用的来源须归属同一会话。 */
+  async getMessageSource(threadId: string, messageId: number): Promise<import('@infos/shared').ConversationSource> {
+    const message = await this.threadRepo.getMessageCoverageContext(messageId)
+    if (!message || message.threadId !== threadId || message.status !== 'active')
+      throw new AppError('CONFLICT', { message: __t('server.conversation', '交流执行已结束或来源已变化') })
+    return { messageId, revision: message.revision ?? 1 }
+  }
+
+  /** 主线按消息身份和 Token 预算读取，连续发言各自占用材料预算。 */
+  async getConversationHistory(threadId: string, tokenBudget: number, throughMessageId?: number): Promise<ThreadMessageInfo[]> {
+    const selected: ThreadMessageInfo[] = []
+    let beforeMessageId = throughMessageId === undefined ? undefined : throughMessageId + 1
+    let used = 0
+    while (used < tokenBudget) {
+      const rows = await this.threadRepo.queryActiveMessages({ threadId, limit: 64, beforeMessageId, orderById: true })
+      if (!rows.length) break
+      for (const row of [...rows].reverse()) {
+        const message = this.toMessageInfo(row)
+        const tokens = tokenCounter.countTokens(message.content) + 8
+        if (selected.length && used + tokens > tokenBudget) return selected.reverse()
+        selected.push(message)
+        used += tokens
+      }
+      beforeMessageId = rows[0]!.id
+    }
+    return selected.reverse()
   }
 
   /** 标记依据完整会话时间索引派生，当前输入是否注入由上下文编译器决定。 */
@@ -419,16 +576,22 @@ export class ThreadService {
     return rows.filter((row) => selected.has(pairKey(row))).map((row) => this.toMessageInfo(row))
   }
 
-  /** 工作历史按材料预算向前分页；保留完整对话对，最终由逐请求窗口整理工具组。 */
+  /** 热轨迹沿用已提交起点，冷启动按材料预算分页；始终保留完整对话对。 */
   async getWorkingMessagePairs(
     threadId: string,
     inputBudget: number,
+    fromMessageId?: number,
+    boundary?: import('../../repositories/workContextClear.repo').WorkContextBoundary,
   ): Promise<ThreadMessageInfo[]> {
     const messages = new Map<number, ThreadMessageInfo>()
     const budget = inputBudget > 0 ? inputBudget : 64_000
     let used = 0
     let beforeMessageId: number | undefined
-    while (used < budget) {
+    while (
+      fromMessageId !== undefined
+        ? beforeMessageId === undefined || beforeMessageId > fromMessageId
+        : used < budget
+    ) {
       const rows = await this.threadRepo.queryActiveMessagePairs(threadId, 8, {
         beforeMessageId,
         recoverable: true,
@@ -438,13 +601,23 @@ export class ThreadService {
         if (messages.has(row.id)) continue
         const message = this.toMessageInfo(row)
         messages.set(message.id, message)
-        used += tokenCounter.countTokens(workContextText(message))
+        if (fromMessageId === undefined)
+          used += tokenCounter.countTokens(workContextText(message, boundary))
       }
       const next = Math.min(...rows.map((row) => row.id))
       if (beforeMessageId !== undefined && next >= beforeMessageId) break
       beforeMessageId = next
     }
-    return [...messages.values()].sort((left, right) => left.id - right.id)
+    const selected = [...messages.values()].sort((left, right) => left.id - right.id)
+    if (fromMessageId === undefined) return selected
+    const retainedPairs = new Set(
+      selected.filter((message) => message.id >= fromMessageId).map((message) => message.pairId),
+    )
+    return selected.filter(
+      (message) =>
+        message.id >= fromMessageId ||
+        (message.pairId !== null && retainedPairs.has(message.pairId)),
+    )
   }
 
   /**
@@ -478,7 +651,29 @@ export class ThreadService {
   }
 
   /** 获取删除某轮的链式 rewind 预检：目标轮次及所有后续轮次。 */
-  async previewMessageRewind(threadId: string, messageId: number): Promise<RewindPreview> {
+  async previewMessageRewind(threadId: string, messageId: number, options: {
+    regenerate?: boolean; restoreFiles?: boolean
+  } = {}): Promise<RewindPreview> {
+    const thread = await this.threadRepo.getThread(threadId)
+    if (thread?.threadKind === 'main') {
+      const target = await this.threadRepo.getMessageCoverageContext(messageId)
+      if (!target || target.threadId !== threadId || target.status === 'deleted')
+        throw new AppError('NOT_FOUND', { message: '消息不存在、已删除或不属于当前会话' })
+      const messageIds = [...new Set([messageId,
+        ...(options.regenerate ? this.conversations.dependentPublications(messageId) : []),
+      ])]
+      const executions = new Set<string>()
+      for (const id of messageIds) {
+        const message = await this.threadRepo.getMessageCoverageContext(id)
+        if (message?.executionId) executions.add(message.executionId)
+      }
+      const files = options.restoreFiles && this.checkpointService
+        ? await this.checkpointService.previewExecutions(threadId, messageId, [...executions])
+        : { threadId, agentId: thread.agentId, wholeThread: false, targetMessageId: messageId,
+            pairIds: [], pairCount: messageIds.length, createdCount: 0, editedCount: 0,
+            preservedCount: 0, files: [], forceWarning: false }
+      return { ...files, scope: options.regenerate ? 'execution' : 'message', messageIds, pairCount: messageIds.length }
+    }
     const preview = await this.checkpointService?.previewPair(threadId, messageId)
     if (!preview) throw new AppError('NOT_FOUND', { message: '消息不存在、已删除或不属于当前会话' })
     return preview
@@ -489,6 +684,7 @@ export class ThreadService {
     const thread = await this.threadRepo.getThread(threadId)
     if (!thread || thread.status === 'deleted')
       throw new AppError('NOT_FOUND', { message: '会话不存在或已删除' })
+    if (thread.threadKind === 'main') throw new AppError('FORBIDDEN', { message: '主会话只能清空重置' })
     const pairIds = await this.threadRepo.activePairIds(threadId)
     return {
       threadId,
@@ -512,9 +708,22 @@ export class ThreadService {
     messageId: number,
     deletedBy = 'user',
     preserveInputAttachments = false,
+    restoreFiles = false,
   ) {
     invalidatePromptReplay(threadId, true)
-    const preview = await this.previewMessageRewind(threadId, messageId)
+    const preview = await this.previewMessageRewind(threadId, messageId, { regenerate: preserveInputAttachments, restoreFiles })
+    if (preview.scope) {
+      const target = await this.threadRepo.getMessageCoverageContext(messageId)
+      if (preserveInputAttachments && target?.role !== 'user')
+        throw new AppError('INVALID_PARAMETER', { message: '重新生成必须从当前会话的用户消息开始' })
+      const remove = async () => {
+        for (const id of preview.messageIds ?? []) await this.deleteMessage(id, deletedBy, preserveInputAttachments ? messageId : undefined)
+      }
+      const workspace = restoreFiles && this.checkpointService
+        ? await this.checkpointService.rollback(preview, remove)
+        : await remove().then(() => ({ files: [], rolledBackCount: 0, preservedCount: 0 }))
+      return { preview, workspace, deletedMessageIds: preview.messageIds ?? [] }
+    }
     if (preserveInputAttachments) {
       const input = await this.threadRepo.getMessageCoverageContext(messageId)
       if (input?.threadId !== threadId || input.role !== 'user' || input.status === 'deleted')
@@ -552,6 +761,7 @@ export class ThreadService {
     const preview = await this.previewThreadRewind(threadId)
     const result = await this.threadRepo.softDeleteThread(threadId)
     if (!result.deleted) throw new AppError('NOT_FOUND', { message: '会话不存在或已删除' })
+    this.onHomeSessionClosed?.(threadId)
     const messageIds = result.messageIds
     const workspace = { files: [], rolledBackCount: 0, preservedCount: 0 }
     await this.planLifecycle?.clearThread(threadId)
@@ -607,6 +817,7 @@ export class ThreadService {
     invalidatePromptReplay(threadId, true)
     const result = await this.threadRepo.softDeleteThread(threadId)
     if (!result.deleted) return false
+    this.onHomeSessionClosed?.(threadId)
     try {
       await this.clearPromptVariables?.(threadId)
     } catch (error) {
@@ -626,16 +837,18 @@ export class ThreadService {
   }
 
   /** 软删除单条消息 */
-  async deleteMessage(messageId: number, deletedBy = 'user'): Promise<boolean> {
+  async deleteMessage(messageId: number, deletedBy = 'user', preserveAttachmentMessageId?: number): Promise<boolean> {
     const context = await this.threadRepo.getMessageCoverageContext(messageId)
     if (context) invalidatePromptReplay(context.threadId, true)
     const success = await this.threadRepo.softDeleteMessage(messageId, deletedBy)
     if (success) {
+      await this.invalidateConversationSource(messageId, context?.threadId)
       if (context?.pairId)
         await this.planLifecycle?.rollbackPairs(context.threadId, [context.pairId])
       if (context?.pairId)
         await this.characterStateLifecycle?.rollbackPairs(context.threadId, [context.pairId])
-      await this.attachmentRepo?.softDeleteByMessageIds([messageId])
+      await this.attachmentRepo?.softDeleteByMessageIds([messageId], preserveAttachmentMessageId === messageId && context
+        ? { threadId: context.threadId, messageId } : undefined)
       if (context?.pairId) {
         await this.coverageInvalidator?.invalidatePairs(context.threadId, [context.pairId])
       }
@@ -647,6 +860,8 @@ export class ThreadService {
   /** 软删除整对消息 */
   async deleteMessagePair(messageId: number, deletedBy = 'user'): Promise<number> {
     const context = await this.threadRepo.getMessageCoverageContext(messageId)
+    if (context && (await this.threadRepo.getThread(context.threadId))?.threadKind === 'main')
+      return (await this.deleteMessage(messageId, deletedBy)) ? 1 : 0
     if (context) invalidatePromptReplay(context.threadId, true)
     const messageIds = await this.threadRepo.getPairMessageIds(messageId)
     const count = await this.threadRepo.softDeletePair(messageId, deletedBy)
@@ -682,6 +897,7 @@ export class ThreadService {
     if (!success && expectedRevision !== undefined)
       throw new AppError('CONFLICT', { message: '消息已更新，请重新打开编辑后再保存' })
     if (success) {
+      await this.invalidateConversationSource(messageId, context.threadId)
       if (context?.pairId) {
         await this.coverageInvalidator?.invalidatePairs(context.threadId, [context.pairId])
       }
@@ -692,6 +908,16 @@ export class ThreadService {
 
   // ── 摘要（已废弃，见 .docs/archived/03-context-runtime.md 第 0 节决策） ──
   // 超出上下文窗口的早期消息由长记忆系统兜底，不再生成滚动摘要。
+
+  private async invalidateConversationSource(messageId: number, threadId?: string): Promise<void> {
+    if (!threadId || (await this.threadRepo.getThread(threadId))?.threadKind !== 'main') return
+    const executionIds = this.conversations.invalidate(messageId)
+    await this.planLifecycle?.rollbackPairs(threadId, executionIds)
+    await this.characterStateLifecycle?.rollbackPairs(threadId, executionIds)
+    await this.flowStateLifecycle?.rollbackPairs(threadId, executionIds)
+    if (executionIds.length) await this.activityInvalidator?.(threadId, executionIds)
+    if (executionIds.length) invalidatePromptReplay(threadId, true)
+  }
 
   /** @deprecated 已废弃，超窗口消息由长记忆系统兜底 */
   async getSummary(threadId: string): Promise<string | null> {
@@ -721,6 +947,11 @@ export class ThreadService {
     return {
       id: r.id as string,
       agentId: r.agentId as string,
+      threadKind: r.threadKind === 'main' ? 'main' : 'side',
+      generation: (r.generation as number) ?? 1,
+      canDelete: r.threadKind !== 'main',
+      canFork: r.threadKind !== 'main' && r.channel === 'desktop' && r.purpose === 'conversation',
+      canReset: r.threadKind === 'main',
       channel: r.channel as ThreadChannel,
       platform: (r.platform as string) ?? undefined,
       platformIdentifier: (r.platformIdentifier as string) ?? undefined,
@@ -731,6 +962,7 @@ export class ThreadService {
       status: (r.status as string) ?? 'active',
       contextPolicy: (r.contextPolicy as string) ?? null,
       disabledTools: this.parseDisabledTools(r.disabledToolsJson),
+      enabledSkills: this.parseDisabledTools(r.enabledSkillsJson),
       interactionMode:
         r.interactionMode === 'minimal'
           ? 'minimal'
@@ -766,6 +998,8 @@ export class ThreadService {
       content: r.content as string,
       rawContent: (r.rawContent as string) ?? null,
       pairId: (r.pairId as string) ?? null,
+      publicationId: (r.publicationId as string) ?? null,
+      executionId: (r.executionId as string) ?? null,
       senderId: (r.senderId as string) ?? null,
       agentId: (r.agentId as string) ?? null,
       revision: (r.revision as number) ?? 1,

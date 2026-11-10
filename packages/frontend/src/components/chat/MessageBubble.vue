@@ -23,8 +23,11 @@ import type { CompositorSurface } from '../../stores'
 import AgentStateHover from '../agent/AgentStateHover.vue'
 import UserAvatar from '../user/UserAvatar.vue'
 import ReplySelection from './ReplySelection.vue'
+import ExpressionActions from '../expression/ExpressionActions.vue'
+import ExpressionAnnotations from '../expression/ExpressionAnnotations.vue'
 
 export interface ChatMessage {
+  executionRecord?: boolean
   id: string
   role: 'user' | 'assistant' | 'system'
   content: string
@@ -53,9 +56,11 @@ interface Props {
   agentAvatarUrl?: string
   /** 是否显示编辑/删除等仅 desktop 支持的持久化操作。 */
   allowMutations?: boolean
+  /** 桌面对话中已保存的回复可作为新会话起点。 */
+  allowFork?: boolean
   /** 允许显示的持久化操作按钮（配合 allowMutations）。据点多角色场景通常只需删除。 */
   mutationActions?: Array<'edit' | 'delete'>
-  /** 删除按钮的悬浮提示（据点群聊为“删除消息”，桌面为“删除对话对”）。 */
+  /** 删除按钮的悬浮提示，具体范围由当前会话合同决定。 */
   deleteActionLabel?: string
   /** 系统消息视觉变体；旁白不复用普通系统提示样式。 */
   systemVariant?: 'default' | 'narration'
@@ -76,6 +81,7 @@ const props = withDefaults(defineProps<Props>(), {
   agentId: '',
   agentAvatarUrl: '',
   allowMutations: true,
+  allowFork: false,
   mutationActions: () => ['edit' as const, 'delete' as const],
   deleteActionLabel: '删除对话对',
   systemVariant: 'default',
@@ -89,6 +95,7 @@ const props = withDefaults(defineProps<Props>(), {
 const emit = defineEmits<{
   edit: [msg: ChatMessage]
   deletePair: [id: string]
+  fork: [id: string]
   copy: [content: string]
   /** TTS 播放/停止切换 */
   ttsPlay: [msg: ChatMessage]
@@ -317,6 +324,7 @@ function formatTime(ts?: number): string {
         <span class="msg-assistant-name">{{ agentName }}</span>
         <span class="msg-time">{{ formatTime(message.timestamp) }}</span>
         <div class="msg-actions">
+          <ExpressionActions :message="message" :agent-id="agentId" :streaming="isStreaming" />
           <!-- TTS 播放按钮（ playMessage） -->
           <button
             v-if="message.role === 'assistant' && message.spokenReply && !isStreaming"
@@ -356,6 +364,16 @@ function formatTime(ts?: number): string {
             @click="emit('edit', message)"
           >
             <PixelIcon name="edit" size="xs" />
+          </button>
+          <button
+            v-if="allowFork && /^\d+$/.test(message.id) && !isStreaming"
+            type="button"
+            class="msg-action-btn"
+            :title="__t('ui.chat', '从此处新建会话')"
+            :aria-label="__t('ui.chat', '从此处新建会话')"
+            @click="emit('fork', message.id)"
+          >
+            <PixelIcon name="git-branch" size="xs" />
           </button>
           <button
             v-if="allowMutations && mutationActions.includes('delete')"
@@ -427,6 +445,7 @@ function formatTime(ts?: number): string {
         <ThinkingIndicator v-else-if="isStreaming" :name="agentName" :label="progressLabel" />
         <div v-else class="msg-surface-missing">{{ __t('ui.chat', '消息 Surface 不可用') }}</div>
       </ReplySelection>
+      <ExpressionAnnotations :message="message" :agent-id="agentId" :streaming="isStreaming" />
       <Transition name="generation-stats">
         <div
           v-if="!isStreaming && message.surface?.state === 'committed' && generationStats"
@@ -746,7 +765,8 @@ function formatTime(ts?: number): string {
   width: 100%;
   min-width: 0;
   margin-bottom: 10px;
-  animation: fade-in-up 0.3s ease-out;
+  /* 入场使用公共动效；ChatContainer 只让最后两条播放，切换会话时不会整页一起动 */
+  animation: motion-rise-in var(--motion-duration-slow) var(--motion-ease-out) backwards;
 }
 .msg-row-user {
   align-items: flex-start;
@@ -1443,17 +1463,6 @@ function formatTime(ts?: number): string {
   letter-spacing: 0.12em;
   /* 纯装饰标签，禁止拦截工具卡片展开点击 */
   pointer-events: none;
-}
-
-@keyframes fade-in-up {
-  from {
-    opacity: 0;
-    transform: translateY(8px);
-  }
-  to {
-    opacity: 1;
-    transform: translateY(0);
-  }
 }
 
 @keyframes cursor-blink {

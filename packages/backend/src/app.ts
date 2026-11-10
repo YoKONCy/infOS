@@ -1,4 +1,7 @@
+import { createExpressionRouter } from './routers/expression.router'
 import { t as __t } from './lib/i18n'
+import { createHomeRouter } from './routers/home.router'
+import { AppError } from './lib/appError'
 import { createRuntimeDebugRouter } from './routers/runtimeDebug.router'
 import { createResourceVersionsRouter } from './routers/resourceVersions.router'
 import { ResourceVersions } from '@infos/shared/resource-versions'
@@ -6,6 +9,7 @@ import { createPackagesRouter } from './routers/packages.router'
 import { isPackageWebUiFileRequest } from './routers/packageWebUi.router'
 import { createAchievementsRouter } from './routers/achievements.router'
 import { createUserAvatarRouter } from './routers/userAvatar.router'
+import { createThemeRouter } from './routers/theme.router'
 import { createBackupRouter, isBackupDownloadRequest } from './routers/backup.router'
 /**
  * Hono 应用入口
@@ -228,8 +232,35 @@ export function createApp(ctx: AppContext) {
       createArcaUiRouter(new StaticAssetService(ctx.pictoria.controller.uiRoot), 'pictoria'),
     )
   app.route('/api/applications', createApplicationsRouter(ctx))
+  if (ctx.expression)
+    app.route(
+      '/api/expression',
+      createExpressionRouter(
+        ctx.expression.store,
+        (request) => ctx.clientAccess?.authenticate(request),
+        { workspace: ctx.promptWorkspace, compiler: ctx.contextCompiler },
+      ),
+    )
   app.route('/api/chat', createChatRouter(ctx))
   app.route('/api/achievements', createAchievementsRouter(ctx))
+  if (ctx.home)
+    app.route(
+      '/api/home',
+      createHomeRouter(
+        ctx.home,
+        (request) => ctx.clientAccess?.authenticate(request),
+        async (scope) => {
+          const thread = await ctx.threadService.getThread(scope.sessionId)
+          if (
+            !thread ||
+            thread.status !== 'active' ||
+            thread.agentId !== scope.agentId ||
+            thread.channel !== 'desktop'
+          )
+            throw new AppError('FORBIDDEN')
+        },
+      ),
+    )
   const htmlPreviews =
     ctx.htmlPreviewService ??
     new HtmlPreviewService(ctx.resourceService, ctx.attachmentService, ctx.threadService)
@@ -242,6 +273,7 @@ export function createApp(ctx: AppContext) {
   app.route('/api/models', createModelRouter(ctx))
   app.route('/api/system', createSystemRouter(ctx))
   app.route('/api/system/user-avatar', createUserAvatarRouter(ctx))
+  app.route('/api/themes', createThemeRouter(ctx))
   app.route('/api/tarot', createTarotRouter(ctx))
   app.route('/api/integrations', createIntegrationsRouter(ctx))
   app.route(
@@ -255,7 +287,8 @@ export function createApp(ctx: AppContext) {
     ),
   )
   app.route('/api/distributed', createDistributedRouter(ctx))
-  if (ctx.backupService) app.route('/api/backups', createBackupRouter(ctx.backupService))
+  if (ctx.backupService)
+    app.route('/api/backups', createBackupRouter(ctx.backupService, ctx.clientAccess))
   app.route('/api/agents', createAgentRouter(ctx))
   app.route('/api/runtime', createRuntimeRouter(ctx))
   app.route('/api/runtime-debug', createRuntimeDebugRouter(ctx.runtimeDebug))

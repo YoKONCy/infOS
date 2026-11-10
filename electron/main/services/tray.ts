@@ -9,6 +9,7 @@ import { t as __t } from '../utils/i18n'
 import { app, Tray, Menu } from 'electron'
 import { loadSystemIcon } from '../utils/appIcon'
 import { windowManager } from '../windows/manager'
+import { desktopTabs } from '../windows/desktopTabs'
 import { logger } from '../utils/logger'
 import { onLocaleChange } from '../../../packages/shared/src/i18n'
 import { showResourceRecovery } from './resourceRecovery'
@@ -17,11 +18,36 @@ import { requestClientRestart } from './clientRestart'
 
 let tray: Tray | null = null
 let stopLocaleListener: (() => void) | undefined
+let recording = false
+let stopRecording: (() => void) | undefined
+let perceptionActions: {stop:()=>void}|undefined
+export function configurePerceptionTray(actions:NonNullable<typeof perceptionActions>):void {perceptionActions=actions;updateTrayMenu()}
+export function refreshPerceptionTray():void {updateTrayMenu()}
+
+/** 主进程的录音状态不受聊天页、桌宠标识偏好或窗口最小化影响。 */
+export function setTrayRecording(active: boolean, stop: () => void): void {
+  recording = active
+  stopRecording = stop
+  updateTrayMenu()
+}
 
 function updateTrayMenu(): void {
   if (!tray || tray.isDestroyed()) return
+  tray.setToolTip(
+    recording ? __t('electron.ui.tray', '正在听电脑的声音') : '萌动链接：PeroperoChat！',
+  )
   tray.setContextMenu(
     Menu.buildFromTemplate([
+      ...(perceptionActions ? [
+        {label:__t('electron.ui.tray','全部停止感知'),click:()=>perceptionActions?.stop()},
+        {type:'separator' as const},
+      ] : []),
+      ...(recording
+        ? [
+            { label: __t('electron.ui.tray', '停止录音'), click: () => stopRecording?.() },
+            { type: 'separator' as const },
+          ]
+        : []),
       {
         label: __t('electron.ui.tray', '启动器'),
         click: () => windowManager.createLauncherWindow(),
@@ -30,6 +56,13 @@ function updateTrayMenu(): void {
       {
         label: __t('electron.ui.tray', '工作台'),
         click: () => windowManager.createDashboardWindow(),
+      },
+      {
+        label: __t('electron.ui.tray', '卡片'),
+        click: () => {
+          windowManager.createDashboardWindow()
+          desktopTabs.openHome('cards')
+        },
       },
       { type: 'separator' },
       {

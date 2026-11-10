@@ -1,4 +1,3 @@
-import { t as __t } from '../i18n/index'
 /**
  * useAgentStore — Agent 全局状态
  *
@@ -9,7 +8,6 @@ import { ref, computed } from 'vue'
 import { agentApi } from '../api/modules/agentApi'
 import { runtimeApi } from '../api/modules/runtimeApi'
 import { invoke, isElectron, listen } from '../utils/ipcAdapter'
-import { useNotificationStore } from './useNotificationStore'
 import type { AgentListItem } from '../api/modules/agentApi'
 
 /**
@@ -115,16 +113,12 @@ export const useAgentStore = defineStore('agent', () => {
     if (fetchingAgents) await fetchingAgents
     if (agentId === activeAgentId.value) return
 
-    const target = agents.value.find((agent) => agent.id === agentId)
     const windowId = getWindowId()
     await runtimeApi.setWindowAgent(windowId, agentId)
     activeAgentId.value = agentId
     if (isElectron()) await invoke('set-client-default-agent', { agentId })
+    // 切换结果在界面上一眼可见，不再弹「已切换」的成功提示
     await fetchAgents()
-    useNotificationStore().toast(
-      __t('ui.useAgentStore', '当前角色已切换为 {0}', [target?.name ?? agentId]),
-      { type: 'success' },
-    )
   }
 
   return {

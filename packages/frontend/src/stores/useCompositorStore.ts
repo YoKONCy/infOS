@@ -17,6 +17,8 @@ import type {
 } from '@infos/shared'
 
 export interface CompositorSurface {
+  threadGeneration?: number
+  processCollapsed?: boolean
   generationStats?: import('@infos/shared').ConversationGenerationStats
   surfaceId: SurfaceId
   generation: string
@@ -57,6 +59,17 @@ export const useCompositorStore = defineStore('compositor', () => {
   const windows = shallowRef<Map<string, CompositorWindow>>(new Map())
   const inputSeats = shallowRef<Map<string, CompositorInputSeat>>(new Map())
   const pending = new Map<SurfaceId, SurfaceFrame[]>()
+  const threadGenerations = new Map<string, number>()
+  function invalidateThreadGeneration(threadId: string, generation: number): void {
+    if ((threadGenerations.get(threadId) ?? 0) >= generation) return
+    threadGenerations.set(threadId, generation)
+    surfaces.value = new Map([...surfaces.value].filter(([, surface]) => surface.threadId !== threadId || surface.threadGeneration === generation))
+  }
+  function staleFrame(frame: SurfaceFrame): boolean {
+    if (!frame.threadId || frame.threadGeneration === undefined) return false
+    const current = threadGenerations.get(frame.threadId)
+    return current !== undefined && frame.threadGeneration < current
+  }
   const frameArrivals = new Map<string, number>()
   let frameHandle: number | null = null
   let flushTimer: ReturnType<typeof setTimeout> | null = null
@@ -77,6 +90,9 @@ export const useCompositorStore = defineStore('compositor', () => {
   })
 
   function enqueue(frame: SurfaceFrame): void {
+    if (staleFrame(frame)) return
+    if (frame.threadId && frame.threadGeneration !== undefined)
+      invalidateThreadGeneration(frame.threadId, frame.threadGeneration)
     frameArrivals.set(frame.operationId, performance.now())
     // 帧大小只抽样，避免监控本身逐帧序列化大型终态快照。
     if (++byteSample % 32 === 1)
@@ -88,7 +104,7 @@ export const useCompositorStore = defineStore('compositor', () => {
     queue.push(frame)
     pending.set(frame.surfaceId, queue)
     // 终态不能等待后台被冻结的动画帧，否则错误会一直留在队列里。
-    if (frame.operation.type === 'surface.fail' || frame.operation.type === 'surface.commit') {
+    if (frame.operation.type === 'surface.fail' || frame.operation.type === 'surface.commit' || frame.operation.type === 'surface.settled') {
       flush()
       return
     }
@@ -125,6 +141,7 @@ export const useCompositorStore = defineStore('compositor', () => {
       // 批次内只修改私有副本；已发布的快照和节点始终保持不可变。
       if (surface) surface = { ...surface, operationIds, nodes: [...surface.nodes] }
       for (const frame of frames) {
+        if (staleFrame(frame)) continue
         frameCount += 1
         const rejected =
           Boolean(
@@ -189,10 +206,14 @@ export const useCompositorStore = defineStore('compositor', () => {
   }
 
   function replaceSnapshot(snapshot: import('@infos/shared').ConversationProjectionSnapshot): void {
+    if (snapshot.threadGeneration !== undefined && snapshot.threadGeneration < (threadGenerations.get(snapshot.threadId) ?? 0)) return
+    if (snapshot.threadGeneration !== undefined) invalidateThreadGeneration(snapshot.threadId, snapshot.threadGeneration)
     replaceScope(`conversation:${snapshot.threadId}`, snapshot.surfaces)
   }
 
   function mergeSnapshot(snapshot: import('@infos/shared').ConversationProjectionSnapshot): void {
+    if (snapshot.threadGeneration !== undefined && snapshot.threadGeneration < (threadGenerations.get(snapshot.threadId) ?? 0)) return
+    if (snapshot.threadGeneration !== undefined) invalidateThreadGeneration(snapshot.threadId, snapshot.threadGeneration)
     flush()
     const scopeId = `conversation:${snapshot.threadId}`
     const next = new Map(surfaces.value)
@@ -210,6 +231,9 @@ export const useCompositorStore = defineStore('compositor', () => {
   }
 
   function install(surface: import('@infos/shared').ConversationSurfaceDescriptor): void {
+    if (surface.threadGeneration !== undefined && surface.threadGeneration < (threadGenerations.get(surface.threadId) ?? 0)) return
+    if (surface.threadGeneration !== undefined)
+      invalidateThreadGeneration(surface.threadId, surface.threadGeneration)
     const next = new Map(surfaces.value)
     next.set(surface.surfaceId, { ...surface, operationIds: new Set() })
     surfaces.value = next
@@ -218,6 +242,7 @@ export const useCompositorStore = defineStore('compositor', () => {
   function installLocalMessage(input: {
     localId: string
     threadId: string
+    threadGeneration?: number
     principalId: string
     content: string
     attachments?: import('../api/modules/attachmentsApi').AttachmentInfo[]
@@ -226,6 +251,7 @@ export const useCompositorStore = defineStore('compositor', () => {
     install({
       surfaceId,
       generation: `local:${input.localId}`,
+      threadGeneration: input.threadGeneration,
       messageId: input.localId,
       threadId: input.threadId,
       principalId: input.principalId,
@@ -418,6 +444,7 @@ export const useCompositorStore = defineStore('compositor', () => {
   }
 
   return {
+    invalidateThreadGeneration,
     surfaces,
     windows,
     inputSeats,
@@ -466,6 +493,8 @@ function reduceFrame(
       surfaceId: frame.surfaceId,
       generation: frame.generation,
       threadId: frame.operation.threadId,
+      threadGeneration: frame.threadGeneration,
+      processCollapsed: frame.operation.processCollapsed,
       principalId: frame.operation.principalId,
       executionId: frame.executionId,
       revision: frame.revision,
@@ -541,6 +570,14 @@ function reduceFrame(
           }
         : operation.node
       surface.nodes = upsertNode(surface.nodes, node)
+      break
+    }
+    case 'surface.publish': {
+      break
+    }
+    case 'surface.settled': {
+      surface.state = 'committed'
+      surface.nodes = []
       break
     }
     case 'surface.commit': {

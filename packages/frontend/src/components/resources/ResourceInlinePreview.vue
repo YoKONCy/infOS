@@ -57,10 +57,13 @@ const loading = ref(false),
   frameUrl = ref('')
 let request: AbortController | undefined
 let revision = 0
+let stopMathReady: (() => void) | undefined
 watch(
   [enabled, () => props.resource],
   async ([ready]) => {
     const version = ++revision
+    stopMathReady?.()
+    stopMathReady = undefined
     request?.abort()
     loading.value = false
     if (!ready) {
@@ -88,8 +91,19 @@ watch(
         if (version !== revision) return
         text.value = result.text.slice(0, 4000)
         if (kind.value === 'office' || kind.value === 'markdown') {
-          const { renderChatRichText } = await import('../../lib/chatRichRenderer')
-          if (version === revision) html.value = renderChatRichText(text.value, { cache: false })
+          const { prepareChatRichText, renderChatRichTextResult, onChatMathReady } =
+            await import('../../lib/chatRichRenderer')
+          await prepareChatRichText(text.value)
+          if (version !== revision) return
+          const rendered = renderChatRichTextResult(text.value, { cache: false })
+          html.value = rendered.html
+          if (!rendered.mathReady)
+            stopMathReady = onChatMathReady(() => {
+              if (version !== revision) return
+              html.value = renderChatRichTextResult(text.value, { cache: false }).html
+              stopMathReady?.()
+              stopMathReady = undefined
+            })
         }
       }
     } catch {
@@ -102,6 +116,7 @@ watch(
 )
 onBeforeUnmount(() => {
   ++revision
+  stopMathReady?.()
   request?.abort()
   sizeObserver?.disconnect()
 })

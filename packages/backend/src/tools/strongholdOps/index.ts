@@ -30,10 +30,12 @@ const logger = createLogger('StrongholdOps')
 /** 模块引用 */
 let _strongholdService: StrongholdService | null = null
 let _butlerService: ButlerService | null = null
+let _canParticipate: (agentId: string) => boolean = () => true
 
 /** 设置据点服务 */
-export function setStrongholdService(service: StrongholdService | null): void {
+export function setStrongholdService(service: StrongholdService | null, canParticipate: (agentId: string) => boolean = () => true): void {
   _strongholdService = service
+  _canParticipate = canParticipate
 }
 
 /** 设置管家执行服务 */
@@ -254,12 +256,12 @@ export const strongholdSummonAgentsTool: BuiltinTool = {
     const accepted = [
       ...new Set(
         requested.filter(
-          (id): id is string => typeof id === 'string' && id !== ctx.agentId && present.has(id),
+          (id): id is string => typeof id === 'string' && id !== ctx.agentId && present.has(id) && _canParticipate(id),
         ),
       ),
     ].slice(0, 5)
     const rejected = requested.filter(
-      (id) => typeof id !== 'string' || id === ctx.agentId || !present.has(id),
+      (id) => typeof id !== 'string' || id === ctx.agentId || !present.has(id) || !_canParticipate(id),
     )
     if (accepted.length === 0) {
       return JSON.stringify({

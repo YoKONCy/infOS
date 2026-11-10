@@ -19,10 +19,13 @@ export interface ApplicationLaunchResult {
 export interface ApplicationLauncherDeps {
   platform: NodeJS.Platform
   discoverApplications(): Promise<InstalledApplication[]>
-  listWindows(): Promise<Array<{ processName: string; title: string }>>
+  listWindows(): Promise<
+    Array<{ processName: string; title: string; windowId?: string; pid?: number }>
+  >
   activateWindow(target: string, signal?: AbortSignal): Promise<string>
   openPath(target: string): Promise<string>
   launchAumid(appId: string): Promise<void>
+  readShortcut?(file: string): { target: string; args?: string }
 }
 
 function normalize(value: string): string {
@@ -127,57 +130,120 @@ function isExplicitPath(value: string, platform: NodeJS.Platform): boolean {
   return path.isAbsolute(value) || (platform === 'win32' && /^[a-z]:[\\/]/i.test(value))
 }
 
-export async function launchApplication(
+export interface ApplicationLaunchPlan {
+  targetType: 'window' | 'path' | 'aumid'
+  target: string
+  title?: string
+  program?: string
+  windowId?: string
+  pid?: number
+  identities?: string[]
+}
+
+/** 先解析唯一目标，再审批同一计划；执行阶段不重新搜索。 */
+export async function resolveApplicationLaunch(
   appName: string,
   deps: ApplicationLauncherDeps = defaultDeps,
   signal?: AbortSignal,
-): Promise<ApplicationLaunchResult> {
+): Promise<ApplicationLaunchPlan> {
   signal?.throwIfAborted()
   const query = appName.trim()
   if (!query) throw new Error('APPLICATION_NAME_REQUIRED: 请提供应用名称')
-
   if (isExplicitPath(query, deps.platform)) {
     if (!fs.existsSync(query)) throw new Error(`APPLICATION_PATH_NOT_FOUND: ${query}`)
-    signal?.throwIfAborted()
-    const error = await deps.openPath(query)
-    if (error) throw new Error(`APPLICATION_LAUNCH_FAILED: ${error}`)
-    return { success: true, application: query, mode: 'launched', targetType: 'path' }
+    const identities = [query]
+    let target = fs.realpathSync.native(query)
+    for (let depth = 0; /\.lnk$/i.test(target); depth++) {
+      if (depth >= 8 || (identities.includes(target) && depth > 0))
+        throw new Error('APPLICATION_SHORTCUT_UNRESOLVED')
+      identities.push(target)
+      const shortcut = (deps.readShortcut ?? ((file) => shell.readShortcutLink(file)))(target)
+      // openPath 不能忠实执行带额外参数的计划；无法绑定参数时拒绝启动。
+      if (!shortcut.target || shortcut.args?.trim())
+        throw new Error('APPLICATION_SHORTCUT_UNRESOLVED')
+      target = fs.realpathSync.native(path.resolve(path.dirname(target), shortcut.target))
+    }
+    identities.push(target)
+    return { targetType: 'path', target, identities: [...new Set(identities)] }
   }
-
   const windows = await deps.listWindows().catch(() => [])
-  const existing = windows.find((window) => {
-    const target = normalize(query)
-    return (
-      normalize(window.title).includes(target) || normalize(window.processName).includes(target)
-    )
-  })
-  if (existing) {
-    signal?.throwIfAborted()
-    const title = signal
-      ? await deps.activateWindow(existing.title, signal)
-      : await deps.activateWindow(existing.title)
-    return { success: true, application: title, mode: 'activated', targetType: 'window' }
-  }
-
-  if (deps.platform !== 'win32') {
+  const matching = windows.filter(
+    (window) =>
+      normalize(window.title).includes(normalize(query)) ||
+      normalize(window.processName).includes(normalize(query)),
+  )
+  if (matching.length > 1) throw new Error('APPLICATION_AMBIGUOUS: WINDOW_AMBIGUOUS')
+  const existing = matching[0]
+  if (existing)
+    return {
+      targetType: 'window',
+      target: existing.windowId ?? existing.title,
+      program: existing.processName,
+      title: existing.title,
+      windowId: existing.windowId,
+      pid: existing.pid,
+    }
+  if (deps.platform !== 'win32')
     throw new Error('APPLICATION_DISCOVERY_UNSUPPORTED: 当前平台暂不支持按名称发现应用')
-  }
-
   const matches = rankApplications(query, await deps.discoverApplications())
-  if (matches.length === 0) throw new Error(`APPLICATION_NOT_FOUND: ${query}`)
-  const first = matches[0]!
-  const second = matches[1]
+  const first = matches[0]
+  if (!first) throw new Error(`APPLICATION_NOT_FOUND: ${query}`)
   const exact =
     normalize(first.name) === normalize(query) || normalize(first.appId) === normalize(query)
-  if (!exact && second) {
+  if (!exact && matches[1])
     throw new Error(
-      `APPLICATION_AMBIGUOUS: 找到多个候选：${matches
+      `APPLICATION_AMBIGUOUS: ${matches
         .slice(0, 5)
         .map((item) => item.name)
         .join('、')}`,
     )
-  }
+  return { targetType: 'aumid', target: first.appId, title: first.name }
+}
+
+export async function executeApplicationLaunch(
+  plan: ApplicationLaunchPlan,
+  deps: ApplicationLauncherDeps = defaultDeps,
+  signal?: AbortSignal,
+): Promise<ApplicationLaunchResult> {
   signal?.throwIfAborted()
-  await deps.launchAumid(first.appId)
-  return { success: true, application: first.name, mode: 'launched', targetType: 'aumid' }
+  if (plan.targetType === 'window') {
+    // 审批后重新核对窗口身份，禁止按旧标题匹配到替换窗口。
+    const windows = await deps.listWindows()
+    const current = windows.filter((window) =>
+      plan.windowId ? window.windowId === plan.windowId : window.title === plan.target,
+    )
+    if (
+      current.length !== 1 ||
+      current[0]!.pid !== plan.pid ||
+      current[0]!.processName !== plan.program
+    )
+      throw new Error('DESKTOP_OBSERVATION_STALE')
+    const title = signal
+      ? await deps.activateWindow(plan.target, signal)
+      : await deps.activateWindow(plan.target)
+    return { success: true, application: title, mode: 'activated', targetType: 'window' }
+  }
+  if (plan.targetType === 'path') {
+    if (fs.realpathSync.native(plan.target) !== plan.target)
+      throw new Error('APPLICATION_TARGET_CHANGED')
+    const error = await deps.openPath(plan.target)
+    if (error) throw new Error(`APPLICATION_LAUNCH_FAILED: ${error}`)
+  } else await deps.launchAumid(plan.target)
+  return {
+    success: true,
+    application: plan.title ?? plan.target,
+    mode: 'launched',
+    targetType: plan.targetType,
+  }
+}
+
+export async function launchApplication(
+  appName: string,
+  deps: ApplicationLauncherDeps = defaultDeps,
+  signal?: AbortSignal,
+  approve?: (plan: ApplicationLaunchPlan) => Promise<void>,
+): Promise<ApplicationLaunchResult> {
+  const plan = await resolveApplicationLaunch(appName, deps, signal)
+  await approve?.(Object.freeze(plan))
+  return executeApplicationLaunch(plan, deps, signal)
 }

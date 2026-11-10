@@ -35,6 +35,11 @@ function updateMode(value: string | number): void {
         @update:model-value="update({ enabled: $event }, true)"
       />
     </div>
+    <p class="mt-2 text-xs text-[var(--ui-text-secondary)]">
+      {{
+        t('ui.settings', '实际是否发送由各模型卡片的“回答预填充能力”决定；不支持的模型会自动跳过')
+      }}
+    </p>
     <div class="mt-5 border-t border-[var(--ui-border-subtle)] pt-4">
       <div class="mb-3 max-w-48">
         <PSelect

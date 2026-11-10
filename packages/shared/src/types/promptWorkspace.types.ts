@@ -50,6 +50,8 @@ export interface PromptBlock {
 }
 
 export interface PromptFramework {
+  /** 结构化的本轮带图意图，不从正文、标题或历史识别标记。 */
+  perceptionImage?: boolean
   id: string
   name: string
   builtin?: boolean
@@ -101,6 +103,7 @@ export interface PromptVariableCommit {
   id: string
   scope: string
   epoch?: number
+  scopeEpoch?: number
   effects: PromptVariableEffects
 }
 

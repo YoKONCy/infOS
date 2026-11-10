@@ -2,7 +2,7 @@ import { t as __t } from '../lib/i18n'
 import { Hono } from 'hono'
 import { bodyLimit } from 'hono/body-limit'
 import { z } from 'zod'
-import { WHOLESOME_MODE_KEY, ASSISTANT_PREFILL_KEY } from '@infos/shared'
+import { WHOLESOME_MODE_KEY, ASSISTANT_PREFILL_KEY, DYNAMIC_CONTEXT_DEPTH_KEY } from '@infos/shared'
 import type { AppContext } from '../container'
 import { promptBundleSchema, readPromptPersona } from '../services/prompt/promptWorkspace'
 import { AppError } from '../lib/appError'
@@ -176,6 +176,7 @@ export function createPromptRouter(ctx: AppContext) {
       ...input.variables,
       wholesome_mode_enabled: (await ctx.configRepo.get(WHOLESOME_MODE_KEY)) !== 'false',
       assistant_prefill_config: await ctx.configRepo.get(ASSISTANT_PREFILL_KEY),
+      dynamic_context_depth: await ctx.configRepo.get(DYNAMIC_CONTEXT_DEPTH_KEY),
     }
     const state = input.taskId
       ? undefined

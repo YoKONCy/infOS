@@ -15,6 +15,7 @@ import { t as __t } from '../../i18n/index'
 import { computed, watch } from 'vue'
 import { useNotificationStore } from '../../stores/useNotificationStore'
 import type { DesktopToast } from '@infos/shared'
+import { lockLeaving } from '../motion/lockLeaving'
 
 const props = defineProps<{
   items?: DesktopToast[]
@@ -71,7 +72,7 @@ const defaultTitleMap: Record<string, string> = {
       :style="!native && store.nativeOverlayActive ? { visibility: 'hidden' } : undefined"
       aria-live="polite"
     >
-      <TransitionGroup name="toast-list">
+      <TransitionGroup name="toast-list" @before-leave="lockLeaving">
         <div v-for="toast in toasts" :key="toast.id" :class="['toast-item', `toast-${toast.type}`]">
           <!-- 标题栏 -->
           <div class="toast-header">
@@ -121,13 +122,20 @@ const defaultTitleMap: Record<string, string> = {
   flex-shrink: 0;
   pointer-events: auto;
   width: min(420px, calc(100vw - 48px));
-  /* 强制使用实心暗色背景，避免浅色透明变量导致白色字体不可见 */
-  background: #1e1e24;
-  border: 2px solid #0f172a;
+  /* 实心背景（不用半透明主题变量，避免文字看不清）；默认深色，浅色主题见下方覆盖 */
+  --toast-bg: #1e1e24;
+  --toast-line: #0f172a;
+  --toast-head: rgba(255, 255, 255, 0.06);
+  --toast-title: #fff;
+  --toast-text: rgba(255, 255, 255, 0.9);
+  --toast-muted: #888;
+  --toast-hover: rgba(255, 255, 255, 0.1);
+  background: var(--toast-bg);
+  border: 2px solid var(--toast-line);
   border-left-width: 6px;
   border-radius: 0;
   overflow: hidden;
-  color: #eee;
+  color: var(--toast-text);
   box-shadow: 4px 4px 0px 0px rgba(0, 0, 0, 0.4);
   transition:
     transform 0.15s steps(3),
@@ -138,6 +146,18 @@ const defaultTitleMap: Record<string, string> = {
 .toast-item:hover {
   transform: translate(-2px, -2px);
   box-shadow: 6px 6px 0px 0px rgba(0, 0, 0, 0.5);
+}
+
+/* 浅色主题：浅底深字，像素风的实色描边保留 */
+:global([data-theme='light']) .toast-item {
+  --toast-bg: #ffffff;
+  --toast-line: #0f172a;
+  --toast-head: #f1f5f9;
+  --toast-title: #0f172a;
+  --toast-text: #334155;
+  --toast-muted: #64748b;
+  --toast-hover: rgba(15, 23, 42, 0.08);
+  box-shadow: 4px 4px 0px 0px rgba(15, 23, 42, 0.25);
 }
 
 /* ── 类型色彩 (实色边框) ── */
@@ -162,8 +182,8 @@ const defaultTitleMap: Record<string, string> = {
   display: flex;
   align-items: center;
   padding: 10px 14px;
-  background: rgba(255, 255, 255, 0.06);
-  border-bottom: 2px solid #0f172a;
+  background: var(--toast-head);
+  border-bottom: 2px solid var(--toast-line);
   gap: 12px;
 }
 
@@ -177,7 +197,7 @@ const defaultTitleMap: Record<string, string> = {
   font-family: var(--font-pixel, monospace);
   font-weight: 700;
   font-size: 16px;
-  color: #fff;
+  color: var(--toast-title);
   letter-spacing: 1px;
   white-space: nowrap;
   overflow: hidden;
@@ -187,7 +207,7 @@ const defaultTitleMap: Record<string, string> = {
 .toast-close {
   background: none;
   border: none;
-  color: #888;
+  color: var(--toast-muted);
   cursor: pointer;
   font-size: 16px;
   line-height: 1;
@@ -198,8 +218,8 @@ const defaultTitleMap: Record<string, string> = {
 }
 
 .toast-close:hover {
-  color: #fff;
-  background: rgba(255, 255, 255, 0.1);
+  color: var(--toast-title);
+  background: var(--toast-hover);
 }
 
 /* ── 消息体 ── */
@@ -208,7 +228,7 @@ const defaultTitleMap: Record<string, string> = {
   line-height: 1.6;
   font-family: var(--font-sans, system-ui, sans-serif);
   font-size: 14px;
-  color: rgba(255, 255, 255, 0.9);
+  color: var(--toast-text);
   word-break: break-word;
   max-height: 120px;
   overflow-y: auto;
@@ -217,7 +237,7 @@ const defaultTitleMap: Record<string, string> = {
 /* ── 进度条 ── */
 .toast-progress {
   height: 4px;
-  background: #0f172a;
+  background: var(--toast-line);
   width: 100%;
 }
 
@@ -256,25 +276,31 @@ const defaultTitleMap: Record<string, string> = {
 }
 
 /* ═══ 列表过渡动画 ═══ */
+/* 只过渡 transform 与 opacity；离开项脱离文档流，其余通知平滑补位。 */
 .toast-list-enter-active {
-  transition: all 0.35s cubic-bezier(0.175, 0.885, 0.32, 1.275);
+  transition:
+    opacity var(--motion-duration-medium) var(--motion-ease-out),
+    transform var(--motion-duration-slow) var(--motion-ease-spring);
 }
 
 .toast-list-leave-active {
-  transition: all 0.25s ease-in;
+  position: absolute;
+  transition:
+    opacity var(--motion-duration-medium) var(--motion-ease-in),
+    transform var(--motion-duration-medium) var(--motion-ease-in);
 }
 
 .toast-list-enter-from {
   opacity: 0;
-  transform: translateX(60px) scale(0.92);
+  transform: translate3d(calc(var(--motion-distance-lg) * 3), 0, 0) scale(var(--motion-scale-in));
 }
 
 .toast-list-leave-to {
   opacity: 0;
-  transform: translateX(60px) scale(0.95);
+  transform: translate3d(calc(var(--motion-distance-lg) * 3), 0, 0) scale(var(--motion-scale-in));
 }
 
 .toast-list-move {
-  transition: transform 0.3s ease;
+  transition: transform var(--motion-duration-slow) var(--motion-ease-standard);
 }
 </style>

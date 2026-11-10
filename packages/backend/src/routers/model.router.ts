@@ -56,6 +56,8 @@ const createModelSchema = z.object({
   returnNativeReasoning: z.boolean().optional(),
   wireApi: z.enum(['chat_completions', 'responses']).optional(),
   reasoningDialect: z.enum(['auto', 'openai', 'deepseek', 'openrouter', 'generic']).optional(),
+  /** 回答预填充能力声明；auto 按协议、接口、模型与思考状态判断。 */
+  assistantPrefill: z.enum(['auto', 'supported', 'unsupported']).optional(),
   /** 是否使用Provider流式接口 */
   stream: z.boolean().optional(),
   /** Provider 类型 / 用途 (global/chat/scorer/reflection/task) */

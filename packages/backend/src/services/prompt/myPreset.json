@@ -1,0 +1,4 @@
+[
+  { "file": "handbook", "name": "表达·手册", "enabled": true },
+  { "file": "thinking", "name": "表达规则", "enabled": true }
+]

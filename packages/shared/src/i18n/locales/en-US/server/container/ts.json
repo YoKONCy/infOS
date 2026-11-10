@@ -1,4 +1,6 @@
 {
+  "据点回复恢复": "Stronghold reply recovery",
+  "恢复尚未完成的据点回复，按原轮次和主线代次继续投递": "Resume unfinished Stronghold replies using their original turn and main-thread generation.",
   "ContextRNN 状态保存": "ContextRNN state saving",
   "仅在 ContextRNN 已启用且存在变更时保存状态与在线学习权重": "Save state and online learning weights only when ContextRNN is enabled and there are changes",
   "八小时记忆补记": "Eight hours of memory supplement\nEvery time",

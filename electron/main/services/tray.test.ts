@@ -26,6 +26,7 @@ vi.mock('electron', () => ({
   },
   Menu: { buildFromTemplate: mock.menu },
 }))
+vi.mock('../windows/desktopTabs', () => ({ desktopTabs: { list: vi.fn(() => []) } }))
 vi.mock('../utils/appIcon', () => ({ loadSystemIcon: () => ({}) }))
 vi.mock('../utils/i18n', () => ({ t: (_scope: string, source: string) => source }))
 vi.mock('../utils/logger', () => ({ logger: { info: vi.fn(), error: vi.fn() } }))
@@ -56,6 +57,7 @@ describe('托盘工作台入口', () => {
       '启动器',
       '桌宠召唤',
       '工作台',
+      '卡片',
       '选择运行方式',
       '拓展恢复',
       '彻底退出',
@@ -63,7 +65,7 @@ describe('托盘工作台入口', () => {
     entries[0]!.click!()
     entries[1]!.click!()
     entries[2]!.click!()
-    entries[4]!.click!()
+    entries[5]!.click!()
     expect(mock.launcher).toHaveBeenCalledOnce()
     expect(mock.pet).toHaveBeenCalledOnce()
     expect(mock.workbench).toHaveBeenCalledOnce()

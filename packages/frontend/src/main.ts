@@ -19,6 +19,8 @@ import { isToastOverlay, listen } from './utils/ipcAdapter'
 
 // 全局样式 (令牌 → Tailwind → 像素风组件)
 import './assets/style.css'
+import './assets/responsive-pages.css'
+import './assets/workspace-layout.css'
 
 if (isToastOverlay()) {
   document.documentElement.dataset.toastOverlay = ''

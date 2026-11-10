@@ -1,17 +1,26 @@
-/** Windows 桥接源码随主进程打包；仅在首次桌面操作时由系统 PowerShell 加载。 */
-export const WINDOWS_DESKTOP_SOURCE = String.raw`
+import { WINDOWS_DESKTOP_VISION_PART } from './windowsDesktopVisionSource'
+import { WINDOWS_DESKTOP_CAPTURE_PART } from './windowsDesktopCaptureSource'
+import { WINDOWS_DESKTOP_UIA_PART } from './windowsDesktopUiaSource'
+import { WINDOWS_DESKTOP_HANDS_PART } from './windowsDesktopHandsSource'
+import { WINDOWS_PERCEPTION_PART } from './windowsPerceptionSource'
+import { WINDOWS_DESKTOP_WINDOW_STATE_PART } from './windowsDesktopWindowStateSource'
+
+/** Windows 桥接主体（C#）；与各 partial 片段拼成完整源码。 */
+const MAIN_SOURCE = String.raw`
 using System;
 using System.Collections;
 using System.Collections.Generic;
 using System.Collections.Concurrent;
 using System.Diagnostics;
+using System.IO;
+using System.Reflection;
 using System.Runtime.InteropServices;
 using System.Text;
 using System.Threading;
 using System.Web.Script.Serialization;
 using System.Windows.Automation;
 
-public static class InfOSDesktop
+public static partial class InfOSDesktop
 {
   const long Marker = 0x494E464F;
   static readonly object OutputLock = new object ();
@@ -23,6 +32,8 @@ public static class InfOSDesktop
   static readonly HashSet<ushort> HeldKeys = new HashSet<ushort>();
   static readonly HashSet<uint> HeldButtons = new HashSet<uint>();
   static volatile string ActiveId = "";
+  // 只读请求（枚举窗口、观察、读取位置）不因用户输入而中断，只有注入类请求才会被用户接管打断。
+  static volatile bool ActiveReadOnly;
   static HookProc MouseProc = MouseHook, KeyProc = KeyHook;
   static IntPtr MouseHandle, KeyHandle;
   static uint HookThread;
@@ -183,7 +194,7 @@ public static class InfOSDesktop
   {
     if (!Listening)
       return;
-    if (ActiveId != "")
+    if (ActiveId != "" && !ActiveReadOnly)
       Cancelled[ActiveId] = true;
     long now = Stopwatch.GetTimestamp();
     if (kind == "move" && (now - LastActivity) * 1000 / Stopwatch.Frequency < 40)
@@ -224,11 +235,13 @@ public static class InfOSDesktop
     GetWindowThreadProcessId(hwnd, out pid);
     StringBuilder title = new StringBuilder(1024);
     GetWindowText(hwnd, title, title.Capacity);
-    string name = "";
+    string name = "", processGeneration = "";
     try
     {
-      using (Process process = Process.GetProcessById((int)pid))
+      using (Process process = Process.GetProcessById((int)pid)) {
         name = process.ProcessName;
+        processGeneration = process.Id.ToString() + ":" + process.StartTime.ToUniversalTime().Ticks.ToString();
+      }
     }
     catch
     {
@@ -236,12 +249,17 @@ public static class InfOSDesktop
 
     Rect r;
     GetWindowRect(hwnd, out r);
+    // 窗口类名：护栏据此识别经典控制面板（CabinetWClass）与对话框（#32770）。
+    StringBuilder className = new StringBuilder(256);
+    GetClassName(hwnd, className, className.Capacity);
     return new
     {
       windowId = hwnd.ToInt64().ToString(),
       title = title.ToString(),
       processName = name,
+      processGeneration = processGeneration,
       pid = pid,
+      className = className.ToString(),
       bounds = new
       {
         x = r.left,
@@ -302,7 +320,7 @@ public static class InfOSDesktop
     {
       Input input = new Input();
       input.type = 1;
-      uint extended = !unicode && (code == 0x21 || code == 0x22 || code == 0x23 || code == 0x24 || code == 0x25 || code == 0x26 || code == 0x27 || code == 0x28 || code == 0x2D || code == 0x2E || code == 0x5B || code == 0x5C) ? 1u : 0u;
+      uint extended = !unicode && IsExtendedKey(code) ? 1u : 0u;
       input.u.key = new KeyInput
       {
         key = unicode ? (ushort)0 : code,
@@ -379,7 +397,7 @@ public static class InfOSDesktop
       case "DOWN":
         return 0x28;
       default:
-        throw new Exception("DESKTOP_HOTKEY_INVALID: 不支持的按键 " + value);
+        return ExtraKeyCode(key, value);
     }
   }
 
@@ -408,70 +426,6 @@ public static class InfOSDesktop
     action();
   }
 
-  static object Observe(Dictionary<string, object> p)
-  {
-    IntPtr hwnd = Target(p);
-    List<object> items = new List<object>();
-    if (S(p, "includeElements") == "True" || S(p, "includeElements") == "true")
-    {
-      Elements.Clear();
-      AutomationElement root = AutomationElement.FromHandle(hwnd);
-      Queue<AutomationElement> nodes = new Queue<AutomationElement>();
-      nodes.Enqueue(root);
-      int visited = 0, limit = Math.Max(1, Math.Min(100, N(p, "limit", 60)));
-      TreeWalker walker = TreeWalker.ControlViewWalker;
-      while (nodes.Count > 0 && visited++ < 500 && items.Count < limit)
-      {
-        Check();
-        AutomationElement e = nodes.Dequeue();
-        try
-        {
-          AutomationElement.AutomationElementInformation c = e.Current;
-          if (!c.IsOffscreen && !c.BoundingRectangle.IsEmpty && c.ControlType != ControlType.Window && c.ControlType != ControlType.Pane)
-          {
-            List<string> patterns = new List<string>();
-            if (Supports(e, InvokePattern.Pattern))
-              patterns.Add("invoke");
-            if (Supports(e, ValuePattern.Pattern) && !c.IsPassword)
-              patterns.Add("value");
-            if (Supports(e, TogglePattern.Pattern))
-              patterns.Add("toggle");
-            if (Supports(e, SelectionItemPattern.Pattern))
-              patterns.Add("select");
-            if (Supports(e, ScrollPattern.Pattern))
-              patterns.Add("scroll");
-            if (Supports(e, ExpandCollapsePattern.Pattern))
-              patterns.Add("expand");
-            if (patterns.Count > 0)
-            {
-              string id = Guid.NewGuid().ToString("N");
-              Elements[id] = e;
-              var r = c.BoundingRectangle;
-              items.Add(new { id = id, name = c.Name.Length > 120 ? c.Name.Substring(0, 120) : c.Name, role = c.ControlType.ProgrammaticName.Replace("ControlType.", ""), enabled = c.IsEnabled, patterns = patterns, bounds = new { x = r.X, y = r.Y, width = r.Width, height = r.Height } });
-            }
-          }
-
-          AutomationElement child = walker.GetFirstChild(e);
-          int siblings = 0;
-          while (child != null && siblings++ < 100 && nodes.Count < 500)
-          {
-            nodes.Enqueue(child);
-            child = walker.GetNextSibling(child);
-          }
-        }
-        catch (ElementNotAvailableException)
-        {
-        }
-      }
-    }
-
-    return new
-    {
-      window = Window(hwnd),
-      elements = items
-    };
-  }
-
   static object ElementAction(Dictionary<string, object> p)
   {
     AutomationElement e;
@@ -496,13 +450,14 @@ public static class InfOSDesktop
       var snapshot = (Dictionary<string, object>)expected;
       var bounds = (Dictionary<string, object>)snapshot["bounds"];
       var actual = e.Current.BoundingRectangle;
-      if (e.Current.Name != S(snapshot, "name") || Math.Abs(actual.X - Convert.ToDouble(bounds["x"])) > 1 || Math.Abs(actual.Y - Convert.ToDouble(bounds["y"])) > 1 || Math.Abs(actual.Width - Convert.ToDouble(bounds["width"])) > 1 || Math.Abs(actual.Height - Convert.ToDouble(bounds["height"])) > 1)
+      if (Clip(e.Current.Name, 120) != S(snapshot, "name") || Math.Abs(actual.X - Convert.ToDouble(bounds["x"])) > 1 || Math.Abs(actual.Y - Convert.ToDouble(bounds["y"])) > 1 || Math.Abs(actual.Width - Convert.ToDouble(bounds["width"])) > 1 || Math.Abs(actual.Height - Convert.ToDouble(bounds["height"])) > 1)
         throw new Exception("DESKTOP_ELEMENT_STALE: 控件位置或内容已变化，请重新观察");
     }
 
     Check();
     object pattern;
     string action = S(p, "action");
+    Dictionary<string, object> before = ElementState(e);
     if (action == "invoke" && e.TryGetCurrentPattern(InvokePattern.Pattern, out pattern))
       Dispatch(() => ((InvokePattern)pattern).Invoke());
     else if (action == "set_value" && !e.Current.IsPassword && e.TryGetCurrentPattern(ValuePattern.Pattern, out pattern))
@@ -528,7 +483,9 @@ public static class InfOSDesktop
     return new
     {
       dispatched = true,
-      method = "uia"
+      method = "uia",
+      before = before,
+      after = action == "set_value" ? ValueAfter(e, S(p, "text")) : StateAfter(e)
     };
   }
 
@@ -536,6 +493,7 @@ public static class InfOSDesktop
   {
     string op = S(p, "operation"), action = S(p, "action");
     Check();
+    if (op == "perception") return PerceptionSample(p);
     if (op == "windows")
     {
       List<object> windows = new List<object>();
@@ -570,6 +528,12 @@ public static class InfOSDesktop
 
     if (op == "observe")
       return Observe(p);
+    if (op == "ocr")
+      return Ocr(p);
+    if (op == "mediaTitles")
+      return VisionCall(p, "MediaTitles", new object[] {}, "DESKTOP_MEDIA_UNAVAILABLE", 2000);
+    if (op == "capture")
+      return CaptureWindow(p);
     if (op == "release")
     {
       Release();
@@ -598,27 +562,42 @@ public static class InfOSDesktop
     if (op == "activate")
     {
       IntPtr hwnd = Target(p);
-      if (IsIconic(hwnd))
-        ShowWindow(hwnd, 9);
       Check();
-      if (!SetForegroundWindow(hwnd) && GetForegroundWindow() != hwnd)
-        throw new Exception("DESKTOP_FOCUS_DENIED: 无法激活目标窗口");
-      return Window(hwnd);
+      return Activate(hwnd);
     }
+
+    // 观察与执行前把目标切到前台；不因用户输入中断（只读分类），失败时给出 DESKTOP_FOCUS_DENIED。
+    if (op == "focus")
+      return Activate(Target(p));
+    if (op == "state")
+      return State(Target(p));
+    if (op == "windowAt")
+      return WindowAt(p);
+    if (op == "findText")
+      return FindText(p);
 
     if (op == "element")
       return ElementAction(p);
     if (!Listening)
       throw new Exception("DESKTOP_INPUT_MONITOR_UNAVAILABLE: 无法监听用户接管，已停止自动输入");
+    if (op == "media")
+      return Media(p);
     IntPtr target = Target(p);
+    object observed = null;
     InputWindow = target;
     if (GetForegroundWindow() != target)
       throw new Exception("DESKTOP_FOCUS_CHANGED: 前台窗口已变化，请重新观察");
     if (op == "mouse")
     {
+      // 痛点 18：点击点下方实际的窗口必须属于目标程序，移动鼠标之前核对，不是就不发出任何输入。
+      if (action != "mouse_up" && action != "move")
+        EnsurePointOwner(target, N(p, "x"), N(p, "y"));
+      if (action == "drag")
+        EnsurePointOwner(target, N(p, "x2"), N(p, "y2"), (uint)Math.Max(0, N(p, "dropPid")));
       if (action != "mouse_up")
         Move(N(p, "x"), N(p, "y"));
-      uint down = S(p, "button", "left") == "right" || action == "right_click" ? 8u : 2u, up = down == 8 ? 16u : 4u;
+      // 左键 2/4、右键 8/16、中键 0x20/0x40（按下/松开）。
+      uint down = ButtonDown(S(p, "button", "left"), action), up = down * 2;
       if (action == "move")
         return new
         {
@@ -643,47 +622,63 @@ public static class InfOSDesktop
           HeldButtons.Add(up);
         }
       }
-      else if (action == "scroll")
-      {
-        int amount = Math.Max(1, Math.Min(20, N(p, "amount", 3)));
-        string direction = S(p, "direction", "down");
-        Mouse(direction == "left" || direction == "right" ? 0x1000u : 0x800u, 0, 0, unchecked((uint)(120 * amount * (direction == "down" || direction == "left" ? -1 : 1))));
-      }
       else
       {
-        int count = action == "double_click" ? 2 : 1;
-        for (int i = 0; i < count; i++)
+        // 修饰键加点击（Ctrl+点击、Shift+滚动等）：先按下修饰键，点完一定松开。
+        List<ushort> modifiers = ModifierCodes(S(p, "modifiers"));
+        try
         {
-          lock (InputLock)
+          foreach (ushort code in modifiers)
+            Key(code, false);
+          if (action == "scroll")
           {
-            Mouse(down);
-            HeldButtons.Add(up);
+            int amount = Math.Max(1, Math.Min(20, N(p, "amount", 3)));
+            string direction = S(p, "direction", "down");
+            Mouse(direction == "left" || direction == "right" ? 0x1000u : 0x800u, 0, 0, unchecked((uint)(120 * amount * (direction == "down" || direction == "left" ? -1 : 1))));
           }
-
-          try
+          else
           {
-            if (action == "drag")
+            int count = action == "triple_click" ? 3 : action == "double_click" ? 2 : 1;
+            for (int i = 0; i < count; i++)
             {
-              int x = N(p, "x"), y = N(p, "y");
-              for (int step = 1; step <= 12; step++)
+              lock (InputLock)
               {
-                Check();
-                Move(x + (N(p, "x2") - x) * step / 12, y + (N(p, "y2") - y) * step / 12);
-                Thread.Sleep(12);
+                Mouse(down);
+                HeldButtons.Add(up);
               }
-            }
-          }
-          finally
-          {
-            lock (InputLock)
-            {
-              Mouse(up, 0, 0, 0, true);
-              HeldButtons.Remove(up);
-            }
-          }
 
-          if (count > 1)
-            Thread.Sleep(60);
+              try
+              {
+                if (action == "drag")
+                {
+                  int x = N(p, "x"), y = N(p, "y");
+                  for (int step = 1; step <= 12; step++)
+                  {
+                    Check();
+                    Move(x + (N(p, "x2") - x) * step / 12, y + (N(p, "y2") - y) * step / 12);
+                    Thread.Sleep(12);
+                  }
+                }
+              }
+              finally
+              {
+                lock (InputLock)
+                {
+                  Mouse(up, 0, 0, 0, true);
+                  HeldButtons.Remove(up);
+                }
+              }
+
+              if (count > 1)
+                Thread.Sleep(60);
+            }
+          }
+        }
+        finally
+        {
+          for (int m = modifiers.Count - 1; m >= 0; m--)
+            if (HeldKeys.Contains(modifiers[m]))
+              Key(modifiers[m], true, false, true);
         }
       }
     }
@@ -703,6 +698,7 @@ public static class InfOSDesktop
         )
           if ((GetAsyncKeyState(code) & 0x8000) != 0 && !HeldKeys.Contains((ushort)code))
             throw new Exception("DESKTOP_USER_BUSY: 用户仍按住修饰键");
+        string typedBefore = FocusedValue(target);
         foreach (char ch in S(p, "text"))
         {
           Check();
@@ -711,10 +707,12 @@ public static class InfOSDesktop
           Key(ch, false, true);
           Key(ch, true, true, true);
         }
+
+        observed = TypedReadBack(target, S(p, "text"), typedBefore);
       }
       else
       {
-        string[] keys = S(p, "text").Split('+');
+        string[] keys = SplitKeys(S(p, "text"));
         List<ushort> codes = new List<ushort>();
         foreach (string key in keys)
           codes.Add(KeyCode(key));
@@ -757,7 +755,8 @@ public static class InfOSDesktop
     return new
     {
       dispatched = true,
-      method = "native"
+      method = "native",
+      observed = observed
     };
   }
 
@@ -801,6 +800,8 @@ public static class InfOSDesktop
       foreach (Dictionary<string, object> request in Requests.GetConsumingEnumerable())
       {
         string id = S(request, "id");
+        string requested = S(request, "operation");
+        ActiveReadOnly = requested == "perception" || requested == "mediaTitles" || requested == "windows" || requested == "active" || requested == "window" || requested == "position" || requested == "observe" || requested == "focus" || requested == "state" || requested == "ocr" || requested == "capture" || requested == "windowAt" || requested == "findText";
         ActiveId = id;
         ActionDispatched = false;
         try
@@ -815,6 +816,7 @@ public static class InfOSDesktop
         finally
         {
           ActiveId = "";
+          ActiveReadOnly = false;
           InputWindow = IntPtr.Zero;
           bool ignored;
           Cancelled.TryRemove(id, out ignored);
@@ -861,3 +863,13 @@ public static class InfOSDesktop
   }
 }
 `
+
+/** Windows 桥接源码随主进程打包；仅在首次桌面操作时由系统 PowerShell 加载。 */
+export const WINDOWS_DESKTOP_SOURCE =
+  MAIN_SOURCE +
+  WINDOWS_DESKTOP_UIA_PART +
+  WINDOWS_DESKTOP_HANDS_PART +
+  WINDOWS_DESKTOP_VISION_PART +
+  WINDOWS_DESKTOP_CAPTURE_PART +
+  WINDOWS_PERCEPTION_PART +
+  WINDOWS_DESKTOP_WINDOW_STATE_PART

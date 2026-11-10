@@ -14,6 +14,7 @@ import type { IPty } from 'node-pty'
 import type { ExecutionSession } from './executionSession'
 import { trackCancellationCleanup } from './cancellation'
 import { createLogger } from '../../lib/logger'
+import { resolveWindowsCmdSpawn } from './windowsCmdArgs'
 
 const logger = createLogger('SandboxRunner')
 
@@ -101,10 +102,12 @@ export class LocalPolicyRunner implements SandboxRunner {
   async spawn(session: ExecutionSession, spec: ProcessSpec): Promise<SandboxProcess> {
     const { cwd, env } = await this.prepareProcess(session, spec)
     spec.signal?.throwIfAborted()
-    const child = spawn(spec.command, spec.args ?? [], {
+    const windowsCmd = spec.shell ? null : resolveWindowsCmdSpawn(spec.command, spec.args)
+    const child = spawn(spec.command, windowsCmd?.args ?? spec.args ?? [], {
       cwd,
       env,
       shell: spec.shell ?? false,
+      ...(windowsCmd ? { windowsVerbatimArguments: true } : {}),
       windowsHide: true,
       detached: process.platform !== 'win32',
       stdio: ['pipe', 'pipe', 'pipe'],
@@ -157,7 +160,8 @@ export class LocalPolicyRunner implements SandboxRunner {
   private trySpawnPty(spec: ProcessSpec, cwd: string, env: NodeJS.ProcessEnv): IPty | null {
     try {
       const nodePty = this.require('node-pty') as typeof import('node-pty')
-      return nodePty.spawn(spec.command, spec.args ?? [], {
+      const windowsCmd = resolveWindowsCmdSpawn(spec.command, spec.args)
+      return nodePty.spawn(spec.command, windowsCmd?.commandLine ?? spec.args ?? [], {
         name:
           process.platform === 'win32' ? 'xterm-256color' : process.env.TERM || 'xterm-256color',
         cols: Math.max(20, spec.cols ?? 120),
@@ -220,10 +224,12 @@ export class LocalPolicyRunner implements SandboxRunner {
     cwd: string,
     env: NodeJS.ProcessEnv,
   ): Promise<ManagedTerminalProcess> {
-    const child = spawn(spec.command, spec.args ?? [], {
+    const windowsCmd = resolveWindowsCmdSpawn(spec.command, spec.args)
+    const child = spawn(spec.command, windowsCmd?.args ?? spec.args ?? [], {
       cwd,
       env,
       shell: false,
+      ...(windowsCmd ? { windowsVerbatimArguments: true } : {}),
       windowsHide: true,
       detached: process.platform !== 'win32',
       stdio: ['pipe', 'pipe', 'pipe'],

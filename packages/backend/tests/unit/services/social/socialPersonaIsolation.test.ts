@@ -4,6 +4,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest'
 import { SocialAppCompiler } from '@infos/social/runtime/compiler'
 import { SocialAppRuntime } from '@infos/social/runtime'
 import type { AppRuntimeContext } from '@infos/backend/applicationHostAbi'
+import { compileModelRequest } from '@infos/backend/applicationHostAbi'
 
 const cleanup: string[] = []
 afterEach(() => {
@@ -50,6 +51,34 @@ function compilerFixture(grantIds = ['pero', 'keromi']) {
 }
 
 describe('社交角色人格隔离', () => {
+  it('社交独立编译器沿用全局动态深度，本轮身份标记随当前输入保留', async () => {
+    const { compiler, input, mdp } = compilerFixture()
+    Object.assign(mdp, {
+      prepareManagedFramework: async () => ({
+        messages: [
+          { role: 'system', content: '社交规则', slotId: 'rules' },
+          { role: 'user', content: '历史提问', historyMessage: true, slotId: 'history/0' },
+          { role: 'assistant', content: '历史回复', historyMessage: true, slotId: 'history/1' },
+          { role: 'user', content: '最新社交状态', slotId: 'turn_context' },
+        ],
+        preview: { requestPlan: { dynamicContextDepth: 1 } },
+      }),
+    })
+    const result = await compiler.compile({
+      ...input,
+      history: [
+        { role: 'user', content: '历史提问', key: 'social-user', timestamp: '' },
+        { role: 'assistant', content: '历史回复', key: 'social-reply', timestamp: '' },
+      ],
+    })
+    const request = compileModelRequest(result.messages, 0).messages
+    expect(request[2]?.content).toContain('最新社交状态')
+    expect(request[3]?.content).toBe('历史提问')
+    expect(request[4]?.content).toBe('历史回复')
+    expect(request.at(-1)?.content).toContain('<current_social_turn>')
+    expect(result.messages[result.currentMessageIndex!]?.content).toContain('你是谁')
+  })
+
   it('存在宿主 Pero 的授权时仍只加载所选可洛米人格，旧历史不能改写当前身份', async () => {
     const { compiler, input } = compilerFixture()
     const result = await compiler.compile(input)

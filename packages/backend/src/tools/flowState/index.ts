@@ -25,6 +25,7 @@ export const updateFlowStateTool: BuiltinTool = {
       threadId: context.threadId,
       agentId: context.agentId,
       pairId: context.pairId,
+      generation: context.generation,
       currentGoal,
       privateFacts,
     })

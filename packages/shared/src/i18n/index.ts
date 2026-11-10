@@ -98,11 +98,13 @@ export function registerCatalog(scope: string, language: AppLocale, messages: Me
 export function translateDiagnostic(source: string, language: AppLocale = locale): string {
   if (language === 'zh-CN' || !source || source.length > 20_000) return source
   const scopes = [...catalogs.keys()].filter((scope) => scope.startsWith('errors.'))
+  // 前端按需装配时可能不注册与原文相同的简中词库，此时以目标语言词库的原文键匹配。
+  const sourceKeys = (scope: string) =>
+    catalogs.get(scope)?.['zh-CN'] ?? catalogs.get(scope)?.[language]
   for (const scope of scopes)
-    if (catalogs.get(scope)?.['zh-CN']?.[source] !== undefined)
-      return translate(scope, source, [], language)
+    if (sourceKeys(scope)?.[source] !== undefined) return translate(scope, source, [], language)
   diagnosticPatterns ??= scopes.flatMap((scope) =>
-    Object.keys(catalogs.get(scope)?.['zh-CN'] ?? {})
+    Object.keys(sourceKeys(scope) ?? {})
       .filter((text) => /\{\d+\}/.test(text))
       .map((text) => {
         const indices: number[] = []

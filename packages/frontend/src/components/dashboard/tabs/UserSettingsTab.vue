@@ -9,9 +9,12 @@ import { t as __t } from '../../../i18n/index'
  */
 import { ref, computed, onMounted, watch } from 'vue'
 import WeatherCard from '../../weather/WeatherCard.vue'
-import DesktopControlSettings from '../../desktop/DesktopControlSettings.vue'
 import CompletionAlertSettings from '../../notification/CompletionAlertSettings.vue'
 import WholesomeModeSettings from '../WholesomeModeSettings.vue'
+import CustomThemeSettings from '../CustomThemeSettings.vue'
+import DesktopLayoutSettings from '../../shell/DesktopLayoutSettings.vue'
+import DesktopStartupSettings from '../../shell/DesktopStartupSettings.vue'
+import DesktopCardSettings from '../../shell/DesktopCardSettings.vue'
 import AssistantPrefillSettings from '../AssistantPrefillSettings.vue'
 import UserAvatarSettings from '../../user/UserAvatarSettings.vue'
 import { PixelIcon, PInput, PSelect, PSlider, PSwitch, PButton, PCard } from '../../pixel'
@@ -32,8 +35,10 @@ import { LANGUAGE_OPTIONS, normalizeLocale } from '@infos/shared/i18n'
 import { resolveSavedMotionLevel } from '../../../lib/sensorySettings'
 import {
   ASSISTANT_PREFILL_KEY,
+  DYNAMIC_CONTEXT_DEPTH_KEY,
   WHOLESOME_MODE_KEY,
   parseAssistantPrefillConfig,
+  parseDynamicContextDepth,
 } from '@infos/shared'
 import {
   createSystemSettingsPage,
@@ -49,6 +54,16 @@ const ownerName = ref('主人')
 const ownerPersona = ref('')
 const wholesomeEnabled = ref(true)
 const assistantPrefill = ref(parseAssistantPrefillConfig())
+const dynamicContextDepth = ref(parseDynamicContextDepth())
+const dynamicContextDepthOptions = computed(() => [
+  { value: 0, label: __t('ui.settings', '贴近当前输入') },
+  { value: 1, label: __t('ui.settings', '前移到上一条输入') },
+])
+function changeDynamicContextDepth(value: string | number): void {
+  if (value !== 0 && value !== 1) return
+  dynamicContextDepth.value = value
+  void handleSave()
+}
 const language = ref<string>(appLocale.value)
 watch(appLocale, (value, previous) => {
   if (language.value === previous) language.value = value
@@ -147,6 +162,7 @@ function settingsItems() {
     ['system.logLevel', logLevel.value],
     [WHOLESOME_MODE_KEY, String(wholesomeEnabled.value)],
     [ASSISTANT_PREFILL_KEY, JSON.stringify(assistantPrefill.value)],
+    [DYNAMIC_CONTEXT_DEPTH_KEY, String(dynamicContextDepth.value)],
   ].map(([key, value]) => ({ key: key!, value: value! }))
 }
 registerSettingsParticipant(settingsPage, {
@@ -246,12 +262,14 @@ async function loadSettings() {
       'system.logLevel',
       WHOLESOME_MODE_KEY,
       ASSISTANT_PREFILL_KEY,
+      DYNAMIC_CONTEXT_DEPTH_KEY,
     ])
     const d = res.data ?? {}
     ownerName.value = d['owner.name'] ?? '主人'
     ownerPersona.value = d['owner.persona'] ?? ''
     wholesomeEnabled.value = d[WHOLESOME_MODE_KEY] !== 'false'
     assistantPrefill.value = parseAssistantPrefillConfig(d[ASSISTANT_PREFILL_KEY])
+    dynamicContextDepth.value = parseDynamicContextDepth(d[DYNAMIC_CONTEXT_DEPTH_KEY])
     if (d['user.language']) language.value = normalizeLocale(d['user.language'])
     if (d['ui.fontSize']) fontSize.value = Number(d['ui.fontSize'])
     sensory.motionLevel.value = resolveSavedMotionLevel(d['ui.motionLevel'], d['ui.animations'])
@@ -461,6 +479,30 @@ onMounted(() => {
         :disabled="settingsDisabled"
         @save="handleSave()"
       />
+      <PCard pixel padding="lg" overflow-visible>
+        <div class="flex flex-wrap items-center justify-between gap-4">
+          <div>
+            <h3
+              class="flex items-center gap-2 text-sm font-black text-[var(--ui-text-primary)] font-pixel"
+            >
+              <PixelIcon name="settings" size="sm" />
+              {{ __t('ui.settings', '动态填充深度') }}
+            </h3>
+            <p class="mt-2 text-xs text-slate-500">
+              {{ __t('ui.settings', '调整状态与检索资料的位置，前移可能增加缓存开销。') }}
+            </p>
+          </div>
+          <div class="w-48">
+            <PSelect
+              :model-value="dynamicContextDepth"
+              :options="dynamicContextDepthOptions"
+              :disabled="settingsDisabled"
+              :aria-label="__t('ui.settings', '动态填充深度')"
+              @update:model-value="changeDynamicContextDepth"
+            />
+          </div>
+        </div>
+      </PCard>
       <!-- 用户人设 -->
       <PCard pixel padding="lg" overflow-visible>
         <h3
@@ -541,7 +583,6 @@ onMounted(() => {
 
       <!-- 默认城市与天气预览 -->
       <WeatherCard settings />
-      <DesktopControlSettings />
       <CompletionAlertSettings />
 
       <!-- 外观设置 -->
@@ -566,6 +607,11 @@ onMounted(() => {
               {{ __t('ui.settings', '与侧边栏的深色/浅色切换按钮实时联动') }}
             </p>
           </div>
+
+          <CustomThemeSettings />
+          <DesktopLayoutSettings />
+          <DesktopCardSettings />
+          <DesktopStartupSettings />
 
           <div
             class="app-background-settings flex flex-col gap-4 border-t border-[var(--ui-border-subtle)] pt-4"

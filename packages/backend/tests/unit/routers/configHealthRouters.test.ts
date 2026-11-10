@@ -8,6 +8,7 @@ import { createConfigRouter } from '@infos/backend/routers/config.router'
 import { errorHandler } from '@infos/backend/middleware/errorHandler'
 import type { AppContext } from '@infos/backend/container'
 import { getLocale, setLocale } from '@infos/shared/i18n'
+import { DYNAMIC_CONTEXT_DEPTH_KEY } from '@infos/shared'
 
 const appVersion = (
   JSON.parse(
@@ -84,6 +85,39 @@ async function readJson(response: Response) {
 }
 
 describe('createConfigRouter', () => {
+  it.each(['0', '1'])('动态深度 %s 可通过单项、批量和导入保存', async (value) => {
+    const ctx = createConfigContext()
+    const router = createConfigRouter(ctx)
+    for (const [endpoint, method, payload] of [
+      ['/', 'PUT', { key: DYNAMIC_CONTEXT_DEPTH_KEY, value }],
+      ['/batch', 'PUT', { items: [{ key: DYNAMIC_CONTEXT_DEPTH_KEY, value }] }],
+      ['/import', 'POST', { data: { [DYNAMIC_CONTEXT_DEPTH_KEY]: value } }],
+    ] as const) {
+      const response = await router.request(endpoint, {
+        method, headers: { 'content-type': 'application/json' }, body: JSON.stringify(payload),
+      })
+      expect(response.status).toBe(200)
+      expect(await ctx.configRepo.get(DYNAMIC_CONTEXT_DEPTH_KEY)).toBe(value)
+    }
+  })
+
+  it.each(['2', '-1', 'true', '1.0'])('动态深度拒绝非法值 %s，整批配置保持原样', async (value) => {
+    const ctx = createConfigContext({ [DYNAMIC_CONTEXT_DEPTH_KEY]: '0' })
+    const router = createConfigRouter(ctx)
+    for (const [endpoint, method, payload] of [
+      ['/', 'PUT', { key: DYNAMIC_CONTEXT_DEPTH_KEY, value }],
+      ['/batch', 'PUT', { items: [{ key: 'owner.name', value: '错误写入' }, { key: DYNAMIC_CONTEXT_DEPTH_KEY, value }] }],
+      ['/import', 'POST', { data: { 'owner.name': '错误写入', [DYNAMIC_CONTEXT_DEPTH_KEY]: value } }],
+    ] as const) {
+      const response = await router.request(endpoint, {
+        method, headers: { 'content-type': 'application/json' }, body: JSON.stringify(payload),
+      })
+      expect(response.status).toBe(400)
+      expect(await ctx.configRepo.get(DYNAMIC_CONTEXT_DEPTH_KEY)).toBe('0')
+      expect(await ctx.configRepo.get('owner.name')).toBeUndefined()
+    }
+  })
+
   it('删除语言偏好后恢复服务端环境语言，广播空偏好让客户端自行识别', async () => {
     vi.stubEnv('INFOS_LANGUAGE', 'en-US')
     setLocale('zh-CN')
@@ -114,11 +148,12 @@ describe('createConfigRouter', () => {
     expect(ctx.appManager.notifyConfigChanged).toHaveBeenCalledWith(['social'])
   })
 
-  it('后台记忆和向量开关独立保存并触发对应的热更新', async () => {
+  it('后台记忆总开关、角色开关和向量开关独立保存并触发对应的热更新', async () => {
     const ctx = createConfigContext()
     const router = createConfigRouter(ctx)
     router.onError(errorHandler)
-    for (const key of ['memory.background.enabled', 'embedding.enabled']) {
+    const keys = ['memory.background.enabled', 'memory.background.agent.pero.enabled', 'embedding.enabled']
+    for (const key of keys) {
       const response = await router.request('/', {
         method: 'PUT',
         headers: { 'content-type': 'application/json' },
@@ -127,18 +162,19 @@ describe('createConfigRouter', () => {
       expect(response.status).toBe(200)
       expect(await ctx.configRepo.get(key)).toBe('false')
     }
-    expect(ctx.reloadMemoryBackgroundConfig).toHaveBeenCalledOnce()
+    for (const key of keys) expect(await ctx.configRepo.get(key)).toBe('false')
+    expect(ctx.reloadMemoryBackgroundConfig).toHaveBeenCalledTimes(2)
     expect(ctx.reloadEmbeddingConfig).toHaveBeenCalledOnce()
   })
 
-  it('拒绝将非法字符串写入开关配置', async () => {
+  it.each(['embedding.enabled', 'memory.background.agent.pero.enabled'])('拒绝将非法字符串写入开关配置 %s', async (key) => {
     const ctx = createConfigContext()
     const router = createConfigRouter(ctx)
     router.onError(errorHandler)
     const response = await router.request('/', {
       method: 'PUT',
       headers: { 'content-type': 'application/json' },
-      body: JSON.stringify({ key: 'embedding.enabled', value: '随便写' }),
+      body: JSON.stringify({ key, value: '随便写' }),
     })
     expect(response.status).toBe(400)
     expect(ctx.configRepo.set).not.toHaveBeenCalled()

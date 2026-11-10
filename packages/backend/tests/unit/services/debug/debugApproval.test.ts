@@ -52,26 +52,16 @@ describe('统一调试工具的权限链', () => {
     expect((await second).isError).toBe(true)
     expect(handler).toHaveBeenCalledTimes(2)
   })
-  it('普通自动执行不能跳过任意 Node 脚本审批，全权限沿用现有执行授权', async () => {
+  it.each(['auto', 'full'] as const)('%s 中任意 Node 脚本均需用户单次确认', async (executionMode) => {
     const { executor, approvals, handler } = fixture()
-    const pending = executor.execute('runtime_debug', { code: 'return 1' }, 'desktop', {
-      executionMode: 'auto',
-    })
+    const pending = executor.execute('runtime_debug', { code: 'return 1' }, 'desktop', { executionMode })
     await vi.waitFor(() => expect(approvals.list({ status: 'pending' })).toHaveLength(1))
-    approvals.resolve(approvals.list({ status: 'pending' })[0]!.id, 'deny_once')
-    expect((await pending).isError).toBe(true)
     expect(handler).not.toHaveBeenCalled()
-    expect(
-      (
-        await executor.execute('runtime_debug', { code: 'return 1' }, 'desktop', {
-          executionMode: 'full',
-        })
-      ).isError,
-    ).toBe(false)
-    expect(handler).toHaveBeenCalledWith(
-      expect.anything(),
-      expect.objectContaining({ approvedSensitiveAction: true }),
-    )
+    const request = approvals.list({ status: 'pending' })[0]!
+    expect(() => approvals.resolve(request.id, 'allow_session')).toThrow('APPROVAL_ONCE_ONLY')
+    approvals.resolve(request.id, 'allow_once')
+    expect((await pending).isError).toBe(false)
+    expect(handler).toHaveBeenCalledWith(expect.anything(), expect.objectContaining({ approvedSensitiveAction: true }))
   })
   it('没有策略引擎时拒绝脚本；最新 Thread 模式覆盖陈旧的工作模式请求', async () => {
     const { executor, handler } = fixture()
@@ -101,35 +91,17 @@ describe('统一调试工具的权限链', () => {
     ).toBe(true)
     expect(handler).not.toHaveBeenCalled()
   })
-  it('自动审批经已有审批员处理，无审批员时明确拒绝且不挂起人工审批', async () => {
+  it('脚本在自动审批模式中交给用户，审批模型不参与', async () => {
     const { executor, handler, approvals } = fixture()
-    expect(
-      (
-        await executor.execute('runtime_debug', { code: 'return 1' }, 'desktop', {
-          executionMode: 'auto_approve',
-        })
-      ).isError,
-    ).toBe(true)
-    expect(handler).not.toHaveBeenCalled()
-    expect(approvals.list({ status: 'pending' })).toEqual([])
-    const review = vi.fn(async () => ({
-      source: 'automatic_reviewer',
-      decision: 'allow',
-      reason: '本地夹具只读检查',
-    }))
+    const review = vi.fn()
     executor.setAutomaticApprovalService({ review } as never)
-    expect(
-      (
-        await executor.execute('runtime_debug', { code: 'return 1' }, 'desktop', {
-          executionMode: 'auto_approve',
-        })
-      ).isError,
-    ).toBe(false)
-    expect(review).toHaveBeenCalledOnce()
-    expect(handler).toHaveBeenCalledWith(
-      expect.anything(),
-      expect.objectContaining({ approvedSensitiveAction: true }),
-    )
+    const pending = executor.execute('runtime_debug', { code: 'return 1' }, 'desktop', { executionMode: 'auto_approve' })
+    await vi.waitFor(() => expect(approvals.list({ status: 'pending' })).toHaveLength(1))
+    expect(review).not.toHaveBeenCalled()
+    expect(handler).not.toHaveBeenCalled()
+    approvals.resolve(approvals.list({ status: 'pending' })[0]!.id, 'deny_once')
+    expect((await pending).isError).toBe(true)
+    expect(handler).not.toHaveBeenCalled()
   })
   it('处理器拒绝 Realm、任务和 ambient，不能借脚本嵌套绕过', async () => {
     const execute = vi.fn()

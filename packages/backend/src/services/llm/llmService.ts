@@ -96,6 +96,8 @@ export interface ModelConfig {
   returnNativeReasoning?: boolean
   wireApi?: LlmWireApi
   reasoningDialect?: ReasoningDialect
+  /** 回答预填充能力声明；只影响本地请求计划，不发送给 Provider。 */
+  assistantPrefill?: import('@infos/shared').AssistantPrefillSupport
   /** 是否使用Provider流式接口；默认启用 */
   stream?: boolean
   /** 是否启用视觉能力 (多模态) */

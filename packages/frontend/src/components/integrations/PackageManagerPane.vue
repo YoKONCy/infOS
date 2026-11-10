@@ -1,11 +1,16 @@
 <script setup lang="ts">
-import { computed, ref, onMounted } from 'vue'
+import { computed, ref, onMounted, defineAsyncComponent } from 'vue'
 import type { ManagedPackageInfo, PackagePermission } from '@infos/shared'
 import { packagesApi } from '../../api/modules/packagesApi'
 import { t } from '../../i18n'
 import { PCard, PButton, PDialog, PixelIcon } from '../pixel'
 import PackageSlot from './PackageSlot.vue'
 import PackageWebUiPane from './PackageWebUiPane.vue'
+import PackageCardExtraActions from './PackageCardExtraActions.vue'
+import { usePackageExtraPanels } from '../../composables/packages/usePackageExtraPanels'
+
+const PackageToolSettingsDialog = defineAsyncComponent(() => import('./PackageToolSettingsDialog.vue'))
+const { settingsPanels, pagePanels, settingsPanel, refreshExtraPanels } = usePackageExtraPanels()
 
 const props = defineProps<{ packageId?: string }>()
 const items = ref<ManagedPackageInfo[]>([])
@@ -41,6 +46,7 @@ const states: Record<string, string> = {
 }
 async function refresh() {
   items.value = (await packagesApi.list()).data ?? []
+  await refreshExtraPanels()
   await extensionSlot.value?.refresh()
 }
 async function perform(operation: () => Promise<unknown>) {
@@ -154,6 +160,14 @@ onMounted(() => perform(async () => undefined))
           <pre>{{ item.error }}</pre>
         </details>
         <footer class="package-actions">
+          <PackageCardExtraActions
+            :item="item"
+            :busy="busy"
+            :settings-panels="settingsPanels"
+            :page-panels="pagePanels"
+            @settings="settingsPanel = $event"
+            @error="error = $event"
+          />
           <PButton
             v-for="entry in item.manifest.contributions.filter((entry) => entry.kind === 'web-ui')"
             :key="entry.id"
@@ -216,6 +230,12 @@ onMounted(() => perform(async () => undefined))
       </PCard>
     </div>
     <PackageSlot ref="extensionSlot" region="integrations" />
+    <PackageToolSettingsDialog
+      v-if="settingsPanel"
+      :key="settingsPanel.id"
+      :panel="settingsPanel"
+      @close="settingsPanel = undefined"
+    />
     <PDialog
       :model-value="!!authorization"
       :title="t('ui.packages', '审核插件权限')"

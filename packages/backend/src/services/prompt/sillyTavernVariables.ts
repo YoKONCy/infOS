@@ -17,6 +17,7 @@ const stateSchema = z.object({
   committed: z.array(z.string()).max(512),
   epoch: z.number().int().nonnegative().default(0),
   deletedThreads: z.array(z.string()).max(2000).default([]),
+  scopeEpochs: z.record(z.string(), z.number().int().nonnegative()).default({}),
 })
 const effect = z.object({
   name,
@@ -28,6 +29,7 @@ const commitSchema = z.object({
   id: z.string().uuid(),
   scope: z.string().min(1).max(500),
   epoch: z.number().int().nonnegative().default(0),
+  scopeEpoch: z.number().int().nonnegative().default(0),
   effects: z.object({ local: z.array(effect).max(1000), global: z.array(effect).max(1000) }),
 })
 type StoredVariables = z.infer<typeof stateSchema>
@@ -38,7 +40,7 @@ export class SillyTavernVariableStore {
   constructor(private repo: ConfigRepository) {}
   private async load(): Promise<StoredVariables> {
     const raw = await this.repo.get(KEY)
-    if (!raw) return { global: {}, sessions: {}, committed: [], epoch: 0, deletedThreads: [] }
+    if (!raw) return stateSchema.parse({ global: {}, sessions: {}, committed: [] })
     try {
       return stateSchema.parse(JSON.parse(raw))
     } catch {
@@ -50,13 +52,14 @@ export class SillyTavernVariableStore {
   private key(scope: string) {
     return createHash('sha256').update(scope).digest('hex')
   }
-  async snapshot(scope: string): Promise<PromptVariableState & { epoch: number }> {
+  async snapshot(scope: string): Promise<PromptVariableState & { epoch: number; scopeEpoch: number }> {
     await this.queue
     const state = await this.load()
     return {
       local: structuredClone(state.sessions[this.key(scope)]?.values ?? {}),
       global: structuredClone(state.global),
       epoch: state.epoch,
+      scopeEpoch: state.scopeEpochs[scope.split(':').at(-1)!] ?? 0,
     }
   }
   commit(input: PromptVariableCommit): Promise<void> {
@@ -66,6 +69,7 @@ export class SillyTavernVariableStore {
       if (state.committed.includes(change.id)) return
       if (
         change.epoch !== state.epoch ||
+        change.scopeEpoch !== (state.scopeEpochs[change.scope.split(':').at(-1)!] ?? 0) ||
         state.deletedThreads.some((threadId) => change.scope.endsWith(`:${threadId}`))
       )
         throw new AppError('CONFLICT', { message: '酒馆变量已重置或会话已删除，本轮变量不再提交' })
@@ -122,7 +126,7 @@ export class SillyTavernVariableStore {
         state = await this.load()
       } catch (error) {
         if (scope) throw error
-        state = { global: {}, sessions: {}, committed: [], epoch: 0, deletedThreads: [] }
+        state = stateSchema.parse({ global: {}, sessions: {}, committed: [] })
       }
       if (!scope) {
         state.global = {}
@@ -143,6 +147,55 @@ export class SillyTavernVariableStore {
         if (session.scope.endsWith(`:${threadId}`)) delete state.sessions[key]
       state.deletedThreads = [...new Set([...state.deletedThreads, threadId])].slice(-2000)
       await this.repo.setJson(KEY, state)
+    })
+    this.queue = action.catch(() => {})
+    return action
+  }
+
+  /** 局部变量与会话代次同事务重置，保留 ID 并使旧全局变量提交失效。 */
+  resetThread<T>(threadId: string, commit: (variables: { key: string; value: string }) => Promise<T>): Promise<T> {
+    const action = this.queue.then(async () => {
+      const state = await this.load()
+      state.scopeEpochs[threadId] = (state.scopeEpochs[threadId] ?? 0) + 1
+      for (const [key, session] of Object.entries(state.sessions))
+        if (session.scope.endsWith(`:${threadId}`)) delete state.sessions[key]
+      return commit({ key: KEY, value: JSON.stringify(state) })
+    })
+    this.queue = action.catch(() => {})
+    return action
+  }
+
+  /** 全量清空聊天时保留用户全局变量，并使所有旧执行的变量提交失效。 */
+  clearConversationScopes<T>(commit: (variables: { key: string; value: string }) => Promise<T>): Promise<T> {
+    const action = this.queue.then(async () => {
+      const state = await this.load()
+      state.sessions = {}
+      state.epoch = Math.max(Date.now(), state.epoch + 1)
+      return commit({ key: KEY, value: JSON.stringify(state) })
+    })
+    this.queue = action.catch(() => {})
+    return action
+  }
+
+  /** 与变量提交串行，交由调用方在创建会话的同一事务内保存当前局部变量副本。 */
+  forkThread<T>(
+    sourceThreadId: string,
+    targetThreadId: string,
+    commit: (configuration: { key: string; value: string }) => T,
+  ): Promise<T> {
+    const action = this.queue.then(async () => {
+      const state = await this.load()
+      for (const session of Object.values(state.sessions)) {
+        if (!session.scope.endsWith(`:${sourceThreadId}`)) continue
+        const scope = session.scope.slice(0, -sourceThreadId.length) + targetThreadId
+        state.sessions[this.key(scope)] = { scope, values: structuredClone(session.values) }
+      }
+      const value = JSON.stringify(state)
+      if (value.length > 4_000_000 || Object.keys(state.sessions).length > 2000)
+        throw new AppError('CONFIG_ERROR', {
+          message: '酒馆变量存储已满，请清理不再使用的会话变量',
+        })
+      return commit({ key: KEY, value })
     })
     this.queue = action.catch(() => {})
     return action

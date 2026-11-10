@@ -32,10 +32,18 @@ export interface MemoryRuntimeConfig {
     'desktop' | 'group',
     {
       contextPairs: number
+      historyTokenBudget: number
       enableAutoRag: boolean
       retrievalLimit: number
+      /** 自动注入记忆的专属 Token 上限，0 表示不限 */
+      memoryTokenBudget: number
     }
   >
+  /** 基础检索（未开启 SA-PPR）的相关度门槛 */
+  basic: {
+    enableRelevanceGate: boolean
+    minSimilarity: number
+  }
   advanced: {
     enableSaPpr: boolean
     expandDepth: number

@@ -24,6 +24,7 @@ import { useNotificationStore } from '../../stores/useNotificationStore'
 import ResourceReferenceCard from '../resources/ResourceReferenceCard.vue'
 import { splitResourceCards } from '../../lib/resourceLinks'
 import { openResource, openResourceLink } from '../../composables/resources/useResources'
+import { isMissingReference, markMissingReference } from '../../lib/missingResourceReference'
 
 const props = withDefaults(
   defineProps<{
@@ -54,6 +55,8 @@ let residentSnapshot: RichTextSnapshot | undefined
 let cancelRender: (() => void) | undefined
 let generation = 0
 let disposed = false
+let mathPending = false
+let stopMathReady: (() => void) | undefined
 const pageActive = ref(true)
 // 按需加载解析器，避免首次切屏必须同步初始化公式和全部高亮语言。
 let rendererPromise: Promise<typeof import('../../lib/chatRichRenderer')> | undefined
@@ -75,12 +78,23 @@ function updateSegments(): void {
     return
   }
   rendererPromise ??= import('../../lib/chatRichRenderer')
+  const content = props.content
   void rendererPromise
-    .then(({ renderChatRichText }) => {
+    .then(async (module) => {
+      if (!disposed)
+        stopMathReady ??= module.onChatMathReady(() => {
+          if (mathPending) updateSegments()
+        })
+      // 公式依赖只在正文可能含公式时加载，加载期间被更新的渲染直接作废。
+      await module.prepareChatRichText(content)
+      return module
+    })
+    .then(({ renderChatRichTextResult }) => {
       if (disposed || current !== generation) return
       cancelRender = queueTextRender(() => {
         if (disposed || current !== generation) return
         try {
+          let mathReady = true
           segments.value =
             // 流式尾部先显示源码；内容稳定后才创建 iframe，避免每个增量都取消并重启导航。
             (
@@ -95,15 +109,18 @@ function updateSegments(): void {
               }>((segment) =>
                 segment.type === 'rich-text' ? splitResourceCards(segment.source) : [segment],
               )
-              .map((segment) => ({
-                ...segment,
-                html:
-                  segment.type === 'rich-text'
-                    ? renderChatRichText(segment.source, { cache: props.cache && props.stable })
-                    : '',
-              }))
-          residentSnapshot = { ...input, segments: segments.value }
-          if (props.cache) writeRichTextSnapshot(residentSnapshot)
+              .map((segment) => {
+                if (segment.type !== 'rich-text') return { ...segment, html: '' }
+                const result = renderChatRichTextResult(segment.source, {
+                  cache: props.cache && props.stable,
+                })
+                mathReady &&= result.mathReady
+                return { ...segment, html: result.html }
+              })
+          mathPending = !mathReady
+          // 降级结果不能进入组件驻留或共享快照，否则依赖恢复后仍会命中源码。
+          residentSnapshot = mathReady ? { ...input, segments: segments.value } : undefined
+          if (props.cache && residentSnapshot) writeRichTextSnapshot(residentSnapshot)
         } catch {
           segments.value = [{ type: 'rich-text', source: props.content }]
         }
@@ -131,6 +148,7 @@ watch(
 )
 onBeforeUnmount(() => {
   disposed = true
+  stopMathReady?.()
   generation++
   cancelRender?.()
 })
@@ -147,27 +165,30 @@ async function handleClick(event: MouseEvent) {
   const link = (event.target as HTMLElement).closest<HTMLElement>('[data-resource-source]')
   if (link) {
     event.preventDefault()
+    const source = link.dataset.resourceSource || ''
     if (!props.agentId || !props.threadId) {
-      const source = (link.dataset.resourceSource || '').replace(/^resource:/i, '')
-      if (/^https?:\/\//i.test(source))
+      const plain = source.replace(/^resource:/i, '')
+      if (/^https?:\/\//i.test(plain))
         openResource({
           kind: 'web',
           name: '网页',
           mimeType: 'text/html',
           sizeBytes: 0,
-          origin: { type: 'url', value: source },
+          origin: { type: 'url', value: plain },
         })
       else notify.toast(__t('ui.chat', '请从所属会话打开文件'), { type: 'warning' })
       return
     }
     try {
-      await openResourceLink(link.dataset.resourceSource || '', {
+      await openResourceLink(source, {
         agentId: props.agentId,
         threadId: props.threadId,
       })
     } catch (error) {
+      // 确认找不到的引用不再显示为可点链接，提示里写明查找过哪里。
+      if (isMissingReference(error)) markMissingReference(link, (error as Error).message)
       notify.toast(error instanceof Error ? error.message : __t('ui.chat', '无法打开资源'), {
-        type: 'error',
+        type: isMissingReference(error) ? 'warning' : 'error',
       })
     }
     return
@@ -239,6 +260,16 @@ async function handleClick(event: MouseEvent) {
 }
 .chat-resource-chip:hover {
   background: color-mix(in srgb, var(--ui-accent-purple) 14%, transparent);
+}
+.chat-resource-chip--missing {
+  color: var(--ui-text-tertiary);
+  border-bottom-style: dashed;
+  background: transparent;
+  box-shadow: none;
+  cursor: help;
+}
+.chat-resource-chip--missing:hover {
+  background: transparent;
 }
 :root,
 [data-theme='light'] {

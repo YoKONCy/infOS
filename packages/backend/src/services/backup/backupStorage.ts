@@ -2,7 +2,9 @@ import { existsSync } from 'node:fs'
 import { cp, lstat, mkdir, readFile, readdir, rename, rm, writeFile } from 'node:fs/promises'
 import path from 'node:path'
 import { randomUUID } from 'node:crypto'
+import { setTimeout as delay } from 'node:timers/promises'
 import Database from 'better-sqlite3'
+import { isSnapshotProgramPath, isSnapshotTransientPath } from '@infos/shared'
 
 export const BACKUP_STATE = '.backup-state'
 export const LOCAL_FILES = new Set([
@@ -33,8 +35,30 @@ export const TRANSIENT_ROOTS = new Set([
 export async function atomicBackupJson(file: string, value: unknown): Promise<void> {
   await mkdir(path.dirname(file), { recursive: true, mode: 0o700 })
   const temporary = `${file}.${randomUUID()}.tmp`
-  await writeFile(temporary, JSON.stringify(value), { mode: 0o600, flush: true })
-  await rename(temporary, file)
+  try {
+    await writeFile(temporary, JSON.stringify(value), { mode: 0o600, flush: true })
+    // Windows 索引或杀毒短暂占用时保留旧记录，最多替换五次。
+    for (let attempt = 0; ; attempt++) {
+      try {
+        await rename(temporary, file)
+        return
+      } catch (error) {
+        const code = (error as NodeJS.ErrnoException).code
+        if (attempt >= 4 || !['EPERM', 'EBUSY', 'EACCES'].includes(code ?? '')) throw error
+        await delay(20 * 2 ** attempt)
+      }
+    }
+  } finally {
+    await rm(temporary, { force: true }).catch(() => undefined)
+  }
+}
+
+/** 机器私有文件，或它的原子写入临时文件（`名字.tmp`、`名字.<随机>.tmp`）。 */
+export function isLocalFilePath(relative: string): boolean {
+  if (LOCAL_FILES.has(relative)) return true
+  if (!relative.endsWith('.tmp')) return false
+  for (const file of LOCAL_FILES) if (relative.startsWith(`${file}.`)) return true
+  return false
 }
 
 export function excludedBackupPath(relative: string): boolean {
@@ -45,7 +69,9 @@ export function excludedBackupPath(relative: string): boolean {
   )
     return true
   return (
-    LOCAL_FILES.has(relative) ||
+    isSnapshotProgramPath(relative) ||
+    isSnapshotTransientPath(relative) ||
+    isLocalFilePath(relative) ||
     TRANSIENT_ROOTS.has(parts[0]!) ||
     parts.some((part) => part.startsWith('.resource-') || part.startsWith('.startup-check-')) ||
     /(?:-wal|-shm|\.lock)$/.test(relative) ||
@@ -159,6 +185,22 @@ export async function installBackupTree(
   const incoming = path.join(directory, 'incoming')
   await mkdir(path.join(directory, 'previous'), { recursive: true })
   await rename(prepared, incoming)
+  // 新快照省略发行文件；恢复时复用目标端已有程序，账号和用户插件仍由快照覆盖。
+  const preservePrograms = async (relative: string): Promise<void> => {
+    const source = path.join(dataDir, relative)
+    if (!existsSync(source)) return
+    const info = await lstat(source)
+    if (info.isSymbolicLink()) return
+    if (info.isDirectory()) {
+      for (const name of await readdir(source)) await preservePrograms(`${relative}/${name}`)
+    } else if (info.isFile() && isSnapshotProgramPath(relative)) {
+      const target = path.join(incoming, relative)
+      if (existsSync(target)) return
+      await mkdir(path.dirname(target), { recursive: true })
+      await cp(source, target)
+    }
+  }
+  for (const root of ['tools/NapCat', 'data/tools/NapCat']) await preservePrograms(root)
   // 本机身份与资源版本控制信息始终沿用目标端，不能被来源覆盖。
   for (const relative of LOCAL_FILES) {
     const source = path.join(dataDir, relative)
@@ -167,8 +209,9 @@ export async function installBackupTree(
     await mkdir(path.dirname(target), { recursive: true })
     await cp(source, target)
   }
-  const oldNames = (await readdir(dataDir)).filter((name) => !retainedRoot(name))
-  const newNames = (await readdir(incoming)).filter((name) => !retainedRoot(name))
+  // 根级客户端缓存沿用目标端；旧包中的缓存仍经过正文校验，安装时跳过。
+  const oldNames = (await readdir(dataDir)).filter((name) => !retainedRoot(name) && !isSnapshotTransientPath(name))
+  const newNames = (await readdir(incoming)).filter((name) => !retainedRoot(name) && !isSnapshotTransientPath(name))
   const journal: RestoreJournal = {
     phase: 'installing',
     directory: id,

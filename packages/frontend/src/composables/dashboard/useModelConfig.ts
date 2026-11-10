@@ -40,6 +40,7 @@ export interface LlmModel {
   returnNativeReasoning: boolean
   wireApi: 'chat_completions' | 'responses'
   reasoningDialect: 'auto' | 'openai' | 'deepseek' | 'openrouter' | 'generic'
+  assistantPrefill: 'auto' | 'supported' | 'unsupported'
   stream: boolean
   enableVision: boolean
   enableAudioInput: boolean
@@ -65,7 +66,10 @@ export const TASK_SLOTS = [
       return __t('ui.settings', '工具审批')
     },
     get description() {
-      return __t('ui.settings', '自动审批终端操作与工作区外删除；未指派时跟随主模型')
+      return __t(
+        'ui.settings',
+        '自动审批模式下判断其他需审批的操作（终端与高危操作仍由你确认）；未指派时跟随主模型',
+      )
     },
     icon: 'check',
   },
@@ -98,6 +102,26 @@ export const TASK_SLOTS = [
       return __t('ui.settings', '关联相近经历、修正内容并减少重复记忆')
     },
     icon: 'link',
+  },
+  {
+    key: 'expression_learning',
+    get label() {
+      return __t('ui.settings', '学说话习惯')
+    },
+    get description() {
+      return __t('ui.settings', '从你的批注和纠正里总结规律，写进说话手册；未指派时跟随主模型')
+    },
+    icon: 'edit',
+  },
+  {
+    key: 'watch_along',
+    get label() {
+      return __t('ui.settings', '陪看和主动开口')
+    },
+    get description() {
+      return __t('ui.settings', '陪看插话和感知叫醒都用它。选个快的，她开口才及时；未指派时跟随主模型')
+    },
+    icon: 'eye',
   },
   {
     key: 'social_scorer',
@@ -137,6 +161,7 @@ function toLlmModel(item: ModelConfigItem): LlmModel {
     returnNativeReasoning: item.returnNativeReasoning ?? false,
     wireApi: item.wireApi ?? 'chat_completions',
     reasoningDialect: item.reasoningDialect ?? 'auto',
+    assistantPrefill: item.assistantPrefill ?? 'auto',
     stream: item.stream ?? true,
     enableVision: item.enableVision ?? false,
     enableAudioInput: item.enableAudioInput ?? false,
@@ -254,6 +279,7 @@ export function useModelConfig() {
     returnNativeReasoning: false,
     wireApi: 'chat_completions',
     reasoningDialect: 'auto',
+    assistantPrefill: 'auto',
     stream: true,
     enableVision: false,
     enableAudioInput: false,
@@ -657,6 +683,7 @@ export function useModelConfig() {
         returnNativeReasoning: false,
         wireApi: 'chat_completions',
         reasoningDialect: 'auto',
+        assistantPrefill: 'auto',
         stream: true,
         enableVision: false,
         enableAudioInput: false,

@@ -36,6 +36,7 @@ export type ToolHandler = (
  * - source/sessionId: 保留向后兼容，新代码请用 threadId/channel
  */
 export interface ToolContext {
+  conversation?: import('@infos/shared').ConversationActions
   requestedBy?: 'user' | 'agent'
   browserScope?: import('@infos/shared').AgentBrowserScope
   /** 消息来源（向后兼容，等价于 channel） */
@@ -48,8 +49,11 @@ export interface ToolContext {
   threadId: string
   /** AIOS: 对话通道（desktop/companion/social/group） */
   channel: string
+  sceneRoomId?: string
   /** 当前对话轮次 ID，文件变更快照按此绑定。 */
   pairId?: string
+  generation?: number
+  characterStateVersion?: { revision: number }
   /** 当前函数调用 ID，用于审计轮内具体工具操作。 */
   toolCallId?: string
   /** 当前 ReAct/任务的取消信号，长时工具必须主动监听。 */

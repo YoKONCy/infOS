@@ -73,12 +73,14 @@ function fixture(options: EventMemoryFallbackOptions = {}, drafts: EventNoteDraf
     markOperationCommitted: vi.fn(),
   }
   const threads = {
-    getThread: vi.fn().mockResolvedValue({ id: 'thread-1', agentId: 'pero', status: 'active' }),
+    getThread: vi.fn().mockResolvedValue({ id: 'thread-1', agentId: 'pero', status: 'active', threadKind: 'main', generation: 1 }),
     listThreads: vi.fn().mockResolvedValue({
-      items: [{ id: 'thread-1', agentId: 'pero', channel: 'desktop' }],
+      items: [{ id: 'thread-1', agentId: 'pero', channel: 'desktop', threadKind: 'main', generation: 1 }],
       total: 1,
     }),
     latestMemoryMessageId: vi.fn(async () => Math.max(0, ...messages.map((m) => m.id))),
+    latestExperienceId: vi.fn().mockResolvedValue(0),
+    queryMemoryExperiencesThrough: vi.fn().mockResolvedValue([]),
     queryMemoryMessagesThrough: vi.fn(async (_thread: string, fence: number) =>
       messages.filter((m) => m.id <= fence),
     ),
@@ -131,6 +133,61 @@ function fixture(options: EventMemoryFallbackOptions = {}, drafts: EventNoteDraf
 }
 
 describe('Agent 累计在线八小时补记', () => {
+  it('来源已转为侧线时停止旧批次，原对话继续保留', async () => {
+    const f = fixture({}, [draft])
+    f.threads.getThread.mockResolvedValue({ id: 'thread-1', agentId: 'pero', status: 'active', threadKind: 'side', generation: 1 })
+    await f.online(60)
+    await f.service.tick(['pero'])
+    expect(f.extractor.extract).not.toHaveBeenCalled()
+    expect(f.create).not.toHaveBeenCalled()
+    expect(f.threads.listThreads).toHaveBeenCalledWith(expect.objectContaining({ threadKind: 'main' }))
+  })
+
+  it('模型提炼期间主线重置，旧结果和覆盖均不提交', async () => {
+    const f = fixture({}, [draft])
+    f.extractor.extract.mockImplementationOnce(async () => {
+      f.threads.getThread.mockResolvedValue({ id: 'thread-1', agentId: 'pero', status: 'active', threadKind: 'main', generation: 2 })
+      return [draft]
+    })
+    await f.online(60)
+    await f.service.tick(['pero'])
+    expect(f.create).not.toHaveBeenCalled()
+    expect(f.repo.commitCoverageUnderClaim).not.toHaveBeenCalled()
+  })
+  it('角色关闭后台记忆后不再计时，其他角色继续累计，重新开启沿用原进度', async () => {
+    const background = new MemoryBackgroundControl()
+    const f = fixture({ background })
+    await f.online(30, f.service, ['pero', 'nana'])
+    background.setAgentEnabled('pero', false)
+    await f.service.checkpointRuntime(['pero', 'nana'])
+    await f.online(30, f.service, ['pero', 'nana'])
+    expect(f.timers.get('background-runtime:pero')).toBe(30)
+    expect(f.timers.get('background-runtime:nana')).toBe(60)
+    await f.service.tick(['pero'])
+    expect(f.extractor.extract).not.toHaveBeenCalled()
+    background.setAgentEnabled('pero', true)
+    await f.service.checkpointRuntime(['pero', 'nana'])
+    await f.online(30, f.service, ['pero', 'nana'])
+    await f.service.tick(['pero'])
+    expect(f.extractor.extract).toHaveBeenCalledOnce()
+  })
+
+  it('单角色关闭后迟到的模型结果不能写入，其他角色的后台信号仍然有效', async () => {
+    const background = new MemoryBackgroundControl()
+    const nana = background.agentSignal('nana')
+    const f = fixture({ background })
+    f.extractor.extract.mockImplementationOnce(async () => {
+      background.setAgentEnabled('pero', false)
+      background.setAgentEnabled('pero', true)
+      return [draft]
+    })
+    await f.online(60)
+    await f.service.tick(['pero'])
+    expect(f.create).not.toHaveBeenCalled()
+    expect(f.coverage.size).toBe(0)
+    expect(nana.aborted).toBe(false)
+  })
+
   it('已删除角色即使仍在调度快照里，也不能继续计时或调用补记模型', async () => {
     const f = fixture({ agents: new MemoryAgentScope(() => false) })
     await f.online(90)

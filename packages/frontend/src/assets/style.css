@@ -28,6 +28,8 @@
 @import './light-theme.css';
 @import './agent-portrait.css';
 @import './scrollbars.css';
+/* 2.2 公共动效层：动效令牌、过渡类、骨架占位 */
+@import './motion.css';
 @import './mobile.css';
 
 /*

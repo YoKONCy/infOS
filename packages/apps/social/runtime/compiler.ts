@@ -34,7 +34,7 @@ import type {
 import type { TriviumDB } from 'triviumdb'
 import { runSocialGeneration, type SocialGenerationOptions } from './socialGeneration'
 import { readFileSync } from 'node:fs'
-import { createLogger, tokenCounter } from '@infos/backend/applicationHostAbi'
+import { createLogger, tokenCounter, bindDynamicContext } from '@infos/backend/applicationHostAbi'
 import { socialOwnerId } from './socialMessageContext'
 import { MAX_SOCIAL_IMAGES } from './socialImageReader'
 
@@ -83,17 +83,17 @@ function parseTerminalAcceptance(result: string): boolean {
 /**
  * 过滤 LLM 回复中的思考块
  *
- * 碎碎念使用 selfMinding，兼容旧 think / thinking / thought，大小写不敏感。
+ * 碎碎念使用 selfMinding 或 innerVoice，兼容旧 think / thinking / thought，大小写不敏感。
  * 完整块与未闭合块都不发送到社交平台。
  */
 function stripThinkingBlocks(text: string): string {
   let result = text
 
   // 先移除完整块，保留块后的正常回复。
-  result = result.replace(/<(selfMinding|think|thinking|thought)(?:\s[^>]*)?>[\s\S]*?<\/\1>/gi, '')
+  result = result.replace(/<(innerVoice|selfMinding|think|thinking|thought)(?:\s[^>]*)?>[\s\S]*?<\/\1>/gi, '')
 
   // 未闭合块从开始标签起移除，避免碎碎念混入回复。
-  result = result.replace(/<(selfMinding|think|thinking|thought)(?:\s[^>]*)?>[\s\S]*$/gi, '')
+  result = result.replace(/<(innerVoice|selfMinding|think|thinking|thought)(?:\s[^>]*)?>[\s\S]*$/gi, '')
 
   // 清理首尾多余空白
   return result.trim()
@@ -577,7 +577,15 @@ export class SocialAppCompiler {
                 ]?.key,
               },
             }
-          : {}),
+          : message.role === 'user'
+            ? {
+                cacheControl: {
+                  kind: 'snapshot' as const,
+                  key: `prompt-slot:${message.slotId}`,
+                  ...(message.dynamicContext ? { dynamicContext: true } : {}),
+                },
+              }
+            : {}),
       })) ?? [
         { role: 'system' as const, content: finalSystemPrompt },
         ...promptVars.native_history.map((message, index) => ({
@@ -586,6 +594,7 @@ export class SocialAppCompiler {
         })),
         {
           role: 'user' as const,
+          cacheControl: { kind: 'snapshot' as const, key: 'prompt-slot:turn_context' },
           content: this.mdpEngine.render(
             'components/state/turn_context',
             promptVars,
@@ -598,7 +607,7 @@ export class SocialAppCompiler {
         : [{ role: 'user' as const, content: userContent }]),
     ]
 
-    if (messages[0] && managed?.preview?.requestPlan?.assistantPrefill)
+    if (messages[0] && managed?.preview?.requestPlan)
       messages[0].promptPlan = managed.preview.requestPlan
     // 直接附在当前输入上，避免自定义框架遗漏身份槽位，或裁剪历史时丢失本轮归属。
     const currentMessageIndex = managedMessages?.some((message) => message.currentMessage)
@@ -625,6 +634,12 @@ export class SocialAppCompiler {
     currentMessage.content = Array.isArray(currentMessage.content)
       ? [...currentMessage.content, { type: 'text', text: target }]
       : `${currentMessage.content}\n\n${target}`
+    const previousUser = [...history].reverse().find((message) => message.role === 'user')
+    bindDynamicContext(
+      messages,
+      managed?.preview?.requestPlan?.dynamicContextDepth ?? 0,
+      previousUser?.key,
+    )
 
     // 7. 使用后端统一 o200k_base Tokenizer 计算消息正文。
     const tokenEstimate = tokenCounter.countMessages(messages)

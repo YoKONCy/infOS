@@ -163,6 +163,7 @@ describe('AgentRouter', () => {
         ),
         getWritableCapabilitiesPath: vi.fn(() => '/tmp/pero-capabilities.yaml'),
       },
+      threadService: { getMainThread: vi.fn().mockResolvedValue({ id: 'main' }) },
       cleanupDeletedAgent: vi.fn(),
       strongholdService: {
         ensureAgentLocation: vi.fn(() => Promise.resolve({ agentId: 'pero', roomId: 'living' })),
@@ -405,6 +406,7 @@ describe('MemoryRouter', () => {
       },
       privacyDeletionService: { deleteMemory: vi.fn(async () => {}) },
       threadRepo: {
+        memorySource: vi.fn().mockResolvedValue({ available: true, withdrawn: false, revised: false, messages: [{ id: 1, role: 'user', content: '原始消息', pairId: 'pair-1' }] }),
         findMessagesByPairIds: vi.fn(() =>
           Promise.resolve([
             {
@@ -508,7 +510,7 @@ describe('MemoryRouter', () => {
 
   it('来源消息已删除时应返回available=false且不返回原文', async () => {
     const ctx = createCtx()
-    ctx.threadRepo.findMessagesByPairIds.mockResolvedValueOnce([])
+    ctx.threadRepo.memorySource.mockResolvedValueOnce({ available: false, withdrawn: true, revised: false, messages: [] })
     const router = createMemoryRouter(ctx as never)
 
     const source = await readJson(await router.request('http://test/event-1/source'))

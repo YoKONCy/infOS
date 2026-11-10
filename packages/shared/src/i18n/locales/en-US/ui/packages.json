@@ -46,5 +46,11 @@
   "授权仅适用于本次审核的版本和内容。": "Authorization applies only to the reviewed version and content.",
   "确认操作": "Confirm action",
   "卸载该插件及其安装文件？": "Uninstall this plugin and its installed files?",
-  "回退后插件将停用，重新审核后可启用。": "The plugin will be disabled after rollback. Review it again to enable."
+  "回退后插件将停用，重新审核后可启用。": "The plugin will be disabled after rollback. Review it again to enable.",
+  "打开导入页": "Open import page",
+  "打开页面": "Open page",
+  "插件页面没有启动。请确认插件状态为「运行中」，或点击「重载」后重试。": "The plugin page is not running. Make sure the plugin status is \"Running\", or click \"Reload\" and try again.",
+  "插件没有在运行。请在「插件」中启用它，状态为「运行中」后再试。": "The plugin is not running. Enable it under \"Plugins\" and try again once its status is \"Running\".",
+  "请允许弹出窗口后重试。": "Allow pop-up windows and try again.",
+  "插件页面没有启动，请启用或重载插件后重试。": "The plugin page is unavailable. Enable or reload the plugin and try again."
 }

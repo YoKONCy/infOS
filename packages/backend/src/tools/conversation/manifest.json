@@ -1,0 +1,93 @@
+{
+  "id": "conversation",
+  "name": "主线交流",
+  "version": "1.0.0",
+  "type": "tool",
+  "entry": "index.ts",
+  "category": "core",
+  "toolDefinition": {
+    "name": "conversation",
+    "description": "主会话连续交流。publish 独立发表一条正式消息，可连续发表多条，id 在本次执行中保持稳定，返回 messageId。resolve 用当前用户输入回应一个或多个待回应事项，ids 来自交流现场。wait 在已发表问题后保存 items 中的等待事项与 continuation，再释放本次执行。每项引用 publish 返回的 message_ids。后续输入启动新执行，结合用户实际回答判断哪些事项已解决。普通最终答复也可直接输出自然语言。",
+    "parameters": {
+      "type": "object",
+      "properties": {
+        "action": {
+          "type": "string",
+          "enum": [
+            "publish",
+            "wait",
+            "resolve"
+          ]
+        },
+        "id": {
+          "type": "string",
+          "description": "publish 的稳定逻辑标识，同一发言重试沿用原标识。"
+        },
+        "content": {
+          "type": "string",
+          "description": "正式发言正文。"
+        },
+        "spoken_reply": {
+          "type": "string",
+          "description": "可选的简短口语答复。"
+        },
+        "responds_to": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "description": "本消息解决的待回应事项 ID。"
+        },
+        "ids": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "items": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "id": {
+                "type": "string"
+              },
+              "question": {
+                "type": "string"
+              },
+              "continuation": {
+                "type": "string",
+                "description": "后续接续所需的简短目标、进展与下一步。"
+              },
+              "message_ids": {
+                "type": "array",
+                "items": {
+                  "type": "integer"
+                }
+              },
+              "expires_at": {
+                "type": "string",
+                "description": "可选的 ISO UTC 到期时间，省略时持续等待。"
+              }
+            },
+            "required": [
+              "id",
+              "question",
+              "continuation",
+              "message_ids"
+            ]
+          }
+        }
+      },
+      "required": [
+        "action"
+      ]
+    }
+  },
+  "userCopy": {
+    "conversation": {
+      "label": "主线交流",
+      "description": "发表消息、记录待回应的问题，并在收到回答后接续。"
+    }
+  }
+}

@@ -31,6 +31,7 @@ import type { PathResolver } from '../../core/pathResolver'
 import type { AgentPublicProfile } from '@infos/shared'
 import type { ConfigRepository } from '../../repositories/config.repo'
 import type { PetStateService } from './petStateService'
+import { installAgentCard } from './agentCardInstall'
 import { createLogger } from '../../lib/logger'
 
 const logger = createLogger('AgentManager')
@@ -171,6 +172,12 @@ export interface AgentProfile {
 // ─────────────────────────────────────────────
 
 export class AgentManager {
+  private onRegistration?: (agentId: string) => void
+
+  setRegistrationHandler(handler: (agentId: string) => void): void {
+    this.onRegistration = handler
+    for (const id of this.agents.keys()) handler(id)
+  }
   /** 所有已加载的 Agent */
   private agents = new Map<string, AgentProfile>()
 
@@ -186,7 +193,7 @@ export class AgentManager {
   /** 已启用的 Agent ID 集合 */
   enabledAgents = new Set<string>()
 
-  /** 会话角色状态服务，用于合并当前会话的动态台词。 */
+  /** 角色共享状态服务，用于合并有效期内的动态台词。 */
   private petStateService?: PetStateService
 
   constructor(
@@ -199,6 +206,26 @@ export class AgentManager {
   /** 注入 PetStateService (容器装配阶段调用) */
   setPetStateService(service: PetStateService): void {
     this.petStateService = service
+  }
+
+  /** 角色目录加载完成后的回调，用于导入角色资源包内嵌的世界书。 */
+  private agentsLoadedListener?: (agents: Array<{ id: string; directory: string }>) => void
+
+  /** 注册后立即以当前角色执行一次，此后每次重载角色目录都会再次通知。 */
+  setAgentsLoadedListener(
+    listener: (agents: Array<{ id: string; directory: string }>) => void,
+  ): void {
+    this.agentsLoadedListener = listener
+    this.notifyAgentsLoaded()
+  }
+
+  private notifyAgentsLoaded(): void {
+    this.agentsLoadedListener?.(
+      [...this.agents.values()].map((profile) => ({
+        id: profile.id,
+        directory: path.dirname(profile.configPath),
+      })),
+    )
   }
 
   /** 扫描并加载所有 Agent 配置 */
@@ -249,6 +276,7 @@ export class AgentManager {
     }
 
     logger.info(__t('logs.agent', '已加载 {0} 个 Agent', [this.agents.size]))
+    this.notifyAgentsLoaded()
   }
 
   /** 将当前生效的官方或用户角色导出为客户端可落盘的版本化资源包。 */
@@ -299,6 +327,34 @@ export class AgentManager {
   /** 获取 Agent */
   getAgent(agentId: string): AgentProfile | undefined {
     return this.agents.get(agentId.toLowerCase())
+  }
+
+  /** 损坏或未加载的用户目录也占用 ID，导入不得静默覆盖其中的资源。 */
+  hasAgentPackage(id: string): boolean {
+    return (
+      this.agents.has(id) || existsSync(path.join(this.pathResolver.resolve('@data/agents'), id))
+    )
+  }
+
+  /** 在同盘暂存资源并保留原目录；同步回调失败时恢复磁盘和内存，不触发旧包自动导书。 */
+  installCard<T>(id: string, files: Map<string, Buffer>, complete: () => T): T {
+    return installAgentCard(
+      {
+        agentsRoot: this.pathResolver.resolve('@data/agents'),
+        dataRoot: this.pathResolver.resolve('@data'),
+        agents: this.agents,
+        enabledAgents: () => this.enabledAgents,
+        loadAgentConfig: (agentId, agentDir, configPath) =>
+          this.loadAgentConfig(agentId, agentDir, configPath),
+      },
+      id,
+      files,
+      () => {
+        const result = complete()
+        this.onRegistration?.(id)
+        return result
+      },
+    )
   }
 
   /**
@@ -430,6 +486,7 @@ export class AgentManager {
     // 同步内存 profile（加载路径统一走 loadAgentConfig 的同一套规则）
     const updated = this.loadAgentConfig(id, agentDir, configPath)
     this.agents.set(id, updated)
+    this.onRegistration?.(id)
 
     logger.info(__t('logs.agent', '已更新 Agent 配置: {0}', [id]))
     return updated
@@ -476,6 +533,7 @@ export class AgentManager {
       : path.join(targetDir, 'config.json')
     const updated = this.loadAgentConfig(id, targetDir, configPath)
     this.agents.set(id, updated)
+    this.onRegistration?.(id)
 
     return targetDir
   }
@@ -733,6 +791,7 @@ export class AgentManager {
     // 加载到内存
     const profile = this.loadAgentConfig(agentId, agentDir, configPath)
     this.agents.set(agentId, profile)
+    this.onRegistration?.(agentId)
     this.enabledAgents.add(agentId)
 
     logger.info(__t('logs.agent', '创建自定义 Agent: {0} ({1})', [opts.name, agentId]))
@@ -808,6 +867,7 @@ export class AgentManager {
     try {
       const profile = this.loadAgentConfig(id, agentDir, configPath)
       this.agents.set(profile.id, profile)
+      this.onRegistration?.(profile.id)
       this.ensureWorkspaceDir(profile.id)
       logger.debug(__t('logs.agent', '已加载 Agent: {0} ({1})', [profile.name, profile.id]))
     } catch (err) {
@@ -991,15 +1051,8 @@ export class AgentManager {
       const stat = statSync(agent.avatarPath)
       if (!stat.isFile()) return undefined
       const url = `/agents/${encodeURIComponent(agent.id)}/avatar`
-      const builtinAvatar = path.join(
-        this.pathResolver.resolve('@app/backend/src/assets/agents'),
-        agent.id,
-        'avatar.png',
-      )
-      // 默认资源更新后切换地址，避免浏览器继续复用旧头像的一小时缓存。
-      return agent.avatarPath === builtinAvatar
-        ? `${url}?v=${stat.size.toString(36)}-${Math.trunc(stat.mtimeMs).toString(36)}`
-        : url
+      // 覆盖角色卡或更新资源后切换地址，避免浏览器复用旧头像的一小时缓存。
+      return `${url}?v=${stat.size.toString(36)}-${stat.mtimeMs.toString(36)}`
     } catch {
       return undefined
     }

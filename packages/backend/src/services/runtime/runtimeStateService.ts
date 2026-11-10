@@ -175,8 +175,9 @@ export class RuntimeStateService {
    * 注销任务（LLM 调用时调用）
    * @param threadId  Thread ID
    */
-  unregisterTask(threadId: string): void {
+  unregisterTask(threadId: string, expectedSignal?: AbortSignal): void {
     const state = this.tasks.get(threadId)
+    if (expectedSignal && state?.abortController.signal !== expectedSignal) return
     if (state) {
       // 清理超时定时器
       if (state.timeoutTimer) {

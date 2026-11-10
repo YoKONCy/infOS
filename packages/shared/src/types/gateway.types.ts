@@ -16,6 +16,11 @@ import type { DeliveryAudience, KernelEventDurability } from './kernel.types'
 import type { DeviceNotificationRequest, NotificationAvailablePayload } from '../notifications'
 
 export const GATEWAY_ACTION_CATALOG = {
+  thread_reset: {
+    durability: 'ephemeral',
+    audience: 'all_principal_clients',
+    recovery: 'conversation-projection',
+  },
   plan_changed: {
     durability: 'ephemeral',
     audience: 'all_principal_clients',

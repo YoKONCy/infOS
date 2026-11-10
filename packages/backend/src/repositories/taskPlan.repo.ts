@@ -66,11 +66,12 @@ export class TaskPlanRepository {
     row: PlanRow,
     previous?: PlanRow,
     replace = false,
-    origin?: { pairId?: string; toolCallId?: string },
+    origin?: { pairId?: string; toolCallId?: string; generation?: number },
   ) {
     return this.db.transaction((tx) => {
+      if (origin?.pairId && new ConversationRepository(this.db).get(origin.pairId)) new ConversationRepository(this.db).assertCurrent(origin.pairId)
       const thread = tx
-        .select({ id: threads.id })
+        .select({ id: threads.id, generation: threads.generation })
         .from(threads)
         .where(and(eq(threads.id, row.threadId), eq(threads.status, 'active')))
         .get()
@@ -87,7 +88,7 @@ export class TaskPlanRepository {
             )
             .get()
         : undefined
-      if (!thread || deletedPair)
+      if (!thread || deletedPair || (origin?.generation !== undefined && thread.generation !== origin.generation))
         throw new AppError('CONFLICT', { message: '原对话已删除或撤回，不能再更新清单' })
       const current = tx
         .select()
@@ -258,6 +259,15 @@ export class TaskPlanRepository {
       if (checked.has(key)) continue
       checked.add(key)
       if ((JSON.parse(mutation.afterJson) as PlanRow[]).some((row) => row.taskId)) continue
+      const execution = new ConversationRepository(this.db).get(mutation.pairId)
+      if (execution) {
+        if (!['completed', 'waiting', 'paused'].includes(execution.status)) {
+          const executionIds = pending.get(mutation.threadId) ?? new Set<string>()
+          executionIds.add(execution.id)
+          pending.set(mutation.threadId, executionIds)
+        }
+        continue
+      }
       const messages = this.db
         .select({ role: threadMessages.role, status: threadMessages.status })
         .from(threadMessages)
@@ -321,3 +331,4 @@ function planContent(row: PlanRow): string {
   const { revision: _revision, updatedAt: _updatedAt, ...content } = row
   return JSON.stringify(content)
 }
+import { ConversationRepository } from './conversation.repo'

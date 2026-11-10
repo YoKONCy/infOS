@@ -4,7 +4,7 @@
 
 export type EventNoteStatus = 'active' | 'archived'
 export type EventNoteOriginMode = 'active' | 'background'
-export type EventNoteWriteScope = 'current_pair' | 'current_uncovered_segment'
+export type EventNoteWriteScope = 'current_execution' | 'uncovered_sources' | 'current_pair' | 'current_uncovered_segment'
 export type EventNoteRelation =
   | 'temporal_next'
   | 'temporal_prev'
@@ -27,6 +27,11 @@ export interface EventNoteOrigin {
   pairIds: string[]
   messageIds: string[]
   channel: string
+  experienceIds?: string[]
+  sourceWithdrawn?: boolean
+  generation?: number
+  messageRevisions?: Record<string, number>
+  sources?: Array<Omit<EventNoteOrigin, 'sources'>>
   manualEdit?: { actor: 'user'; previousId: string; editedAt: string }
 }
 
@@ -87,6 +92,7 @@ export interface ConversationCoverage {
   id: string
   agentId: string
   threadId: string
+  /** 主线存储 message:ID@revision 来源键，旧会话保留原配对键。 */
   pairIds: string[]
   messageIds: string[]
   outcome: 'event_recorded' | 'reviewed_no_event'

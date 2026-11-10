@@ -18,7 +18,7 @@ export interface FlowStateInfo {
   updatedAt: string | null
 }
 
-/** Thread × Agent 私有临时记忆领域服务。 */
+/** 会话心流。角色主会话与据点共享，侧会话及 Realm 各自持有。 */
 export class FlowStateService {
   constructor(
     private readonly repo: FlowStateRepository,
@@ -43,15 +43,17 @@ export class FlowStateService {
     currentGoal?: string
     privateFacts?: string
     pairId?: string | null
+    generation?: number
   }): Promise<FlowStateInfo> {
     await this.assertScope(input.threadId, input.agentId)
     if (input.currentGoal === undefined && input.privateFacts === undefined) {
       throw new AppError('INVALID_PARAMETER', { message: '至少需要更新当前目标或私有事实之一' })
     }
-    const before = await this.repo.get(input.threadId, input.agentId)
-    const currentGoal = this.normalize(input.currentGoal ?? before?.currentGoal ?? '')
-    const privateFacts = this.normalize(input.privateFacts ?? before?.privateFacts ?? '')
-    const row = await this.repo.save({ ...input, currentGoal, privateFacts })
+    const row = await this.repo.save({
+      ...input,
+      currentGoal: input.currentGoal === undefined ? undefined : this.normalize(input.currentGoal),
+      privateFacts: input.privateFacts === undefined ? undefined : this.normalize(input.privateFacts),
+    })
     return this.toInfo(row)
   }
 
@@ -62,6 +64,10 @@ export class FlowStateService {
 
   async rollbackPairs(threadId: string, pairIds: string[]): Promise<void> {
     await this.repo.rollbackPairs(threadId, pairIds)
+  }
+
+  async rollbackScene(roomId: string, pairId: string): Promise<void> {
+    await this.repo.rollbackScene(roomId, pairId)
   }
 
   async deleteThread(threadId: string): Promise<void> {
@@ -99,7 +105,7 @@ export class FlowStateService {
   private async assertScope(threadId: string, agentId: string): Promise<void> {
     const thread = await this.threadService.getThread(threadId)
     if (!thread) throw new AppError('NOT_FOUND', { message: '会话不存在' })
-    // 普通单 Agent Thread 必须匹配归属；群聊允许参与 Agent 分别维护独立心流。
+    // 据点传入角色自己的主会话，保留旧群聊 Thread 的参与者作用域。
     if (thread.channel !== 'group' && thread.agentId !== agentId) {
       throw new AppError('FORBIDDEN', { message: '不能访问其他 Agent 的会话心流' })
     }

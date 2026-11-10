@@ -29,6 +29,7 @@ import { validate as zValidator } from '../lib/validation'
 import { z } from 'zod'
 import { streamSSE } from 'hono/streaming'
 import { runChatStream } from '../services/conversation/chatStreamRunner'
+import { environmentEventsSchema } from '../services/conversation/environmentContext'
 import type { AppContext } from '../container'
 import { AppError } from '../lib/appError'
 import { disposeExecutionOwner } from '../tools/productivityRuntimeHolder'
@@ -36,6 +37,7 @@ import { resolveToolUserDescription, resolveToolUserLabel } from '../tools/toolU
 import { isAdvancedTool } from '../tools/advancedTools'
 import { isSystemProtocolTool } from '../tools/systemProtocolTools'
 import { isToolAllowedInInteractionMode } from '../tools/interactionMode'
+import { publicWorkMetadata } from '../services/context/workContext'
 import type { ThreadChannel } from '@infos/shared'
 import { REASONING_EFFORT_VALUES } from '@infos/shared'
 
@@ -56,6 +58,8 @@ const chatRequestSchema = z.object({
   attachmentIds: z.array(z.string().uuid()).max(5).optional(),
   /** 图片识别方式：原生视觉或专用多模态转述。 */
   imageMode: z.enum(['auto', 'native', 'relay']).optional(),
+  /** 桌面客户端记下的环境事件：仅注入本轮模型上下文，不写入用户消息正文。 */
+  environmentEvents: environmentEventsSchema.optional(),
   /** 工作区隐式上下文：仅注入模型上下文，不写入用户消息正文。 */
   workspaceContext: z
     .object({
@@ -96,9 +100,17 @@ const renameThreadSchema = z.object({
   title: z.string().max(100),
 })
 
+const forkThreadSchema = z.object({
+  messageId: z.number().int().positive(),
+})
+
 /** 编辑消息请求 */
 const threadToolsSchema = z.object({
   disabledTools: z.array(z.string().min(1)).max(500),
+})
+
+const threadSkillsSchema = z.object({
+  enabledSkills: z.array(z.string().min(1).max(255)).max(500),
 })
 
 const threadExecutionModeSchema = z
@@ -119,6 +131,7 @@ const rewindSchema = z
     messageId: z.number().int().positive().optional(),
     wholeThread: z.boolean().optional(),
     preserveInputAttachments: z.boolean().optional(),
+    restoreFiles: z.boolean().optional(),
   })
   .refine((value) => value.wholeThread === true || value.messageId !== undefined, {
     message: __t('server.routers', '必须指定 messageId 或 wholeThread=true'),
@@ -151,11 +164,24 @@ export function createChatRouter(ctx: AppContext) {
   }
 
   const queueIdentity = async (threadId: string) => {
+    ctx.conversationQueue.assertHistoryStable(threadId)
     const thread = await ctx.threadService.getThread(threadId)
     if (!thread || thread.channel !== 'desktop' || thread.status !== 'active')
       throw new AppError('NOT_FOUND', { message: '目标对话不存在' })
     return thread
   }
+  router.post('/threads/:id/regenerate', zValidator('json', z.object({
+    messageId: z.number().int().positive(),
+    revision: z.number().int().positive(),
+    clientMessageId: z.string().uuid(),
+  })), async (c) => {
+    const threadId = c.req.param('id')
+    await queueIdentity(threadId)
+    await assertThreadMutable(threadId)
+    const input = c.req.valid('json')
+    const data = await ctx.conversationQueue.regenerate(input.clientMessageId, threadId, input.messageId, input.revision)
+    return c.json({ code: 'OK', data })
+  })
   router.get('/queue/:threadId', async (c) => {
     await queueIdentity(c.req.param('threadId'))
     return c.json({ code: 'OK', data: ctx.conversationQueue.snapshot(c.req.param('threadId')) })
@@ -262,18 +288,21 @@ export function createChatRouter(ctx: AppContext) {
     if (body.agentId && body.agentId !== thread.agentId)
       throw new AppError('CONFLICT', { message: '角色与目标会话不匹配' })
     ctx.runtimeStateService.registerTask(threadId, thread.agentId)
+    const ownedSignal = ctx.runtimeStateService.getAbortSignal(threadId)
     let succeeded = false
     try {
       const result = await ctx.conversationTurnService.executeTurn({
         achievementSubjectId: achievementSubject(c.req.raw, body.generationType),
         threadId,
         agentId: thread.agentId,
+        expectedGeneration: thread.generation,
         signal: ctx.runtimeStateService.getAbortSignal(threadId),
         content,
         attachmentIds: body.attachmentIds,
         imageMode: body.imageMode,
         generationType: body.generationType,
         workspaceContext: body.workspaceContext,
+        environmentEvents: body.environmentEvents,
       })
 
       const messageId = result.assistantMessage?.id
@@ -298,10 +327,12 @@ export function createChatRouter(ctx: AppContext) {
         },
       })
     } finally {
-      try {
-        ctx.conversationQueue.afterTurn(threadId, { success: succeeded })
-      } finally {
-        ctx.runtimeStateService.unregisterTask(threadId)
+      if (ctx.runtimeStateService.getAbortSignal(threadId) === ownedSignal) {
+        try {
+          ctx.conversationQueue.afterTurn(threadId, { success: succeeded })
+        } finally {
+          ctx.runtimeStateService.unregisterTask(threadId, ownedSignal)
+        }
       }
     }
   })
@@ -313,6 +344,7 @@ export function createChatRouter(ctx: AppContext) {
    */
   router.post('/stream', zValidator('json', chatRequestSchema), async (c) => {
     const body = c.req.valid('json')
+    ctx.conversationQueue.assertHistoryStable(body.threadId)
     const thread = await ctx.threadService.getThread(body.threadId)
     if (!thread) throw new AppError('NOT_FOUND', { message: '目标会话不存在' })
     if (body.agentId && body.agentId !== thread.agentId)
@@ -358,6 +390,7 @@ export function createChatRouter(ctx: AppContext) {
           ctx,
           {
             ...body,
+            expectedGeneration: thread.generation,
             achievementSubjectId: achievementSubject(c.req.raw, body.generationType),
           },
           writeEvent,
@@ -396,6 +429,8 @@ export function createChatRouter(ctx: AppContext) {
     const pageSize = Math.min(100, Math.max(1, Number(c.req.query('pageSize') ?? 20)))
 
     const knownAgentIds = ctx.agentManager.listAgents().map((agent) => agent.id)
+    for (const id of agentId ? [agentId] : knownAgentIds)
+      if (ctx.agentManager.getAgent(id)) await ctx.threadService.getMainThread(id)
     if (agentId && !ctx.agentManager.getAgent(agentId)) {
       throw new AppError('NOT_FOUND', { message: `角色不存在: ${agentId}` })
     }
@@ -450,17 +485,21 @@ export function createChatRouter(ctx: AppContext) {
       .getDefinitions(thread.channel)
       .filter((tool) => tool.name !== 'runtime_debug')
       .filter((tool) => !ctx.applicationRealms.isPrivateTool(tool.name))
-    const allowed = ctx.capabilityGate.resolve(
+    const capability = ctx.capabilityGate.resolve(
       thread.agentId,
       thread.channel,
       thread.id,
-    ).allowedTools
+    )
+    const allowed = capability.allowedTools
+    const selectedSkills = new Set(thread.enabledSkills ?? [])
+    const hasSkills = capability.enabledSkills?.some((skill) => selectedSkills.has(skill.id)) ?? false
     const disabled = new Set(thread.disabledTools.filter((name) => !isSystemProtocolTool(name)))
     const tools = registryTools
       .filter(
         (tool) =>
           !isAdvancedTool(tool.name) && (isSystemProtocolTool(tool.name) || allowed.has(tool.name)),
       )
+      .filter((tool) => hasSkills || !['skill_list_resources', 'skill_read_resource'].includes(tool.name))
       .map((tool) => ({
         name: tool.name,
         packageId: tool.packageId,
@@ -563,6 +602,47 @@ export function createChatRouter(ctx: AppContext) {
       return c.json({ code: 'OK', message: __t('server.routers', '已保存'), data })
     },
   )
+
+  async function resolveThreadSkills(threadId: string) {
+    const thread = await ctx.threadService.getThread(threadId)
+    if (!thread || thread.channel !== 'desktop' || thread.purpose !== 'conversation')
+      throw new AppError('NOT_FOUND', { message: '聊天会话不存在' })
+    const selected = new Set(thread.enabledSkills ?? [])
+    const skills = ctx.capabilityGate.resolve(thread.agentId, thread.channel, thread.id)
+      .enabledSkills.map((skill) => ({
+        id: skill.id,
+        name: skill.name,
+        description: skill.description,
+        enabled: selected.has(skill.id),
+      }))
+    return {
+      threadId,
+      enabledSkills: skills.filter((skill) => skill.enabled).map((skill) => skill.id),
+      skills,
+    }
+  }
+
+  router.get('/threads/:id/skills', async (c) =>
+    c.json({ code: 'OK', data: await resolveThreadSkills(c.req.param('id')) }),
+  )
+
+  router.put('/threads/:id/skills', zValidator('json', threadSkillsSchema), async (c) => {
+    const threadId = c.req.param('id')
+    await assertThreadMutable(threadId)
+    const available = new Set((await resolveThreadSkills(threadId)).skills.map((skill) => skill.id))
+    const enabledSkills = [...new Set(c.req.valid('json').enabledSkills)]
+    const invalid = enabledSkills.filter((id) => !available.has(id))
+    if (invalid.length)
+      throw new AppError('INVALID_PARAMETER', {
+        message: __t('server.routers', '本会话不可使用这些 Skills：{0}', [invalid.join(', ')]),
+      })
+    await ctx.threadService.updateEnabledSkills(threadId, enabledSkills)
+    return c.json({
+      code: 'OK',
+      message: __t('server.routers', '已保存'),
+      data: await resolveThreadSkills(threadId),
+    })
+  })
 
   /** GET /threads/:id/tools — 仅返回当前 Channel 合法且可由会话控制的工具。 */
   router.get('/threads/:id/tools', async (c) => {
@@ -684,6 +764,13 @@ export function createChatRouter(ctx: AppContext) {
    * 查询参数：page, pageSize（消息分页）
    */
   router.get('/threads/:id', async (c) => {
+    const debug = c.req.query('debug') === '1'
+    // 请求副本含私有上下文，沿用客户端访问管理的管理员权限边界，缺少鉴权服务也拒绝。
+    if (debug && !ctx.clientAccess?.authenticate(c.req.raw)?.admin)
+      return c.json(
+        { code: 'FORBIDDEN', message: __t('server.routers', '仅管理员可读取模型请求调试副本') },
+        403,
+      )
     const threadId = c.req.param('id')
     const page = Math.max(1, Number(c.req.query('page') ?? 1))
     const pageSize = Math.min(200, Math.max(1, Number(c.req.query('pageSize') ?? 100)))
@@ -698,6 +785,17 @@ export function createChatRouter(ctx: AppContext) {
       page,
       pageSize,
     })
+    if (debug) {
+      const raw = await ctx.threadRepo.listActiveMessages({ threadId, page, pageSize })
+      const debugMetadata = new Map(
+        raw.items.map((row) => [
+          row.id,
+          publicWorkMetadata(row.metadataJson ?? '{}', { debug: true }),
+        ]),
+      )
+      for (const message of messages.items)
+        message.metadataJson = debugMetadata.get(message.id) ?? message.metadataJson
+    }
 
     const attachmentMap = await ctx.attachmentService.listForMessages(
       messages.items.map((message) => message.id),
@@ -744,11 +842,39 @@ export function createChatRouter(ctx: AppContext) {
   router.post('/threads/latest', async (c) => {
     const body = await c.req.json().catch(() => ({}) as Record<string, unknown>)
     const agentId = ((body as Record<string, unknown>).agentId as string) ?? 'pero'
+    if (!ctx.agentManager.getAgent(agentId)) throw new AppError('NOT_FOUND', { message: `角色不存在: ${agentId}` })
     const channel = 'desktop'
 
     const thread = await ctx.threadService.getOrCreateLatest(agentId, channel, 'conversation')
     return c.json({ code: 'OK', message: __t('server.routers', '获取成功'), data: { thread } })
   })
+
+  router.post('/threads/:id/reset', historyMutation, async (c) => {
+    const threadId = c.req.param('id')
+    const current = await ctx.threadService.getThread(threadId)
+    if (!current?.canReset) throw new AppError('FORBIDDEN', { message: '仅主会话支持清空重置' })
+    ctx.runtimeStateService.cancelTask(threadId)
+    const cancellation = __t('errors.backend', '会话已重置，本次执行已过期')
+    ctx.approvalService.cancelThread(threadId, cancellation)
+    ctx.agentInputService.cancelThread(threadId, cancellation)
+    for (const execution of ctx.kernelScheduler.list())
+      if (execution.descriptor.threadId === threadId)
+        await ctx.kernelScheduler.cancel(execution.descriptor.executionId)
+    const thread = await ctx.threadService.resetMainThread(threadId)
+    ctx.runtimeStateService.unregisterTask(threadId)
+    ctx.conversationQueue.historyChanged(threadId, false, true)
+    ctx.conversationQueue.setLive(threadId)
+    await ctx.runtimeDebug.close(threadId)
+    ctx.toolContextService.deleteThread(threadId)
+    ctx.conversationProjection.invalidate(threadId)
+    await ctx.gatewayHub.pushBusiness('thread_reset', { threadId, agentId: thread.agentId, generation: thread.generation },
+      { type: 'all_principal_clients', principalId: thread.agentId }).catch(() => {})
+    return c.json({ code: 'OK', data: { thread } })
+  })
+
+  router.get('/threads/:id/experiences', async (c) => c.json({
+    code: 'OK', data: { items: await ctx.threadService.listExperiences(c.req.param('id')) },
+  }))
 
   /** PATCH /api/threads/:id — 修改会话标题。 */
   router.patch('/threads/:id', zValidator('json', renameThreadSchema), async (c) => {
@@ -758,13 +884,27 @@ export function createChatRouter(ctx: AppContext) {
     return c.json({ code: 'OK', message: __t('server.routers', '会话标题已更新') })
   })
 
+  /** POST /threads/:id/fork — 复制完整历史前缀与当前会话设置、状态，来源保持原样。 */
+  router.post('/threads/:id/fork', zValidator('json', forkThreadSchema), async (c) => {
+    const signal = c.req.raw.signal
+    let id: string
+    try {
+      id = await ctx.threadForkService.fork(c.req.param('id'), c.req.valid('json').messageId, signal)
+    } catch (error) {
+      if (signal.aborted) return new Response(null, { status: 499 })
+      throw error
+    }
+    const thread = await ctx.threadService.getThread(id)
+    return c.json({ code: 'CREATED', data: { thread } }, 201)
+  })
+
   /** POST /threads/:id/rewind-preview — 返回删除及文件回滚清单，不产生副作用。 */
   router.post('/threads/:id/rewind-preview', zValidator('json', rewindSchema), async (c) => {
     const threadId = c.req.param('id')
     const body = c.req.valid('json')
     const preview = body.wholeThread
       ? await ctx.threadService.previewThreadRewind(threadId)
-      : await ctx.threadService.previewMessageRewind(threadId, body.messageId!)
+      : await ctx.threadService.previewMessageRewind(threadId, body.messageId!, { regenerate: body.preserveInputAttachments, restoreFiles: body.restoreFiles })
     return c.json({ code: 'OK', message: __t('server.routers', '预检成功'), data: preview })
   })
 
@@ -780,7 +920,7 @@ export function createChatRouter(ctx: AppContext) {
       const body = c.req.valid('json')
       const preview = body.wholeThread
         ? await ctx.threadService.previewThreadRewind(threadId)
-        : await ctx.threadService.previewMessageRewind(threadId, body.messageId!)
+        : await ctx.threadService.previewMessageRewind(threadId, body.messageId!, { regenerate: body.preserveInputAttachments, restoreFiles: body.restoreFiles })
       const result = body.wholeThread
         ? await ctx.threadService.rewindThread(threadId)
         : await ctx.threadService.rewindMessage(
@@ -788,8 +928,10 @@ export function createChatRouter(ctx: AppContext) {
             body.messageId!,
             'user',
             body.preserveInputAttachments,
+            body.restoreFiles,
           )
-      ctx.conversationQueue.historyChanged(threadId, body.wholeThread, true)
+      ctx.conversationQueue.historyChanged(threadId, body.wholeThread,
+        (await ctx.threadService.getThread(threadId))?.threadKind !== 'main')
       if (body.wholeThread) {
         await ctx.runtimeDebug.close(threadId)
         await ctx.flowStateService.deleteThread(threadId)
@@ -891,7 +1033,8 @@ export function createChatRouter(ctx: AppContext) {
     if (!success) {
       throw new AppError('NOT_FOUND', { message: '消息不存在' })
     }
-    ctx.conversationQueue.historyChanged(threadId, false, true)
+    ctx.conversationQueue.historyChanged(threadId, false,
+      (await ctx.threadService.getThread(threadId))?.threadKind !== 'main')
     ctx.conversationProjection.invalidate(c.req.param('id'))
     const data = await ctx.conversationProjection.getSnapshot(c.req.param('id'))
     return c.json({ code: 'OK', message: __t('server.routers', '消息已删除'), data })
@@ -912,7 +1055,8 @@ export function createChatRouter(ctx: AppContext) {
     ctx.conversationQueue.pause(threadId, true)
     await assertThreadMutable(threadId)
     const result = await ctx.threadService.rewindMessage(threadId, msgId)
-    ctx.conversationQueue.historyChanged(threadId, false, true)
+    ctx.conversationQueue.historyChanged(threadId, false,
+      (await ctx.threadService.getThread(threadId))?.threadKind !== 'main')
     if (result.preview.pairIds.length) {
       await ctx.flowStateService.rollbackPairs(threadId, result.preview.pairIds)
       ctx.toolContextService.deletePairs(threadId, result.preview.pairIds)
@@ -921,7 +1065,7 @@ export function createChatRouter(ctx: AppContext) {
     const projection = await ctx.conversationProjection.getSnapshot(threadId)
     return c.json({
       code: 'OK',
-      message: __t('server.routers', '已回滚 {0} 轮对话及关联文件', [result.preview.pairCount]),
+      message: __t('server.routers', result.preview.scope ? '已撤回 {0} 条消息' : '已回滚 {0} 轮对话及关联文件', [result.preview.pairCount]),
       data: {
         deletedCount: result.deletedMessageIds.length,
         preview: result.preview,

@@ -1,0 +1,296 @@
+/*
+ * 表达层的红笔样式。
+ *
+ * 批注自带底色，不依赖气泡或壁纸的颜色，所以深浅主题和自定义壁纸下都看得清。
+ * ::highlight 不能写在 scoped 样式里，整份放全局，类名都带 expr- 前缀。
+ */
+:root,
+[data-theme='light'] {
+  --expr-ink: #c62828;
+  --expr-ink-strong: #a31515;
+  --expr-ink-soft: rgba(198, 40, 40, 0.1);
+  --expr-ink-line: rgba(198, 40, 40, 0.42);
+  --expr-paper: rgba(255, 252, 248, 0.94);
+  --expr-paper-text: #5f5a66;
+}
+
+[data-theme='dark'] {
+  --expr-ink: #ff8f87;
+  --expr-ink-strong: #ffb0a9;
+  --expr-ink-soft: rgba(255, 143, 135, 0.14);
+  --expr-ink-line: rgba(255, 143, 135, 0.45);
+  --expr-paper: rgba(32, 26, 34, 0.94);
+  --expr-paper-text: #c9c1cf;
+}
+
+::highlight(expression-robotic) {
+  text-decoration: underline wavy #c62828;
+}
+::highlight(expression-good) {
+  text-decoration-line: underline;
+  text-decoration-color: #c62828;
+  text-decoration-thickness: 2px;
+}
+[data-theme='dark'] ::highlight(expression-robotic) {
+  text-decoration: underline wavy #ff8f87;
+}
+[data-theme='dark'] ::highlight(expression-good) {
+  text-decoration-line: underline;
+  text-decoration-color: #ff8f87;
+  text-decoration-thickness: 2px;
+}
+
+/* 手写感：系统手写体优先，中文落到楷体 */
+.expr-hand {
+  font-family:
+    'Segoe Print', 'Bradley Hand', 'Chalkboard SE', 'KaiTi', 'STKaiti', 'Kaiti SC', '楷体', cursive;
+}
+
+/* 操作栏按钮 */
+.expr-action {
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+  height: 20px;
+  padding: 0 5px;
+  border: 1px solid var(--ui-border-subtle);
+  border-radius: var(--ui-radius-xs);
+  background: var(--ui-bg-surface);
+  color: var(--ui-text-tertiary);
+  font: 600 10px/1 var(--ui-font-sans);
+  white-space: nowrap;
+  cursor: pointer;
+}
+.expr-action:hover:not(:disabled),
+.expr-action.is-active {
+  border-color: var(--expr-ink-line);
+  color: var(--expr-ink);
+}
+.expr-action.is-active {
+  background: var(--expr-ink-soft);
+}
+.expr-action:disabled {
+  cursor: progress;
+  opacity: 0.6;
+}
+.expr-action:focus-visible,
+.expr-note:focus-visible,
+.expr-popover button:focus-visible,
+.expr-editor button:focus-visible {
+  outline: 2px solid var(--expr-ink);
+  outline-offset: 1px;
+}
+
+/* 气泡下方的批注 */
+.expr-host:empty {
+  display: none;
+}
+.expr-notes {
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+  margin: 6px 0 0 5px;
+}
+.expr-notes:empty {
+  display: none;
+}
+.expr-note {
+  display: flex;
+  align-items: flex-start;
+  gap: 6px;
+  width: fit-content;
+  max-width: 100%;
+  padding: 4px 10px 5px 8px;
+  border: 0;
+  border-left: 2px solid var(--expr-ink);
+  border-radius: 2px 8px 8px 2px;
+  background: var(--expr-paper);
+  box-shadow: 0 1px 3px rgba(40, 20, 20, 0.12);
+  color: var(--expr-ink);
+  text-align: left;
+  cursor: pointer;
+  transition:
+    background-color var(--motion-duration-fast) var(--motion-ease-out),
+    box-shadow var(--motion-duration-fast) var(--motion-ease-out);
+}
+.expr-note:hover {
+  box-shadow: 0 2px 8px rgba(40, 20, 20, 0.2);
+}
+.expr-note.is-flash {
+  animation: expr-note-flash var(--motion-duration-slow) var(--motion-ease-out) 2;
+}
+.expr-note__sign {
+  flex: 0 0 auto;
+  font-size: 16px;
+  font-weight: 700;
+  line-height: 1.3;
+  transform: rotate(-6deg);
+}
+.expr-note__body {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 2px 7px;
+  min-width: 0;
+}
+.expr-note__quote,
+.expr-note__scope,
+.expr-note__empty {
+  color: var(--expr-paper-text);
+  font: 11px/1.5 var(--ui-font-sans);
+  overflow-wrap: anywhere;
+}
+/* 正文里没匹配到的句子，靠这里看出是哪一句 */
+.expr-note__quote.is-unmatched {
+  border-bottom: 1px dashed var(--expr-ink-line);
+}
+.expr-note__text {
+  color: var(--expr-ink);
+  font-size: 14px;
+  line-height: 1.5;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  transform-origin: left center;
+  transform: rotate(-0.3deg);
+}
+
+/* 选中一句的小浮层 */
+.expr-popover {
+  position: fixed;
+  z-index: 11900;
+  display: flex;
+  gap: 2px;
+  width: 188px;
+  height: 38px;
+  padding: 4px;
+  border: 1px solid var(--expr-ink-line);
+  border-radius: 8px;
+  background: var(--ui-bg-elevated, var(--ui-bg-surface));
+  box-shadow: 0 8px 24px rgba(20, 10, 20, 0.22);
+}
+.expr-popover button {
+  flex: 1;
+  padding: 0 4px;
+  border: 0;
+  border-radius: 5px;
+  background: transparent;
+  color: var(--ui-text-primary);
+  font: 600 12px/1 var(--ui-font-sans);
+  white-space: nowrap;
+  cursor: pointer;
+}
+.expr-popover button:hover {
+  background: var(--expr-ink-soft);
+  color: var(--expr-ink);
+}
+.expr-popover button.is-active {
+  background: var(--expr-ink-soft);
+  color: var(--expr-ink);
+}
+
+/* 就地编辑；底部留出「回到底部」按钮的位置 */
+.expr-editor {
+  scroll-margin: 12px 0 56px;
+  display: grid;
+  gap: 6px;
+  padding: 8px 10px;
+  border: 1px dashed var(--expr-ink-line);
+  border-radius: 8px;
+  background: var(--expr-paper);
+  box-shadow: 0 2px 8px rgba(40, 20, 20, 0.14);
+}
+.expr-editor__quote {
+  margin: 0;
+  max-height: 72px;
+  overflow: auto;
+  color: var(--expr-paper-text);
+  font: 11px/1.5 var(--ui-font-sans);
+  overflow-wrap: anywhere;
+}
+.expr-editor__input {
+  width: 100%;
+  min-height: 52px;
+  padding: 2px 0;
+  resize: vertical;
+  border: 0;
+  border-bottom: 1px solid var(--expr-ink-line);
+  outline: none;
+  background: transparent;
+  caret-color: var(--expr-ink);
+  color: var(--expr-ink);
+  font-size: 15px;
+  line-height: 1.5;
+}
+.expr-editor__input::placeholder {
+  color: var(--expr-ink);
+  opacity: 0.55;
+}
+.expr-editor__foot {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px 10px;
+}
+.expr-editor__kinds,
+.expr-editor__buttons {
+  display: flex;
+  gap: 4px;
+}
+.expr-editor__buttons {
+  margin-left: auto;
+}
+.expr-editor__hint {
+  color: var(--expr-paper-text);
+  font: 10px/1.4 var(--ui-font-sans);
+}
+.expr-editor button {
+  min-height: 24px;
+  padding: 2px 8px;
+  border: 1px solid var(--ui-border-subtle);
+  border-radius: 5px;
+  background: transparent;
+  color: var(--expr-paper-text);
+  font: 600 11px/1.2 var(--ui-font-sans);
+  cursor: pointer;
+}
+.expr-editor button:disabled {
+  cursor: progress;
+  opacity: 0.6;
+}
+.expr-editor__kinds button.is-active {
+  border-color: var(--expr-ink);
+  background: var(--expr-ink-soft);
+  color: var(--expr-ink);
+}
+.expr-editor button.is-primary {
+  border-color: var(--expr-ink);
+  background: var(--expr-ink);
+  color: #fff;
+}
+[data-theme='dark'] .expr-editor button.is-primary {
+  color: #2a1412;
+}
+.expr-editor__remove:hover:not(:disabled) {
+  border-color: var(--expr-ink);
+  color: var(--expr-ink);
+}
+
+@keyframes expr-note-flash {
+  50% {
+    background: var(--expr-ink-soft);
+    transform: translate3d(var(--motion-distance-sm), 0, 0);
+  }
+}
+
+@media (max-width: 560px) {
+  .expr-notes {
+    margin-left: 0;
+  }
+  .expr-editor__hint {
+    display: none;
+  }
+  .expr-action {
+    height: 24px;
+    padding: 0 6px;
+  }
+}

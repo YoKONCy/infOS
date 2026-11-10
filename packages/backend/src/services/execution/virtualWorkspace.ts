@@ -19,6 +19,7 @@ import {
   stat,
   writeFile,
 } from 'node:fs/promises'
+import { assertSafetyFileAccess, safetyFileAccessible } from './safetyPath'
 import type { ExecutionSession } from './executionSession'
 
 // ─────────────────────────────────────────────
@@ -326,12 +327,14 @@ export class VirtualWorkspace {
 
     const walk = async (directory: string, depth: number): Promise<void> => {
       if (depth > maxDepth || output.length >= limit) return
+      if (!(await safetyFileAccessible(directory))) return
       const entries = await readdir(directory, { withFileTypes: true })
       for (const entry of entries) {
         if (output.length >= limit) break
         if (!options.includeHidden && entry.name.startsWith('.')) continue
         if (entry.name === 'node_modules') continue
         const absolute = path.join(directory, entry.name)
+        if (!(await safetyFileAccessible(absolute))) continue
         const relative = path.relative(root, absolute).replaceAll('\\', '/')
         if (entry.isDirectory()) await walk(absolute, depth + 1)
         else if (entry.isFile() && regex.test(relative)) output.push(relative)
@@ -359,7 +362,20 @@ export class VirtualWorkspace {
   ) {
     return this.withFileMutation(session, input.path, input.deviceScope, async () => {
       const captured = await input.beforeWrite?.()
-      const written = await this.writeUnlocked(session, input)
+      // 保险钩子可绑定读取时的版本，空串表示该路径当时尚不存在。
+      const guardedHash = (captured as { expectedBeforeHash?: string | null } | undefined)
+        ?.expectedBeforeHash
+      const written = await this.writeUnlocked(
+        session,
+        guardedHash === undefined
+          ? input
+          : {
+              ...input,
+              expectedHash: input.expectedHash ?? guardedHash ?? '',
+              // 保险钩子认定这是新建：只能排他创建，被抢先就报 EEXIST，不能覆盖。
+              exclusive: guardedHash === null,
+            },
+      )
       let checkpointWarning: string | undefined
       try {
         await input.afterWrite?.(captured, written)
@@ -466,6 +482,7 @@ export class VirtualWorkspace {
       append?: boolean
       deviceScope?: boolean
       signal?: AbortSignal
+      exclusive?: boolean
     },
   ) {
     const filePath = input.deviceScope
@@ -489,7 +506,7 @@ export class VirtualWorkspace {
       if (code !== 'ENOENT') throw error
       // ENOENT：文件不存在，按新建处理
     }
-    if (input.expectedHash && currentHash !== input.expectedHash) {
+    if (input.expectedHash !== undefined && (currentHash ?? '') !== input.expectedHash) {
       throw new WorkspaceError(
         WS_ERROR.WRITE_HASH_MISMATCH,
         '文件已被外部修改，expected_hash 不匹配，请重新读取',
@@ -508,7 +525,7 @@ export class VirtualWorkspace {
     if (finalHash !== currentHash)
       throw new WorkspaceError(WS_ERROR.WRITE_HASH_MISMATCH, '提交前文件已变化，请重新读取')
     input.signal?.throwIfAborted()
-    await this.atomicWrite(filePath, nextContent)
+    await this.atomicWrite(filePath, nextContent, input.exclusive && !existed)
     return {
       success: true,
       operation: input.append ? 'append' : existed ? 'overwrite' : 'create',
@@ -621,7 +638,8 @@ export class VirtualWorkspace {
     }
   }
 
-  async atomicWrite(filePath: string, content: string): Promise<void> {
+  /** exclusive：目标已存在就报 EEXIST，用硬链接发布，不会替换夹进来的文件。 */
+  async atomicWrite(filePath: string, content: string, exclusive = false): Promise<void> {
     const directory = path.dirname(filePath)
     await mkdir(directory, { recursive: true })
     const temporary = path.join(directory, `.${path.basename(filePath)}.${randomUUID()}.tmp`)
@@ -633,7 +651,10 @@ export class VirtualWorkspace {
       } finally {
         await handle.close()
       }
-      await rename(temporary, filePath)
+      if (exclusive) {
+        await link(temporary, filePath)
+        await rm(temporary, { force: true })
+      } else await rename(temporary, filePath)
     } catch (error) {
       await rm(temporary, { force: true }).catch(() => undefined)
       throw error
@@ -803,10 +824,11 @@ export class VirtualWorkspace {
     const names = await readdir(directory)
     return Promise.all(
       names.map(async (name) => {
+        if (!(await safetyFileAccessible(path.join(directory, name)))) return null
         const info = await lstat(path.join(directory, name))
         return { name, isDirectory: info.isDirectory(), size: info.size, modifiedAt: info.mtime }
       }),
-    )
+    ).then((items) => items.filter((item): item is NonNullable<typeof item> => item !== null))
   }
 
   /** 设备级只读解析：只接受现有真实路径，绝对路径按设备定位，相对路径仍基于 Workspace。 */
@@ -818,6 +840,7 @@ export class VirtualWorkspace {
     const resolved = path.isAbsolute(normalizedPath)
       ? path.resolve(normalizedPath)
       : path.resolve(session.workspaceRoot, normalizedPath)
+    await assertSafetyFileAccess(resolved)
     const actual = await realpath(resolved)
     const info = await stat(actual)
     if (!info.isFile() && !info.isDirectory())
@@ -831,6 +854,7 @@ export class VirtualWorkspace {
       throw new WorkspaceError(WS_ERROR.PATH_OUT_OF_SCOPE, '工作区外审批写入必须使用绝对路径')
     }
     const resolved = path.resolve(inputPath)
+    await assertSafetyFileAccess(resolved)
     let probe = resolved
     let foundExistingParent = false
     while (!foundExistingParent) {
@@ -853,6 +877,7 @@ export class VirtualWorkspace {
     mode: 'read' | 'write',
   ): Promise<string> {
     const resolved = path.resolve(session.workspaceRoot, this.normalizePrincipalPath(inputPath))
+    await assertSafetyFileAccess(resolved)
     const roots =
       mode === 'read' ? session.sandboxProfile.readableRoots : session.sandboxProfile.writableRoots
     if (

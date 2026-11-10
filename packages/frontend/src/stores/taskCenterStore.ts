@@ -31,6 +31,7 @@ import { useCompositorStore } from './useCompositorStore'
 import { getApiBaseUrl } from '../api/transport'
 import { invoke, isElectron } from '../utils/ipcAdapter'
 import { logger } from '../lib/logger'
+import { reportEnvironmentTask } from '../composables/useEnvironmentEvents'
 
 async function sendSystemNotification(title: string, body: string): Promise<void> {
   try {
@@ -326,6 +327,9 @@ export const useTaskCenterStore = defineStore('taskCenter', () => {
 
     // 持久通知由后端投递；此处仅保留本地窗口行为与系统通知。
     if (action === 'background_task_completed') {
+      // 环境事件：她发起的任务完成，等用户下次和她说话时顺带告诉她（主进程按设置决定记不记）。
+      if (task.status === 'completed' && task.category !== 'resident')
+        reportEnvironmentTask(task.agentId, task.id)
       // 完成音与系统完成通知由 Electron 主进程统一处理，避免多窗口重复提醒。
       if (task.completionAction === 'open_result') {
         pendingOpenTask.value = task

@@ -17,6 +17,7 @@ import { resolve, dirname } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { existsSync, renameSync, rmSync } from 'node:fs'
 import { applySchemaMigrations } from './schemaMigrations'
+import { storeDiagnostic } from '../lib/storeDiagnostics'
 
 const logger = createLogger('Database')
 const sqliteConnections = new WeakMap<object, Database.Database>()
@@ -356,7 +357,7 @@ function ensureKernelResourceSchema(sqlite: Database.Database): void {
   })()
 }
 
-/** 为既有数据库补齐 Thread 自动执行模式字段。 */
+/** 为既有数据库补齐 Thread 执行模式及会话技能选择字段。 */
 function ensureThreadExecutionModeSchema(sqlite: Database.Database): void {
   const columns = new Set(
     sqlite
@@ -364,6 +365,9 @@ function ensureThreadExecutionModeSchema(sqlite: Database.Database): void {
       .all()
       .map((row) => (row as { name: string }).name),
   )
+  if (!columns.has('enabled_skills_json')) {
+    sqlite.exec("ALTER TABLE threads ADD COLUMN enabled_skills_json TEXT DEFAULT '[]' NOT NULL")
+  }
   if (!columns.has('auto_execute_tools')) {
     sqlite.exec('ALTER TABLE threads ADD COLUMN auto_execute_tools INTEGER DEFAULT false NOT NULL')
   }
@@ -478,7 +482,9 @@ export function createDrizzleConnection(databasePath: string) {
     logger.success(__t('logs.database', '数据库结构迁移完成'))
   } catch (error) {
     sqlite.close()
-    logger.error(__t('logs.database', '数据库结构迁移失败: {0}', [error]))
+    logger.error(__t('logs.database', '数据库结构迁移失败: {0}', [error]), {
+      diagnostic: storeDiagnostic(error, 'schema-migration'),
+    })
     throw error
   }
 

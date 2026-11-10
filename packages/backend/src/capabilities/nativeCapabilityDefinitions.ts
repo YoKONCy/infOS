@@ -110,5 +110,7 @@ export const DESKTOP_ENVIRONMENT_CAPABILITY: KernelCapabilityDefinition = {
     mousePosition: { risk: 'read', idempotency: 'safe' },
     mouseAction: { risk: 'elevated', idempotency: 'unsafe' },
     keyboardAction: { risk: 'elevated', idempotency: 'unsafe' },
+    desktopDirect: { risk: 'elevated', idempotency: 'unsafe' },
+    homeRecycle: { risk: 'elevated', idempotency: 'unsafe' },
   },
 }

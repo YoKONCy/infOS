@@ -1,0 +1,12 @@
+{
+  "卡片加载失败": "Card could not load",
+  "找不到卡片内容，请让她修复或重新创建。": "Card contents are missing. Ask her to repair or recreate the card.",
+  "加载未完成：{0}": "Loading did not complete: {0}",
+  "卡片进程已停止：{0}": "The card process stopped: {0}",
+  "拖动卡片": "Drag card",
+  "卡片运行出错": "Card error",
+  "隐藏错误": "Dismiss error",
+  "重新加载": "Reload",
+  "这张卡片尚未绑定对话，请让她重新创建。": "This card is not bound to a conversation. Ask her to recreate it.",
+  "卡片通道暂不可用，请稍后重新加载。": "The card connection is unavailable. Try reloading later."
+}

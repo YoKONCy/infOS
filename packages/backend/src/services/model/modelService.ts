@@ -44,6 +44,7 @@ export interface ModelConfigDto {
   returnNativeReasoning: boolean
   wireApi: string
   reasoningDialect: string
+  assistantPrefill: string
   stream: boolean
   createdAt: string | null
   updatedAt: string | null
@@ -151,6 +152,7 @@ export class ModelService {
       returnNativeReasoning: model.returnNativeReasoning ?? false,
       wireApi: model.wireApi ?? 'chat_completions',
       reasoningDialect: model.reasoningDialect ?? 'auto',
+      assistantPrefill: model.assistantPrefill ?? 'auto',
       stream: model.stream ?? true,
       apiKey: maskKey(model.apiKey),
     }

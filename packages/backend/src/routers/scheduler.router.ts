@@ -17,9 +17,11 @@ import { AppError } from '../lib/appError'
 import { validate as zValidator } from '../lib/validation'
 import { z } from 'zod'
 import type { AppContext } from '../container'
+import { registerWatchAlongRoutes } from './watchAlong.routes'
 
 export function createSchedulerRouter(ctx: AppContext) {
   const router = new Hono()
+  registerWatchAlongRoutes(router, ctx)
 
   router.get('/proactive', (c) =>
     c.json({ code: 'OK', data: ctx.companionSchedulerService.getState() }),
@@ -31,6 +33,7 @@ export function createSchedulerRouter(ctx: AppContext) {
       z
         .object({
           mode: z.enum(['off', 'companion', 'autonomous']).optional(),
+          strongholdActivity: z.boolean().optional(),
           companionIntervalMinutes: z.number().min(1).max(1440).optional(),
           autonomousIntervalMinutes: z.number().min(1).max(1440).optional(),
           goal: z.string().max(8000).optional(),
@@ -44,6 +47,18 @@ export function createSchedulerRouter(ctx: AppContext) {
         code: 'OK',
         data: await ctx.companionSchedulerService.configure(c.req.valid('json')),
       }),
+  )
+  router.put(
+    '/proactive/agents/:agentId',
+    zValidator('json', z.object({
+      mode: z.enum(['off', 'companion', 'autonomous']).nullable().optional(),
+      strongholdActivity: z.boolean().nullable().optional(),
+    }).strict()),
+    async (c) => {
+      const agentId = c.req.param('agentId')
+      if (!ctx.agentManager.getAgent(agentId)) throw new AppError('NOT_FOUND', { message: '角色不存在' })
+      return c.json({ code: 'OK', data: await ctx.companionSchedulerService.configureAgent(agentId, c.req.valid('json')) })
+    },
   )
   router.post('/proactive/check', async (c) =>
     c.json({ code: 'OK', data: await ctx.companionSchedulerService.checkNow() }),

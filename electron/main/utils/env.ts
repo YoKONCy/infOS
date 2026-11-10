@@ -29,6 +29,12 @@ function detectPortableMode(exePath: string): boolean {
 export const isPackaged = isPackagedRuntime
 export const isDev = !isPackaged
 export const isPortable = isPackaged && detectPortableMode(app.getPath('exe'))
+/**
+ * 从源码直接启动日常使用（仓库根「启动infOS.bat」设置 INFOS_CLIENT_PROFILE=installed）：
+ * 代码仍按开发运行，但用户目录布局与安装版相同，设置、卡片、桌面组件缓存与打包客户端共用。
+ * `pnpm dev:electron` 不设这个变量，开发模式不受影响。
+ */
+const installedProfile = isPackaged || process.env.INFOS_CLIENT_PROFILE === 'installed'
 
 // ─── 用户数据根目录 ─────────────────────────────────────
 function resolveUserData(): string {
@@ -42,7 +48,7 @@ function resolveUserData(): string {
     return dir
   }
 
-  if (isDev) {
+  if (!installedProfile) {
     // 开发模式：Electron 与独立 Daemon 统一使用 ~/.infos。
     const devDir = path.join(app.getPath('home'), '.infos')
     stdioGuard.write('stdout', () =>
@@ -61,7 +67,7 @@ const appUserData = resolveUserData()
  * 业务数据目录必须与后端 PERO_DATA_DIR 完全一致。
  * 开发模式直接使用 ~/.infos；打包版使用 userData/data；便携版使用 exe/data。
  */
-const appDataDir = isDev ? appUserData : path.join(appUserData, 'data')
+const appDataDir = installedProfile ? path.join(appUserData, 'data') : appUserData
 
 // ─── 统一路径工厂 ───────────────────────────────────────
 export const paths = {

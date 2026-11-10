@@ -1,4 +1,7 @@
 import { t as __t } from '../lib/i18n'
+import { HOME_SETTINGS_KEY } from '@infos/shared'
+import { validHomeSettings } from '../services/home/homeSettingsSchema'
+import { homeMessage } from '../services/home/homeErrors'
 /**
  * 配置 API 路由
  *
@@ -32,9 +35,10 @@ import { LANGUAGE_CONFIG_KEY, normalizeLocale, SUPPORTED_LOCALES } from '@infos/
 import { getLocale, setLocale, getAutomaticLocale } from '../lib/i18n'
 import {
   EMBEDDING_ENABLED_KEY,
-  MEMORY_BACKGROUND_ENABLED_KEY,
+  isMemoryBackgroundSwitchKey,
   WHOLESOME_MODE_KEY,
   ASSISTANT_PREFILL_KEY,
+  DYNAMIC_CONTEXT_DEPTH_KEY,
 } from '@infos/shared'
 import {
   MEMORY_RUNTIME_CONFIG_KEY,
@@ -107,8 +111,16 @@ const importConfigSchema = z.object({
     .record(z.string(), z.string())
     .refine(
       (data) =>
-        [EMBEDDING_ENABLED_KEY, MEMORY_BACKGROUND_ENABLED_KEY, WHOLESOME_MODE_KEY].every(
-          (key) => data[key] === undefined || data[key] === 'true' || data[key] === 'false',
+        data[HOME_SETTINGS_KEY] === undefined ||
+        validHomeSettings(HOME_SETTINGS_KEY, data[HOME_SETTINGS_KEY]!),
+      { message: homeMessage('HOME_INVALID') },
+    )
+    .refine(
+      (data) =>
+        Object.entries(data).every(
+          ([key, value]) =>
+            (!isMemoryBackgroundSwitchKey(key) && ![EMBEDDING_ENABLED_KEY, WHOLESOME_MODE_KEY].includes(key)) ||
+            value === 'true' || value === 'false',
         ),
       { message: '开关配置必须为 true 或 false' },
     )
@@ -123,6 +135,13 @@ const importConfigSchema = z.object({
         data[ASSISTANT_PREFILL_KEY] === undefined ||
         validAssistantPrefillSetting(data[ASSISTANT_PREFILL_KEY]!),
       { message: '预填充配置无效，正文最多 8000 个字符' },
+    )
+    .refine(
+      (data) =>
+        data[DYNAMIC_CONTEXT_DEPTH_KEY] === undefined ||
+        data[DYNAMIC_CONTEXT_DEPTH_KEY] === '0' ||
+        data[DYNAMIC_CONTEXT_DEPTH_KEY] === '1',
+      { message: '动态填充深度只能为 0 或 1' },
     ),
   /** 是否覆盖已有 key (默认 true) */
   overwrite: z.boolean().default(true),
@@ -137,6 +156,22 @@ const importConfigSchema = z.object({
  */
 export function createConfigRouter(ctx: AppContext) {
   const router = new Hono()
+  router.use('*', async (c, next) => {
+    if (!['GET', 'HEAD', 'OPTIONS'].includes(c.req.method)) {
+      const body = c.req.method === 'DELETE' ? undefined : await c.req.json().catch(() => undefined)
+      const touchesHome =
+        c.req.param('key') === HOME_SETTINGS_KEY ||
+        c.req.path.split('/').at(-1) === HOME_SETTINGS_KEY ||
+        body?.key === HOME_SETTINGS_KEY ||
+        (Array.isArray(body?.items) &&
+          body.items.some((item: { key?: string } | null) => item?.key === HOME_SETTINGS_KEY)) ||
+        body?.data?.[HOME_SETTINGS_KEY] !== undefined
+      if (touchesHome && !ctx.clientAccess?.authenticate(c.req.raw)?.admin)
+        throw new AppError('FORBIDDEN')
+    }
+    return next()
+  })
+
   let writing = false
   // 激活期间禁止另一端修改关联配置，避免验证的是一个模型、最终保存的是另一个。
   router.use('*', async (c, next) => {

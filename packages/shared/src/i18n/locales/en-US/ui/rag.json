@@ -1,4 +1,8 @@
 {
+  "侧会话历史轮数": "Side conversation history turns",
+  "侧会话按完整对话保留历史": "Keep complete conversation turns in side conversations",
+  "历史 Token 预算": "History token budget",
+  "近期消息可使用的上下文容量": "Context capacity available for recent messages",
   "RAG 配置": "RAG settings",
   "核心记忆": "Core memory",
   "返回核心记忆": "Back to core memory",
@@ -51,5 +55,17 @@
   "放弃未保存的修改？": "Discard unsaved changes?",
   "离开会丢弃未保存的修改。": "Leaving will discard unsaved changes.",
   "放弃修改": "Discard changes",
-  "继续编辑": "Keep editing"
+  "继续编辑": "Keep editing",
+  "记忆注入上限": "Memory injection limit",
+  "自动注入记忆的 Token 上限，超出时优先保留直接相关的完整事件；0 表示不限": "Token limit for automatically injected memories. Directly relevant events are kept whole first; 0 means no limit",
+  "Token": "tokens",
+  "检索策略": "Retrieval strategy",
+  "基础与高级检索参数由两个场景共用": "Basic and advanced retrieval settings are shared by both scenarios",
+  "基础检索门槛": "Basic retrieval threshold",
+  "只注入相关记忆": "Inject only relevant memories",
+  "候选不够相关时少放，不按召回事件数补满；关闭后恢复旧行为": "Inject fewer memories when candidates are not relevant enough instead of filling the recall count. Turn off to restore the previous behavior",
+  "已开启高级检索，此处设置暂不生效": "Advanced retrieval is on, so this setting is not in effect",
+  "最低向量相似度": "Minimum vector similarity",
+  "查询与记忆的余弦相似度下限；标签与查询一致的记忆不受此限制": "Lower bound of cosine similarity between the query and a memory. Memories whose tags match the query are exempt",
+  "以下高级检索选项与基础检索门槛互不叠加": "The advanced options below do not stack with the basic threshold"
 }

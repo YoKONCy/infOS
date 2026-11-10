@@ -24,7 +24,17 @@ export function createPackagesRouter(
   router.onError((error, c) => {
     if (error instanceof AppError) return errorHandler(error, c)
     const reason = String(error).match(/PACKAGE_[A-Z_]+/)?.[0] ?? 'PACKAGE_OPERATION_FAILED'
-    const message =
+    if (reason === 'PACKAGE_SETTINGS_CONFLICT')
+      return errorHandler(new AppError('CONFLICT', {
+        message: t('server.packages', '插件设置已在其他位置修改，请重新载入后再保存。'),
+        data: { reason },
+      }), c)
+    const settingsMessages: Record<string, string> = {
+      PACKAGE_SETTINGS_INVALID: '插件返回的设置数据无效，请检查插件版本。',
+      PACKAGE_PAGE_INVALID: '插件页面地址无效，只支持本机 HTTP 或 HTTPS 地址。',
+      PACKAGE_ACTION_UNAVAILABLE: '插件入口已失效，请刷新列表后重试。',
+    }
+    const message = settingsMessages[reason] ?? (
       reason === 'PACKAGE_RECOVERY_MODE'
         ? '当前处于拓展恢复模式，请在资源版本页恢复拓展并重启。'
         : reason === 'PACKAGE_INDEX_INVALID'
@@ -42,7 +52,7 @@ export function createPackagesRouter(
                       'PACKAGE_MANIFEST_INVALID',
                     ].includes(reason)
                   ? '插件包无效，或含有不允许的路径和配置。'
-                  : '插件操作失败，请检查插件包与授权状态。'
+                  : '插件操作失败，请检查插件包与授权状态。')
     return errorHandler(
       new AppError(
         ['PACKAGE_WEB_UI_UNAVAILABLE', 'PACKAGE_WEB_UI_FILE_UNAVAILABLE'].includes(reason)
@@ -125,11 +135,18 @@ export function createPackagesRouter(
     if (!PACKAGE_UI_SLOTS.includes(slot)) throw new AppError('INVALID_PARAMETER')
     return c.json({ code: 'OK', data: ui.list(slot) })
   })
-  router.post('/panel-actions', async (c) => {
+  router.post('/panel-actions', bodyLimit({
+    maxSize: 1024 * 1024,
+    onError: () => { throw new AppError('PAYLOAD_TOO_LARGE') },
+  }), async (c) => {
     const body = z
-      .object({ panelId: z.string().max(250), actionId: z.string().max(100) })
+      .object({
+        panelId: z.string().max(250),
+        actionId: z.string().max(100),
+        payload: z.record(z.string(), z.unknown()).optional(),
+      })
       .parse(await c.req.json())
-    const data = await ui.invoke(body.panelId, body.actionId)
+    const data = await ui.invoke(body.panelId, body.actionId, body.payload)
     return c.json({ code: 'OK', data: data ?? null })
   })
   return router

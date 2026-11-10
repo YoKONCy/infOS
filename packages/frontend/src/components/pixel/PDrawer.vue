@@ -8,7 +8,7 @@ import { nextTick, onBeforeUnmount, onMounted, ref, useId } from 'vue'
 import { t } from '../../i18n'
 import PixelIcon from './PixelIcon.vue'
 
-defineProps<{ title: string }>()
+withDefaults(defineProps<{ title: string; width?: number }>(), { width: 720 })
 const emit = defineEmits<{ close: [] }>()
 const titleId = useId()
 const panel = ref<HTMLElement>()
@@ -74,6 +74,7 @@ onBeforeUnmount(() => {
         <aside
           ref="panel"
           class="p-drawer"
+          :style="{ width: `min(${width}px, 100%)` }"
           role="dialog"
           aria-modal="true"
           :aria-labelledby="titleId"
@@ -105,11 +106,10 @@ onBeforeUnmount(() => {
   z-index: 1100;
   display: flex;
   justify-content: flex-end;
-  background: color-mix(in srgb, var(--ui-text-primary) 18%, transparent);
+  background: var(--ui-overlay-backdrop);
   overscroll-behavior: contain;
 }
 .p-drawer {
-  width: min(720px, 100%);
   min-width: 0;
   height: 100%;
   display: flex;
@@ -139,7 +139,7 @@ onBeforeUnmount(() => {
   width: 30px;
   height: 30px;
   border: 0;
-  border-radius: var(--ui-radius-xs);
+  border-radius: 0;
   color: var(--ui-text-secondary);
   background: transparent;
   cursor: pointer;
@@ -149,7 +149,8 @@ onBeforeUnmount(() => {
   color: var(--ui-text-primary);
 }
 .p-drawer__close:focus-visible {
-  outline: 2px solid var(--ui-accent-sky);
+  outline: 1px solid var(--ui-accent-primary);
+  outline-offset: 2px;
 }
 .p-drawer__body {
   min-height: 0;

@@ -1,4 +1,5 @@
 import { t as __t } from '../../lib/i18n'
+import { PERCEPTION_MEMORY_TOOLS, perceptionReadOnly, redactPerception } from '../conversation/perceptionContext'
 /**
  * Tool Executor — 工具执行器
  *
@@ -10,7 +11,7 @@ import { t as __t } from '../../lib/i18n'
  * - Package Hook Bus 事件触发
  *
  * 执行流程:
- * 1. Thread 模式与逐项工具策略校验，再处理 finish_task / load_skill
+ * 1. Thread 模式与逐项工具策略校验，再处理执行协议工具
  * 2. CapabilityGate.isToolAllowed() → 权限校验
  * 3. Hook: before_tool_call → 可拦截/修改参数
  * 4. ToolRegistry.getHandler() → 获取处理函数
@@ -30,6 +31,8 @@ import type { CapabilityScope } from '../../capabilities/types'
 import type { SkillLoader } from '../../capabilities/skillLoader'
 import { isSystemProtocolTool } from '../../tools/systemProtocolTools'
 import { isToolAllowedInInteractionMode } from '../../tools/interactionMode'
+import { isMemoryToolAllowed } from '../../tools/memoryPolicy'
+import { NOTEBOOK_FILE_TOOLS } from '../memory/notebook'
 import {
   EXPAND_ADVANCED_TOOLS,
   isAdvancedTool,
@@ -47,10 +50,18 @@ import { optionalTaskToolRuntime } from '../../tools/taskControl/runtime'
 import {
   getProductivityRuntime,
   resolveExecutionSession,
+  isNotebookToolPathAllowed,
 } from '../../tools/productivityRuntimeHolder'
 import type { FileWritePreviewBaseline } from '@infos/shared'
 import { resolveExecutionMode, parseAutomaticApproval, type ExecutionMode } from '@infos/shared'
 import { realpath } from 'node:fs/promises'
+import { toolPathArguments } from '../execution/safetyPath'
+import {
+  highRiskApprovalReason,
+  isForbiddenReadOnlyTerminalTarget,
+  resolveToolSafetyRisk,
+  toolSafetyBlockedResult,
+} from './toolSafetyGate'
 import {
   grantReadOnlyTerminal,
   planReadOnlyTerminal,
@@ -197,20 +208,6 @@ export interface DesktopCapabilityPort {
  * ToolExecutor 在调用工具前会从 args 中提取这些字段，
  * 用 CapabilityGate.isPathAllowed() 校验是否落在 ResourceScope.allowedRoots 内。
  */
-const PATH_PARAM_NAMES = new Set<string>([
-  'file_path',
-  'filePath',
-  'dir_path',
-  'dirPath',
-  'directory',
-  'path',
-  'cwd',
-  'destination',
-  'target_path',
-  'targetPath',
-  'output_path',
-  'outputPath',
-])
 
 const DEVICE_READ_TOOLS = new Set([
   'read_file',
@@ -263,8 +260,13 @@ export class RegistryToolExecutor implements ToolExecutor {
   }
 
   private threadPolicyResolver?: (threadId: string) => Promise<{
+    generation?: number
+    agentId?: string
+    threadKind?: 'main' | 'side'
+    status?: string
     interactionMode: import('@infos/shared').InteractionMode
     disabledTools: string[]
+    enabledSkills?: string[]
     executionMode?: ExecutionMode
     autoExecuteTools?: boolean
   } | null>
@@ -345,6 +347,8 @@ export class RegistryToolExecutor implements ToolExecutor {
     if (!this.registry.getHandler(toolName) || !this.registry.isAllowedInSource(toolName, channel))
       return unavailable
     const policy = await this.threadPolicyResolver?.(threadId)
+    if ((policy?.interactionMode === 'minimal' || channel === 'group') &&
+        (context.taskId || !(await isNotebookToolPathAllowed(agentId, path)))) return unavailable
     if (
       [toolName, 'read_file'].some(
         (name) => context.disabledTools?.includes(name) || policy?.disabledTools.includes(name),
@@ -461,6 +465,10 @@ export class RegistryToolExecutor implements ToolExecutor {
     runtimeContext?: NonNullable<Parameters<ToolExecutor['execute']>[3]>,
   ): Promise<ToolExecutionResult> {
     runtimeContext?.signal?.throwIfAborted()
+    // 在内置工具、扩展钩子、审批与执行前拒绝，不能依靠模型遵守空工具清单。
+    if (perceptionReadOnly() || runtimeContext?.capabilityScope === 'perception')
+      return { output: JSON.stringify({ success: false, code: 'PERCEPTION_READ_ONLY' }), isError: true, shouldTerminate: true, durationMs: 0 }
+    if (PERCEPTION_MEMORY_TOOLS.has(name)) args = redactPerception(args)
     const guard = runtimeContext?.loopGuard
     const observationVersion = guard?.observationVersion
     let warning: string | undefined
@@ -559,6 +567,8 @@ export class RegistryToolExecutor implements ToolExecutor {
     args: Record<string, unknown>,
     source: string,
     runtimeContext?: {
+      sceneRoomId?: string
+      conversation?: import('@infos/shared').ConversationActions
       threadId?: string
       channel?: string
       agentId?: string
@@ -574,6 +584,8 @@ export class RegistryToolExecutor implements ToolExecutor {
       processId?: import('@infos/shared').KernelProcessId
       deadline?: string
       pairId?: string
+      generation?: number
+      characterStateVersion?: { revision: number }
       toolCallId?: string
       disabledTools?: string[]
       interactionMode?: import('@infos/shared').InteractionMode
@@ -591,6 +603,7 @@ export class RegistryToolExecutor implements ToolExecutor {
   ): Promise<ToolExecutionResult> {
     runtimeContext?.signal?.throwIfAborted()
     const startTime = Date.now()
+    runtimeContext?.conversation?.assertCurrent()
     // 第七阶段修复（批次 B1）：agentId 必须从 runtimeContext 传入
     // 原实现读 this.defaultContext.agentId（构造时注入且从不更新的共享状态），
     // 而 container.ts 创建 ToolExecutor 时根本没传 defaultContext，
@@ -660,8 +673,13 @@ export class RegistryToolExecutor implements ToolExecutor {
     const threadPolicy = runtimeContext?.realmId
       ? null
       : await this.threadPolicyResolver?.(threadId)
-    const interactionMode =
-      threadPolicy?.interactionMode ?? runtimeContext?.interactionMode ?? 'work'
+    if (runtimeContext?.generation !== undefined && threadPolicy?.generation !== runtimeContext.generation)
+      return { output: 'THREAD_GENERATION_STALE', durationMs: Date.now() - startTime, isError: true, shouldTerminate: true }
+    if (!isMemoryToolAllowed(name, threadPolicy?.agentId === agentId && threadPolicy.status === 'active' ? threadPolicy.threadKind : undefined))
+      return { output: __t('server.agent', '此记忆操作仅限有效的主会话执行'), durationMs: Date.now() - startTime, isError: true, shouldTerminate: false }
+    const interactionMode = channel === 'group'
+      ? 'work'
+      : threadPolicy?.interactionMode ?? runtimeContext?.interactionMode ?? 'work'
     if (
       !runtimeContext?.realmId &&
       !isToolAllowedInInteractionMode(name, interactionMode, this.registry)
@@ -679,7 +697,9 @@ export class RegistryToolExecutor implements ToolExecutor {
         runtimeContext?.disabledTools?.includes(EXPAND_ADVANCED_TOOLS) ||
         threadPolicy?.disabledTools.includes(EXPAND_ADVANCED_TOOLS)
       const access = runtimeContext?.advancedToolAccess
-      const unavailable = access && (!access.expanded || !access.names.has(name))
+      // 常驻工具不需要展开；入口关闭、权限与审批仍照常检查。
+      const unavailable =
+        access && !access.resident?.has(name) && (!access.expanded || !access.names.has(name))
       if (entryDisabled || unavailable) {
         return {
           output: entryDisabled
@@ -740,6 +760,9 @@ export class RegistryToolExecutor implements ToolExecutor {
             runtimeContext.toolCallId ?? '',
           )
         const context: ToolContext = {
+          conversation: runtimeContext?.conversation,
+          sceneRoomId: runtimeContext?.sceneRoomId,
+          realmId: runtimeContext?.realmId,
           source,
           agentId,
           sessionId,
@@ -751,8 +774,11 @@ export class RegistryToolExecutor implements ToolExecutor {
           processId: runtimeContext?.processId,
           deadline: runtimeContext?.deadline,
           pairId: runtimeContext?.pairId,
+          generation: runtimeContext?.generation,
+          characterStateVersion: runtimeContext?.characterStateVersion,
           toolCallId: runtimeContext?.toolCallId,
         }
+        context.signal?.throwIfAborted()
         const result = await handler(args, context)
         const failed =
           typeof result !== 'string' &&
@@ -785,19 +811,6 @@ export class RegistryToolExecutor implements ToolExecutor {
           shouldTerminate: false,
         }
       }
-    }
-
-    // ── 内置: load_skill（ambient 作用域禁止动态解锁能力） ──
-    if (name === 'load_skill') {
-      if (runtimeContext?.capabilityScope && runtimeContext.capabilityScope !== 'default') {
-        return {
-          output: '当前低权限环境不允许动态加载技能。',
-          durationMs: Date.now() - startTime,
-          isError: true,
-          shouldTerminate: false,
-        }
-      }
-      return await this.handleLoadSkill(args, sessionId, startTime)
     }
 
     // ── CapabilityGate 权限校验 ──
@@ -847,7 +860,16 @@ export class RegistryToolExecutor implements ToolExecutor {
     if (PLATFORM_CAPABILITY_TOOLS.has(name)) {
       return this.handlePlatformCapability(
         name,
-        { ...args, __desktopCaller: { agentId, threadId, taskId: runtimeContext?.taskId } },
+        {
+          ...args,
+          __desktopCaller: {
+            agentId,
+            threadId,
+            taskId: runtimeContext?.taskId,
+            // 家的声明与授权按任务区分：普通回合用 pairId，与 home_* 工具一致。
+            homeTaskId: runtimeContext?.taskId ?? runtimeContext?.pairId,
+          },
+        },
         startTime,
         {
           principalId: agentId,
@@ -896,6 +918,26 @@ export class RegistryToolExecutor implements ToolExecutor {
       }
     }
 
+    // Hook 可能修改参数，技能资源读取必须按最终参数和当前会话选择重新校验。
+    if (name === 'skill_list_resources' || name === 'skill_read_resource') {
+      const skillId = typeof args.skill_id === 'string' ? args.skill_id : ''
+      const available = this.capabilityGate?.resolve(
+        agentId, channel, sessionId, runtimeContext?.capabilityScope,
+      )
+        .enabledSkills.some((skill) => skill.id === skillId)
+      if (
+        !threadPolicy?.enabledSkills?.includes(skillId) ||
+        !available ||
+        !this.skillLoader?.getManifest(skillId)
+      )
+        return {
+          output: __t('server.agent', '本会话未启用此 Skill：{0}', [skillId]),
+          durationMs: Date.now() - startTime,
+          isError: true,
+          shouldTerminate: false,
+        }
+    }
+
     if (name === 'edit_file') {
       try {
         const session = await resolveExecutionSession({
@@ -916,9 +958,6 @@ export class RegistryToolExecutor implements ToolExecutor {
     }
     const remoteTerminalTool = isRemoteTerminalTool(name)
     const isDeviceReadTool = DEVICE_READ_TOOLS.has(name)
-    const isSkillTool =
-      typeof this.capabilityGate?.isSkillUnlockedTool === 'function' &&
-      this.capabilityGate.isSkillUnlockedTool(sessionId, name)
     // 远程节点路径由节点侧解释，不能拿 Server Workspace 边界误判。
     let pathViolation =
       !remoteTerminalTool && !isDeviceReadTool
@@ -967,6 +1006,14 @@ export class RegistryToolExecutor implements ToolExecutor {
       )
     }
 
+    const notebookRestricted = !runtimeContext?.realmId && NOTEBOOK_FILE_TOOLS.has(name) &&
+      (interactionMode === 'minimal' || channel === 'group')
+    if (notebookRestricted) {
+      const requested = name === 'list_directory' ? args.dir_path : args.file_path
+      if (runtimeContext?.taskId || !(await isNotebookToolPathAllowed(agentId, requested, name === 'list_directory')))
+        return { output: __t('server.agent', '当前模式的文件工具仅开放 notes 目录及其直接 Markdown 文件'), durationMs: Date.now() - startTime, isError: true, shouldTerminate: false }
+    }
+
     // 参数与审批策略必须基于 Hook 修改后的最终参数执行。
     let approvalObservation:
       | { decision: string; userMessage?: string; source?: 'automatic_reviewer' }
@@ -978,7 +1025,7 @@ export class RegistryToolExecutor implements ToolExecutor {
       : resolveExecutionMode(runtimeContext?.executionMode, runtimeContext?.autoExecuteTools)
     const fullAccess = executionMode === 'full'
     const autoExecuteTools = executionMode !== 'manual'
-    if (!fullAccess && TERMINAL_APPROVAL_TOOLS.has(name)) {
+    if (TERMINAL_APPROVAL_TOOLS.has(name)) {
       const denied = this.approvalService?.consumeDeniedOnce({
         agentId,
         sessionId,
@@ -1002,10 +1049,8 @@ export class RegistryToolExecutor implements ToolExecutor {
     }
     let readOnlyTerminal: ReadOnlyTerminalGrant | undefined
     if (
-      !fullAccess &&
       this.policyEngine &&
       !pathViolation &&
-      !isSkillTool &&
       !this.registry.isRuntimeScoped(name) &&
       ['terminal_execute', 'terminal_create'].includes(name)
     ) {
@@ -1048,13 +1093,29 @@ export class RegistryToolExecutor implements ToolExecutor {
             session.workspaceRoot,
             args.cwd,
             (target) =>
-              this.checkPathAllowed(name, { file_path: target }, agentId, channel) === null,
+              this.checkPathAllowed(name, { file_path: target }, agentId, channel) === null &&
+              !isForbiddenReadOnlyTerminalTarget(target),
             runtimeContext?.signal,
           )) ?? undefined
       }
     }
+    // 高危操作（与桌面护栏共用 safety-lists.draft.json）：任何执行模式都由用户本人逐次确认，
+    // 审批模型不参与，完整权限也不跳过。
+    // 桌面通道的 delete_file 只走家的回收流程，家的确认就是那一道（不永久删除），不再叠一张执行模式审批卡。
+    // 手动模式照旧逐次问；敏感位置（sensitive-path）照旧走高危审批。
+    const outsideDelete = name === 'delete_file' && pathViolation !== null && channel !== 'desktop'
+    const safetyRisk = await resolveToolSafetyRisk(this.registry, name, args, {
+      deviceRead: DEVICE_READ_TOOLS.has(name),
+      readOnlyTerminal: !!readOnlyTerminal,
+      deleteOutsideWorkspace: outsideDelete,
+      session: { agentId, threadId, channel, taskId: runtimeContext?.taskId },
+    })
+    const safetyBlocked = toolSafetyBlockedResult(safetyRisk, !!this.policyEngine, startTime)
+    if (safetyBlocked) return safetyBlocked
+    const highRisk = safetyRisk === 'forbidden-resource' ? null : safetyRisk
     const needsAutomaticReview =
       executionMode === 'auto_approve' &&
+      !highRisk &&
       ((name === 'runtime_debug' && typeof args.code === 'string' && !!args.code.trim()) ||
         this.registry.isRuntimeScoped(name) ||
         (TERMINAL_APPROVAL_TOOLS.has(name) && !readOnlyTerminal) ||
@@ -1065,7 +1126,7 @@ export class RegistryToolExecutor implements ToolExecutor {
           'remote_terminal_kill',
           'remote_terminal_close',
         ].includes(name) ||
-        (name === 'delete_file' && pathViolation !== null))
+        outsideDelete)
     let automaticReview: AutomaticApprovalDecision | undefined
     if (needsAutomaticReview) {
       const denied = this.approvalService?.consumeDeniedOnce({
@@ -1183,10 +1244,11 @@ export class RegistryToolExecutor implements ToolExecutor {
         runtimeContext?.onExecutionStatus?.('自动审批通过，正在执行工具……')
       }
     }
-    const skipApprovalPolicy = fullAccess || automaticReview?.decision === 'allow'
+    const skipApprovalPolicy = (fullAccess || automaticReview?.decision === 'allow') && !highRisk
     const pathRequiresApproval =
-      !skipApprovalPolicy && pathViolation !== null && (!autoExecuteTools || name === 'delete_file')
+      !skipApprovalPolicy && pathViolation !== null && (!autoExecuteTools || outsideDelete)
     const forceApprovalEachCall =
+      !!highRisk ||
       (name === 'runtime_debug' && typeof args.code === 'string' && !!args.code.trim()) ||
       this.registry.isRuntimeScoped(name) ||
       (!autoExecuteTools && remoteTerminalTool) ||
@@ -1205,7 +1267,7 @@ export class RegistryToolExecutor implements ToolExecutor {
         shouldTerminate: false,
       }
     }
-    if (this.policyEngine && !fullAccess) {
+    if (this.policyEngine && (!fullAccess || highRisk)) {
       const permission = this.capabilityGate?.getToolPermission(agentId, channel, name)
       const actionPermission =
         typeof args.action === 'string'
@@ -1238,7 +1300,7 @@ export class RegistryToolExecutor implements ToolExecutor {
         readOnlyTerminal: !!readOnlyTerminal,
       })
       const policyDecision = remoteTerminalTool
-        ? autoExecuteTools
+        ? autoExecuteTools && !highRisk
           ? { action: 'allow' as const }
           : {
               action: 'require_approval' as const,
@@ -1247,18 +1309,13 @@ export class RegistryToolExecutor implements ToolExecutor {
             }
         : autoExecuteTools &&
             basePolicyDecision.action === 'require_approval' &&
+            !highRisk &&
             !TERMINAL_APPROVAL_TOOLS.has(name) &&
-            !(name === 'delete_file' && pathViolation !== null) &&
+            !outsideDelete &&
             name !== 'runtime_debug' &&
             !this.registry.isRuntimeScoped(name)
           ? { action: 'allow' as const }
-          : isSkillTool && executionMode !== 'auto_approve' && basePolicyDecision.action === 'allow'
-            ? {
-                action: 'require_approval' as const,
-                reason: `工具 ${name} 由Skill临时解锁，首次执行需要用户确认`,
-                riskLevel: 'medium' as const,
-              }
-            : basePolicyDecision
+          : basePolicyDecision
       let decision: PolicyDecision = policyDecision
       if (automaticReview?.decision === 'allow') {
         decision = basePolicyDecision.action === 'deny' ? basePolicyDecision : { action: 'allow' }
@@ -1266,6 +1323,18 @@ export class RegistryToolExecutor implements ToolExecutor {
         decision = {
           action: 'require_approval',
           reason: `工具 ${name} 请求访问工作区或资源范围外路径：${pathViolation}`,
+          riskLevel: 'high',
+        }
+      }
+      // 高危操作一律交给用户：完整权限跳过参数策略，因此连策略拒绝也改为由用户决定；
+      // 其他模式保留明确配置的拒绝。
+      if (highRisk && (fullAccess || decision.action !== 'deny')) {
+        decision = {
+          action: 'require_approval',
+          reason:
+            decision.action === 'require_approval'
+              ? decision.reason
+              : highRiskApprovalReason(highRisk, name),
           riskLevel: 'high',
         }
       }
@@ -1278,8 +1347,8 @@ export class RegistryToolExecutor implements ToolExecutor {
         }
       }
       if (decision.action === 'require_approval') {
-        // 自动审批模式不能因遗留策略落入等待用户的分支。
-        if (executionMode === 'auto_approve')
+        // 自动审批模式不能因遗留策略落入等待用户的分支；高危操作除外，必须由用户确认。
+        if (executionMode === 'auto_approve' && !highRisk)
           return {
             output: JSON.stringify({
               code: 'EXECUTION_POLICY_DENIED',
@@ -1324,16 +1393,19 @@ export class RegistryToolExecutor implements ToolExecutor {
             shouldTerminate: false,
           }
         }
-        const storedAuthorization = this.approvalService.authorize({
-          agentId,
-          sessionId,
-          toolName: name,
-          args,
-        })
-        const authorization =
-          forceApprovalEachCall && !runtimeContext?.taskId && storedAuthorization === 'allow'
+        const storedAuthorization =
+          forceApprovalEachCall && !runtimeContext?.taskId
             ? 'none'
-            : storedAuthorization
+            : this.approvalService.authorize({
+                agentId,
+                sessionId,
+                toolName: name,
+                args,
+                onceOnly: forceApprovalEachCall,
+                taskId: runtimeContext?.taskId,
+                threadId,
+              })
+        const authorization = storedAuthorization
         if (authorization === 'deny') {
           // 若用户留过拒绝附言，把理由一并回传给 Agent，避免原样盲目重试。
           const userMessage = this.approvalService.findDeniedMessage({
@@ -1365,7 +1437,7 @@ export class RegistryToolExecutor implements ToolExecutor {
             toolName: name,
             args,
             reason: decision.reason,
-            riskLevel: decision.riskLevel,
+            riskLevel: forceApprovalEachCall ? 'high' : decision.riskLevel,
           })
           if (runtimeContext?.taskId) {
             return {
@@ -1407,19 +1479,38 @@ export class RegistryToolExecutor implements ToolExecutor {
           }
           runtimeContext?.signal?.throwIfAborted()
           runtimeContext?.onExecutionStatus?.('已允许，正在执行工具并等待结果……')
-          // waitForResolution 已确认本次原调用，因此直接续行；allow_once 在此消费。
-          if (resolved.decision === 'allow_once') {
-            this.approvalService.authorize({ agentId, sessionId, toolName: name, args })
-          }
+          // 看到批准状态不等于持有执行许可，必须原子领取同一审批的票据。
+          const claimed = this.approvalService.authorize({
+            approvalId: approval.id,
+            agentId,
+            sessionId,
+            toolName: name,
+            args,
+            onceOnly: forceApprovalEachCall,
+            taskId: runtimeContext?.taskId,
+            threadId,
+          })
+          if (claimed !== 'allow')
+            return {
+              output: JSON.stringify({
+                code: 'APPROVAL_REQUIRED',
+                message: __t('server.agent', '一次批准已被消费，本次工具未执行，请重新申请确认'),
+              }),
+              durationMs: Date.now() - startTime,
+              isError: true,
+              shouldTerminate: false,
+            }
           approvalObservation = {
             decision: resolved.decision,
             userMessage: resolved.resolutionMessage,
           }
-          approvedSensitiveAction = remoteTerminalTool || ALWAYS_APPROVE_EACH_CALL_TOOLS.has(name)
+          approvedSensitiveAction =
+            remoteTerminalTool || ALWAYS_APPROVE_EACH_CALL_TOOLS.has(name) || !!highRisk
           approvedOutsideWorkspace = pathViolation !== null
         }
         if (authorization === 'allow') {
-          approvedSensitiveAction = remoteTerminalTool || ALWAYS_APPROVE_EACH_CALL_TOOLS.has(name)
+          approvedSensitiveAction =
+            remoteTerminalTool || ALWAYS_APPROVE_EACH_CALL_TOOLS.has(name) || !!highRisk
           approvedOutsideWorkspace = pathViolation !== null
         }
       }
@@ -1445,7 +1536,7 @@ export class RegistryToolExecutor implements ToolExecutor {
       if (
         approvedOutsideWorkspace &&
         LOCAL_PATH_TOOLS.has(name) &&
-        [...PATH_PARAM_NAMES].some((key) => typeof args[key] === 'string' && args[key])
+        toolPathArguments(args, this.registry.getDefinition(name)?.parameters).length > 0
       ) {
         const session = await resolveExecutionSession({
           agentId,
@@ -1453,20 +1544,24 @@ export class RegistryToolExecutor implements ToolExecutor {
           channel,
           taskId: runtimeContext?.taskId,
         })
-        args = { ...args }
-        for (const key of PATH_PARAM_NAMES) {
-          if (typeof args[key] === 'string' && args[key]) {
-            args[key] = path.resolve(
-              session.workspaceRoot,
-              String(args[key]).replace(/^@principal[\\/]/i, ''),
-            )
-          }
+        args = structuredClone(args)
+        for (const { value, segments } of toolPathArguments(
+          args,
+          this.registry.getDefinition(name)?.parameters,
+        )) {
+          let parent = args
+          for (const segment of segments.slice(0, -1))
+            parent = parent[segment] as Record<string, unknown>
+          parent[segments.at(-1)!] = path.resolve(
+            session.workspaceRoot,
+            value.replace(/^@principal[\\/]/i, ''),
+          )
         }
       }
       runtimeContext?.signal?.throwIfAborted()
       if (
         ['write_file', 'edit_file', 'delete_file'].includes(name) &&
-        typeof args.file_path === 'string'
+        toolPathArguments(args, this.registry.getDefinition(name)?.parameters).length > 0
       ) {
         const session = await resolveExecutionSession({
           agentId,
@@ -1474,11 +1569,15 @@ export class RegistryToolExecutor implements ToolExecutor {
           channel,
           taskId: runtimeContext?.taskId,
         })
-        const target = path.resolve(
-          session.workspaceRoot,
-          args.file_path.replace(/^@principal[\\/]/i, ''),
-        )
-        const resource = await protectedResourceWrite(getDataDir(), target)
+        let resource: Awaited<ReturnType<typeof protectedResourceWrite>>
+        for (const { value } of toolPathArguments(
+          args,
+          this.registry.getDefinition(name)?.parameters,
+        )) {
+          const target = path.resolve(session.workspaceRoot, value.replace(/^@principal[\\/]/i, ''))
+          resource = await protectedResourceWrite(getDataDir(), target)
+          if (resource) break
+        }
         if (resource)
           return {
             output: JSON.stringify({
@@ -1494,8 +1593,15 @@ export class RegistryToolExecutor implements ToolExecutor {
             shouldTerminate: false,
           }
       }
+      // 审批和其他异步准备结束后重查真实路径，目录链接可能已在等待期间变化。
+      if (notebookRestricted && !(await isNotebookToolPathAllowed(
+        agentId, name === 'list_directory' ? args.dir_path : args.file_path, name === 'list_directory',
+      )))
+        return { output: __t('server.agent', '当前模式的文件工具仅开放 notes 目录及其直接 Markdown 文件'), durationMs: Date.now() - startTime, isError: true, shouldTerminate: false }
       // AIOS: 透传 threadId + channel 给工具处理函数
       const context: ToolContext = {
+        conversation: runtimeContext?.conversation,
+        sceneRoomId: runtimeContext?.sceneRoomId,
         requestedBy: runtimeContext?.requestedBy,
         source,
         agentId,
@@ -1506,7 +1612,7 @@ export class RegistryToolExecutor implements ToolExecutor {
         loopGuard: runtimeContext?.loopGuard,
         executionMode,
         interactionMode,
-        disabledTools: threadPolicy?.disabledTools ?? runtimeContext?.disabledTools,
+        disabledTools: [...new Set([...(threadPolicy?.disabledTools ?? []), ...(runtimeContext?.disabledTools ?? [])])],
         advancedToolAccess: runtimeContext?.advancedToolAccess,
         realmId: runtimeContext?.realmId,
         browserScope: runtimeContext?.browserScope,
@@ -1520,6 +1626,8 @@ export class RegistryToolExecutor implements ToolExecutor {
         processId: runtimeContext?.processId,
         deadline: runtimeContext?.deadline,
         pairId: runtimeContext?.pairId,
+        generation: runtimeContext?.generation,
+        characterStateVersion: runtimeContext?.characterStateVersion,
         toolCallId: runtimeContext?.toolCallId,
         ...(approvedSensitiveAction ? { approvedSensitiveAction: true } : {}),
         ...(readOnlyTerminal ? { readOnlyTerminal } : {}),
@@ -1535,7 +1643,11 @@ export class RegistryToolExecutor implements ToolExecutor {
           context.toolCallId ?? '',
           !!readOnlyTerminal,
         )
-      const rawResult = await handler(args, context)
+      context.signal?.throwIfAborted()
+      const rawResult = await handler(
+        PERCEPTION_MEMORY_TOOLS.has(name) ? redactPerception(args) : args,
+        context,
+      )
       if (context.taskId)
         await optionalTaskToolRuntime()?.afterTool(
           context.taskId,
@@ -1715,7 +1827,7 @@ export class RegistryToolExecutor implements ToolExecutor {
   /**
    * 校验工具参数中的路径是否落在 ResourceScope 允许范围内
    *
-   * 从 args 中按 PATH_PARAM_NAMES 提取路径参数，
+   * 从参数定义及兼容字段中统一提取路径参数，
    * 对每个非空字符串路径调用 CapabilityGate.isPathAllowed() 校验。
    *
    * @returns 拒绝原因字符串（首个被拒路径），全部通过时返回 null
@@ -1726,10 +1838,10 @@ export class RegistryToolExecutor implements ToolExecutor {
     agentId: string,
     channel: string,
   ): string | null {
-    for (const [key, value] of Object.entries(args)) {
-      if (!PATH_PARAM_NAMES.has(key)) continue
-      if (typeof value !== 'string' || value.length === 0) continue
-
+    for (const { key, value } of toolPathArguments(
+      args,
+      this.registry.getDefinition(toolName)?.parameters,
+    )) {
       const withinWorkspace = this.pathBoundaryChecker?.(agentId, channel, value) ?? true
       const withinResourceScope =
         this.capabilityGate?.isPathAllowed(agentId, channel, toolName, value) ?? true
@@ -1740,104 +1852,6 @@ export class RegistryToolExecutor implements ToolExecutor {
     return null
   }
 
-  // ── 内置工具: load_skill ──
-
-  private async handleLoadSkill(
-    args: Record<string, unknown>,
-    sessionId: string,
-    startTime: number,
-  ): Promise<ToolExecutionResult> {
-    const skillId = (args.skill_id as string) ?? (args.skillId as string)
-    if (!skillId) {
-      return {
-        output: '缺少参数 skill_id',
-        durationMs: Date.now() - startTime,
-        isError: true,
-        shouldTerminate: false,
-      }
-    }
-
-    if (!this.skillLoader) {
-      return {
-        output: 'Skill 系统未初始化',
-        durationMs: Date.now() - startTime,
-        isError: true,
-        shouldTerminate: false,
-      }
-    }
-
-    try {
-      const params = (args.params as Record<string, string>) ?? undefined
-      const fullContent = this.skillLoader.loadSkillContentWithParams(skillId, params)
-      if (!fullContent) {
-        return {
-          output: `Skill "${skillId}" 不存在或加载失败`,
-          durationMs: Date.now() - startTime,
-          isError: true,
-          shouldTerminate: false,
-        }
-      }
-
-      if (this.capabilityGate) {
-        this.unlockSkillToolsRecursive(sessionId, skillId, new Set())
-      }
-
-      const paramKeys = params ? Object.keys(params) : []
-      const paramInfo = paramKeys.length > 0 ? ` (已注入参数: ${paramKeys.join(', ')})` : ''
-      logger.info(
-        __t('logs.agent', 'Skill {0} 已加载{1} (session={2})', [skillId, paramInfo, sessionId]),
-      )
-
-      return {
-        output: fullContent,
-        durationMs: Date.now() - startTime,
-        isError: false,
-        shouldTerminate: false,
-      }
-    } catch (error) {
-      const message = error instanceof Error ? error.message : String(error)
-      logger.warn(__t('logs.agent', 'Skill {0} 加载异常: {1}', [skillId, message]))
-      return {
-        output: `Skill "${skillId}" 加载失败: ${message}`,
-        durationMs: Date.now() - startTime,
-        isError: true,
-        shouldTerminate: false,
-      }
-    }
-  }
-
-  /**
-   * 递归解锁 Skill 及其依赖子 Skill 的工具
-   *
-   * visited 防止循环依赖导致的无限递归。
-   */
-  private unlockSkillToolsRecursive(
-    sessionId: string,
-    skillId: string,
-    visited: Set<string>,
-  ): void {
-    if (visited.has(skillId)) return
-    visited.add(skillId)
-
-    // 解锁当前 Skill 的工具
-    this.capabilityGate!.unlockSkillTools(sessionId, skillId)
-
-    // 获取子 Skill 列表并递归解锁
-    if (!this.skillLoader) return
-    const manifest = this.skillLoader.getManifest(skillId)
-    if (!manifest?.dependsOnSkills?.length) return
-
-    for (const childSkillId of manifest.dependsOnSkills) {
-      this.unlockSkillToolsRecursive(sessionId, childSkillId, visited)
-      logger.debug(
-        __t('logs.agent', '子 Skill {0} 工具已递归解锁 (parent={1}, session={2})', [
-          childSkillId,
-          skillId,
-          sessionId,
-        ]),
-      )
-    }
-  }
 }
 
 /** 截断过长文本 */

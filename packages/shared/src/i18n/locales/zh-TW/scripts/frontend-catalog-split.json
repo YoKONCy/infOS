@@ -1,0 +1,16 @@
+{
+  "frontend.ts 语法错误: {0}": "frontend.ts 語法錯誤: {0}",
+  "frontend.ts 重复引入标识符: {0}": "frontend.ts 重複引入識別符: {0}",
+  "frontend.ts 含有不支持的 import 写法": "frontend.ts 含有不支援的 import 寫法",
+  "frontend.ts 只允许具名引入 registerCatalog": "frontend.ts 只允許具名引入 registerCatalog",
+  "frontend.ts 未引入 registerCatalog": "frontend.ts 未引入 registerCatalog",
+  "frontend.ts 引入了无法识别的 i18n 成员: {0}": "frontend.ts 引入了無法識別的 i18n 成員: {0}",
+  "frontend.ts 只允许默认引入支持语言的 JSON 词库": "frontend.ts 只允許預設引入支援語言的 JSON 詞庫",
+  "frontend.ts 含有拆分插件不支持的语句": "frontend.ts 含有拆分外掛不支援的陳述式",
+  "frontend.ts 含有拆分插件不支持的语句；只允许直接调用 registerCatalog": "frontend.ts 含有拆分外掛不支援的陳述式；只允許直接呼叫 registerCatalog",
+  "frontend.ts 注册参数必须为两个字符串字面量和一个词库标识符": "frontend.ts 註冊參數必須為兩個字串字面值和一個詞庫識別符",
+  "frontend.ts 注册了未知词库: {0}": "frontend.ts 註冊了未知詞庫: {0}",
+  "frontend.ts 词库语言不一致: {0} {1} ← {2}": "frontend.ts 詞庫語言不一致: {0} {1} ← {2}",
+  "frontend.ts 有未注册的词库: {0}": "frontend.ts 有未註冊的詞庫: {0}",
+  "未知的前端词库分块: {0}": "未知的前端詞庫分塊: {0}"
+}

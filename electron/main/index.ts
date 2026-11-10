@@ -19,11 +19,22 @@ import { t as __t, initializeDesktopLanguage } from './utils/i18n'
 
 import { app, BrowserWindow, protocol, safeStorage, powerMonitor } from 'electron'
 import { steamCloudAutoSave } from './services/cloudAutoSave'
+import {
+  ensurePortableDaemon,
+  ownsPortableDaemon,
+  probeBusinessHealth,
+  restartPortableDaemon,
+  stopPortableDaemon,
+} from './services/portableDaemon'
+import { createTray, destroyTray } from './services/tray'
+import { earsModel } from './services/ears/earsRuntime'
 import { release } from 'node:os'
 import { logger } from './utils/logger'
 import { windowManager } from './windows/manager'
 import { desktopTabs } from './windows/desktopTabs'
 import { registerIpcHandlers } from './ipcBridge'
+// ipcBridge 已静态引入 desktopStartup，这里同样静态引入，避免同一模块混用动态与静态导入。
+import { backendLaunchDeps, backendLauncher } from './services/desktopStartup'
 import { initSteam } from './services/steam'
 import { closePictoriaDesktopGuard } from './services/pictoriaLifetime'
 import { closeArcaDesktopGuard } from './services/arcaLifetime'
@@ -46,6 +57,10 @@ import {
   focusConnectionSetup,
 } from './services/clientConnectionSetup'
 import { notifyRendererError, reportMainError } from './utils/mainErrorHandler'
+import { DESKTOP_CARD_SCHEME } from '../../packages/shared/src/desktopCards'
+import { startHomeEvents, stopHomeEvents } from './home/homeEvents'
+import { startHomePetCards } from './home/homePetCards'
+import { desktopCards } from './windows/desktopCards'
 import {
   installRemoteCertificateTrust,
   connectionErrorSource,
@@ -92,6 +107,10 @@ protocol.registerSchemesAsPrivileged([
       stream: true,
     },
   },
+  // 阶段 4 桌面卡片：标准安全来源，使 CSP 的 'self' 只指向本卡片；不开放 fetch 与 CORS。
+  { scheme: DESKTOP_CARD_SCHEME, privileges: { standard: true, secure: true } },
+  // 耳朵录音页使用 getDisplayMedia 所需的安全来源。
+  { scheme: 'infos-ears', privileges: { standard: true, secure: true } },
 ])
 
 // ─── 平台适配 ────────────────────────────────────────
@@ -185,9 +204,17 @@ const startupFlow = new StartupFlow({
     await scan3DModels()
   },
   backend: async (signal) => {
-    const { ensurePortableDaemon, ownsPortableDaemon, restartPortableDaemon } =
-      await import('./services/portableDaemon')
-    if (!(await ensureSelectedBackend(ensurePortableDaemon))) return false
+    // 阶段 5：用户选择了后端启动程序时，本机后端未运行则先启动它并等待就绪。
+    // 启动程序已打开但未就绪时不再启动便携 Daemon（两个后端会抢同一端口），交给重试或改选连接。
+    const ready = await ensureSelectedBackend(async () => {
+      const launched = await backendLauncher.ensure(
+        backendLaunchDeps(isRemoteConnection, probeBusinessHealth),
+        signal,
+      )
+      if (launched === 'skipped') return ensurePortableDaemon()
+      return launched === 'ready'
+    })
+    if (!ready) return false
     return steamCloudAutoSave.restoreAtStartup(
       ownsPortableDaemon(),
       () => restartPortableDaemon(signal),
@@ -205,7 +232,6 @@ const startupFlow = new StartupFlow({
     )
   },
   verifyBackend: async () => {
-    const { probeBusinessHealth } = await import('./services/portableDaemon')
     return ensureSelectedBackend(probeBusinessHealth)
   },
   finish: (signal) => startupSplash.finish(signal),
@@ -252,8 +278,12 @@ async function startDesktop(): Promise<void> {
       notifyRendererError('桌面能力连接失败', '无法连接 Daemon，截图、剪贴板等桌面工具暂不可用。')
     })
 
+    // 「家」右下角确认与活动通知：订阅后端实时事件（凭据只在主进程）。
+    const { startHomeNotices } = await import('./home/homeNotices')
+    if (isPreparingQuit) return
+    startHomeNotices()
+
     // 启动系统服务
-    const { createTray } = await import('./services/tray')
     if (isPreparingQuit) return
     createTray()
 
@@ -287,9 +317,13 @@ app
       void steamCloudAutoSave.saveNow('resume')
     })
     // 恢复托盘先于后端加载，首次启动失败时也必须保留原生恢复入口。
-    const { createTray } = await import('./services/tray')
     createTray()
     await startDesktop()
+    app.once(
+      'will-quit',
+      startHomePetCards(desktopCards, () => windowManager.petWin),
+    )
+    startHomeEvents()
   })
   .catch((error) => startupSplash.fail('shell', error))
 
@@ -298,13 +332,14 @@ app.on('window-all-closed', () => {
   // 保持托盘运行，不退出
   if (process.platform === 'darwin') return
 })
+app.once('will-quit', stopHomeEvents)
 
 app.on('browser-window-created', (_event, window) => {
   window.on('close', () => {
-    void steamCloudAutoSave.saveNow('window-close', 15_000)
+    if (!isQuitting) void steamCloudAutoSave.saveNow('window-close')
   })
   window.on('hide', () => {
-    void steamCloudAutoSave.saveNow('window-hide', 15_000)
+    if (!isQuitting) void steamCloudAutoSave.saveNow('window-hide')
   })
   // Windows 会话结束不经过 before-quit；提前保存但不无限阻止系统关机或注销。
   window.on('query-session-end', () => {
@@ -314,7 +349,7 @@ app.on('browser-window-created', (_event, window) => {
     void steamCloudAutoSave.saveNow('session-end', 3000)
   })
   window.webContents.on('render-process-gone', () => {
-    void steamCloudAutoSave.saveNow('renderer-gone', 8000)
+    if (!isQuitting) void steamCloudAutoSave.saveNow('renderer-gone', 8000)
   })
 })
 
@@ -355,6 +390,10 @@ app.on('before-quit', async (event) => {
 
   logger.info('Main', __t('electron.logs.index.ts', '正在执行退出清理...'))
   try {
+    // 确认退出后先停止观察与模型下载，等待下载管道清理半截文件。
+    const { stopHome } = await import('./services/home/homeCapability')
+    stopHome('DESKTOP_APP_EXIT')
+    await earsModel.shutdown()
     // 1. 销毁所有窗口
     windowManager.destroyAll()
 
@@ -389,6 +428,9 @@ app.on('before-quit', async (event) => {
     await closePictoriaDesktopGuard()
     await closeArcaDesktopGuard()
 
+    const { stopHomeNotices } = await import('./home/homeNotices')
+    stopHomeNotices()
+
     // 3.停止能力提供者（断开与 Daemon 的连接，注销能力）
     const { capabilityProvider } = await import('./services/capabilityProvider')
     await capabilityProvider.stop()
@@ -398,7 +440,6 @@ app.on('before-quit', async (event) => {
     unregisterShortcuts()
 
     // 5. 销毁托盘
-    const { destroyTray } = await import('./services/tray')
     destroyTray()
   } catch (e: unknown) {
     logger.error('Main', __t('electron.logs.index.ts', '退出清理失败: {0}', [e]))
@@ -413,14 +454,12 @@ app.on('before-quit', async (event) => {
         ),
       )
     // 前面的清理失败时也必须等待本应用拉起的 Daemon 退出，避免重启时遗留进程。
-    await import('./services/portableDaemon')
-      .then(({ stopPortableDaemon }) => stopPortableDaemon())
-      .catch((error) =>
-        logger.warn(
-          'Main',
-          __t('electron.logs.index.ts', '停止内置 Daemon 失败：{0}', [String(error)]),
-        ),
-      )
+    await stopPortableDaemon().catch((error) =>
+      logger.warn(
+        'Main',
+        __t('electron.logs.index.ts', '停止内置 Daemon 失败：{0}', [String(error)]),
+      ),
+    )
     // 其他退出步骤失败也必须等待 NapCat 进程树回收完成。
     await import('./services/napcat')
       .then(({ stopNapCat }) => stopNapCat())

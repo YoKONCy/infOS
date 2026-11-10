@@ -18,6 +18,7 @@ import { t as __t } from '../lib/i18n'
 
 import { Hono } from 'hono'
 import { DEFAULT_CHARACTER_STATE } from '@infos/shared'
+import { registerAgentCardRoutes } from './agentCard.routes'
 import { validate as zValidator } from '../lib/validation'
 import { z } from 'zod'
 import { AppError } from '../lib/appError'
@@ -81,6 +82,7 @@ const updateChannelsSchema = z.record(
 
 export function createAgentRouter(ctx: AppContext) {
   const router = new Hono()
+  registerAgentCardRoutes(router, ctx)
 
   // GET /api/agents — 列出所有 Agent (含 avatarUrl)
   router.get('/', (c) => {
@@ -307,6 +309,7 @@ export function createAgentRouter(ctx: AppContext) {
       })
       // 新角色的 capabilities.yaml 需要让 CapabilityGate 重新扫描加载
       ctx.capabilityGate.reloadAll()
+      await ctx.threadService.getMainThread(profile.id)
       await ctx.strongholdService.ensureAgentLocation(profile.id)
       return c.json(
         {
@@ -511,6 +514,9 @@ export function createAgentRouter(ctx: AppContext) {
         mood: state?.mood ?? DEFAULT_CHARACTER_STATE.mood,
         vibe: state?.vibe ?? DEFAULT_CHARACTER_STATE.vibe,
         mind: state?.mind ?? DEFAULT_CHARACTER_STATE.mind,
+        ongoingGoals: state?.ongoingGoals ?? '',
+        commitments: state?.commitments ?? '',
+        relationships: state?.relationships ?? '',
         clickMessages: hasActiveTexts
           ? parse<Record<string, string[]>>(state?.clickMessagesJson, {})
           : {},

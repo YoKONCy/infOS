@@ -11,6 +11,7 @@ import TaskDetailModal from './TaskDetailModal.vue'
 import PixelIcon from '../pixel/PixelIcon.vue'
 import { backgroundTasksApi, type BackgroundTaskInfo } from '../../api/modules/backgroundTasksApi'
 import { useTaskDetail } from '../../composables/main/useTaskDetail'
+import MotionCollapse from '../motion/MotionCollapse.vue'
 
 const props = defineProps<{
   agentId: string
@@ -173,163 +174,169 @@ function dismiss(): void {
         <PixelIcon name="close" size="xs" />
       </button>
     </header>
-    <div v-if="expanded" class="activity-body">
-      <div v-if="error" role="alert" class="activity-error">
-        <PixelIcon name="alert" size="xs" />
-        <span>{{ error }}</span>
-        <button type="button" @click="refresh">{{ __t('ui.taskCenter', '重试') }}</button>
-      </div>
-      <article v-for="task in tasks" :key="task.id" class="activity-item">
-        <div class="activity-item-head">
-          <PixelIcon
-            :name="['waiting_input', 'blocked'].includes(task.status) ? 'shield' : 'activity'"
-            size="xs"
-          />
-          <strong>{{ task.title }}</strong>
-          <span class="activity-state">{{ statusLabels[task.status] }}</span>
+    <MotionCollapse :open="expanded" lazy>
+      <div class="activity-body">
+        <div v-if="error" role="alert" class="activity-error">
+          <PixelIcon name="alert" size="xs" />
+          <span>{{ error }}</span>
+          <button type="button" @click="refresh">{{ __t('ui.taskCenter', '重试') }}</button>
         </div>
-        <p v-if="task.inputQuestion">{{ task.inputQuestion }}</p>
-        <p v-else-if="task.currentStage" class="activity-muted">{{ task.currentStage }}</p>
-        <div class="activity-actions">
-          <button type="button" class="activity-primary" @click="openTask(task)">
-            {{
-              ['waiting_input', 'blocked'].includes(task.status)
-                ? __t('ui.taskCenter', '查看并处理')
-                : __t('ui.taskCenter', '查看任务')
-            }}
-            <PixelIcon name="chevron-right" size="xs" />
-          </button>
-        </div>
-      </article>
-      <article v-for="suggestion in suggestions" :key="suggestion.id" class="activity-item">
-        <div class="activity-item-head">
-          <PixelIcon name="sparkle" size="xs" />
-          <strong>{{ suggestion.title }}</strong>
-          <span class="activity-state">{{ __t('ui.taskCenter', '建议') }}</span>
-        </div>
-        <p class="activity-muted">{{ suggestion.reason }}</p>
-        <details class="activity-disclosure">
-          <summary>
-            {{ __t('ui.taskCenter', '行动内容') }}
-            <PixelIcon name="chevron-down" size="xs" />
-          </summary>
-          <p>{{ suggestion.instruction }}</p>
-        </details>
-        <span v-if="suggestion.status === 'accepting'" class="activity-muted">
-          {{ __t('ui.taskCenter', '正在派发任务…') }}
-        </span>
-        <div v-else class="activity-actions">
-          <button
-            type="button"
-            class="activity-primary"
-            :disabled="busy"
-            @click="perform(() => schedulerApi.resolveSuggestion(suggestion.id, agentId, 'accept'))"
-          >
-            <PixelIcon name="check" size="xs" />
-            {{ __t('ui.taskCenter', '采纳并开始') }}
-          </button>
-          <button
-            type="button"
-            class="activity-quiet"
-            :disabled="busy"
-            @click="
-              perform(() => schedulerApi.resolveSuggestion(suggestion.id, agentId, 'dismiss'))
-            "
-          >
-            {{ __t('ui.taskCenter', '暂不采纳') }}
-          </button>
-        </div>
-      </article>
-      <article v-for="item in scheduled" :key="item.id" class="activity-item">
-        <div class="activity-item-head">
-          <PixelIcon name="clock" size="xs" />
-          <strong>{{ item.reason || item.content }}</strong>
-          <span class="activity-state">
-            {{
-              item.status === 'failed'
-                ? __t('ui.taskCenter', '未能派发')
-                : item.status === 'dispatching'
-                  ? __t('ui.taskCenter', '派发中')
-                  : __t('ui.taskCenter', '待触发')
-            }}
-          </span>
-        </div>
-        <p class="activity-muted">
-          {{
-            item.type === 'follow_up' ? __t('ui.taskCenter', '跟进') : __t('ui.taskCenter', '计划')
-          }}
-          · {{ timeText(item.time) }}
-        </p>
-        <details v-if="item.reason" class="activity-disclosure">
-          <summary>
-            {{ __t('ui.taskCenter', '检查内容') }}
-            <PixelIcon name="chevron-down" size="xs" />
-          </summary>
-          <p>{{ item.content }}</p>
-        </details>
-        <p v-if="item.lastError" class="activity-error-text">{{ item.lastError }}</p>
-        <div class="activity-actions">
-          <button
-            v-if="item.status === 'failed'"
-            type="button"
-            class="activity-primary"
-            :disabled="busy"
-            @click="perform(() => schedulerApi.retryReminder(item.id, agentId))"
-          >
-            <PixelIcon name="refresh" size="xs" />
-            {{ __t('ui.taskCenter', '重试派发') }}
-          </button>
-          <button
-            v-if="item.status !== 'dispatching'"
-            type="button"
-            class="activity-quiet"
-            :disabled="busy"
-            @click="perform(() => schedulerApi.cancelReminder(item.id, agentId))"
-          >
-            {{ __t('ui.taskCenter', '取消计划') }}
-          </button>
-        </div>
-      </article>
-      <details v-if="recent.length" class="activity-results" :open="focused || undefined">
-        <summary>
-          {{ __t('ui.taskCenter', '近期结果') }}
-          <span>{{ recent.length }}</span>
-          <PixelIcon name="chevron-down" size="xs" />
-        </summary>
-        <article v-for="task in recent" :key="task.id" class="activity-item">
+        <article v-for="task in tasks" :key="task.id" class="activity-item">
           <div class="activity-item-head">
-            <PixelIcon :name="task.status === 'failed' ? 'alert' : 'check'" size="xs" />
+            <PixelIcon
+              :name="['waiting_input', 'blocked'].includes(task.status) ? 'shield' : 'activity'"
+              size="xs"
+            />
             <strong>{{ task.title }}</strong>
-            <span class="activity-state">
-              {{
-                task.status === 'completed'
-                  ? __t('ui.taskCenter', '已完成')
-                  : task.status === 'failed'
-                    ? __t('ui.taskCenter', '遇到问题')
-                    : __t('ui.taskCenter', '已取消')
-              }}
-            </span>
+            <span class="activity-state">{{ statusLabels[task.status] }}</span>
           </div>
-          <p v-if="task.errorMessage" class="activity-error-text">{{ task.errorMessage }}</p>
-          <p v-else-if="task.result" class="activity-result-preview">{{ task.result }}</p>
+          <p v-if="task.inputQuestion">{{ task.inputQuestion }}</p>
+          <p v-else-if="task.currentStage" class="activity-muted">{{ task.currentStage }}</p>
           <div class="activity-actions">
-            <button type="button" @click="openTask(task)">
-              {{ __t('ui.taskCenter', '查看结果') }}
+            <button type="button" class="activity-primary" @click="openTask(task)">
+              {{
+                ['waiting_input', 'blocked'].includes(task.status)
+                  ? __t('ui.taskCenter', '查看并处理')
+                  : __t('ui.taskCenter', '查看任务')
+              }}
               <PixelIcon name="chevron-right" size="xs" />
-            </button>
-            <button
-              v-if="task.status === 'failed' && task.errorMessage?.includes('服务重启')"
-              type="button"
-              class="activity-primary"
-              :disabled="busy"
-              @click="perform(() => backgroundTasksApi.resumeInterrupted(task.id))"
-            >
-              {{ __t('ui.taskCenter', '继续任务') }}
             </button>
           </div>
         </article>
-      </details>
-    </div>
+        <article v-for="suggestion in suggestions" :key="suggestion.id" class="activity-item">
+          <div class="activity-item-head">
+            <PixelIcon name="sparkle" size="xs" />
+            <strong>{{ suggestion.title }}</strong>
+            <span class="activity-state">{{ __t('ui.taskCenter', '建议') }}</span>
+          </div>
+          <p class="activity-muted">{{ suggestion.reason }}</p>
+          <details class="activity-disclosure">
+            <summary>
+              {{ __t('ui.taskCenter', '行动内容') }}
+              <PixelIcon name="chevron-down" size="xs" />
+            </summary>
+            <p>{{ suggestion.instruction }}</p>
+          </details>
+          <span v-if="suggestion.status === 'accepting'" class="activity-muted">
+            {{ __t('ui.taskCenter', '正在派发任务…') }}
+          </span>
+          <div v-else class="activity-actions">
+            <button
+              type="button"
+              class="activity-primary"
+              :disabled="busy"
+              @click="
+                perform(() => schedulerApi.resolveSuggestion(suggestion.id, agentId, 'accept'))
+              "
+            >
+              <PixelIcon name="check" size="xs" />
+              {{ __t('ui.taskCenter', '采纳并开始') }}
+            </button>
+            <button
+              type="button"
+              class="activity-quiet"
+              :disabled="busy"
+              @click="
+                perform(() => schedulerApi.resolveSuggestion(suggestion.id, agentId, 'dismiss'))
+              "
+            >
+              {{ __t('ui.taskCenter', '暂不采纳') }}
+            </button>
+          </div>
+        </article>
+        <article v-for="item in scheduled" :key="item.id" class="activity-item">
+          <div class="activity-item-head">
+            <PixelIcon name="clock" size="xs" />
+            <strong>{{ item.reason || item.content }}</strong>
+            <span class="activity-state">
+              {{
+                item.status === 'failed'
+                  ? __t('ui.taskCenter', '未能派发')
+                  : item.status === 'dispatching'
+                    ? __t('ui.taskCenter', '派发中')
+                    : __t('ui.taskCenter', '待触发')
+              }}
+            </span>
+          </div>
+          <p class="activity-muted">
+            {{
+              item.type === 'follow_up'
+                ? __t('ui.taskCenter', '跟进')
+                : __t('ui.taskCenter', '计划')
+            }}
+            · {{ timeText(item.time) }}
+          </p>
+          <details v-if="item.reason" class="activity-disclosure">
+            <summary>
+              {{ __t('ui.taskCenter', '检查内容') }}
+              <PixelIcon name="chevron-down" size="xs" />
+            </summary>
+            <p>{{ item.content }}</p>
+          </details>
+          <p v-if="item.lastError" class="activity-error-text">{{ item.lastError }}</p>
+          <div class="activity-actions">
+            <button
+              v-if="item.status === 'failed'"
+              type="button"
+              class="activity-primary"
+              :disabled="busy"
+              @click="perform(() => schedulerApi.retryReminder(item.id, agentId))"
+            >
+              <PixelIcon name="refresh" size="xs" />
+              {{ __t('ui.taskCenter', '重试派发') }}
+            </button>
+            <button
+              v-if="item.status !== 'dispatching'"
+              type="button"
+              class="activity-quiet"
+              :disabled="busy"
+              @click="perform(() => schedulerApi.cancelReminder(item.id, agentId))"
+            >
+              {{ __t('ui.taskCenter', '取消计划') }}
+            </button>
+          </div>
+        </article>
+        <details v-if="recent.length" class="activity-results" :open="focused || undefined">
+          <summary>
+            {{ __t('ui.taskCenter', '近期结果') }}
+            <span>{{ recent.length }}</span>
+            <PixelIcon name="chevron-down" size="xs" />
+          </summary>
+          <article v-for="task in recent" :key="task.id" class="activity-item">
+            <div class="activity-item-head">
+              <PixelIcon :name="task.status === 'failed' ? 'alert' : 'check'" size="xs" />
+              <strong>{{ task.title }}</strong>
+              <span class="activity-state">
+                {{
+                  task.status === 'completed'
+                    ? __t('ui.taskCenter', '已完成')
+                    : task.status === 'failed'
+                      ? __t('ui.taskCenter', '遇到问题')
+                      : __t('ui.taskCenter', '已取消')
+                }}
+              </span>
+            </div>
+            <p v-if="task.errorMessage" class="activity-error-text">{{ task.errorMessage }}</p>
+            <p v-else-if="task.result" class="activity-result-preview">{{ task.result }}</p>
+            <div class="activity-actions">
+              <button type="button" @click="openTask(task)">
+                {{ __t('ui.taskCenter', '查看结果') }}
+                <PixelIcon name="chevron-right" size="xs" />
+              </button>
+              <button
+                v-if="task.status === 'failed' && task.errorMessage?.includes('服务重启')"
+                type="button"
+                class="activity-primary"
+                :disabled="busy"
+                @click="perform(() => backgroundTasksApi.resumeInterrupted(task.id))"
+              >
+                {{ __t('ui.taskCenter', '继续任务') }}
+              </button>
+            </div>
+          </article>
+        </details>
+      </div>
+    </MotionCollapse>
     <TaskDetailModal
       v-if="selectedTask"
       :task="selectedTask"

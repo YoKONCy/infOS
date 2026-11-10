@@ -3,7 +3,9 @@
  * ContextMenu — 像素风右键菜单
  *
  */
+import { computed, ref, watch } from 'vue'
 import { useEventListener } from '../../composables'
+import { clampMenuPoint } from '../../lib/floatingPlacement'
 
 export interface ContextMenuItem {
   label?: string
@@ -20,12 +22,34 @@ interface Props {
   items: ContextMenuItem[]
 }
 
-defineProps<Props>()
+const props = defineProps<Props>()
 
 const emit = defineEmits<{
   close: []
   action: [item: ContextMenuItem]
 }>()
+
+const menuRef = ref<HTMLElement | null>(null)
+const position = ref({ x: props.x, y: props.y })
+const menuStyle = computed(() => ({ top: `${position.value.y}px`, left: `${position.value.x}px` }))
+
+// 贴近窗口右下角右键时，把菜单推回视口内；用布局尺寸，不受入场缩放动画影响。
+watch(
+  () => [props.visible, props.x, props.y, props.items],
+  () => {
+    position.value = { x: props.x, y: props.y }
+    if (!props.visible || !menuRef.value) return
+    position.value = clampMenuPoint({
+      x: props.x,
+      y: props.y,
+      width: menuRef.value.offsetWidth,
+      height: menuRef.value.offsetHeight,
+      viewportWidth: window.innerWidth,
+      viewportHeight: window.innerHeight,
+    })
+  },
+  { flush: 'post', immediate: true },
+)
 
 function handleClick(item: ContextMenuItem) {
   if (item.disabled) return
@@ -50,8 +74,9 @@ useEventListener(window, 'keydown', ((e: KeyboardEvent) => {
     <Transition name="ctx-menu">
       <div
         v-if="visible"
+        ref="menuRef"
         class="p-context-menu"
-        :style="{ top: `${y}px`, left: `${x}px` }"
+        :style="menuStyle"
         @click.stop
         @contextmenu.prevent
       >

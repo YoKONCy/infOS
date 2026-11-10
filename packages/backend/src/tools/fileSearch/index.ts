@@ -2,18 +2,16 @@
  * search_files — 文件搜索工具
  *
  * 按文件名搜索文件。
- * Windows: 优先使用 Everything (es.exe)，速度瞬间
- * 跨平台/降级: 使用 fd 或 Node.js 递归搜索
+ * 使用 Node.js 遍历，每个目录和条目分别检查凭据禁区。
  *
  * 搜索目录默认为当前 ExecutionSession 的 Workspace；设备只读权限允许显式指定本机目录。
- * 搜索算法（Everything → fd → Node.js 回退）保持不变，搜索根统一由 VirtualWorkspace 校验。
+ * 搜索根由 VirtualWorkspace 校验，父目录授权不覆盖凭据子目录。
  *
  * @module packages/backend/src/tools/fileSearch
  */
 
-import { execFile } from 'node:child_process'
-import { readdirSync, statSync } from 'node:fs'
-import { stat } from 'node:fs/promises'
+import { safetyFileAccessible } from '../../services/execution/safetyPath'
+import { readdir, stat } from 'node:fs/promises'
 import path from 'node:path'
 import type { BuiltinTool } from '../index'
 import { getProductivityRuntime, resolveExecutionSession } from '../productivityRuntimeHolder'
@@ -21,7 +19,6 @@ import { toolSuccess } from '../../services/execution/toolResult'
 
 const MAX_RESULTS = 50
 const MAX_RESULT_LIMIT = 200
-const SEARCH_TIMEOUT_MS = 15_000
 
 export const fileSearchTool: BuiltinTool = {
   name: 'search_files',
@@ -44,19 +41,8 @@ export const fileSearchTool: BuiltinTool = {
       { deviceScope: ctx.deviceReadScope },
     )
 
-    // Windows: 尝试 Everything (es.exe)
-    if (process.platform === 'win32') {
-      const esResult = await tryEverythingSearch(query, searchDir, probeLimit)
-      if (esResult !== null) return searchResult(esResult, limit, 'everything')
-    }
-
-    // 跨平台: 尝试 fd
-    const fdResult = await tryFdSearch(query, searchDir, probeLimit)
-    if (fdResult !== null) return searchResult(fdResult, limit, 'fd')
-
-    // 最终降级: Node.js 递归搜索 (限定在 searchDir)
-    const fallbackResults = nodeFallbackSearch(query, searchDir, probeLimit)
-    return searchResult(fallbackResults, limit, 'node-fallback')
+    // 逐目录、逐条目检查禁区；不把普通父目录整体交给不可插入护栏的递归搜索程序。
+    return searchResult(await nodeFallbackSearch(query, searchDir, probeLimit), limit, 'node')
   },
 }
 
@@ -92,90 +78,34 @@ async function searchResult(paths: string[], limit: number, engine: string) {
   return toolSuccess(JSON.stringify({ ...summary, files, directories }), summary)
 }
 
-/** 使用 Everything (es.exe) 搜索 — 仅 Windows */
-async function tryEverythingSearch(
-  query: string,
-  searchDir: string,
-  limit: number,
-): Promise<string[] | null> {
-  return new Promise((resolve) => {
-    execFile(
-      'es',
-      [query, '-path', searchDir, '-n', String(limit), '-utf8'],
-      {
-        timeout: SEARCH_TIMEOUT_MS,
-        maxBuffer: 2 * 1024 * 1024,
-        windowsHide: true,
-      },
-      (error, stdout) => {
-        if (error) {
-          resolve(null) // es.exe 不可用，降级
-          return
-        }
-        const results = stdout
-          .trim()
-          .split('\n')
-          .map((l) => l.trim())
-          .filter(Boolean)
-        resolve(results.slice(0, limit))
-      },
-    )
-  })
-}
-
-/** 使用 fd 搜索 — 全平台 */
-async function tryFdSearch(
-  query: string,
-  searchDir: string,
-  limit: number,
-): Promise<string[] | null> {
-  return new Promise((resolve) => {
-    execFile(
-      'fd',
-      [query, searchDir, '--max-results', String(limit), '--no-ignore'],
-      {
-        timeout: SEARCH_TIMEOUT_MS,
-        maxBuffer: 2 * 1024 * 1024,
-        windowsHide: true,
-      },
-      (error, stdout) => {
-        if (error) {
-          resolve(null)
-          return
-        }
-        const results = stdout
-          .trim()
-          .split('\n')
-          .map((l) => l.trim())
-          .filter(Boolean)
-        resolve(results.slice(0, limit))
-      },
-    )
-  })
-}
-
 /** Node.js 回退搜索 (简易递归，有深度/数量限制) */
-function nodeFallbackSearch(query: string, rootDir: string, limit: number): string[] {
+async function nodeFallbackSearch(
+  query: string,
+  rootDir: string,
+  limit: number,
+): Promise<string[]> {
   const results: string[] = []
   const lowerQuery = query.toLowerCase()
   const maxDepth = 5
 
-  function walk(dir: string, depth: number) {
+  async function walk(dir: string, depth: number): Promise<void> {
     if (depth > maxDepth || results.length >= limit) return
     try {
-      const entries = readdirSync(dir)
+      if (!(await safetyFileAccessible(dir))) return
+      const entries = await readdir(dir)
       for (const entry of entries) {
         if (results.length >= limit) break
         if (entry.startsWith('.') || entry === 'node_modules') continue
 
         const fullPath = path.join(dir, entry)
+        if (!(await safetyFileAccessible(fullPath))) continue
         if (entry.toLowerCase().includes(lowerQuery)) {
           results.push(fullPath)
         }
 
         try {
-          if (statSync(fullPath).isDirectory()) {
-            walk(fullPath, depth + 1)
+          if ((await stat(fullPath)).isDirectory()) {
+            await walk(fullPath, depth + 1)
           }
         } catch {
           // 权限不足，跳过
@@ -186,6 +116,6 @@ function nodeFallbackSearch(query: string, rootDir: string, limit: number): stri
     }
   }
 
-  walk(rootDir, 0)
+  await walk(rootDir, 0)
   return results
 }

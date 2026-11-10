@@ -9,6 +9,10 @@ import { t as __t } from '../../i18n/index'
  */
 import { ref, watch } from 'vue'
 import { PixelIcon } from '../pixel'
+import MotionList from '../motion/MotionList.vue'
+import MotionSkeleton from '../motion/MotionSkeleton.vue'
+import MainThreadCard from '../chat/MainThreadCard.vue'
+import { threadDisplayName } from '../../utils/threadPresentation'
 import { threadsApi, type ThreadInfo } from '../../api/modules/threadsApi'
 import { useAgentStore, useThreadStore, useNotificationStore } from '../../stores'
 import { getApiBaseUrl } from '../../api/transport'
@@ -23,6 +27,7 @@ const notify = useNotificationStore()
 interface AgentThreadGroup {
   agent: { id: string; name: string; avatarUrl?: string }
   threads: ThreadInfo[]
+  mainThread?: ThreadInfo
 }
 
 const groups = ref<AgentThreadGroup[]>([])
@@ -61,7 +66,12 @@ async function loadGroups(): Promise<void> {
       agentStore.agents.map(async (agent) => {
         try {
           const res = await threadsApi.list({ agentId: agent.id, channel: 'desktop', pageSize: 20 })
-          return { agent, threads: res.data?.items ?? [] }
+          const items = res.data?.items ?? []
+          return {
+            agent,
+            mainThread: items.find((thread) => thread.threadKind === 'main'),
+            threads: items.filter((thread) => thread.threadKind !== 'main'),
+          }
         } catch {
           return { agent, threads: [] }
         }
@@ -69,7 +79,7 @@ async function loadGroups(): Promise<void> {
     )
     // 只展示有会话的角色；若当前角色确实没有会话，仍保留其分组以便新建。
     groups.value = loaded.filter(
-      (group) => group.threads.length > 0 || group.agent.id === agentStore.activeAgentId,
+      (group) => group.mainThread || group.threads.length > 0 || group.agent.id === agentStore.activeAgentId,
     )
   } finally {
     isLoading.value = false
@@ -89,7 +99,7 @@ async function selectThread(agentId: string, thread: ThreadInfo): Promise<void> 
     if (agentStore.activeAgentId !== agentId) await agentStore.switchAgent(agentId)
     if (generation !== switchGeneration) return
     notify.toast(
-      __t('ui.workspace', '已切换到「{0}」', [thread.title || __t('ui.workspace', '未命名会话')]),
+      __t('ui.workspace', '已切换到「{0}」', [threadDisplayName(thread)]),
       { type: 'success' },
     )
     emit('update:open', false)
@@ -113,7 +123,6 @@ async function createThread(agentId: string): Promise<void> {
     if (generation !== switchGeneration) return
     if (agentStore.activeAgentId !== agentId) await agentStore.switchAgent(agentId)
     if (generation !== switchGeneration) return
-    notify.toast(__t('ui.workspace', '新会话已创建'), { type: 'success' })
     emit('update:open', false)
   } catch (error) {
     notify.toast(error instanceof Error ? error.message : __t('ui.workspace', '新建会话失败'), {
@@ -153,10 +162,12 @@ watch(
           </header>
 
           <div class="session-drawer__body">
-            <div v-if="isLoading" class="session-drawer__loading">
-              <PixelIcon name="refresh" size="md" animation="spin" />
-              <span>{{ __t('ui.workspace', '正在加载会话…') }}</span>
-            </div>
+            <MotionSkeleton
+              v-if="isLoading"
+              variant="list"
+              :rows="4"
+              :label="__t('ui.workspace', '正在加载会话…')"
+            />
 
             <section v-for="group in groups" :key="group.agent.id" class="agent-group">
               <header class="agent-group__header">
@@ -169,7 +180,7 @@ watch(
                   <span v-else>{{ group.agent.name.charAt(0).toUpperCase() }}</span>
                 </span>
                 <strong>{{ group.agent.name }}</strong>
-                <i>{{ group.threads.length }}</i>
+                <i>{{ group.threads.length + (group.mainThread ? 1 : 0) }}</i>
                 <button
                   :title="__t('ui.workspace', '新建会话')"
                   :disabled="isSwitching"
@@ -179,7 +190,15 @@ watch(
                 </button>
               </header>
 
-              <div v-if="group.threads.length" class="agent-group__threads">
+              <MainThreadCard
+                v-if="group.mainThread"
+                class="agent-group__main"
+                compact
+                :active="threadStore.threadId === group.mainThread.id && group.agent.id === agentStore.activeAgentId"
+                :disabled="isSwitching"
+                @select="group.mainThread && selectThread(group.agent.id, group.mainThread)"
+              />
+              <MotionList v-if="group.threads.length" class="agent-group__threads">
                 <button
                   v-for="thread in group.threads"
                   :key="thread.id"
@@ -193,15 +212,15 @@ watch(
                   @click="selectThread(group.agent.id, thread)"
                 >
                   <span class="thread-item__title">
-                    {{ thread.title || __t('ui.workspace', '未命名会话') }}
+                    {{ threadDisplayName(thread) }}
                   </span>
                   <span class="thread-item__meta">
                     <span>{{ thread.messageCount }} {{ __t('ui.workspace', '条消息') }}</span>
                     <span>{{ formatTime(thread.lastMessageAt) }}</span>
                   </span>
                 </button>
-              </div>
-              <p v-else class="agent-group__empty">
+              </MotionList>
+              <p v-else-if="!group.mainThread" class="agent-group__empty">
                 {{ __t('ui.workspace', '暂无会话，点击「+」新建') }}
               </p>
             </section>
@@ -372,6 +391,9 @@ watch(
   color: var(--ui-accent-sky);
 }
 
+.agent-group__main {
+  margin-bottom: 8px;
+}
 .agent-group__threads {
   display: flex;
   flex-direction: column;

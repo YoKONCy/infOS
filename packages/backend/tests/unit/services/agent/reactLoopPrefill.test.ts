@@ -11,7 +11,7 @@ const selfMinding = {
   },
 }
 
-const modelConfig: ModelConfig = { provider: 'openai', modelId: 'test-model', apiKey: 'k' }
+const modelConfig: ModelConfig = { provider: 'openai', modelId: 'test-model', apiKey: 'k', assistantPrefill: 'supported' }
 
 function textStream(...chunks: string[]) {
   return (async function* (): AsyncGenerator<ChatDelta> {

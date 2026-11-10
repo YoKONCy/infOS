@@ -1,10 +1,10 @@
 /**
  * code_search — 安全代码搜索工具
  *
- * 优先使用 ripgrep JSON 输出，始终通过 spawn 参数数组执行且不启用 shell；
- * rg 不可用时降级为 Node 流式逐行搜索。
+ * 工具入口使用逐文件资源校验的 Node 流式搜索，避免递归进入凭据禁区。
  */
 
+import { assertSafetyFileAccess, safetyFileAccessible } from '../../services/execution/safetyPath'
 import { spawn } from 'node:child_process'
 import { createReadStream, existsSync } from 'node:fs'
 import { createRequire } from 'node:module'
@@ -67,23 +67,9 @@ export const codeSearcherTool: BuiltinTool = {
       includeHidden,
       signal: ctx.signal,
     }
-    const rg = await searchWithRipgrep(options)
-    // Node fallback 仅在 rg 不可用时执行
-    const node = rg.available ? null : await searchWithNode(options)
-    const result = rg.available
-      ? {
-          matches: rg.matches,
-          total: rg.matches.length,
-          truncated: rg.truncated,
-          engine: 'ripgrep',
-        }
-      : {
-          matches: node!.matches,
-          total: node!.matches.length,
-          truncated: node!.truncated,
-          engine: 'node-fallback',
-        }
-    result.total = result.matches.length
+    // 原生递归搜索无法在每个实际访问点检查凭据禁区，受控入口使用逐文件校验的遍历。
+    const searched = await searchWithNode(options)
+    const result = { ...searched, total: searched.matches.length, engine: 'node-fallback' }
     const fileCount = new Set(result.matches.map((match) => match.file)).size
     // 只保留已命中的真实路径作为只读打开凭据，不扩大工作区编辑边界。
     const resultRef = result.matches.length
@@ -294,6 +280,7 @@ async function searchWithNode(
       '.rgignore',
     ]) {
       try {
+        if (!(await safetyFileAccessible(path.join(directory, name)))) continue
         matcher.add(await readFile(path.join(directory, name), 'utf8'))
       } catch (error) {
         if (!['ENOENT', 'ENOTDIR'].includes((error as NodeJS.ErrnoException).code ?? ''))
@@ -325,6 +312,7 @@ async function searchWithNode(
   const inherited = (await Promise.all(ancestors.map(readRules))).flat()
   const searchOne = async (absolute: string) => {
     check()
+    if (!(await safetyFileAccessible(absolute))) return
     if (
       extensions &&
       ![...extensions].some((extension) => absolute.toLowerCase().endsWith(extension))
@@ -346,6 +334,7 @@ async function searchWithNode(
   const walk = async (directory: string, parents: Rules[]): Promise<void> => {
     if (matches.length >= MAX_RESULTS) return
     check()
+    if (!(await safetyFileAccessible(directory))) return
     const rules = [...parents, ...(await readRules(directory))]
     const entries = await readdir(directory, { withFileTypes: true })
     for (const entry of entries) {
@@ -382,6 +371,7 @@ async function searchFile(
   signal?: AbortSignal,
   check?: () => void,
 ): Promise<void> {
+  await assertSafetyFileAccess(filePath)
   const stream = createReadStream(filePath, { encoding: 'utf8' })
   const lines = readline.createInterface({ input: stream, crlfDelay: Infinity })
   let lineNumber = 0

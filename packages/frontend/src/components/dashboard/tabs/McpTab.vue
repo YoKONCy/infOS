@@ -101,7 +101,9 @@ watch(
 <template>
   <div :class="[!embedded && 'p-8', 'h-full flex flex-col overflow-hidden']">
     <!-- 头部 + 子选项卡切换 -->
-    <div class="flex items-start justify-between gap-4 mb-6 flex-shrink-0 relative group/header">
+    <div
+      class="flex flex-wrap items-start justify-between gap-4 mb-6 flex-shrink-0 relative group/header"
+    >
       <div
         class="absolute -right-20 -top-10 w-40 h-40 bg-sky-400/5 blur-[60px] rounded-full pointer-events-none group-hover/header:bg-sky-400/15 transition-all duration-1000"
       />
@@ -138,7 +140,10 @@ watch(
         </p>
       </div>
       <!-- 右侧操作栏 -->
-      <div class="flex gap-2 items-center" :class="{ 'ml-auto': embedded }">
+      <div
+        class="flex flex-wrap gap-2 items-center whitespace-nowrap"
+        :class="{ 'ml-auto': embedded }"
+      >
         <template v-if="currentSubTab === 'mcp'">
           <span
             class="text-[11px] font-bold text-slate-400 px-2.5 py-1 border border-slate-200 bg-slate-50"

@@ -14,6 +14,9 @@ const BLOCK_ELEMENT =
 const PROTECTED_CONTENT =
   'code, pre, a, button, svg, math, .katex, .chat-math-block, .chat-xml-inline'
 
+/** 尖括号只认紧跟汉字的动作写法，a < b 这类比较不算。 */
+const ACTION_START = /^\p{Script=Han}/u
+
 /** 按括号类型配对，嵌套范围只绘制最外层；不跨换行或容器边界匹配。 */
 function parentheticalRanges(text: string): TextRange[] {
   const stack: Array<{ open: string; start: number }> = []
@@ -24,7 +27,12 @@ function parentheticalRanges(text: string): TextRange[] {
       stack.length = 0
     } else if (char === '（' || char === '(') {
       stack.push({ open: char, start: index })
+    } else if (char === '<') {
+      if (ACTION_START.test(text.slice(index + 1, index + 3))) stack.push({ open: char, start: index })
+    } else if (char === '>') {
+      if (stack.at(-1)?.open === '<') ranges.push({ start: stack.pop()!.start, end: index + 1 })
     } else if (char === '）' || char === ')') {
+      while (stack.at(-1)?.open === '<') stack.pop()
       const previous = stack.at(-1)
       if (previous?.open === (char === '）' ? '（' : '(')) {
         stack.pop()
@@ -70,7 +78,7 @@ function decorateRuns(runs: TextRun[], text: string): void {
   }
 }
 
-/** 只修饰正文中的中英文圆括号；受保护的行内节点作为整体跨过，不读取其内部括号。 */
+/** 只修饰正文中的中英文圆括号和动作尖括号；受保护的行内节点作为整体跨过，不读取其内部括号。 */
 export function decorateChatParentheses(root: DocumentFragment): void {
   let runs: TextRun[] = []
   let pieces: string[] = []

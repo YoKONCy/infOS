@@ -6,6 +6,8 @@ import { randomBytes, randomUUID } from 'node:crypto'
 import path from 'node:path'
 import { setImmediate as yieldLoop } from 'node:timers/promises'
 import { BackupImports } from './backupImports'
+import { captureLiveSnapshot } from './liveSnapshot'
+import { AppError } from '../../lib/appError'
 import { checkBackupIntegrity } from './backupIntegrity'
 import type { BackupReadOptions } from './backupArchive'
 import type { DrizzleDb } from '../../database'
@@ -52,6 +54,12 @@ import type {
   BackupSelection,
   ImportPolicy,
 } from './backupTypes'
+import { publicWorkMetadata } from '../context/workContext'
+
+/** 由调用端的已验证身份决定，不从备份选择或上传内容读取。 */
+interface BackupAccess {
+  includeInternalMetadata?: boolean
+}
 
 const MAX_UPLOAD = 20 * 1024 ** 3
 const APP_VERSION = '0.9.12'
@@ -107,6 +115,7 @@ export class BackupService {
   readonly imports: BackupImports
   private busy = false
   private activeWrites = 0
+  private syncCapture?: { controller: AbortController; pending: Promise<void> }
   constructor(private readonly deps: Dependencies) {
     this.root = path.join(deps.dataDir, BACKUP_STATE)
     this.imports = new BackupImports(
@@ -241,7 +250,13 @@ export class BackupService {
     await rm(path.join(this.root, 'previews', pending.ticket), { recursive: true, force: true })
   }
 
-  async create(selection: BackupSelection, password = ''): Promise<BackupRecord> {
+  async create(
+    selection: BackupSelection,
+    password = '',
+    access: BackupAccess = {},
+  ): Promise<BackupRecord> {
+    // 内部恢复与快照调用保持完整；HTTP 路由必须显式传入已验证的权限。
+    const publicMessageMetadata = access.includeInternalMetadata === false
     if (this.busy || this.imports.active) throw new Error('BACKUP_BUSY')
     if (selection.includeSecrets && password.length < 8)
       throw new Error('BACKUP_PASSWORD_TOO_SHORT')
@@ -260,6 +275,28 @@ export class BackupService {
       const summary: Record<string, number> = {}
       try {
         records = selection.level === 'full' ? new Map() : selectBackupRecords(db, selection)
+        if (publicMessageMetadata) {
+          if (selection.level === 'full' && hasTable(db, 'thread_messages')) {
+            const update = db.prepare('UPDATE thread_messages SET metadata_json=? WHERE id=?')
+            const messages = db
+              .prepare('SELECT id, metadata_json FROM thread_messages')
+              .all() as Array<{ id: number; metadata_json: string | null }>
+            db.transaction(() => {
+              for (const row of messages)
+                update.run(publicWorkMetadata(row.metadata_json ?? '{}'), row.id)
+            })()
+            // 删除快照页中旧的内部正文，避免完整数据库的空闲页保留请求副本。
+            db.exec('VACUUM')
+          } else if (records.has('thread_messages')) {
+            records.set(
+              'thread_messages',
+              records.get('thread_messages')!.map((row) => ({
+                ...row,
+                metadata_json: publicWorkMetadata(String(row.metadata_json ?? '{}')),
+              })),
+            )
+          }
+        }
         if (selection.modules.includes('memory') && selection.level !== 'full')
           records.set(SOCIAL_TABLE, social)
         if (Buffer.byteLength(JSON.stringify([...records])) > 256 * 1024 ** 2)
@@ -415,6 +452,7 @@ export class BackupService {
         encrypted: Boolean(password),
         protection: password ? 'password' : 'none',
         reason: 'manual',
+        publicMessageMetadata,
         manifest,
       }
       await atomicBackupJson(path.join(this.root, 'archives', `${id}.json`), record)
@@ -523,8 +561,12 @@ export class BackupService {
   async download(
     id: string,
     password = '',
+    access: BackupAccess = {},
   ): Promise<{ path: string; cleanup: () => Promise<void> }> {
     const record = await this.record(id)
+    // 旧归档与恢复点没有公开标记，默认按完整备份拒绝普通设备。
+    if (access.includeInternalMetadata === false && record.publicMessageMetadata !== true)
+      throw new Error('BACKUP_INTERNAL_METADATA_FORBIDDEN')
     if (record.protection !== 'local')
       return { path: this.archivePath(id), cleanup: async () => {} }
     if (password.length < 8) throw new Error('BACKUP_LOCAL_DOWNLOAD')
@@ -686,10 +728,28 @@ export class BackupService {
   private client(): Database.Database {
     return (this.deps.db as unknown as { $client: Database.Database }).$client
   }
-  captureForSync(destination: string): void {
+  captureForSync(destination: string, signal?: AbortSignal): Promise<void> {
     this.deps.assertIdle(true)
     if (this.activeWrites) throw new Error('BACKUP_ACTIVE_WRITES')
-    this.capture(destination, emptySelection())
+    if (this.busy) throw new AppError('RESOURCE_BUSY')
+    this.busy = true
+    const controller = new AbortController()
+    const combined = signal ? AbortSignal.any([signal, controller.signal]) : controller.signal
+    const pending = captureLiveSnapshot(
+      this.deps.dataDir, destination, this.client(), this.deps.stores, combined,
+    ).finally(() => {
+      this.busy = false
+      this.syncCapture = undefined
+    })
+    this.syncCapture = { controller, pending }
+    return pending
+  }
+
+  async shutdown(): Promise<void> {
+    const capture = this.syncCapture
+    capture?.controller.abort(new Error('BACKUP_CAPTURE_CANCELLED'))
+    await capture?.pending.catch(() => {})
+    await this.imports.shutdown()
   }
   private async localKey(): Promise<string> {
     const file = path.join(this.root, 'local.key')
@@ -816,6 +876,8 @@ export class BackupService {
         throw new Error('BACKUP_TABLE_UNSUPPORTED')
     for (const file of manifest.files) {
       safeBackupPath(file.path)
+      // 旧完整包可携带启动语言缓存，安装计划按目标端本机状态保留。
+      if (file.path === 'client-language.txt' && manifest.selection.level === 'full') continue
       if (excludedBackupPath(file.path) || LOCAL_FILES.has(file.path))
         throw new Error('BACKUP_PATH_INVALID')
       if (

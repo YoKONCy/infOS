@@ -29,6 +29,42 @@ function createRegistry() {
 }
 
 describe('RegistryToolExecutor', () => {
+  it.each([
+    { realmId: undefined, generation: 2 },
+    { realmId: 'application:test', generation: undefined },
+  ])('结束执行时透传真实据点与 Realm 身份 $realmId', async ({ realmId, generation }) => {
+    const registry = new ToolRegistry()
+    const handler = vi.fn().mockResolvedValue('{"finished":true}')
+    registry.register({ name: 'finish_task', description: '结束执行', parameters: {} }, handler)
+    const executor = new RegistryToolExecutor(registry)
+    executor.setThreadPolicyResolver(async () => ({ agentId: 'pero', threadKind: 'main', status: 'active',
+      generation: 2, interactionMode: 'work', disabledTools: [] }))
+    const result = await executor.execute('finish_task', { reply: '收到' }, 'group', {
+      agentId: 'pero', threadId: 'main-pero', generation, channel: 'group', sceneRoomId: 'living', realmId,
+    })
+    expect(handler).toHaveBeenCalledWith({ reply: '收到' }, expect.objectContaining({
+      agentId: 'pero', threadId: 'main-pero', generation, sceneRoomId: 'living', realmId,
+    }))
+    expect(result).toMatchObject({ isError: false, shouldTerminate: true })
+  })
+  it.each(['write_fact', 'supersede_fact', 'delete_fact', 'add_fact_object_alias', 'remove_fact_object_alias'])(
+    '%s 在侧会话拒绝，按真实主会话身份执行', async (name) => {
+      const registry = new ToolRegistry()
+      const handler = vi.fn(async () => '{"updated":true}')
+      registry.register({ name, description: '事实修改', parameters: {} }, handler)
+      const executor = new RegistryToolExecutor(registry)
+      const policy = { agentId: 'pero', threadKind: 'side' as 'main' | 'side',
+        status: 'active', generation: 1, interactionMode: 'work' as const, disabledTools: [] }
+      executor.setThreadPolicyResolver(async () => policy)
+      const context = { agentId: 'pero', threadId: 'thread', generation: 1, interactionMode: 'work' as const }
+      expect((await executor.execute(name, {}, 'desktop', context)).isError).toBe(true)
+      expect(handler).not.toHaveBeenCalled()
+      policy.threadKind = 'main'
+      expect((await executor.execute(name, {}, 'desktop', context)).isError).toBe(false)
+      expect(handler).toHaveBeenCalledWith({}, expect.objectContaining({ agentId: 'pero', threadId: 'thread', generation: 1 }))
+    },
+  )
+
   it('普通文件分派保持可用，资源运行目录写入要求先创建候选', async () => {
     const registry = new ToolRegistry(),
       handler = vi.fn(async () => '已写入')
@@ -74,6 +110,9 @@ describe('RegistryToolExecutor', () => {
     registry.register({ name: 'run_script', description: '脚本', parameters: {} }, script)
     registry.register({ name: 'browser_open_url', description: '网页', parameters: {} }, browser)
     const executor = new RegistryToolExecutor(registry)
+    const approvals = new ApprovalService()
+    executor.setPolicyRuntime(new PolicyEngine(), approvals)
+    approvals.onRequested((request) => approvals.resolve(request.id, 'allow_once'))
     const context = {
       agentId: 'pero',
       threadId: 'nit-chat',
@@ -313,7 +352,7 @@ describe('RegistryToolExecutor', () => {
       agentId: 'pero',
       threadId: 'thread-1',
       channel: 'desktop',
-      disabledTools: ['finish_task', 'load_skill'],
+      disabledTools: ['finish_task', 'update_flow_state'],
     })
 
     expect(finishHandler).toHaveBeenCalledOnce()
@@ -490,7 +529,7 @@ describe('RegistryToolExecutor', () => {
     expect(handler).toHaveBeenCalledTimes(1)
   })
 
-  it('自动执行模式仅保留终端与工作区外删除审批', async () => {
+  it('自动执行保留终端审批，桌面删除交由家的回收入口确认', async () => {
     const registry = new ToolRegistry()
     const browserHandler = vi.fn().mockResolvedValue('完成')
     const terminalHandler = vi.fn().mockResolvedValue('命令完成')
@@ -544,10 +583,9 @@ describe('RegistryToolExecutor', () => {
       'desktop',
       { autoExecuteTools: true },
     )
-    await vi.waitFor(() => expect(approvals.list({ status: 'pending' })).toHaveLength(1))
-    approvals.resolve(approvals.list({ status: 'pending' })[0]!.id, 'deny_once')
-    expect((await outsideDelete).isError).toBe(true)
-    expect(deleteHandler).not.toHaveBeenCalled()
+    expect((await outsideDelete).isError).toBe(false)
+    expect(approvals.list({ status: 'pending' })).toEqual([])
+    expect(deleteHandler).toHaveBeenCalledOnce()
 
     await expect(
       executor.execute('delete_file', { file_path: 'notes/old.txt' }, 'desktop', {
@@ -771,20 +809,12 @@ describe('RegistryToolExecutor', () => {
     )
   })
 
-  it('应当加载 Skill、注入参数并递归解锁依赖工具', async () => {
+  it('移除 load_skill 后不能借助旧工具调用读取技能正文', async () => {
     const { registry } = createRegistry()
-    const capabilityGate = {
-      unlockSkillTools: vi.fn(),
-    } as unknown as CapabilityGate
     const skillLoader = {
       loadSkillContentWithParams: vi.fn().mockReturnValue('技能内容'),
-      getManifest: vi.fn((skillId: string) => {
-        if (skillId === 'parent') return { dependsOnSkills: ['child'] }
-        if (skillId === 'child') return { dependsOnSkills: [] }
-        return undefined
-      }),
     } as unknown as SkillLoader
-    const executor = new RegistryToolExecutor(registry, capabilityGate, skillLoader, null, {
+    const executor = new RegistryToolExecutor(registry, null, skillLoader, null, {
       sessionId: 'session-1',
     })
 
@@ -794,59 +824,38 @@ describe('RegistryToolExecutor', () => {
       'desktop',
     )
 
-    expect(skillLoader.loadSkillContentWithParams).toHaveBeenCalledWith('parent', { topic: '猫' })
-    expect(capabilityGate.unlockSkillTools).toHaveBeenCalledWith('session-1', 'parent')
-    expect(capabilityGate.unlockSkillTools).toHaveBeenCalledWith('session-1', 'child')
-    expect(result).toMatchObject({ output: '技能内容', isError: false, shouldTerminate: false })
+    expect(skillLoader.loadSkillContentWithParams).not.toHaveBeenCalled()
+    expect(result.isError).toBe(true)
   })
 
-  it('Skill临时解锁工具首次调用应审批且会话允许后可复用', async () => {
-    const { registry, handler } = createRegistry()
+  it('技能资源只允许读取本会话已选中的技能，取消后立即收回访问', async () => {
+    const { registry } = createRegistry()
+    const read = vi.fn(async () => '已选技能的参考资料')
+    registry.register({ name: 'skill_read_resource', description: '读取技能资源', parameters: { type: 'object' } }, read)
     const capabilityGate = {
       isToolAllowed: vi.fn().mockReturnValue(true),
-      isSkillUnlockedTool: vi.fn().mockReturnValue(true),
+      resolve: vi.fn(() => ({ enabledSkills: [{ id: 'demo' }] })),
       isPathAllowed: vi.fn().mockReturnValue(true),
       getToolPermission: vi.fn(),
     } as unknown as CapabilityGate
-    const approvals = new ApprovalService()
-    const executor = new RegistryToolExecutor(registry, capabilityGate, null, null, {
+    const loader = { getManifest: vi.fn(() => ({ id: 'demo' })) } as unknown as SkillLoader
+    const policy = { interactionMode: 'work' as const, disabledTools: [], enabledSkills: [] as string[] }
+    const executor = new RegistryToolExecutor(registry, capabilityGate, loader, null, {
       agentId: 'pero',
       channel: 'desktop',
       sessionId: 'skill-thread',
     })
-    executor.setPolicyRuntime(new PolicyEngine(), approvals)
-
-    const first = executor.execute('demo.run', { value: 1 }, 'desktop')
-    await vi.waitFor(() => expect(approvals.list({ status: 'pending' })).toHaveLength(1))
-    expect(handler).not.toHaveBeenCalled()
-    approvals.resolve(approvals.list({ status: 'pending' })[0]!.id, 'allow_session')
-    expect((await first).isError).toBe(false)
-
-    const second = await executor.execute('demo.run', { value: 2 }, 'desktop')
-    expect(second.isError).toBe(false)
-    expect(approvals.list({ status: 'pending' })).toHaveLength(0)
-    expect(handler).toHaveBeenCalledTimes(2)
-  })
-
-  it('应当处理 load_skill 参数缺失、系统未初始化与内容缺失', async () => {
-    const { registry } = createRegistry()
-    const executorWithoutLoader = new RegistryToolExecutor(registry)
-    const skillLoader = {
-      loadSkillContentWithParams: vi.fn().mockReturnValue(null),
-    } as unknown as SkillLoader
-    const executorWithLoader = new RegistryToolExecutor(registry, null, skillLoader)
-
-    const missingId = await executorWithoutLoader.execute('load_skill', {}, 'desktop')
-    const noLoader = await executorWithoutLoader.execute('load_skill', { skill_id: 'x' }, 'desktop')
-    const missingContent = await executorWithLoader.execute(
-      'load_skill',
-      { skillId: 'x' },
-      'desktop',
-    )
-
-    expect(missingId).toMatchObject({ output: '缺少参数 skill_id', isError: true })
-    expect(noLoader).toMatchObject({ output: 'Skill 系统未初始化', isError: true })
-    expect(missingContent).toMatchObject({ output: 'Skill "x" 不存在或加载失败', isError: true })
+    executor.setThreadPolicyResolver(async () => policy)
+    const args = { skill_id: 'demo', path: 'references/guide.md' }
+    expect((await executor.execute('skill_read_resource', args, 'desktop')).isError).toBe(true)
+    expect(read).not.toHaveBeenCalled()
+    policy.enabledSkills = ['demo']
+    expect(await executor.execute('skill_read_resource', args, 'desktop')).toMatchObject({
+      output: '已选技能的参考资料', isError: false,
+    })
+    policy.enabledSkills = []
+    expect((await executor.execute('skill_read_resource', args, 'desktop')).isError).toBe(true)
+    expect(read).toHaveBeenCalledOnce()
   })
 
   // ── 第七阶段修复（批次 A2）：平台能力工具名 → 能力名映射 ──

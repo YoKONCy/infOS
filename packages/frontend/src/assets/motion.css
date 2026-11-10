@@ -1,0 +1,416 @@
+/**
+ * 公共动效层（Motion Layer）
+ *
+ * 用法说明见 .docs/S07_MOTION_LAYER.md。
+ *
+ * 约定：
+ * - 只对 transform 与 opacity 做动画；展开收起使用 grid-template-rows 0fr → 1fr。
+ * - 过渡类名统一以 `motion-` 开头，可直接作为 <Transition name> / <TransitionGroup name> 使用。
+ * - 系统「减少动态效果」或用户选择「减少动效」时，位移与缩放归零，仅保留不透明度变化；
+ *   用户选择「关闭动效」时，所有时长归零。
+ */
+
+:root {
+  /* ── 时长：快 / 中 / 慢 ── */
+  --motion-duration-fast: 120ms;
+  --motion-duration-medium: 200ms;
+  --motion-duration-slow: 320ms;
+  /* 退出比进入略快，让界面「跟手」 */
+  --motion-exit-ratio: 0.75;
+
+  /* ── 缓动曲线 ── */
+  /* 进入：快速启动、柔和落定 */
+  --motion-ease-out: cubic-bezier(0.2, 0, 0, 1);
+  /* 退出：逐渐加速离开 */
+  --motion-ease-in: cubic-bezier(0.3, 0, 1, 1);
+  /* 位置移动、面板展开 */
+  --motion-ease-standard: cubic-bezier(0.2, 0, 0.1, 1);
+  /* 强调：抽屉、大面板 */
+  --motion-ease-emphasized: cubic-bezier(0.32, 0.72, 0, 1);
+  /* 轻微回弹：小型弹出物（菜单、气泡），回弹幅度很小 */
+  --motion-ease-spring: cubic-bezier(0.34, 1.32, 0.64, 1);
+
+  /* ── 位移与缩放 ── */
+  --motion-distance-sm: 4px;
+  --motion-distance-md: 8px;
+  --motion-distance-lg: 16px;
+  --motion-scale-in: 0.96;
+  --motion-scale-press: 0.97;
+  --motion-lift-hover: -1px;
+
+  /* ── 骨架屏 ── */
+  --motion-skeleton-base: color-mix(in srgb, var(--ui-text-primary) 7%, transparent);
+  --motion-skeleton-shine: color-mix(in srgb, var(--ui-bg-surface) 55%, transparent);
+}
+
+/* 用户在系统设定中选择「减少动效」：保留淡入淡出，去掉位移和缩放 */
+[data-motion='reduced'] {
+  --motion-duration-fast: 90ms;
+  --motion-duration-medium: 140ms;
+  --motion-duration-slow: 180ms;
+  --motion-distance-sm: 0px;
+  --motion-distance-md: 0px;
+  --motion-distance-lg: 0px;
+  --motion-scale-in: 1;
+  --motion-scale-press: 1;
+  --motion-lift-hover: 0px;
+}
+
+/* 用户在系统设定中选择「关闭动效」 */
+[data-motion='off'] {
+  --motion-duration-fast: 0ms;
+  --motion-duration-medium: 0ms;
+  --motion-duration-slow: 0ms;
+  --motion-distance-sm: 0px;
+  --motion-distance-md: 0px;
+  --motion-distance-lg: 0px;
+  --motion-scale-in: 1;
+  --motion-scale-press: 1;
+  --motion-lift-hover: 0px;
+}
+
+/* 系统级「减少动态效果」：去掉位移和缩放，只保留必要的不透明度变化 */
+@media (prefers-reduced-motion: reduce) {
+  :root {
+    --motion-distance-sm: 0px;
+    --motion-distance-md: 0px;
+    --motion-distance-lg: 0px;
+    --motion-scale-in: 1;
+    --motion-scale-press: 1;
+    --motion-lift-hover: 0px;
+  }
+}
+
+/* ════════════════════════════════════════════════════════════════
+ * 1. 过渡类（<Transition name="motion-xxx">）
+ * ════════════════════════════════════════════════════════════════ */
+
+/* motion-fade：纯淡入淡出，适合遮罩、提示文字、状态切换 */
+.motion-fade-enter-active {
+  transition: opacity var(--motion-duration-medium) var(--motion-ease-out);
+}
+.motion-fade-leave-active {
+  transition: opacity calc(var(--motion-duration-medium) * var(--motion-exit-ratio))
+    var(--motion-ease-in);
+}
+.motion-fade-enter-from,
+.motion-fade-leave-to {
+  opacity: 0;
+}
+
+/* motion-rise：淡入并轻微上浮，适合卡片、提示条、新出现的区块 */
+.motion-rise-enter-active {
+  transition:
+    opacity var(--motion-duration-medium) var(--motion-ease-out),
+    transform var(--motion-duration-medium) var(--motion-ease-out);
+}
+.motion-rise-leave-active {
+  transition:
+    opacity calc(var(--motion-duration-medium) * var(--motion-exit-ratio)) var(--motion-ease-in),
+    transform calc(var(--motion-duration-medium) * var(--motion-exit-ratio)) var(--motion-ease-in);
+}
+.motion-rise-enter-from,
+.motion-rise-leave-to {
+  opacity: 0;
+  transform: translate3d(0, var(--motion-distance-md), 0);
+}
+
+/*
+ * motion-pop：从触发点缩放弹出，适合下拉菜单、气泡、浮层。
+ * 弹出原点用 --motion-origin 指定（默认 top center）；向上弹出的菜单设为 bottom center。
+ */
+.motion-pop-enter-active {
+  transform-origin: var(--motion-origin, top center);
+  transition:
+    opacity var(--motion-duration-fast) var(--motion-ease-out),
+    transform var(--motion-duration-medium) var(--motion-ease-spring);
+}
+.motion-pop-leave-active {
+  transform-origin: var(--motion-origin, top center);
+  transition:
+    opacity var(--motion-duration-fast) var(--motion-ease-in),
+    transform var(--motion-duration-fast) var(--motion-ease-in);
+}
+.motion-pop-enter-from,
+.motion-pop-leave-to {
+  opacity: 0;
+  transform: translate3d(0, calc(var(--motion-pop-direction, -1) * var(--motion-distance-sm)), 0)
+    scale(var(--motion-scale-in));
+}
+
+/* motion-sheet：对话框类浮层，淡入 + 轻微放大 */
+.motion-sheet-enter-active {
+  transition:
+    opacity var(--motion-duration-medium) var(--motion-ease-out),
+    transform var(--motion-duration-slow) var(--motion-ease-emphasized);
+}
+.motion-sheet-leave-active {
+  transition:
+    opacity var(--motion-duration-fast) var(--motion-ease-in),
+    transform var(--motion-duration-fast) var(--motion-ease-in);
+}
+.motion-sheet-enter-from,
+.motion-sheet-leave-to {
+  opacity: 0;
+  transform: translate3d(0, var(--motion-distance-md), 0) scale(var(--motion-scale-in));
+}
+
+/* motion-slide-end / motion-slide-start：从右 / 左侧滑入的抽屉与侧栏 */
+.motion-slide-end-enter-active,
+.motion-slide-start-enter-active {
+  transition:
+    opacity var(--motion-duration-medium) var(--motion-ease-out),
+    transform var(--motion-duration-slow) var(--motion-ease-emphasized);
+}
+.motion-slide-end-leave-active,
+.motion-slide-start-leave-active {
+  transition:
+    opacity var(--motion-duration-medium) var(--motion-ease-in),
+    transform var(--motion-duration-medium) var(--motion-ease-in);
+}
+.motion-slide-end-enter-from,
+.motion-slide-end-leave-to {
+  opacity: 0;
+  transform: translate3d(var(--motion-distance-lg), 0, 0);
+}
+.motion-slide-start-enter-from,
+.motion-slide-start-leave-to {
+  opacity: 0;
+  transform: translate3d(calc(-1 * var(--motion-distance-lg)), 0, 0);
+}
+
+/*
+ * motion-dialog / motion-drawer：带遮罩的浮层。过渡加在遮罩根元素上，
+ * 遮罩淡入淡出，第一个子元素（对话框 / 抽屉面板）同时放大或从右侧滑入。
+ * 根元素的过渡时长与子元素一致，Vue 才会等子元素播完再移除。
+ */
+.motion-dialog-enter-active,
+.motion-drawer-enter-active {
+  transition: opacity var(--motion-duration-slow) var(--motion-ease-out);
+}
+.motion-dialog-leave-active,
+.motion-drawer-leave-active {
+  transition: opacity var(--motion-duration-medium) var(--motion-ease-in);
+}
+.motion-dialog-enter-from,
+.motion-dialog-leave-to,
+.motion-drawer-enter-from,
+.motion-drawer-leave-to {
+  opacity: 0;
+}
+.motion-dialog-enter-active > :first-child,
+.motion-drawer-enter-active > :first-child {
+  transition: transform var(--motion-duration-slow) var(--motion-ease-emphasized);
+}
+.motion-dialog-leave-active > :first-child,
+.motion-drawer-leave-active > :first-child {
+  transition: transform var(--motion-duration-medium) var(--motion-ease-in);
+}
+.motion-dialog-enter-from > :first-child,
+.motion-dialog-leave-to > :first-child {
+  transform: translate3d(0, var(--motion-distance-md), 0) scale(var(--motion-scale-in));
+}
+.motion-drawer-enter-from > :first-child,
+.motion-drawer-leave-to > :first-child {
+  transform: translate3d(calc(var(--motion-distance-lg) * 2), 0, 0);
+}
+
+/* motion-swap：同一位置的内容替换（配合 mode="out-in"），比 rise 更短更轻 */
+.motion-swap-enter-active,
+.motion-swap-leave-active {
+  transition:
+    opacity var(--motion-duration-fast) var(--motion-ease-out),
+    transform var(--motion-duration-fast) var(--motion-ease-out);
+}
+.motion-swap-enter-from {
+  opacity: 0;
+  transform: translate3d(0, var(--motion-distance-sm), 0);
+}
+.motion-swap-leave-to {
+  opacity: 0;
+  transform: translate3d(0, calc(-1 * var(--motion-distance-sm)), 0);
+}
+
+/* ════════════════════════════════════════════════════════════════
+ * 2. 列表（<TransitionGroup name="motion-list"> 或 <MotionList>）
+ *    增删淡入淡出，其余项平滑让位（FLIP，仅 transform）。
+ * ════════════════════════════════════════════════════════════════ */
+/*
+ * 选择器带上容器类与 :not() 提高优先级，避免列表项组件自带的 scoped transition 盖掉列表过渡。
+ * 需要让位动画时请用 <MotionList>，或给 TransitionGroup 容器加 class="motion-list-host"。
+ */
+.motion-list-host > .motion-list-move:not(.motion-list-static) {
+  transition: transform var(--motion-duration-slow) var(--motion-ease-standard);
+}
+.motion-list-host > .motion-list-enter-active:not(.motion-list-static) {
+  transition:
+    opacity var(--motion-duration-medium) var(--motion-ease-out),
+    transform var(--motion-duration-medium) var(--motion-ease-out);
+}
+.motion-list-host > .motion-list-leave-active:not(.motion-list-static) {
+  transition:
+    opacity var(--motion-duration-fast) var(--motion-ease-in),
+    transform var(--motion-duration-fast) var(--motion-ease-in);
+  /* 离开项脱离文档流，其余项才能用 move 动画让位；宽度由 MotionList 在离开前锁定 */
+  position: absolute;
+  pointer-events: none;
+}
+.motion-list-host > .motion-list-enter-from:not(.motion-list-static),
+.motion-list-host > .motion-list-leave-to:not(.motion-list-static) {
+  opacity: 0;
+  transform: scale(var(--motion-scale-in));
+}
+.motion-list-host > .motion-list-enter-from:not(.motion-list-static) {
+  transform: translate3d(0, calc(-1 * var(--motion-distance-sm)), 0) scale(var(--motion-scale-in));
+}
+
+/* ════════════════════════════════════════════════════════════════
+ * 3. 一次性入场（无需 Transition，元素插入时自动播放）
+ * ════════════════════════════════════════════════════════════════ */
+
+/* 元素自身入场 */
+.motion-enter {
+  animation: motion-rise-in var(--motion-duration-medium) var(--motion-ease-out) backwards;
+}
+/* 直接子元素依次入场；需要错落时给子元素设 style="--motion-index: n" */
+.motion-enter-children > * {
+  animation: motion-rise-in var(--motion-duration-medium) var(--motion-ease-out) backwards;
+  animation-delay: calc(min(var(--motion-index, 0), 8) * 24ms);
+}
+/* 只淡入，不位移 */
+.motion-enter-fade,
+.motion-enter-fade-children > * {
+  animation: motion-fade-in var(--motion-duration-medium) var(--motion-ease-out) backwards;
+}
+
+@keyframes motion-rise-in {
+  from {
+    opacity: 0;
+    transform: translate3d(0, var(--motion-distance-sm), 0);
+  }
+}
+@keyframes motion-fade-in {
+  from {
+    opacity: 0;
+  }
+}
+
+/* ════════════════════════════════════════════════════════════════
+ * 4. 可点元素的悬停与按压反馈
+ * ════════════════════════════════════════════════════════════════ */
+
+/*
+ * 全局默认按压反馈：所有按钮按下时轻微缩小。
+ * 用 :where() 把优先级降到 0，组件只要自己声明过 transform（像素按钮下沉、居中定位等），
+ * 都以组件为准；减少 / 关闭动效时 --motion-scale-press 为 1，不再缩放。
+ */
+:where(button, [role='button']):where(:not(:disabled, [aria-disabled='true'])):active {
+  transform: scale(var(--motion-scale-press));
+}
+
+/* 按压：轻微缩小；悬停不位移，只交给组件自己的颜色变化 */
+.motion-press {
+  transition:
+    transform var(--motion-duration-fast) var(--motion-ease-out),
+    background-color var(--motion-duration-fast) var(--motion-ease-out),
+    border-color var(--motion-duration-fast) var(--motion-ease-out),
+    color var(--motion-duration-fast) var(--motion-ease-out),
+    box-shadow var(--motion-duration-fast) var(--motion-ease-out),
+    opacity var(--motion-duration-fast) var(--motion-ease-out);
+}
+.motion-press:not(:disabled, [aria-disabled='true']):active {
+  transform: scale(var(--motion-scale-press));
+  transition-duration: 60ms;
+}
+/* 卡片类：悬停时轻微抬起 */
+.motion-lift {
+  transition:
+    transform var(--motion-duration-medium) var(--motion-ease-out),
+    box-shadow var(--motion-duration-medium) var(--motion-ease-out),
+    border-color var(--motion-duration-fast) var(--motion-ease-out),
+    background-color var(--motion-duration-fast) var(--motion-ease-out);
+}
+@media (hover: hover) {
+  .motion-lift:not(:disabled, [aria-disabled='true']):hover {
+    transform: translate3d(0, var(--motion-lift-hover), 0);
+  }
+}
+.motion-lift:not(:disabled, [aria-disabled='true']):active {
+  transform: scale(var(--motion-scale-press));
+  transition-duration: 60ms;
+}
+
+/* ════════════════════════════════════════════════════════════════
+ * 5. 展开收起（MotionCollapse 使用，也可直接套 class）
+ *    结构：.motion-collapse > .motion-collapse__inner > 内容
+ * ════════════════════════════════════════════════════════════════ */
+.motion-collapse {
+  display: grid;
+  grid-template-rows: 0fr;
+  opacity: 0;
+  transition:
+    grid-template-rows var(--motion-duration-slow) var(--motion-ease-standard),
+    opacity var(--motion-duration-medium) var(--motion-ease-in);
+}
+.motion-collapse.is-open {
+  grid-template-rows: 1fr;
+  opacity: 1;
+  transition:
+    grid-template-rows var(--motion-duration-slow) var(--motion-ease-standard),
+    opacity var(--motion-duration-medium) var(--motion-ease-out) 60ms;
+}
+.motion-collapse__inner {
+  min-height: 0;
+  overflow: hidden;
+}
+/* 系统减少动态效果时，展开收起不做高度动画，只保留淡入淡出 */
+@media (prefers-reduced-motion: reduce) {
+  .motion-collapse,
+  .motion-collapse.is-open {
+    transition: opacity var(--motion-duration-medium) var(--motion-ease-out);
+  }
+}
+[data-motion='reduced'] .motion-collapse,
+[data-motion='reduced'] .motion-collapse.is-open {
+  transition: opacity var(--motion-duration-medium) var(--motion-ease-out);
+}
+
+/* ════════════════════════════════════════════════════════════════
+ * 6. 骨架占位（MotionSkeleton 使用，也可直接给块元素加 .motion-skeleton）
+ *    微光只移动伪元素的 transform，不触发重排。
+ * ════════════════════════════════════════════════════════════════ */
+.motion-skeleton {
+  position: relative;
+  overflow: hidden;
+  border-radius: var(--ui-radius-xs);
+  background: var(--motion-skeleton-base);
+}
+.motion-skeleton::after {
+  position: absolute;
+  inset: 0;
+  content: '';
+  transform: translateX(-100%);
+  background: linear-gradient(90deg, transparent, var(--motion-skeleton-shine), transparent);
+  animation: motion-shimmer 1.4s var(--motion-ease-standard) infinite;
+}
+@keyframes motion-shimmer {
+  to {
+    transform: translateX(100%);
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .motion-skeleton::after {
+    animation: none;
+    opacity: 0;
+  }
+}
+[data-motion='reduced'] .motion-skeleton::after,
+[data-motion='off'] .motion-skeleton::after {
+  animation: none;
+  opacity: 0;
+}
+
+/* MotionList 容器：离开项绝对定位时以此为参照 */
+.motion-list-host {
+  position: relative;
+}

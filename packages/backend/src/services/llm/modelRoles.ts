@@ -14,6 +14,8 @@ import { t as __t } from '../../lib/i18n'
  *   main（主模型）      model.main                     角色未单独指派时的默认模型
  *   scorer             model.task.scorer              从对话中整理值得长期记住的内容
  *   reflection         model.task.reflection          整理记忆关系、修订和去重
+ *   expression_learning model.task.expression_learning 从批注和纠正里学说话习惯，写进手册
+ *   watch_along        model.task.watch_along         陪看和主动开口；越快她开口越及时
  *   social_scorer      model.task.social_scorer       整理社交互动中的长期记忆
  *   butler             model.task.butler              理解据点管理请求并生成操作建议
  *   knowledge          model.task.knowledge           整理文档摘要、关键词与语义切片
@@ -57,6 +59,8 @@ export type ModelTaskSlot =
   | 'main'
   | 'scorer'
   | 'reflection'
+  | 'expression_learning'
+  | 'watch_along'
   | 'social_scorer'
   | 'butler'
   | 'knowledge'
@@ -67,6 +71,8 @@ const TASK_CONFIG_KEYS: Record<ModelTaskSlot, string> = {
   main: 'model.main',
   scorer: 'model.task.scorer',
   reflection: 'model.task.reflection',
+  expression_learning: 'model.task.expression_learning',
+  watch_along: 'model.task.watch_along',
   social_scorer: 'model.task.social_scorer',
   butler: 'model.task.butler',
   knowledge: 'model.task.knowledge',
@@ -92,6 +98,8 @@ export class ModelRoleResolver {
     const purpose: ModelConfig['usagePurpose'] =
       task === 'main'
         ? undefined
+        : task === 'watch_along'
+          ? 'companion'
         : task === 'knowledge'
           ? 'knowledge'
           : task === 'butler' || task === 'approval'
@@ -256,6 +264,7 @@ export class ModelRoleResolver {
       returnNativeReasoning: row.returnNativeReasoning ?? false,
       wireApi: (row.wireApi as ModelConfig['wireApi']) ?? 'chat_completions',
       reasoningDialect: (row.reasoningDialect as ModelConfig['reasoningDialect']) ?? 'auto',
+      assistantPrefill: (row.assistantPrefill as ModelConfig['assistantPrefill']) ?? 'auto',
       enableVision: row.enableVision ?? false,
       enableAudioInput: row.enableAudioInput ?? false,
       stream: row.stream ?? true,

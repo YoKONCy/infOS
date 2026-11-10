@@ -10,6 +10,7 @@ import {
   conversationQueueItems as items,
   conversationQueueThreads as threads,
   threadMessages,
+  conversationExecutions,
 } from '../database/schema'
 import { AppError } from '../lib/appError'
 import { t as __t } from '../lib/i18n'
@@ -283,6 +284,9 @@ export class ConversationQueueRepository {
         .all()
       for (const row of unfinished) {
         if (row.state === 'running') {
+          const input = JSON.parse(row.inputJson) as QueuedConversationInput
+          const execution = this.db.select().from(conversationExecutions).where(eq(conversationExecutions.id,
+            `conversation:${row.threadId}:${input.expectedGeneration ?? 1}:${row.id}`)).get()
           const reply = this.db
             .select()
             .from(threadMessages)
@@ -298,9 +302,9 @@ export class ConversationQueueRepository {
           this.db
             .update(items)
             .set({
-              state: reply ? 'completed' : 'interrupted',
+              state: reply || (execution && ['completed', 'waiting'].includes(execution.status)) ? 'completed' : 'interrupted',
               immediate: false,
-              error: reply ? null : '应用曾异常退出，本次执行已中断，请在聊天栏自行发送后续指令。',
+              error: reply || (execution && ['completed', 'waiting'].includes(execution.status)) ? null : '应用曾异常退出，本次执行已中断，请在聊天栏自行发送后续指令。',
               revision: row.revision + 1,
             })
             .where(eq(items.id, row.id))

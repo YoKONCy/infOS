@@ -7,5 +7,7 @@
   "补记期间来源已变化，放弃旧结果并保留本周期待处理状态": "The source has changed during the make-up period. The old results are discarded and the status of awaiting processing for this week is retained.",
   "后台定时补记批次已落盘": "Backend scheduled re-recording batch has been placed",
   "事件记忆事务重放失败: {0}": "Event memory transaction replay failed: {0}",
-  "事件关系维护失败，已记录重试退避": "event relationship maintenance failed, retry backoff has been recorded"
+  "事件关系维护失败，已记录重试退避": "event relationship maintenance failed, retry backoff has been recorded",
+  "记忆注入超出 {0} Token 上限，按优先级舍弃 {1} 个完整事件": "Memory injection exceeded the {0}-token limit; dropped {1} whole events by priority",
+  "读取角色记事本失败，已使用位置提示：{0}": "Could not read the character notebook. Showing its location instead: {0}"
 }

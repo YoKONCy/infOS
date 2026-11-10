@@ -402,6 +402,8 @@ export * from './types/integrations.types'
 
 export * from './agentInput'
 export * from './types/desktopAutomation'
+export * from './types/desktopHome'
+export * from './types/perception'
 export * from './resources'
 export * from './documents'
 export * from './taskPlan'
@@ -445,10 +447,25 @@ export {
   WHOLESOME_MODE_KEY,
   ASSISTANT_PREFILL_KEY,
   MAX_ASSISTANT_PREFILL_LENGTH,
+  DYNAMIC_CONTEXT_DEPTH_KEY,
+  parseDynamicContextDepth,
   isAssistantPrefillConfig,
   parseAssistantPrefillConfig,
 } from './contentMode'
-export type { AssistantPrefillConfig, CompiledPromptPlan } from './contentMode'
+export type { AssistantPrefillConfig, CompiledPromptPlan, DynamicContextDepth } from './contentMode'
+export {
+  ASSISTANT_PREFILL_SUPPORT_VALUES,
+  resolveAssistantPrefillCapability,
+  resolveAssistantPrefillForChain,
+  resolveReasoningDialect,
+} from './assistantPrefill'
+export type {
+  AssistantPrefillSupport,
+  AssistantPrefillProtocol,
+  AssistantPrefillSkipReason,
+  AssistantPrefillDecision,
+  AssistantPrefillTarget,
+} from './assistantPrefill'
 export type * from './types/package-management.types'
 export type * from './types/package-host.types'
 export type * from './types/package-hooks.types'
@@ -459,7 +476,13 @@ export type * from './resourceVersions'
 export * from './attachmentUpload'
 export * from './nativeAudio'
 export * from './agentPresence'
+export * from './customTheme'
+export * from './desktopShell'
+export * from './desktopCards'
+export * from './desktopSafety'
+export * from './desktopSensitive'
 export type * from './types/backup.types'
+export { isSnapshotProgramPath, isSnapshotTransientPath } from './snapshotPaths'
 export type {
   IndexScope,
   IndexMaintenanceDiagnostic,
@@ -468,3 +491,8 @@ export type {
 } from './types/indexMaintenance.types'
 export * from './achievements'
 export type { SteamCloudSaveStatus } from './types/steamCloud.types'
+export * from './conversation'
+export * from './home'
+
+export * from './expression'
+export type * from './types/expression.types'

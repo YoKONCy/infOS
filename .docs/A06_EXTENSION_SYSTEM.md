@@ -142,7 +142,7 @@ LLM Tool Call
 
 ### 5.2 Skill Resource
 
-Skill 是按需加载的任务知识与 Context Resource。`requiredTools` 只投影为 Capability Requirement，不能解锁权限。
+Skill 是按会话选择的任务知识与 Context Resource。导入后进入候选清单，用户在对话栏勾选后直接装配完整正文；`requiredTools` 只投影为 Capability Requirement，不能解锁权限。作用域与资源读取规则见[会话 Skills](M02_CAPABILITY_GATE.md#32-会话-skills)。
 
 ```text
 SKILL.md
@@ -327,6 +327,27 @@ Electron 标准版、便携版和 Docker 都通过 PathResolver 使用各自的�
 各分类独立读取，一类失败通过 `unavailable` 返回，其余分类仍可使用；前端明确标识读取失败，避免把错误显示成空列表。用户刷新会调用已有 `POST /api/assets/rescan` 更新模型索引；普通进入页面只读取已登记状态。离开管理面板后重新读取列表，保留当前筛选条件。此入口不查询市场更新，也不执行工坊订阅。
 
 AssetRegistry 补充扫描服务端 `@data/models`，打包模式读取 `INFOS_RESOURCES_ROOT/assets/3d`，源码模式读取项目 `public/assets/3d`。未部署在服务端的模型不会因为客户端存在同名文件而显示为已安装。
+
+### 10.2 插件设置与本机页面
+
+`presenter.panel.settings.kind` 声明 `tool-groups` 或 `local-page`。这两类面板注册到 `integrations`，宿主将入口放在所属插件卡片上。普通声明式卡片沿用原有插槽。插件管理页中的「工具管理」打开宿主绘制的设置弹窗，「打开页面」取得插件本机服务地址后交给链接处理入口。
+
+`POST /api/packages/panel-actions` 接收 `panelId`、`actionId` 和可选对象 `payload`，请求体上限为 1 MiB。宿主按当前激活贡献查找处理器，调用 `onAction(actionId, payload)`。载荷复制后交给插件，动作限时十秒。异步返回时复查注册身份，停用或重载期间产生的旧结果返回入口失效。插件自行维护写入事务和取消语义。
+
+| 入口类型 | 动作 | 合同 |
+| --- | --- | --- |
+| `tool-groups` | `settings.load` | 返回完整 `PackageToolSettingsSnapshot` |
+| `tool-groups` | `settings.save` | 接收 `revision`、`values`、`groups`、`ungroupedState`、`disabledTools`，返回提交后的完整快照 |
+| `tool-groups` | `settings.check` | 接收 `field`、`value`，返回 `{ ok: boolean }` |
+| `local-page` | `page.url` | 返回 `{ url: string }`，宿主校验为回环 HTTP(S) 地址 |
+
+工具快照包含配置字段、工具描述及参数、分组、逐项禁用清单、可选提示与新工具清单。分组状态为 `pinned`、`ondemand`、`off`，实际工具装配与执行约束由插件落实。宿主支持搜索、组顺序调整、跨组移动、组状态和逐项开关，草稿在保存后提交。插件通过 revision 实现并发控制，冲突抛 `PACKAGE_SETTINGS_CONFLICT`，API 返回 HTTP 409 和 `CONFLICT`，用户重新读取后再编辑。
+
+宿主校验返回快照的字段形状、工具及分组身份、分组成员唯一性。旧工具暂时不可用时，其分组引用保留。设置入口只能调用对应种类的内置设置动作及面板显式声明的其他动作，原有两参数动作请求继续有效。
+
+本机页面仅接受 `localhost`、`127.0.0.1`、`[::1]`，地址包含凭据或使用其他协议时返回 `PACKAGE_PAGE_INVALID`。本机指浏览器所在设备，远程服务的页面访问应按部署地址和网络可达性设计。桌面版沿用现有窗口链接处理，浏览器版在用户点击时预留标签页，并在请求失败时关闭空白页。
+
+前端入口位于 `components/integrations/PackageCardExtraActions.vue`、`PackageToolSettingsDialog.vue`，附加面板状态位于 `composables/packages/usePackageExtraPanels.ts`。运行时入口位于 `packages/packageUiRegistry.ts`、`packageSettingsEntry.ts` 与 `routers/packages.router.ts`。界面词条使用 `ui.package-tool-settings`，接口提示使用 `server.packages`。
 
 ## 11. 编写贡献与扩展点
 

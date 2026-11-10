@@ -96,11 +96,11 @@ Identity
 
 ### 3.1 Thread 的职责
 
-Thread 是一次交互的持久边界，负责消息存储、软删除、修订版本与策略归属；不负责人格、长期记忆、工具权限或上下文编译。
+Thread 是交互的持久边界，负责消息事实、修订版本与会话策略。每个角色拥有唯一主 Thread 和多个 SideThread，角色持续状态与长记忆由角色资源持有。生命周期、来源及迁移规则见 [主侧会话与角色持续状态](./B26_MAIN_SIDE_THREADS.md)。
 
 ```text
 Thread
-├─ id / agentId / channel
+├─ id / agentId / channel / threadKind / generation
 ├─ platform / platformIdentifier
 ├─ title / status / 时间字段
 ├─ contextPolicy
@@ -122,7 +122,7 @@ ThreadChannel = 'desktop' | 'group'
 - Channel 不属于 Agent 的“当前模式”，也不是临时调用参数。
 - 同一 Agent 可并发拥有不同 channel 的 Thread。
 - `ambient` 是请求级 Capability Scope，不是 Channel；它只能在当前 Channel 权限基础上做减法。
-- App 聊天与 Pet3DView 都使用同一 Agent 最新的 `desktop/conversation` Thread，确保历史与短期上下文连续。
+- App 聊天与 Pet3DView 默认进入角色唯一主 Thread，各窗口保留用户显式选择的 SideThread。
 - 主动陪伴开关只控制 Agent 主动行为调度，不切换 Thread、Channel 或人格。
 
 | Channel | 主要处理路径                    | 记忆边界   | 说明                                        |
@@ -130,18 +130,18 @@ ThreadChannel = 'desktop' | 'group'
 | desktop | PrincipalAgent Context Compiler | 主记忆     | App、Pet3DView 与本地快捷入口共享的连续交互 |
 | group   | 主应用Stronghold运行时          | 房间事件流 | 主应用内部多人房间交互，不属于Application   |
 
-### 3.3 据点群聊的双层模型
+### 3.3 据点事实与角色亲历
 
-据点群聊同时存在两种不同用途的数据：
+据点群聊按事实和亲历分别持有数据。
 
 1. **房间权威消息流**：按 `roomId` 存储和展示，代表用户实际看到的房间会话。
-2. **按 Agent 隔离的 group Thread**：例如 `stronghold_{roomId}_{agentId}`，仅用于每个 Agent 的独立上下文编译、人格与工具边界。
+2. **角色亲历引用**：`agent_experiences` 在每条消息提交时固定在场关系，并关联角色主线代次。
 
-两者不可混淆。对话日志必须按房间聚合并读取权威消息流，不能因内部隔离 Thread 而将同一房间拆成多个角色会话；内部 Thread 也不应被房间日志的改名、删除操作误伤。
+据点回合以角色主线为身份锚点，场景适配器为 Execution 编译 `group` 上下文与权限。执行通过 KernelScheduler、ConversationTurnService 和 AgentService 完成，结果回到原房间，审计过程附在房间消息上。旧 `stronghold_{roomId}_{agentId}` Thread 留作历史资料。主线私聊与据点来源按各自视图呈现。
 
 ### 3.4 主动行为与临时输入
 
-主动陪伴、定时事件和系统触发属于通用主动行为，不创建专用 Channel。调度器复用目标 Agent 最新的 `desktop/conversation` Thread，并以 `capabilityScope='ambient'` 执行。内部触发指令使用 `inputPersistence='ephemeral'`，只参与本轮上下文；最终 assistant 回复正常写入 Thread 并推送到客户端。这样既保留完整用户历史，也避免内部系统指令污染聊天记录。
+主动陪伴、定时事件和系统触发使用目标角色唯一主 Thread，能力范围沿用各调度来源的门控策略。内部触发指令使用 `inputPersistence='ephemeral'` 参与本轮上下文，最终 assistant 回复写入主线并推送到客户端。
 
 旧 `companion` Thread 在迁移启动时统一软删除，不合并到 Desktop 历史。
 
@@ -284,7 +284,7 @@ Principal Workspace 的唯一可写根为：
 2. 未配置 channel 必须 fail-closed，不能回退 desktop 全开放。
 3. 平台能力（截图、剪贴板等）也必须先通过 CapabilityGate，再路由给 Provider。
 4. 工具执行上下文必须显式传递 `agentId + threadId + channel + capabilityScope`，禁止默认回退到某个 Agent。
-5. `ambient` 只能对 Channel 的工具、Skill 与 Prompt Fragment 取交集，禁止动态 `load_skill` 扩权。
+5. `ambient` 只能对 Channel 的工具与 Prompt Fragment 取交集，并清空 Skills 指引；会话选中的 Skills 直接装配完整正文，工具授权继续由现有门禁决定。
 6. 文件和终端操作默认受 Workspace scope 限制；高风险动作进入审批层。
 7. `run_script` 等快捷路径不得绕过统一执行器。
 
@@ -438,12 +438,12 @@ Application 使用 Persona、Knowledge、Workspace、Model 或 Asset 时必须�
 
 ## 8. Context Compiler 与 Region 收敛
 
-ContextCompiler 是 infOS 唯一的模型上下文编译权威。跨端连续性统一实现为 Continuity Region，而不是平行的预处理器、消息库或 Prompt 触发系统。
+ContextCompiler 负责主应用的模型上下文编译，社交应用通过自己的编译器提供当前平台会话资料。角色身份和长记忆通过对应资源接入，聊天历史、心流和执行过程按所属 Thread 或场景提供。
 
 ```text
 Identity / Rules / State / Capability / Memory / Flow
 Thread Message Authority
-Cross-thread Continuity Query
+Current Scene Context
         ↓
 ContextRegionProvider
         ↓
@@ -493,6 +493,8 @@ ContextCompiler 在 Selector 选中后处理已经渲染的消息，不重新执
 
 源码入口：`services/context/contextCompiler.ts` 的 `packageMessages`、`services/context/contextRegionRuntime.ts`、`packages/packageExtensionActivators.ts`。
 
+以上描述规范轨迹的装配顺序。全局「动态填充深度」可在最终模型请求副本中将本轮资料前移到上一条用户输入之前，历史校验继续消费连续的规范轨迹；配置、缓存代价和作用范围统一见 [动态填充深度](./B17_PROMPT_WORKSPACE.md#动态填充深度)。
+
 ### 8.2 Region 信任与预算
 
 信任级别至少区分：
@@ -517,33 +519,13 @@ required Region 必须保留，否则编译失败
 
 本阶段只允许 Region 整体选择，不对任意文本静默截断；后续可由 Provider 提供多分辨率 Region 或显式压缩版本。
 
-### 8.3 Continuity Region
+### 8.3 场景历史与长期连续性
 
-Continuity Region 只读查询同一 Agent 的其他活跃 conversation Thread：
+主线和侧线读取各自 Thread 的消息与心流。据点适配器提供角色在场时的房间记录，社交应用提供当前平台账号与会话的历史。复用角色身份和执行基础时，编译器仍在数据读取层维护这些作用域，模板变量与原生消息使用相同边界。
 
-```text
-agentId = 当前 Agent
-threadId !=当前 Thread
-purpose = conversation
-status = active
-role ∈ user/assistant
-message status = active
-按 Authority timestamp/messageId 稳定排序
-限制 Thread 数、消息数、时间范围与 Token 预算
-```
+跨场景长期认识通过角色记忆的沉淀、修订和检索形成。记忆保留来源、时间与角色归属，进入当前输入时按场景资料范围和预算选择。原始来源供追溯查询，显式委派通过独立任务请求及交付回执传递选定资料。
 
-Continuity 消息引用来自 Server Authority，但消息正文仍属于 `principal/external` 数据，不能因为由服务器持久化就提升为系统指令。Region 必须以低信任数据边界渲染，禁止覆盖当前目标、Policy、Capability 或系统规则。
-
-输出保留结构化来源：
-
-```text
-messageId / threadId / channel / platform
-senderId / agentId / role / revision / timestamp
-```
-
-Context 渲染时可以显示来源，但禁止把来源尾标写回消息正文。
-
-Continuity 不建立私有消息数据库，不使用 Fuzzy 作为原生身份机制，不覆盖 Thread Message，不将其他 Thread 消息写入当前 Thread。编辑与重试分别由 Revision 和 Execution/Correlation 表达。
+`internalScene` 与 `realmExecution` 会隔离宿主 Thread 的聊天历史和心流。旧 `enableContinuity` 等字段保留解析兼容，内置运行时采用场景自身的资料和记忆检索。
 
 ### 8.4 Context Manifest
 
@@ -569,13 +551,11 @@ Manifest 用于审计、调试和可解释 Surface，不包含 Credential 明文
 ```text
 Thread Message Domain Event
 ├─ Memory Pipeline → Memory Region
-├─ Summary Service → Summary Region
-├─ Continuity Query → Continuity Region
 ├─ Observer Service → Agent State Region
 └─ Surface Projection
 ```
 
-这些消费者并列读取权威事件；Continuity 不是 Memory，Summary 不是 Message Authority，Observer 不能直接修改 Context。是否进入模型输入最终由 ContextPolicy 和 ContextCompiler 决定。
+这些消费者分别读取领域权威资料。记忆加工维护有来源的长期认识，Observer 提供派生观察，Surface 提供展示投影。当前场景的编译器负责选择实际进入模型输入的材料。
 
 ---
 

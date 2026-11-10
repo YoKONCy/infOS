@@ -20,6 +20,7 @@ const loaders: Record<string, TabLoader> = {
   stronghold: () => import('../../components/main/tabs/StrongholdTab.vue'),
   agent_config: () => import('../../components/dashboard/tabs/AgentConfigTab.vue'),
   user_settings: () => import('../../components/dashboard/tabs/UserSettingsTab.vue'),
+  desktop_home: () => import('../../components/desktop/DesktopHomeSettings.vue'),
   model_config: () => import('../../components/dashboard/tabs/ModelConfigTab.vue'),
   prompts: () => import('../../components/dashboard/tabs/PromptManagementTab.vue'),
   voice_config: () => import('../../components/dashboard/tabs/VoiceTab.vue'),
@@ -29,6 +30,7 @@ const loaders: Record<string, TabLoader> = {
   social: () => import('../../components/dashboard/tabs/SocialTab.vue'),
   terminal: () => import('../../components/dashboard/tabs/TerminalTab.vue'),
   system_reset: () => import('../../components/dashboard/tabs/ResetTab.vue'),
+  cards: () => import('../../components/shell/cards/CardsTab.vue'),
 }
 
 const pending = new Map<string, Promise<TabModule>>()

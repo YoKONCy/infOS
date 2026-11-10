@@ -2,17 +2,24 @@ import type { InteractionMode } from '@infos/shared'
 import type { ToolRegistry } from '../services/agent/toolRegistry'
 import { isAdvancedTool } from './advancedTools'
 import { WORK_CONTROL_TOOLS } from './systemProtocolTools'
+import { NOTEBOOK_FILE_TOOLS } from '../services/memory/notebook'
+import { isMemoryToolAllowed } from './memoryPolicy'
 
-/** 极简模式仅开放截图、结束任务、私有心流和事件查询；主动行为开关不参与工具权限判断。 */
+/** 极简模式开放交流、截图、任务结束、心流、记忆查询及目录受限的记事本操作。 */
 export const MINIMAL_TOOLS = new Set([
+  'conversation',
   'finish_task',
   'update_flow_state',
   'take_screenshot',
   'query_event_notes',
+  'query_facts',
+  'clear_work_context',
+  ...NOTEBOOK_FILE_TOOLS,
 ])
 
 /** 聊天保留日常助理和文本处理能力；扩展通过注册元数据声明准入。 */
 const CHAT_TOOLS = new Set([
+  'conversation',
   'manage_task',
   'ask_user',
   'run_script',
@@ -21,8 +28,7 @@ const CHAT_TOOLS = new Set([
   'update_flow_state',
   'finish_task',
   'query_event_notes',
-  'write_event_note',
-  'revise_event_note',
+  'clear_work_context',
   'query_facts',
   'write_fact',
   'supersede_fact',
@@ -38,6 +44,8 @@ const CHAT_TOOLS = new Set([
   'read_image',
   'read_file_range',
   'get_file_info',
+  'skill_list_resources',
+  'skill_read_resource',
   'list_directory',
   'glob_files',
   'search_files',
@@ -51,6 +59,7 @@ export function isToolAllowedInInteractionMode(
   mode: InteractionMode,
   registry: ToolRegistry,
 ): boolean {
+  if (!isMemoryToolAllowed(name, 'main')) return false
   if (name === 'document' || name === 'runtime_debug' || registry.isRuntimeScoped(name))
     return mode === 'work'
   if (mode === 'minimal') return MINIMAL_TOOLS.has(name)

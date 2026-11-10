@@ -60,6 +60,17 @@ interface Props {
 const props = withDefaults(defineProps<Props>(), {
   displayMode: 'all',
 })
+const processExpanded = ref(false)
+const hasProcess = computed(() => props.surface.nodes.some((node) => {
+  if (node.kind === 'markdown') return (node.props as MarkdownSurfaceProps).final !== true
+  return !['approval', 'input', 'error', 'status', 'attachment'].includes(node.kind)
+}))
+const showNode = (node: SurfaceNode) => {
+  if (!props.surface.processCollapsed || processExpanded.value) return true
+  if (node.kind === 'markdown') return (node.props as { final?: boolean }).final === true
+  if (node.kind === 'status' && props.surface.state !== 'open') return (node.props as StatusSurfaceProps).state === 'paused'
+  return ['approval', 'input', 'error', 'status', 'attachment'].includes(node.kind)
+}
 const compositor = useCompositorStore()
 const { withInputSeatFor } = useGateway()
 const inputMessage = ref('')
@@ -155,6 +166,7 @@ const renderItems = computed<RenderItem[]>(() => {
   }
   for (const node of props.surface.nodes) {
     if (nestedNodes.has(node.nodeId)) continue
+    if (!showNode(node)) continue
     if (node.kind !== 'markdown') {
       items.push({
         type: 'node',
@@ -250,7 +262,10 @@ function resultProps(node: SurfaceNode): ToolResultSurfaceProps {
 }
 
 function statusProps(node: SurfaceNode): StatusSurfaceProps {
-  return node.props as StatusSurfaceProps
+  const status = node.props as StatusSurfaceProps
+  if (props.surface.processCollapsed && !processExpanded.value && props.surface.state === 'open' && status.state !== 'paused')
+    return { ...status, state: 'thinking', message: __t('ui.chat', '正在回复') }
+  return status
 }
 
 const pendingInteraction = computed(() => {
@@ -477,6 +492,15 @@ function errorMessage(node: SurfaceNode): string {
 
 <template>
   <div class="conversation-surface" :data-surface-id="surface.surfaceId">
+    <button
+      v-if="surface.processCollapsed && hasProcess"
+      type="button"
+      class="surface-process-toggle"
+      :aria-expanded="processExpanded"
+      @click="processExpanded = !processExpanded"
+    >
+      {{ __t('ui.chat', processExpanded ? '收起执行过程' : '查看执行过程') }}
+    </button>
     <ExecutionProcess
       v-for="group in executionGroups"
       :key="group.id"
@@ -679,6 +703,20 @@ function errorMessage(node: SurfaceNode): string {
 </template>
 
 <style scoped>
+.surface-process-toggle {
+  margin-block: 4px 10px;
+  padding: 5px 10px;
+  border: 1px solid var(--ui-border-subtle);
+  border-radius: var(--ui-radius-md);
+  background: var(--ui-bg-surface);
+  color: var(--ui-text-secondary);
+  font: inherit;
+  font-size: 12px;
+  cursor: pointer;
+}
+.surface-process-toggle:hover {
+  color: var(--ui-accent-sky);
+}
 .msg-streaming-cursor {
   display: inline-block;
   width: 7px;

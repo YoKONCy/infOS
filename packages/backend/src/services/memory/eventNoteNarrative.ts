@@ -1,4 +1,4 @@
-/** 主动记事采用明确的第一人称开篇约定；只校验，不替模型改写经历与事实归属。 */
+/** 事件加工与历史草稿恢复共用第一人称开篇校验。 */
 export function validateEventNoteNarrative(value: unknown): string {
   const narrative = typeof value === 'string' ? value.trim() : ''
   if (!narrative) throw new Error('事件记叙不能为空')

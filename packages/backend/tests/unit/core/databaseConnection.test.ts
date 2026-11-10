@@ -6,7 +6,6 @@
 import Database from 'better-sqlite3'
 import { afterEach, describe, expect, it } from 'vitest'
 import { readFileSync, rmSync } from 'node:fs'
-import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { createDrizzleConnection, closeDrizzleConnection } from '@infos/backend/database'
@@ -16,6 +15,7 @@ import { getTableConfig } from 'drizzle-orm/sqlite-core'
 import { AgentInputRepository } from '@infos/backend/repositories/agentInput.repo'
 
 let databasePath = ''
+const tempRoot = process.env.INFOS_TEST_TEMP_ROOT ?? fileURLToPath(new URL('../../../../../TEMP/', import.meta.url))
 
 afterEach(() => {
   rmSync(databasePath, { force: true })
@@ -25,7 +25,7 @@ afterEach(() => {
 
 describe('数据库结构迁移', () => {
   it('从零执行标准迁移链并支持 Drizzle 查询', () => {
-    databasePath = join(tmpdir(), `infos-baseline-${Date.now()}-${Math.random()}.db`)
+    databasePath = join(tempRoot, `infos-baseline-${Date.now()}-${Math.random()}.db`)
 
     const db = createDrizzleConnection(databasePath)
     const sqlite = (db as unknown as { $client: Database.Database }).$client
@@ -72,7 +72,7 @@ describe('数据库结构迁移', () => {
 
   // 本用例含落盘建表、整条迁移链和重开验证，保留独立集成预算，不放宽全局单测时限。
   it('旧单基线库升级时保留私有心流，并移除工作正文与旧工具摘录表', () => {
-    databasePath = join(tmpdir(), `infos-legacy-${Date.now()}-${Math.random()}.db`)
+    databasePath = join(tempRoot, `infos-legacy-${Date.now()}-${Math.random()}.db`)
     const legacy = new Database(databasePath)
     const baselinePath = fileURLToPath(
       new URL('../../../src/database/migrations/0000_baseline.sql', import.meta.url),

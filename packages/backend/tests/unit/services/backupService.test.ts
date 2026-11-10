@@ -52,6 +52,7 @@ async function withImportFixture(
     backupId: string
   }) => Promise<void>,
   password = '',
+  legacyLanguage?: string,
 ) {
   const root = directory(),
     source = path.join(root, 'source')
@@ -88,6 +89,12 @@ async function withImportFixture(
     warnings: [],
   }
   const archive = path.join(root, 'backup.infos-backup')
+  if (legacyLanguage !== undefined) {
+    const languageBytes = Buffer.from(legacyLanguage)
+    writeFileSync(path.join(source, 'client-language.txt'), languageBytes)
+    manifest.files.push({ path: 'client-language.txt', size: languageBytes.length,
+      sha256: createHash('sha256').update(languageBytes).digest('hex') })
+  }
   async function* records(): AsyncGenerator<{ table: string; row: BackupRow }> {
     // 完整包保留 SQLite 文件，不重复输出逻辑记录。
     yield* []
@@ -119,6 +126,15 @@ async function withImportFixture(
 }
 
 describe('数据备份与恢复的关键路径', () => {
+  it('旧完整备份中的启动语言缓存可以通过完整校验并预览', async () => {
+    await withImportFixture(async ({ service, archive }) => {
+      const preview = await service.previewFile(archive)
+      expect(preview.manifest.files).toEqual(expect.arrayContaining([
+        expect.objectContaining({ path: 'client-language.txt', size: 5 }),
+      ]))
+    }, '', 'en-US')
+  })
+
   it('加密备份缺口令或口令错误时在预约前拒绝，修正后仍使用同一原文件', async () => {
     await withImportFixture(async ({ service, router, archive, live }) => {
       const bytes = readFileSync(archive)

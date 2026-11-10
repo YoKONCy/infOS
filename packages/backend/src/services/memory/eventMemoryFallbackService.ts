@@ -2,6 +2,7 @@ import { t as __t } from '../../lib/i18n'
 import { createHash, randomUUID } from 'node:crypto'
 import { performance } from 'node:perf_hooks'
 import type { EventNoteDraftInput, MemoryBackgroundPolicy } from '@infos/shared'
+import { isMemoryBackgroundEnabled } from '@infos/shared'
 import { MemoryBackgroundControl } from './memoryBackgroundControl'
 import { MemoryAgentScope } from './memoryAgentScope'
 import type { EventNoteRepository } from '../../repositories/eventNote.repo'
@@ -35,6 +36,7 @@ export interface BackgroundEventExtractor {
 interface MemoryCycle {
   runtimeSeconds: number
   throughMessageId: number
+  throughExperienceId?: number
 }
 
 interface MemoryBatch {
@@ -42,6 +44,8 @@ interface MemoryBatch {
   threadId: string
   channel: string
   pairIds: string[]
+  generation?: number
+  throughExperienceId?: number
 }
 
 export interface EventMemoryFallbackOptions {
@@ -93,7 +97,7 @@ export class EventMemoryFallbackService {
 
   /** 独立轻量心跳持续落盘，不因正在调用补记模型而漏计运行时间。 */
   checkpointRuntime(enabledAgentIds: string[]): Promise<void> {
-    enabledAgentIds = enabledAgentIds.filter((id) => this.options.agents.isAvailable(id))
+    enabledAgentIds = enabledAgentIds.filter((id) => this.options.agents.isAvailable(id) && isMemoryBackgroundEnabled(this.options.background, id))
     const now = this.runtimeNow()
     const elapsed = Math.max(0, (now - this.lastTickMs) / 1000)
     const enabled = this.options.background.enabled
@@ -139,8 +143,12 @@ export class EventMemoryFallbackService {
       this.scanIncomplete = false
       for (const agentId of new Set(enabledAgentIds)) {
         signal.throwIfAborted()
-        if (!this.options.agents.isAvailable(agentId)) continue
-        const agentSignal = AbortSignal.any([signal, this.options.agents.signal(agentId)])
+        if (!this.options.agents.isAvailable(agentId) || !isMemoryBackgroundEnabled(this.options.background, agentId)) continue
+        const agentSignal = AbortSignal.any([
+          signal,
+          this.options.agents.signal(agentId),
+          ...(this.options.background.agentSignal ? [this.options.background.agentSignal(agentId)] : []),
+        ])
         const runtime = await this.repo.readTimer(`background-runtime:${agentId}`)
         const reviewed = await this.repo.readTimer(`background-reviewed-runtime:${agentId}`)
         if (agentSignal.aborted) continue
@@ -183,6 +191,7 @@ export class EventMemoryFallbackService {
     const cycle = (saved?.payload as MemoryCycle | undefined) ?? {
       runtimeSeconds,
       throughMessageId: await this.threads.latestMemoryMessageId(),
+      throughExperienceId: await this.threads.latestExperienceId(),
     }
     signal.throwIfAborted()
     // 固定本周期边界；分批和失败重试都不会顺带追赶后来追加的对话。
@@ -193,6 +202,7 @@ export class EventMemoryFallbackService {
       const result = await this.threads.listThreads({
         agentId,
         purpose: 'conversation',
+        threadKind: 'main',
         pageSize: 100,
         page,
       })
@@ -202,8 +212,12 @@ export class EventMemoryFallbackService {
           thread.id,
           cycle.throughMessageId,
         )
+        const experiences = await this.threads.queryMemoryExperiencesThrough(thread.id, cycle.throughExperienceId ?? 0)
         const covered = await this.repo.coveredPairIds(agentId, thread.id)
-        const segments = this.eligibleSegments(messages, covered)
+        const segments = [
+          ...this.eligibleSegments(messages, covered).map((pairIds) => ({ channel: thread.channel, pairIds })),
+          ...this.eligibleSegments(experiences, covered).map((pairIds) => ({ channel: 'group', pairIds })),
+        ]
         if (!segments.length) continue
         const scheduleKey = `${agentId}:${thread.id}`
         if (
@@ -214,14 +228,14 @@ export class EventMemoryFallbackService {
           continue
         }
         try {
-          const capacity = await this.capacityTokens(agentId, thread.channel)
-          const costs = this.pairTokenCosts(messages, new Set(segments.flat()))
           for (const segment of segments) {
-            for (const pairIds of this.sliceByCapacity(costs, segment, capacity)) {
+            const capacity = await this.capacityTokens(agentId, segment.channel)
+            const costs = this.pairTokenCosts([...messages, ...experiences], new Set(segment.pairIds))
+            for (const pairIds of this.sliceByCapacity(costs, segment.pairIds, capacity)) {
               signal.throwIfAborted()
               if (
                 !(await this.process(
-                  { agentId, threadId: thread.id, channel: thread.channel, pairIds },
+                  { agentId, threadId: thread.id, channel: segment.channel, pairIds, generation: thread.generation, throughExperienceId: cycle.throughExperienceId },
                   capacity,
                   signal,
                 ))
@@ -288,6 +302,10 @@ export class EventMemoryFallbackService {
   }
 
   private completedPairs(messages: MemoryMessage[]): string[] {
+    const mainLine = new Set(messages.filter((message) => {
+      const metadata = JSON.parse(message.metadataJson ?? '{}') as Record<string, unknown>
+      return metadata.proactive === true || message.pairId?.startsWith('task-result:')
+    }).map((message) => message.pairId))
     const users = new Set(
       messages.filter((message) => message.role === 'user').map((message) => message.pairId),
     )
@@ -295,7 +313,8 @@ export class EventMemoryFallbackService {
       messages.filter((message) => message.role === 'assistant').map((message) => message.pairId),
     )
     return [...new Set(messages.map((message) => message.pairId))].filter(
-      (id): id is string => Boolean(id) && users.has(id) && assistants.has(id),
+      (id): id is string => typeof id === 'string' &&
+        (id.startsWith('message:') || id.startsWith('experience:') || mainLine.has(id) || (users.has(id) && assistants.has(id))),
     )
   }
 
@@ -422,9 +441,10 @@ export class EventMemoryFallbackService {
   ): Promise<boolean> {
     signal.throwIfAborted()
     const thread = await this.threads.getThread(task.threadId)
-    if (!thread || thread.status !== 'active' || thread.agentId !== task.agentId) return true
+    if (!thread || thread.threadKind !== 'main' || thread.status !== 'active' || thread.agentId !== task.agentId ||
+        (task.generation !== undefined && thread.generation !== task.generation)) return true
     const covered = await this.repo.coveredPairIds(task.agentId, task.threadId)
-    const available = await this.threads.findMessagesByPairIds(task.threadId, task.pairIds)
+    const available = await this.batchMessages(task, task.pairIds)
     const complete = new Set(this.completedPairs(available))
     const pairIds = task.pairIds.filter((id) => !covered.has(id) && complete.has(id))
     if (!pairIds.length) return true
@@ -477,11 +497,12 @@ export class EventMemoryFallbackService {
           pending?.drafts ?? (await this.extractor.extract({ ...task, messages: batch, signal }))
         signal.throwIfAborted()
         const current = await this.threads.getThread(task.threadId)
-        const currentMessages = await this.threads.findMessagesByPairIds(task.threadId, pairIds)
+        const currentMessages = await this.batchMessages(task, pairIds)
         signal.throwIfAborted()
         if (
           !current ||
           current.status !== 'active' ||
+          current.threadKind !== 'main' || current.generation !== thread.generation ||
           this.messageRevision(currentMessages) !== revision
         )
           return false
@@ -503,12 +524,13 @@ export class EventMemoryFallbackService {
           batches: batches.length,
         })
       }
-      const latest = await this.threads.findMessagesByPairIds(task.threadId, pairIds)
+      const latest = await this.batchMessages(task, pairIds)
       const currentThread = await this.threads.getThread(task.threadId)
       signal.throwIfAborted()
       if (
         !currentThread ||
         currentThread.status !== 'active' ||
+        currentThread.threadKind !== 'main' || currentThread.generation !== thread.generation ||
         this.messageRevision(latest) !== revision
       ) {
         logger.info(__t('logs.memory', '补记期间来源已变化，放弃旧结果并保留本周期待处理状态'), {
@@ -517,7 +539,8 @@ export class EventMemoryFallbackService {
         return false
       }
       const notes = []
-      const messageIds = messages.map((message) => String(message.id))
+      const messageIds = messages.filter((message) => message.id > 0).map((message) => String(message.id))
+      const experienceIds = messages.filter((message) => message.id < 0).map((message) => String(-message.id))
       if (!aggregate)
         await this.repo.createOperation(aggregateId, task.agentId, 'background_extraction', {
           agentId: task.agentId,
@@ -538,6 +561,9 @@ export class EventMemoryFallbackService {
                 pairIds,
                 messageIds,
                 channel: task.channel,
+                experienceIds,
+                generation: thread.generation,
+                messageRevisions: Object.fromEntries(messages.filter((message) => message.id > 0).map((message) => [String(message.id), message.revision ?? 1])),
               },
             },
             `background:${task.agentId}:${task.threadId}:${revision}:${index}`,
@@ -575,6 +601,15 @@ export class EventMemoryFallbackService {
     } finally {
       await this.repo.releaseCoverageClaim(ownerId)
     }
+  }
+
+  private async batchMessages(task: MemoryBatch, pairIds: string[]): Promise<MemoryMessage[]> {
+    const selected = new Set(pairIds)
+    const messages = await this.threads.findMessagesByPairIds(task.threadId, pairIds.filter((id) => !id.startsWith('experience:')))
+    if (pairIds.some((id) => id.startsWith('experience:')))
+      messages.push(...(await this.threads.queryMemoryExperiencesThrough(task.threadId, task.throughExperienceId ?? 0))
+        .filter((message) => message.pairId && selected.has(message.pairId)))
+    return messages
   }
 
   private messageRevision(messages: MemoryMessage[]): string {
