@@ -360,6 +360,7 @@ export class RegistryToolExecutor implements ToolExecutor {
         toolName,
         policy?.interactionMode ?? context.interactionMode ?? 'work',
         this.registry,
+        policy?.threadKind,
       )
     )
       return unavailable
@@ -682,7 +683,7 @@ export class RegistryToolExecutor implements ToolExecutor {
       : threadPolicy?.interactionMode ?? runtimeContext?.interactionMode ?? 'work'
     if (
       !runtimeContext?.realmId &&
-      !isToolAllowedInInteractionMode(name, interactionMode, this.registry)
+      !isToolAllowedInInteractionMode(name, interactionMode, this.registry, threadPolicy?.threadKind)
     ) {
       return {
         output: `当前${interactionMode === 'minimal' ? '极简' : '聊天'}模式未开放此操作，请在该 Thread 中调整执行模式。`,

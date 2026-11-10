@@ -162,7 +162,6 @@
   "导出 Markdown": "export Markdown",
   "向角色下达指令或输入 / 打开命令面板…": "Give commands to the character or enter / open the command panel...",
   "极简": "Minimal",
-  "极简模式：交流、截图、完成任务、心流与事件查询": "Minimal mode: conversation, screenshots, task completion, flow state, and event queries",
   "聊天": "Chat",
   "聊天模式": "chat mode",
   "工作": "Work",
@@ -568,5 +567,5 @@
   "已学出的规则可在手册中单独管理。": "Manage already learned rules separately in the handbook.",
   "来源会话 {0}": "Source conversation {0}",
   "学出的习惯由角色共享，可直接编辑或删除。": "Learned habits are shared across the character’s conversations and can be edited or deleted.",
-  "极简模式：交流、截图、心流、记忆查询与记事本": "Minimal mode: conversation, screenshots, flow, memory queries and notebook"
+  "极简模式：心流、完成任务与主会话发言": "Minimal mode: flow updates, task completion, and main-thread messaging"
 }

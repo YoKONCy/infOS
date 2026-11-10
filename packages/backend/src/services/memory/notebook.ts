@@ -54,8 +54,11 @@ export class NotebookContextProvider implements ContextRegionProvider {
     } catch (error) {
       logger.warn(t('logs.memory', '读取角色记事本失败，已使用位置提示：{0}', [String(error)]))
     }
-    const guidance = '【个人记事本】工作区 notes/MEMORY.md 保存简短要点及附页索引，其他 Markdown 附页与它同级。使用文件工具记录和整理非事件要点，附页按需读取。极简和据点模式的文件工具仅开放此目录及直接 Markdown 文件。事件记忆由后台整理，主动查询使用 query_event_notes。共享事实由主会话按权限修改。'
-    const content = `${guidance}\n\n${body || '主文件为空，可在需要记录时创建。'}`
+    const guidance = request.interactionMode === 'minimal'
+      ? '【个人记事本】以下为工作区 notes/MEMORY.md 中已保存的要点，作为本次交流的参考。'
+      : '【个人记事本】工作区 notes/MEMORY.md 保存简短要点及附页索引，其他 Markdown 附页与它同级。使用文件工具记录和整理非事件要点，附页按需读取。据点模式的文件工具仅开放此目录及直接 Markdown 文件。事件记忆由后台整理，主动查询使用 query_event_notes。共享事实由主会话按权限修改。'
+    const emptyContent = request.interactionMode === 'minimal' ? '主文件为空。' : '主文件为空，可在需要记录时创建。'
+    const content = `${guidance}\n\n${body || emptyContent}`
     const contentHash = createHash('sha256').update(content).digest('hex')
     return [{
       providerId: this.providerId,

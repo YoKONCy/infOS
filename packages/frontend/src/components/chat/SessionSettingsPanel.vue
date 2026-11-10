@@ -87,8 +87,8 @@ const modeOptions = computed(() => [
     value: 'minimal' as const,
     label: __t('ui.chat', '极简'),
     icon: 'leaf',
-    title: __t('ui.chat', '极简模式：交流、截图、心流、记忆查询与记事本'),
-    detail: __t('ui.input-controls', '轻量对话与日常工具'),
+    title: __t('ui.chat', '极简模式：心流、完成任务与主会话发言'),
+    detail: __t('ui.input-controls', '仅保留基础对话工具'),
   },
   {
     value: 'chat' as const,

@@ -621,7 +621,7 @@ export class ContextCompiler {
         (name) =>
           !disabledTools.has(name) &&
           isMemoryToolAllowed(name, thread.threadKind) &&
-          this.capabilityGate.isToolAllowedInMode(name, thread.interactionMode),
+          this.capabilityGate.isToolAllowedInMode(name, thread.interactionMode, thread.threadKind),
       ),
     )
     if (!capability.enabledSkills?.length) {

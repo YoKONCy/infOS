@@ -20,7 +20,7 @@
 
 模式是 Channel / 角色能力之上的减法层。工具定义、能力描述、Skills 指引和实际执行使用同一模式策略。Skills 选择独立保存在会话中，极简模式保留选择但暂停指引装配；接口和权限规则见[会话 Skills](M02_CAPABILITY_GATE.md#32-会话-skills)。
 
-极简模式的 `MINIMAL_TOOLS` 包含主线交流协议 `conversation`、截图 `take_screenshot`、完成任务 `finish_task`、当前会话私有心流 `update_flow_state`、查询事件 `query_event_notes`、查询事实 `query_facts`、工作上下文清理 `clear_work_context` 和目录受限的记事本文件工具。主线使用 `conversation` 发布消息，SideThread 沿用普通回复。工具的实际开放范围同时受会话作用域、角色权限、设备与模型能力约束。事件由后台维护，共享事实修改归有效主会话，知识库检索、提醒与跟进按聊天或工作模式及场景授权提供。极简模式的文件入口限定工作区 notes 目录和直接 Markdown 文件。
+极简模式的主会话工具为 `conversation`、`update_flow_state` 和 `finish_task`，侧会话工具为 `update_flow_state` 和 `finish_task`。`MINIMAL_TOOLS` 定义模式上限，编译器、工具菜单和执行器再依据真实 Thread 类型限制连续交流协议。主线使用 `conversation` 发布消息、登记等待和处理待回应事项，SideThread 沿用普通回复，也可通过 `finish_task.reply` 交付。极简模式首个模型请求即提供并允许调用 `finish_task`。记事本主文件继续按上下文规则提供已有内容，文件维护和主动查询通过聊天或工作模式的获准工具完成。
 
 聊天允许列表维护于 `packages/backend/src/tools/interactionMode.ts`：
 
@@ -42,7 +42,7 @@
 
 ## 前端与提示词
 
-- 输入栏最左侧的“模式 · 模型”文字入口打开会话设置面板（`SessionSettingsPanel.vue`），依次提供模型、模型思考、会话模式（工作模式下展开调试开关）、执行权限及识图／语音。执行权限只在该面板调整，会话工具弹层只保留工具列表；放开到自动审批或完整权限需在面板内确认，降低立即生效，放开后入口的模式文字以警示色提示。面板与入口使用像素字体和主题变量，适配深浅主题与紧凑布局（窄宽度只显示模式）。极简模式提示列出交流、截图、心流、记忆查询与记事本，具体工具随会话作用域装配。
+- 输入栏最左侧的“模式 · 模型”文字入口打开会话设置面板（`SessionSettingsPanel.vue`），依次提供模型、模型思考、会话模式（工作模式下展开调试开关）、执行权限及识图／语音。执行权限只在该面板调整，会话工具弹层只保留工具列表；放开到自动审批或完整权限需在面板内确认，降低立即生效，放开后入口的模式文字以警示色提示。面板与入口使用像素字体和主题变量，适配深浅主题与紧凑布局（窄宽度只显示模式）。极简模式提示列出心流、完成任务和主会话发言，工具菜单按主侧类型显示有效状态。
 - 工具接口分别返回 `enabled`、`userEnabled`、`modeAllowed`，区分有效状态、手动设置和模式限制。
 - 工具计数只计算当前模式可用范围；受模式限制的项目标记“模式未开放”。
 - 能力说明注入 `components/abilities/interaction_mode.md`，用户名使用既有 `owner_name`；关闭工具的完整定义不注入模型。

@@ -2,19 +2,13 @@ import type { InteractionMode } from '@infos/shared'
 import type { ToolRegistry } from '../services/agent/toolRegistry'
 import { isAdvancedTool } from './advancedTools'
 import { WORK_CONTROL_TOOLS } from './systemProtocolTools'
-import { NOTEBOOK_FILE_TOOLS } from '../services/memory/notebook'
 import { isMemoryToolAllowed } from './memoryPolicy'
 
-/** 极简模式开放交流、截图、任务结束、心流、记忆查询及目录受限的记事本操作。 */
+/** 极简模式保留心流与执行结束，主会话另有连续交流协议。 */
 export const MINIMAL_TOOLS = new Set([
   'conversation',
   'finish_task',
   'update_flow_state',
-  'take_screenshot',
-  'query_event_notes',
-  'query_facts',
-  'clear_work_context',
-  ...NOTEBOOK_FILE_TOOLS,
 ])
 
 /** 聊天保留日常助理和文本处理能力；扩展通过注册元数据声明准入。 */
@@ -58,11 +52,14 @@ export function isToolAllowedInInteractionMode(
   name: string,
   mode: InteractionMode,
   registry: ToolRegistry,
+  threadKind?: 'main' | 'side',
 ): boolean {
   if (!isMemoryToolAllowed(name, 'main')) return false
   if (name === 'document' || name === 'runtime_debug' || registry.isRuntimeScoped(name))
     return mode === 'work'
-  if (mode === 'minimal') return MINIMAL_TOOLS.has(name)
+  // 无会话身份时计算模式上限，具体会话依据真实主侧类型继续收窄。
+  if (mode === 'minimal')
+    return MINIMAL_TOOLS.has(name) && (name !== 'conversation' || threadKind !== 'side')
   if (mode === 'chat' && (WORK_CONTROL_TOOLS.has(name) || isAdvancedTool(name))) return false
   return mode === 'work' || CHAT_TOOLS.has(name) || registry.isChatEnabled(name)
 }

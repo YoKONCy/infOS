@@ -59,6 +59,46 @@ async function collectLoop(params: Parameters<typeof runReActLoop>[0]) {
 }
 
 describe('runReActLoop', () => {
+  it('极简侧会话首轮提供心流与完成工具，可直接交付回复并结束', async () => {
+    const args = { reply: '今天也想陪你聊聊。' }
+    const menus: string[][] = []
+    const chatStream = vi.fn((
+      _model: ModelConfig,
+      _messages: ChatMessage[],
+      options?: { tools?: Array<{ function: { name: string } }> },
+    ) => {
+      menus.push(options?.tools?.map((tool) => tool.function.name) ?? [])
+      return streamFrom([{ choices: [{ delta: {
+        toolCalls: [{ index: 0, id: 'minimal-finish', type: 'function',
+          function: { name: 'finish_task', arguments: JSON.stringify(args) } }],
+      }, finishReason: 'tool_calls' }] }])
+    })
+    const execute = vi.fn().mockResolvedValue({
+      output: JSON.stringify({ finished: true, reply: args.reply }),
+      durationMs: 1, isError: false, shouldTerminate: true,
+    })
+
+    const { result } = await collectLoop({
+      llmService: { chatStream } as never, modelConfig,
+      messages: [{ role: 'user', content: '聊聊天吧' }],
+      tools: ['update_flow_state', 'finish_task'].map((name) => ({
+        name, description: '对话工具', parameters: { type: 'object' },
+      })),
+      toolExecutor: { execute }, source: 'desktop', agentId: 'pero',
+      threadContext: { threadId: 'minimal-side', interactionMode: 'minimal' },
+    })
+
+    expect(menus).toHaveLength(1)
+    expect(menus[0]!.slice().sort()).toEqual(['finish_task', 'update_flow_state'])
+    expect(execute).toHaveBeenCalledWith('finish_task', args, 'desktop',
+      expect.objectContaining({ threadId: 'minimal-side', interactionMode: 'minimal' }))
+    expect(result.toolCalls.map((call) => ({ name: call.name, isError: call.isError })))
+      .toEqual([{ name: 'finish_task', isError: false }])
+    expect(result.contentBlocks).toContainEqual(expect.objectContaining({
+      kind: 'narration', phase: 'final', content: args.reply,
+    }))
+  })
+
   it('据点可在首个模型请求中直接休息，执行结束工具收到等待意图', async () => {
     const args = { reply: '', next_activity: { kind: 'rest' } }
     const chatStream = vi.fn(() => streamFrom([{ choices: [{ delta: {

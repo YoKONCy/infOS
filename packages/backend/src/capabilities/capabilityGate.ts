@@ -52,7 +52,7 @@ const EMPTY_CAPABILITY: ResolvedCapability = {
   toolPermissions: new Map(),
 }
 
-/** 旧请求范围只作兼容，和 Thread 极简模式共用同一集合。 */
+/** 旧请求范围保留独立的通道能力上限，再与 Thread 模式取交集。 */
 const AMBIENT_ALLOWED_TOOLS = new Set([
   'conversation', 'finish_task', 'update_flow_state', 'take_screenshot', 'query_event_notes',
 ])
@@ -123,8 +123,8 @@ export class CapabilityGate {
     return this.buildToolsDescription(new Set(toolNames), mode)
   }
 
-  isToolAllowedInMode(name: string, mode: InteractionMode): boolean {
-    return isToolAllowedInInteractionMode(name, mode, this.toolRegistry)
+  isToolAllowedInMode(name: string, mode: InteractionMode, threadKind?: 'main' | 'side'): boolean {
+    return isToolAllowedInInteractionMode(name, mode, this.toolRegistry, threadKind)
   }
 
   /** 扫描所有 Agent 目录的 capabilities.yaml */

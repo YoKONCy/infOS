@@ -30,6 +30,33 @@ function createRegistry() {
 
 describe('RegistryToolExecutor', () => {
   it.each([
+    'conversation',
+    'take_screenshot',
+    'query_event_notes',
+    'query_facts',
+    'read_file',
+    'write_file',
+    'clear_work_context',
+    'run_script',
+  ])('极简侧会话按持久策略拒绝 %s，调用现场的工作模式无法扩权', async (name) => {
+    const registry = new ToolRegistry()
+    const handler = vi.fn(async () => '处理完成')
+    registry.register({ name, description: '测试工具', parameters: {} }, handler)
+    const executor = new RegistryToolExecutor(registry)
+    executor.setThreadPolicyResolver(async () => ({
+      agentId: 'pero', threadKind: 'side', status: 'active', generation: 1,
+      interactionMode: 'minimal', disabledTools: [],
+    }))
+
+    const result = await executor.execute(name, {}, 'desktop', {
+      agentId: 'pero', threadId: 'minimal-side', generation: 1, interactionMode: 'work',
+    })
+
+    expect(handler).not.toHaveBeenCalled()
+    expect(result).toMatchObject({ isError: true, shouldTerminate: false })
+  })
+
+  it.each([
     { realmId: undefined, generation: 2 },
     { realmId: 'application:test', generation: undefined },
   ])('结束执行时透传真实据点与 Realm 身份 $realmId', async ({ realmId, generation }) => {

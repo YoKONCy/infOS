@@ -511,13 +511,16 @@ export function createChatRouter(ctx: AppContext) {
         ),
         display: tool.display ?? undefined,
         enabled:
-          isToolAllowedInInteractionMode(tool.name, thread.interactionMode, ctx.toolRegistry) &&
+          isToolAllowedInInteractionMode(
+            tool.name, thread.interactionMode, ctx.toolRegistry, thread.threadKind,
+          ) &&
           (isSystemProtocolTool(tool.name) || !disabled.has(tool.name)),
         userEnabled: isSystemProtocolTool(tool.name) || !disabled.has(tool.name),
         modeAllowed: isToolAllowedInInteractionMode(
           tool.name,
           thread.interactionMode,
           ctx.toolRegistry,
+          thread.threadKind,
         ),
         locked: isSystemProtocolTool(tool.name),
       }))

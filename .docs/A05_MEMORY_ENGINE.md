@@ -46,7 +46,7 @@
 
 `NotebookContextProvider` 每次主应用前台编译固定主文件正文与指纹，最多读取 16000 字符，再交给统一 Region 与模型请求预算选择，正文放不下时可降为位置说明。附页按需读取。主、侧会话及据点按各自工具权限使用同一角色目录。
 
-极简和据点模式开放 `read_file`、`write_file`、`edit_file`、`get_file_info` 与 `list_directory`，执行器在 Hook 后限制到 `notes` 目录及直接 Markdown 文件，并核对真实路径。任务独立工作区和应用 Realm 沿各自授权接入，前台记事本 Provider 按请求作用域装配。
+据点模式开放 `read_file`、`write_file`、`edit_file`、`get_file_info` 与 `list_directory`，执行器在 Hook 后限制到 `notes` 目录及直接 Markdown 文件，并核对真实路径。极简模式按上下文规则读取已有主文件，提示词只提供已有要点作为参考。聊天与工作模式通过获准文件工具维护记事本。任务独立工作区和应用 Realm 沿各自授权接入，前台记事本 Provider 按请求作用域装配。
 
 记事本随工作区备份恢复。正文整理及删除通过文件操作完成，用户记忆管理中的结构化遗忘负责相应事件、事实和日记来源。
 

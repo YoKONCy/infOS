@@ -319,7 +319,7 @@ const MODE_MAX_TURNS: Record<string, number> = {
 
 /**
  * 首轮菜单同时供实际执行和预算预览使用，避免隐藏工具被重复计算。
- * stableFinishTask：工作模式从首个请求起列出 finish_task，避免该工具解锁时改变菜单，
+ * stableFinishTask：主线、工作及极简模式从首个请求起列出 finish_task，稳定工具菜单，
  * 帮助上游复用前缀；权限刷新与错误恢复仍可改变菜单，调用条件仍由执行侧门控决定。
  */
 export function initialReActTools(
@@ -737,8 +737,12 @@ export async function* runReActLoop(params: {
   const finishTaskTool = allAvailableTools.find((tool) => tool.name === 'finish_task')
   const advancedTools = allAvailableTools.filter((tool) => gated(tool.name))
   advancedToolAccess.names = new Set(advancedTools.map((tool) => tool.name))
-  // 工作模式首轮即包含 finish_task，避免它在业务工具执行后追加而改变提示词前缀。
-  const stableFinishTask = !!params.threadContext?.conversation || params.threadContext?.interactionMode === 'work'
+  // 主线、工作和极简模式首轮提供完成工具，极简侧会话可直接交付回复并结束。
+  const minimalMode = params.threadContext?.interactionMode === 'minimal'
+  const stableFinishTask =
+    !!params.threadContext?.conversation ||
+    params.threadContext?.interactionMode === 'work' ||
+    minimalMode
   let currentTools = initialReActTools(
     allAvailableTools,
     !!params.threadContext?.taskId,
@@ -748,7 +752,11 @@ export async function* runReActLoop(params: {
   )
   let preparedTools: ToolDefinition[] | undefined
   advancedToolAccess.expanded = currentTools.some((tool) => gated(tool.name))
-  let finishTaskAvailable = !!params.threadContext?.taskId || !!params.threadContext?.conversation || source === 'group'
+  let finishTaskAvailable =
+    !!params.threadContext?.taskId ||
+    !!params.threadContext?.conversation ||
+    source === 'group' ||
+    minimalMode
   /** 是否已经向用户流式输出过可见正文（Thinking 不计入）。 */
   let hasVisibleReply = false
   // 完整原始转写：保留每一轮未过滤的 LLM 输出 (含 Thinking 块) + 工具调用/返回摘要，

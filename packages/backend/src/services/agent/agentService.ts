@@ -500,7 +500,7 @@ export class AgentService {
       )?.filter((tool) => isMemoryToolAllowed(tool.name, thread?.threadKind) && (tool.name !== 'conversation' || continuous) && (tool.name !== 'ask_user' || !continuous)) ?? [],
       false,
       messages,
-      continuous || input.interactionMode === 'work',
+      continuous || input.interactionMode === 'work' || input.interactionMode === 'minimal',
       capability.residentTools,
     )
     if (this.deps.resolveToolDefinitions)
