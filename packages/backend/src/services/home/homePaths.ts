@@ -48,7 +48,7 @@ export function canonicalPath(input: string): string {
 
 /** @platform WINDOWS/LINUX/DARWIN 系统及程序目录固定逐次确认。 */
 export function protectedRoots(): string[] {
-  return process.platform === 'win32'
+  const roots = process.platform === 'win32'
     ? [
         process.env.SystemRoot ?? 'C:\\Windows',
         process.env.ProgramFiles ?? 'C:\\Program Files',
@@ -68,6 +68,8 @@ export function protectedRoots(): string[] {
         '/dev',
         '/sys',
       ]
+  // 宿主固定的系统目录先展开 Linux/macOS 链接，以真实路径进入保护范围。
+  return [...new Set(roots.map(resolveExisting))]
 }
 
 /**

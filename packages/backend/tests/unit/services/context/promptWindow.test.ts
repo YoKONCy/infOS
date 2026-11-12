@@ -68,7 +68,7 @@ describe('逐请求自动滑动窗口', () => {
   it('再次滑窗更新交接通知的来源，旧通知不会锁住已经退出的起点', () => {
     const messages: ChatMessage[] = [
       { role: 'system', content: '固定规则' },
-      { role: 'user', content: '旧材料'.repeat(2000) },
+      { role: 'user', content: '旧材料'.repeat(600) },
       {
         role: 'user',
         content: '当前输入一',
@@ -76,19 +76,21 @@ describe('逐请求自动滑动窗口', () => {
       },
     ]
     const count = () => tokenCounter.countMessages(messages)
+    expect(count()).toBeGreaterThan(1000)
     expect(slidePromptWindow(messages, 1000, count).removedMessages).toBeGreaterThan(0)
     const notice = messages.find(
       (message) => message.cacheControl?.key === 'infos.work.sliding-window',
     )
     expect(notice?.cacheControl?.replayAnchor).toEqual({ key: 'input-1', messageId: 1 })
     messages.push(
-      { role: 'user', content: '新增的大段材料'.repeat(2000) },
+      { role: 'user', content: '新增的大段材料'.repeat(600) },
       {
         role: 'user',
         content: '当前输入二',
         cacheControl: { kind: 'current', replayAnchor: { key: 'input-2', messageId: 2 } },
       },
     )
+    expect(count()).toBeGreaterThan(1000)
     expect(slidePromptWindow(messages, 1000, count).removedMessages).toBeGreaterThan(0)
     expect(notice?.cacheControl?.replayAnchor).toEqual({ key: 'input-2', messageId: 2 })
     expect(messages.some((message) => message.content === '当前输入一')).toBe(false)
