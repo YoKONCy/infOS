@@ -47,6 +47,8 @@ Electron 首次启动先显示本地透明开屏，并在同一窗口内选择�
 
 ### Docker Web 静态资源缓存
 
+前端镜像构建阶段复制 Vite 配置依赖的 `frontendCatalogSplit.ts`、`i18n.mjs`、`pdfAssetsPlugin.ts` 与 `vite-browser-compat.ts`。词库拆分插件及其脚本翻译入口随镜像源码一起提供，语言 JSON 来自已复制的共享包。
+
 前端 Nginx 对 `assets/` 下带内容哈希的 JS、CSS、字体、图片和 WASM 返回一年不可变缓存；HTML 入口和固定文件名资源使用 `no-cache` 与 ETag，刷新时协商更新，避免旧入口引用已经被替换的模块。TTF、MJS、WASM、PDF CMap 等资源纳入静态规则，不再依赖通用页面回退路径的默认缓存行为。业务 API、预览与附件继续遵循各自鉴权和缓存边界，不启用共享业务响应缓存。
 
 Docker 前端镜像在前端构建后运行 `scripts/precompress-web-assets.mjs`，为压缩后确有收益的公开文本、字体及解码资源生成 gzip 副本；Nginx 通过 `gzip_static` 按请求协商发送，并设置 `Vary: Accept-Encoding`。未预压缩的响应仍可动态 gzip。原文件保留，未声明 gzip 的客户端继续使用原格式；不重复压缩 PNG、WOFF2 等已压缩资源。

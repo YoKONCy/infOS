@@ -11,6 +11,7 @@ COPY package.json pnpm-lock.yaml pnpm-workspace.yaml tsconfig.base.json ./
 COPY packages/ ./packages/
 COPY patches/ ./patches/
 COPY scripts/vite-browser-compat.ts ./scripts/vite-browser-compat.ts
+COPY scripts/frontendCatalogSplit.ts scripts/i18n.mjs ./scripts/
 COPY public/ ./public/
 COPY scripts/pdfAssetsPlugin.ts ./scripts/pdfAssetsPlugin.ts
 COPY scripts/precompress-web-assets.mjs ./scripts/precompress-web-assets.mjs
