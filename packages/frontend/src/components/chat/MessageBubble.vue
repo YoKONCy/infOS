@@ -947,14 +947,18 @@ function formatTime(ts?: number): string {
 /* :global 保证主题根节点不会被 scoped 属性限制。 */
 :global(:root),
 :global([data-theme='light']) {
-  --user-bubble-bg: #f8f7fb;
-  --user-bubble-text: #302d3a;
-  --user-bubble-border: #e3dfe9;
-  --user-bubble-border-hover: #d6cfdf;
-  --user-bubble-accent: #b888d1;
-  --user-bubble-time: #8b8493;
-  --user-bubble-shadow: 0 1px 2px rgba(46, 39, 58, 0.06);
-  --user-bubble-shadow-hover: 0 3px 10px rgba(46, 39, 58, 0.09);
+  --user-bubble-bg: #f8f7fd;
+  --user-bubble-text: #221f2e;
+  --user-bubble-border: rgba(109, 92, 148, 0.22);
+  --user-bubble-border-hover: rgba(109, 92, 148, 0.34);
+  --user-bubble-accent: #8b5cf6;
+  --user-bubble-time: #6d6882;
+  --user-bubble-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.92),
+    0 1px 3px rgba(15, 23, 42, 0.055);
+  --user-bubble-shadow-hover:
+    inset 0 1px 0 rgba(255, 255, 255, 0.96),
+    0 4px 12px rgba(46, 39, 58, 0.09);
 }
 
 :global([data-theme='dark']) {
@@ -978,9 +982,9 @@ function formatTime(ts?: number): string {
   position: relative;
   padding: 14px 18px 14px 20px;
   background: var(--ui-bg-surface);
-  border: 1px solid var(--ui-border-subtle);
+  border: 1px solid var(--ui-border-default);
   border-radius: var(--ui-radius-sm);
-  box-shadow: var(--ui-shadow-sm);
+  box-shadow: var(--ui-card-dual-shadow, var(--ui-shadow-sm));
   font-size: 14px;
   line-height: 1.9;
   display: flex;

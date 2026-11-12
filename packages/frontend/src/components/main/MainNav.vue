@@ -201,9 +201,10 @@ function itemClasses(item: MainNavItem): string[] {
   z-index: 20;
   overflow: hidden;
   width: var(--ui-nav-width);
-  background: linear-gradient(180deg, rgba(254, 242, 248, 0.9) 0%, rgba(240, 249, 255, 0.92) 100%);
-  border-right: 1px solid var(--ui-border-subtle);
-  backdrop-filter: blur(20px) saturate(1.1);
+  background: linear-gradient(180deg, rgba(238, 242, 250, 0.96) 0%, rgba(230, 236, 248, 0.98) 100%);
+  border-right: 1px solid var(--ui-border-default);
+  box-shadow: inset -1px 0 0 rgba(255, 255, 255, 0.76);
+  backdrop-filter: blur(20px) saturate(1.45);
 }
 
 .main-nav--rail {
@@ -213,13 +214,14 @@ function itemClasses(item: MainNavItem): string[] {
 [data-theme='dark'] .main-nav {
   background: linear-gradient(180deg, rgba(26, 21, 38, 0.95) 0%, rgba(15, 16, 26, 0.97) 100%);
   border-right: 1px solid rgba(139, 92, 246, 0.15);
+  box-shadow: none;
 }
 
 .main-nav-pixel-bg {
   position: absolute;
   inset: 0;
   pointer-events: none;
-  opacity: 0.03;
+  opacity: 0.014;
   background-image: repeating-linear-gradient(
     0deg,
     transparent,
@@ -227,8 +229,13 @@ function itemClasses(item: MainNavItem): string[] {
     currentColor 2px,
     currentColor 3px
   );
-  color: var(--ui-accent-primary);
+  color: var(--ui-text-secondary);
   z-index: 0;
+}
+
+[data-theme='dark'] .main-nav-pixel-bg {
+  opacity: 0.03;
+  color: var(--ui-accent-primary);
 }
 
 /* ── 品牌区 ── */

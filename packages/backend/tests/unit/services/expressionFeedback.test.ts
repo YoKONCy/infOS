@@ -5,6 +5,7 @@ import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 import { applySchemaMigrations } from '../../../src/database/schemaMigrations'
 import { ExpressionStore } from '../../../src/services/expression/store'
 import { ExpressionService } from '../../../src/services/expression/service'
+import { expressionPackageMessage, recordExpressionTurn } from '../../../src/services/context/expressionContext'
 
 let sqlite: Database.Database
 let store: ExpressionStore
@@ -34,6 +35,19 @@ function reply(threadId: string, agentId = 'pero', content = '今天一起去公
 }
 
 describe('表达批注的作用域与来源', () => {
+  it('表达素材与版本记录通过独立执行身份关联主会话', () => {
+    store.create({ agentId: 'pero', threadId: 'main-pero', messageId: reply('main-pero'),
+      kind: 'robotic', quote: '', note: '先回答重点' })
+    const options = { expressionRunId: 'expression-execution' }
+    const input = { agentId: 'pero', threadId: 'main-pero', channel: 'desktop' as const,
+      purpose: 'conversation', query: '继续', notes: [], pairId: 'history-pair' }
+    expect(expressionPackageMessage(service, options, input)?.content).toContain('先回答重点')
+    recordExpressionTurn(service, options, { ...input, promptRevision: 'published-prompt' })
+    expect(sqlite.prepare('SELECT thread_id,agent_id,pair_id FROM expression_turn_versions').all()).toEqual([
+      { thread_id: 'main-pero', agent_id: 'pero', pair_id: 'expression-execution' },
+    ])
+  })
+
   it('同角色的原始素材按会话隔离，手册保存角色级表达习惯', () => {
     const main = store.create({ agentId: 'pero', threadId: 'main-pero', messageId: reply('main-pero'), kind: 'robotic', quote: '', note: '先回答重点' })
     store.create({ agentId: 'pero', threadId: 'side-pero', messageId: reply('side-pero'), kind: 'robotic', quote: '', note: '侧会话专用批注' })

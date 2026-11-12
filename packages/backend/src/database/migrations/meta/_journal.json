@@ -253,6 +253,13 @@
       "when": 1793836800010,
       "tag": "0035_flow_patch_fields",
       "breakpoints": true
+    },
+    {
+      "idx": 36,
+      "version": "6",
+      "when": 1793836800011,
+      "tag": "0036_stronghold_life",
+      "breakpoints": true
     }
   ]
 }

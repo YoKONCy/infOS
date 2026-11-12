@@ -1,4 +1,5 @@
 import Database from 'better-sqlite3'
+import { isObsoleteRetrievalStatePath, isSnapshotClientCachePath } from '@infos/shared'
 import { copyFileSync, createReadStream, existsSync, mkdirSync, readdirSync } from 'node:fs'
 import { Readable } from 'node:stream'
 import { cp, lstat, mkdir, open, readFile, readdir, rm, stat, writeFile } from 'node:fs/promises'
@@ -62,7 +63,7 @@ interface BackupAccess {
 }
 
 const MAX_UPLOAD = 20 * 1024 ** 3
-const APP_VERSION = '0.9.12'
+const APP_VERSION = '0.9.13'
 const UUID = /^[a-f0-9-]{36}$/i
 const AGENT = /^[a-z0-9][a-z0-9_-]{0,79}$/
 const emptySelection = (): BackupSelection => ({
@@ -876,8 +877,9 @@ export class BackupService {
         throw new Error('BACKUP_TABLE_UNSUPPORTED')
     for (const file of manifest.files) {
       safeBackupPath(file.path)
-      // 旧完整包可携带启动语言缓存，安装计划按目标端本机状态保留。
-      if (file.path === 'client-language.txt' && manifest.selection.level === 'full') continue
+      // 旧完整包的本机缓存和退役状态参与校验，安装阶段按当前规则处理。
+      if (manifest.selection.level === 'full' &&
+        (isSnapshotClientCachePath(file.path) || isObsoleteRetrievalStatePath(file.path))) continue
       if (excludedBackupPath(file.path) || LOCAL_FILES.has(file.path))
         throw new Error('BACKUP_PATH_INVALID')
       if (

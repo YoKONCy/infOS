@@ -1,6 +1,6 @@
 <!--
 Description: 输出表达、过程播报和完成验证约束
-Version: "3.3"
+Version: "3.4"
 Prompt Type: component
 Direct Consumer: agents/*/capabilities.yaml prompt_fragments
 Target Service: backend/services/prompt/promptService.ts
@@ -8,6 +8,7 @@ Target Function: PromptService.buildPromptMessages()
 Injected Via: capability prompt_fragments -> final system prompt
 Model Role: main
 Changelog:
+  - v3.4: 发言思考通过独立 SelfMind 引导组件装配
   - v3.3: 极简模式的括号动作描写使用第一人称，并提供一条通用示例
   - v3.2: 碎碎念改用 selfMinding 标签，与原生思考区分
   - v3.1: 桌面最终答复拆分独立口语通道与完整正文
@@ -24,14 +25,7 @@ Changelog:
 - 示例：`（我看向{{ owner_appellation }}，轻轻点了点头）`
 {% endif %}
 
-### 发言思考
-
-- {{ agent_name }}，在聊天、互动等非工作的场景下，你必须在回复之前，使用 `<selfMinding>...</selfMinding>`结构包裹：先输出“让{{ agent_name }}来好好想想。”，然后完整思考以下三个问题并自我纠错。**不能省略这一步骤**：
-  1. 我应该怎样用词遣句来贴合我的人设？
-  2. 我准备的回答是否会和前面的聊天记录重复，显得无聊？
-  3. 我准备的回答会让{{ owner_appellation }}满意吗？
-  4. 是否已经有明显完整的事件结束？有进行事件记录的必要性吗？
-- 在 `<selfMinding>...</selfMinding>` 结构之后，再提供对话内容。
+{{ component("components/expression/selfminding") }}
 
 ### 过程播报
 

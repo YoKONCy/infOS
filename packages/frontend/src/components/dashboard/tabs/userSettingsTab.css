@@ -110,6 +110,66 @@
   pointer-events: none;
   user-select: none;
 }
+.app-background-preview.is-draggable {
+  pointer-events: auto;
+  cursor: grab;
+  touch-action: none;
+}
+.app-background-preview.is-dragging {
+  cursor: grabbing;
+}
+.app-background-preview__hud {
+  position: absolute;
+  top: 4px;
+  right: 8px;
+  z-index: 3;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  max-width: calc(100% - 148px);
+  padding: 3px 8px;
+  border: 1px solid var(--app-crystal-border, var(--ui-border-default));
+  background: color-mix(in oklab, var(--ui-bg-elevated) 92%, transparent);
+  backdrop-filter: blur(12px) saturate(165%);
+  box-shadow: var(--app-crystal-shadow, var(--ui-shadow-xs));
+  color: var(--ui-text-secondary);
+  font-size: 10px;
+  line-height: 1.2;
+  pointer-events: none;
+}
+.app-background-preview__hud-hint {
+  display: inline-flex;
+  min-width: 0;
+  align-items: center;
+  gap: 4px;
+}
+.app-background-preview__hud-hint > span {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.app-background-preview__hud-reset {
+  flex-shrink: 0;
+  padding: 2px 6px;
+  border: 1px solid var(--ui-border-default);
+  background: var(--ui-bg-surface);
+  color: var(--ui-accent-sky);
+  font-size: 10px;
+  font-weight: 700;
+  cursor: pointer;
+  pointer-events: auto;
+  transition:
+    border-color var(--ui-duration-fast),
+    background-color var(--ui-duration-fast);
+}
+.app-background-preview__hud-reset:hover {
+  border-color: var(--ui-accent-sky);
+  background: var(--ui-accent-sky-soft);
+}
+.app-background-preview__hud-reset:focus-visible {
+  outline: 2px solid var(--ui-focus-color);
+  outline-offset: 1px;
+}
 .app-background-preview__window {
   position: relative;
   z-index: 1;
@@ -122,6 +182,7 @@
   grid-template-areas: 'titlebar titlebar' 'sidebar conversation';
   color: var(--ui-text-primary);
   font-size: 11px;
+  pointer-events: none;
 }
 .app-background-preview__titlebar {
   grid-area: titlebar;
@@ -129,13 +190,14 @@
   align-items: center;
   gap: 10px;
   padding: 0 10px;
-  border-bottom: 1px solid var(--ui-border-default);
+  border-bottom: 1px solid var(--app-crystal-border, var(--ui-border-default));
   background: var(--app-shell-fill, var(--ui-bg-surface-soft));
-  backdrop-filter: blur(var(--app-material-blur, 0px));
+  backdrop-filter: blur(var(--app-material-blur, 0px))
+    saturate(var(--app-material-saturate, 172%));
 }
 .app-background-preview__tab {
   padding: 4px 10px;
-  border: 1px solid var(--ui-border-default);
+  border: 1px solid var(--app-crystal-border, var(--ui-border-default));
   border-bottom: 2px solid var(--ui-accent-purple);
   background: var(--app-panel-fill, var(--ui-bg-surface));
   font-family: var(--ui-font-pixel);
@@ -146,9 +208,10 @@
   flex-direction: column;
   gap: 12px;
   padding: 18px 16px;
-  border-right: 1px solid var(--ui-border-default);
+  border-right: 1px solid var(--app-crystal-border, var(--ui-border-default));
   background: var(--app-shell-fill, var(--ui-bg-surface-soft));
-  backdrop-filter: blur(var(--app-material-blur, 0px));
+  backdrop-filter: blur(var(--app-material-blur, 0px))
+    saturate(var(--app-material-saturate, 172%));
 }
 .app-background-preview__avatar {
   width: 32px;
@@ -175,9 +238,10 @@
 }
 .app-background-preview__header {
   padding: 12px 16px;
-  border-bottom: 1px solid var(--ui-border-default);
+  border-bottom: 1px solid var(--app-crystal-border, var(--ui-border-default));
   background: var(--app-shell-fill, var(--ui-bg-surface-soft));
-  backdrop-filter: blur(var(--app-material-blur, 0px));
+  backdrop-filter: blur(var(--app-material-blur, 0px))
+    saturate(var(--app-material-saturate, 172%));
   font-weight: 700;
 }
 .app-background-preview__messages {
@@ -191,8 +255,9 @@
 .app-background-preview__bubble {
   max-width: 85%;
   padding: 10px 12px;
-  border: 1px solid var(--ui-border-default);
+  border: 1px solid var(--app-crystal-border, var(--ui-border-default));
   background: var(--app-reading-fill, var(--ui-bg-surface));
+  box-shadow: var(--app-crystal-shadow, var(--ui-card-dual-shadow, none));
   color: var(--ui-text-primary);
   line-height: 1.5;
   overflow-wrap: anywhere;
@@ -208,30 +273,90 @@
 .app-background-preview__input {
   margin: 0 16px 14px;
   padding: 10px 12px;
-  border: 1px solid var(--ui-border-default);
+  border: 1px solid var(--app-crystal-border, var(--ui-border-default));
   background: var(--app-reading-fill, var(--ui-bg-surface));
+  box-shadow: var(--app-crystal-shadow, var(--ui-card-dual-shadow, none));
   color: var(--ui-text-secondary);
   font-family: var(--ui-font-pixel);
 }
 
 .app-background-presets {
   display: flex;
-  flex-wrap: wrap;
-  align-items: center;
+  flex-direction: column;
   gap: 8px;
 }
-.app-background-presets > span {
-  margin-right: 6px;
+.app-background-presets__label {
   color: var(--ui-text-secondary);
   font-size: 12px;
   font-weight: 700;
+}
+.app-background-preset-grid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 8px;
+}
+.app-background-preset-card {
+  display: flex;
+  min-width: 0;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 6px;
+  padding: 11px 12px;
+  border: 1px solid var(--ui-border-default);
+  background: var(--dash-panel-soft);
+  box-shadow: var(--ui-crystal-highlight, none);
+  color: var(--ui-text-secondary);
+  text-align: left;
+  cursor: pointer;
+  transition:
+    border-color var(--ui-duration-fast),
+    background-color var(--ui-duration-fast),
+    box-shadow var(--ui-duration-fast);
+}
+.app-background-preset-card__head {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  color: var(--ui-text-primary);
+}
+.app-background-preset-card strong {
+  font-size: 12px;
+  font-weight: 700;
+}
+.app-background-preset-card small {
+  color: var(--ui-text-tertiary);
+  font-size: 10px;
+  line-height: 1.45;
+}
+.app-background-preset-card:hover {
+  border-color: var(--ui-border-strong);
+  background: var(--ui-bg-hover);
+}
+.app-background-preset-card[aria-pressed='true'] {
+  border-color: var(--ui-accent-primary);
+  background: var(--ui-bg-active);
+  box-shadow:
+    inset 0 -2px 0 var(--ui-accent-primary),
+    var(--ui-crystal-highlight, none);
+}
+.app-background-preset-card[aria-pressed='true'] .app-background-preset-card__head {
+  color: var(--ui-accent-primary);
+}
+.app-background-preset-card:focus-visible {
+  outline: 2px solid var(--ui-focus-color);
+  outline-offset: 2px;
 }
 .app-background-details {
   border: 1px solid var(--ui-border-default);
   background: var(--dash-panel-soft);
 }
 .app-background-details > summary {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
   padding: 12px 14px;
+  list-style: none;
   color: var(--ui-text-secondary);
   font-size: 12px;
   font-weight: 700;
@@ -239,6 +364,40 @@
   transition:
     color var(--ui-duration-fast),
     background-color var(--ui-duration-fast);
+}
+.app-background-details > summary::-webkit-details-marker {
+  display: none;
+}
+/* 隐藏默认三角时提供显式方向箭头，保持折叠交互语义明确。 */
+.app-background-details > summary::after {
+  content: '';
+  flex-shrink: 0;
+  width: 7px;
+  height: 7px;
+  border-right: 2px solid currentColor;
+  border-bottom: 2px solid currentColor;
+  transform: translateY(-2px) rotate(45deg);
+  transition: transform var(--ui-duration-fast);
+}
+.app-background-details[open] > summary::after {
+  transform: translateY(2px) rotate(-135deg);
+}
+.app-background-details__summary-text {
+  display: flex;
+  min-width: 0;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 4px 10px;
+}
+.app-background-details__summary-text strong {
+  color: var(--ui-text-primary);
+  font-size: 12px;
+  font-weight: 700;
+}
+.app-background-details__summary-text small {
+  color: var(--ui-text-tertiary);
+  font-size: 11px;
+  font-weight: 500;
 }
 .app-background-details > summary:hover,
 .app-background-details[open] > summary {
@@ -275,13 +434,16 @@
   .app-background-preview__sidebar {
     display: none;
   }
+  .app-background-preset-grid,
   .app-background-controls {
     grid-template-columns: 1fr;
   }
 }
 
 @media (prefers-reduced-motion: reduce) {
-  .app-background-details > summary {
+  .app-background-preset-card,
+  .app-background-details > summary,
+  .app-background-details > summary::after {
     transition: none;
   }
 }

@@ -7,5 +7,20 @@
   "已将「{0}」的 {1} 修改为 {2}。": "has changed {1} of \"{0}\" to {2}.",
   "已删除房间「{0}」，其中的角色已转移到客厅。": "The room \"{0}\" has been deleted and the characters in it have been moved to the living room.",
   "温馨的家": "warm home",
-  "宽敞明亮的公共区域，适合大家聚在一起。": "The spacious and bright public area is suitable for everyone to gather together."
+  "宽敞明亮的公共区域，适合大家聚在一起。": "The spacious and bright public area is suitable for everyone to gather together.",
+  "{0} · {1}": "{0} · {1}",
+  "你": "You",
+  "进入了房间": "entered the room",
+  "离开了房间": "left the room",
+  "调整了房间环境": "changed the room environment",
+  "邀请 {0} 一起{1}": "invited {0} to {1}",
+  "接受了活动邀请": "accepted the invitation",
+  "婉拒了活动邀请": "declined the invitation",
+  "稍后再回应邀请": "will respond to the invitation later",
+  "取消了活动邀请": "cancelled the invitation",
+  "活动更新 · {0}": "Activity update · {0}",
+  "活动邀请已结束": "the activity invitation has ended",
+  "到了约定时间": "the agreed time has arrived",
+  "开始留意房间里的变化": "started watching for changes in the room",
+  "据点": "Stronghold"
 }

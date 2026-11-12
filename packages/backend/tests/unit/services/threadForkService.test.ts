@@ -116,7 +116,7 @@ async function addAttachment() {
     mimeType: 'text/plain', sizeBytes: content.length,
     sha256: createHash('sha256').update(content).digest('hex'), extractedText: content.toString(),
   })
-  await attachments.bind([id], 'source', messageIds[2])
+  await attachments.bind([id], 'source', messageIds[2]!)
   return { id, storageKey, content }
 }
 
@@ -124,7 +124,7 @@ describe('会话检查点分支', () => {
   it('复制完整历史前缀并继承当前设置、状态和变量，后续独立编辑与撤回', async () => {
     const sourceMessages = db.select().from(threadMessages).where(eq(threadMessages.threadId, 'source'))
       .orderBy(threadMessages.id).all()
-    const id = await service.fork('source', messageIds[3])
+    const id = await service.fork('source', messageIds[3]!)
     const thread = await repo.getThread(id)
     expect(thread).toMatchObject({
       agentId: 'pero', channel: 'desktop', interactionMode: 'work', reasoningEffort: 'high',
@@ -137,11 +137,11 @@ describe('会话检查点分支', () => {
     expect(copied.map((row) => row.timestamp)).toEqual(Array(4).fill(originalTime))
     expect(copied.map((row) => row.rawContent)).toEqual([null, '思考与回复一', null, '思考与回复二'])
     expect(copied.every((row) => !messageIds.includes(row.id))).toBe(true)
-    expect(copied[0].pairId).toBe(copied[1].pairId)
-    expect(copied[2].pairId).toBe(copied[3].pairId)
+    expect(copied[0]!.pairId).toBe(copied[1]!.pairId)
+    expect(copied[2]!.pairId).toBe(copied[3]!.pairId)
     expect(copied.map((row) => row.pairId)).not.toContain('pair-0')
-    expect(JSON.parse(copied[3].metadataJson!).forkOrigin).toMatchObject({
-      threadId: 'source', messageId: messageIds[3], checkpointMessageId: messageIds[3],
+    expect(JSON.parse(copied[3]!.metadataJson!).forkOrigin).toMatchObject({
+      threadId: 'source', messageId: messageIds[3]!, checkpointMessageId: messageIds[3]!,
     })
     expect(db.select().from(flowStates).where(eq(flowStates.threadId, id)).get()).toMatchObject({
       currentGoal: '第三轮后的当前目标', privateFacts: '当前私有事实', updatedByPairId: null,
@@ -162,8 +162,8 @@ describe('会话检查点分支', () => {
       effects: { local: [{ name: 'scene', before: '当前场景', after: '分支场景', write: true }], global: [] },
     })
     expect((await variables.snapshot(sourceScope)).local).toEqual({ scene: '当前场景' })
-    await repo.softDeletePair(copied[3].id, 'user')
-    await plans.rollbackPairs(id, [copied[3].pairId!])
+    await repo.softDeletePair(copied[3]!.id, 'user')
+    await plans.rollbackPairs(id, [copied[3]!.pairId!])
     expect(plans.get(id, 'pero')?.title).toBe('当前计划')
     expect(db.select().from(threadMessages).where(eq(threadMessages.threadId, 'source'))
       .orderBy(threadMessages.id).all()).toEqual(sourceMessages)
@@ -178,29 +178,29 @@ describe('会话检查点分支', () => {
     db.update(threadMessages).set({ metadataJson: JSON.stringify({
       workContext: {
         version: 1, threadId: 'source', pairId: 'pair-1',
-        historyRevisions: [[messageIds[0], 1], [messageIds[2], 1]],
+        historyRevisions: [[messageIds[0]!, 1], [messageIds[2]!, 1]],
         input: { attachmentId: attachment.id }, messages: [],
       },
       toolCalls: [{ name: 'read_file', result: JSON.stringify({ source: `attachment:${attachment.id}`, attachmentId: attachment.id }) }],
-    }) }).where(eq(threadMessages.id, messageIds[3])).run()
-    const id = await service.fork('source', messageIds[3])
+    }) }).where(eq(threadMessages.id, messageIds[3]!)).run()
+    const id = await service.fork('source', messageIds[3]!)
     const copied = db.select().from(threadMessages).where(eq(threadMessages.threadId, id)).orderBy(threadMessages.id).all()
     const rows = await attachments.listByMessageIds(copied.map((row) => row.id))
     expect(rows).toHaveLength(1)
-    expect(rows[0]).toMatchObject({ threadId: id, messageId: copied[2].id, extractedText: attachment.content.toString() })
-    expect(rows[0].id).not.toBe(attachment.id)
-    expect(rows[0].storageKey).not.toBe(attachment.storageKey)
-    expect(JSON.parse(copied[3].metadataJson!).workContext).toMatchObject({
-      threadId: id, pairId: copied[3].pairId,
-      historyRevisions: [[copied[0].id, 1], [copied[2].id, 1]],
-      input: { attachmentId: rows[0].id },
+    expect(rows[0]!).toMatchObject({ threadId: id, messageId: copied[2]!.id, extractedText: attachment.content.toString() })
+    expect(rows[0]!.id).not.toBe(attachment.id)
+    expect(rows[0]!.storageKey).not.toBe(attachment.storageKey)
+    expect(JSON.parse(copied[3]!.metadataJson!).workContext).toMatchObject({
+      threadId: id, pairId: copied[3]!.pairId,
+      historyRevisions: [[copied[0]!.id, 1], [copied[2]!.id, 1]],
+      input: { attachmentId: rows[0]!.id },
     })
-    expect(JSON.parse(JSON.parse(copied[3].metadataJson!).toolCalls[0].result)).toEqual({
-      source: `attachment:${rows[0].id}`, attachmentId: rows[0].id,
+    expect(JSON.parse(JSON.parse(copied[3]!.metadataJson!).toolCalls[0].result)).toEqual({
+      source: `attachment:${rows[0]!.id}`, attachmentId: rows[0]!.id,
     })
-    await attachments.softDeleteByMessageIds([messageIds[2]])
+    await attachments.softDeleteByMessageIds([messageIds[2]!])
     await attachmentService.purgeDeleted(attachment.id, attachment.storageKey)
-    expect(await readFile(attachmentService.resolveStoragePath(rows[0].storageKey))).toEqual(attachment.content)
+    expect(await readFile(attachmentService.resolveStoragePath(rows[0]!.storageKey))).toEqual(attachment.content)
   })
 
   it('提交变量失败时回滚全部会话数据并清理已复制的附件', async () => {
@@ -208,7 +208,7 @@ describe('会话检查点分支', () => {
     const before = db.select().from(configs).all()
     const sqlite = (db as unknown as { $client: { exec(sql: string): void } }).$client
     sqlite.exec("CREATE TRIGGER reject_config_write BEFORE UPDATE ON configs BEGIN SELECT RAISE(ABORT, '模拟写入失败'); END")
-    await expect(service.fork('source', messageIds[3])).rejects.toThrow('模拟写入失败')
+    await expect(service.fork('source', messageIds[3]!)).rejects.toThrow('模拟写入失败')
     expect(db.select().from(threads).all().map((row) => row.id)).toEqual(['source'])
     expect(db.select().from(threadMessages).all().map((row) => row.id)).toEqual(messageIds)
     expect(db.select().from(configs).all()).toEqual(before)
@@ -220,16 +220,16 @@ describe('会话检查点分支', () => {
 
   it('拒绝跨会话和用户消息边界，来源前缀变化时拒绝提交', async () => {
     await repo.createThread({ id: 'other', agentId: 'pero', channel: 'desktop' })
-    await expect(service.fork('other', messageIds[3])).rejects.toMatchObject({ code: 'NOT_FOUND' })
-    await expect(service.fork('source', messageIds[2])).rejects.toMatchObject({ code: 'NOT_FOUND' })
+    await expect(service.fork('other', messageIds[3]!)).rejects.toMatchObject({ code: 'NOT_FOUND' })
+    await expect(service.fork('source', messageIds[2]!)).rejects.toMatchObject({ code: 'NOT_FOUND' })
     const attachment = await addAttachment()
     const resolve = attachmentService.resolveStoragePath.bind(attachmentService)
     vi.spyOn(attachmentService, 'resolveStoragePath').mockImplementation((key) => {
       if (key !== attachment.storageKey)
-        db.update(threadMessages).set({ content: '复制期间编辑' }).where(eq(threadMessages.id, messageIds[0])).run()
+        db.update(threadMessages).set({ content: '复制期间编辑' }).where(eq(threadMessages.id, messageIds[0]!)).run()
       return resolve(key)
     })
-    await expect(service.fork('source', messageIds[3])).rejects.toMatchObject({ code: 'CONFLICT' })
+    await expect(service.fork('source', messageIds[3]!)).rejects.toMatchObject({ code: 'CONFLICT' })
     expect(db.select().from(threads).all().map((row) => row.id).sort()).toEqual(['other', 'source'])
   })
 

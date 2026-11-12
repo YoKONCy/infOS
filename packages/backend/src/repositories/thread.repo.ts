@@ -246,6 +246,7 @@ export class ThreadRepository {
       roomName: groupChatRooms.name,
       sourceMessageId: groupChatMessages.id, senderId: groupChatMessages.senderId,
       content: groupChatMessages.content, role: groupChatMessages.role,
+      lifeEventJson: sql<string | null>`json_extract(${groupChatMessages.metadataJson}, '$.lifeEvent')`,
       timestamp: agentExperiences.occurredAt, generation: agentExperiences.generation,
       pairId: groupChatMessages.pairId,
     }).from(agentExperiences)
@@ -265,7 +266,8 @@ export class ThreadRepository {
     const rows = await this.queryExperiences(threadId, 0, throughId)
     return rows.map((row) => ({
       id: -row.id, threadId, role: 'system',
-      content: JSON.stringify({ source: 'stronghold', roomId: row.roomId, senderId: row.senderId, content: row.content }),
+      content: JSON.stringify({ source: 'stronghold', sourceMessageId: row.sourceMessageId, roomId: row.roomId,
+        senderId: row.senderId, content: row.content, lifeEvent: row.lifeEventJson ? JSON.parse(row.lifeEventJson) : undefined }),
       rawContent: null, status: 'active', pairId: `experience:${row.id}`, senderId: row.senderId,
       publicationId: null, executionId: null,
       revision: 1, agentId: null, metadataJson: '{}', scorerStatus: 'pending',

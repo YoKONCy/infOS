@@ -43,6 +43,8 @@ export class StrongholdRoundService {
     const history = await this.chat.getHistory(message.roomId, 10, message.id)
     const dispatch = await this.dispatcher.decideNextTurn(message.roomId, history)
     if (this.stopped) return undefined
+    const current = this.chat.getReplyIntent(messageId)
+    if (!current || current.intent.queue || current.intent.status !== 'pending') return current?.intent
     const eligible = intent.targets.map((target) => target.agentId)
       .filter((agentId) => !intent.autonomous || this.allowsAutonomy(agentId))
     const allMention = dispatch.agentIds.includes('@all')
@@ -72,6 +74,18 @@ export class StrongholdRoundService {
 
   async runIdle(roomId: string, agentId: string, signal: AbortSignal): Promise<{ reply?: string }> {
     if (this.stopped || this.isRoomBusy(roomId) || !this.allowsAutonomy(agentId)) return {}
+    signal.throwIfAborted()
+    const deferredId = this.chat.claimDeferredReply(roomId, agentId)
+    if (deferredId !== undefined) {
+      await this.kick(deferredId, signal)
+      signal.throwIfAborted()
+      const source = this.chat.getReplyIntent(deferredId)
+      const target = source?.intent.targets.find((entry) => entry.agentId === agentId)
+      const message = source && target && this.chat.getSceneReply(roomId, agentId, source.message.pairId!,
+        { ...target, sourceMessageId: deferredId })
+      return { reply: message?.content }
+    }
+    if (this.chat.hasDeferredReply(roomId, agentId)) return {}
     const roundId = `idle:${crypto.randomUUID()}`
     let reply: string | undefined
     const push = (action: string, extra: Record<string, unknown>) => this.gateway.broadcast({
@@ -103,17 +117,21 @@ export class StrongholdRoundService {
     for (const id of this.chat.pendingReplyIds()) void this.kick(id)
   }
 
-  kick(messageId: number): Promise<void> {
+  kick(messageId: number, signal?: AbortSignal): Promise<void> {
     if (this.stopped) return Promise.resolve()
     const current = this.running.get(messageId)
     if (current) return current
     const roomId = this.chat.getReplyIntent(messageId)?.message.roomId
     if (!roomId) return Promise.resolve()
     const previous = this.roomsRunning.get(roomId) ?? Promise.resolve()
-    const operation = previous.catch(() => {}).then(() => this.run(messageId)).catch((error) => {
+    const operation = previous.catch(() => {}).then(() => this.run(messageId, signal)).catch((error) => {
       if (this.stopped) return
       const source = this.chat.getReplyIntent(messageId)
       if (!source) return
+      if (signal?.aborted) {
+        this.chat.saveReplyIntent(messageId, { ...source.intent, retryAt: Date.now() + 1000 })
+        return
+      }
       source.intent.attempts++
       source.intent.retryAt = Date.now() + Math.min(60_000, 1000 * 2 ** source.intent.attempts)
       if (source.intent.attempts >= 3) source.intent.status = 'completed'
@@ -132,13 +150,23 @@ export class StrongholdRoundService {
     this.stopped = true
   }
 
-  private async run(messageId: number): Promise<void> {
+  private async run(messageId: number, signal?: AbortSignal): Promise<void> {
+    signal?.throwIfAborted()
     await this.prepare(messageId)
     if (this.stopped) return
     let source = this.chat.getReplyIntent(messageId)
     if (!source || source.intent.status !== 'pending' || this.stopped) return
+    if (!source.intent.queue?.length && source.intent.deferredAgentIds?.length) return
     const { message } = source
     const roomId = message.roomId
+    const explicitPending = source.intent.autonomous && this.chat.pendingReplyIds().some((id) => {
+      const other = id === messageId ? undefined : this.chat.getReplyIntent(id)
+      return other?.message.roomId === roomId && !other.intent.autonomous
+    })
+    if (explicitPending) {
+      this.chat.saveReplyIntent(messageId, { ...source.intent, retryAt: Date.now() + 1000 })
+      return
+    }
     const pairId = message.pairId!
     const roundId = message.role === 'user' ? pairId : `${pairId}:${message.id}`
     const push = (action: string, payload: Record<string, unknown> = {}) => this.gateway.broadcast({
@@ -149,9 +177,14 @@ export class StrongholdRoundService {
     while (!this.stopped) {
       source = this.chat.getReplyIntent(messageId)
       if (!source || source.intent.status !== 'pending') return
-      const { intent } = source
+      let { intent } = source
       const agentId = intent.queue?.[0]
       if (!agentId) {
+        if (intent.deferredAgentIds?.length) {
+          this.chat.saveReplyIntent(messageId, { ...intent, retryAt: undefined })
+          await push('stronghold_round_completed', { completedAgentIds: intent.completed, failedAgentIds: intent.failedAgentIds ?? [] })
+          return
+        }
         intent.status = 'completed'
         this.chat.saveReplyIntent(messageId, intent)
         await push('stronghold_round_completed', { completedAgentIds: intent.completed, failedAgentIds: intent.failedAgentIds ?? [] })
@@ -161,10 +194,20 @@ export class StrongholdRoundService {
       const thread = target && await this.threads.getThread(target.threadId)
       const present = await this.rooms.getRoomAgents(roomId)
       const enabled = this.agents.listAgents().some((agent) => agent.id === agentId && agent.isEnabled)
+      source = this.chat.getReplyIntent(messageId)
+      if (!source || source.intent.status !== 'pending') return
+      intent = source.intent
+      if (!intent.queue?.includes(agentId)) continue
+      if (!this.chat.isReplySourceCurrent(source.message)) {
+        this.chat.saveReplyIntent(messageId, { ...intent, status: 'completed', queue: [], deferredAgentIds: [] })
+        await push('stronghold_round_completed', { completedAgentIds: intent.completed, failedAgentIds: intent.failedAgentIds ?? [] })
+        return
+      }
       if (intent.completed.includes(agentId) || !enabled || !present.includes(agentId) ||
         (intent.autonomous && !this.allowsAutonomy(agentId)) ||
-        !target || !thread || thread.generation !== target.generation || thread.status !== 'active') {
-        intent.queue!.shift()
+        !target || !thread || thread.threadKind !== 'main' || thread.agentId !== agentId ||
+        thread.generation !== target.generation || thread.status !== 'active') {
+        intent.queue = intent.queue.filter((id) => id !== agentId)
         this.chat.saveReplyIntent(messageId, intent)
         continue
       }
@@ -177,27 +220,35 @@ export class StrongholdRoundService {
           expectedThread: target,
           sourceMessageId: message.id,
           autonomous: intent.autonomous,
+          signal,
         })
+        // 执行期间事件可为原消息追加接收者，按最新持久队列结算本角色。
+        source = this.chat.getReplyIntent(messageId)
+        if (this.stopped || !source || source.intent.status !== 'pending') return
+        intent = source.intent
         if (result.deferred) {
           intent.retryAt = Date.now() + 1000
           this.chat.saveReplyIntent(messageId, intent)
           return
         }
         // 结算以原消息仍有效为前提；回复本身按来源幂等，可恢复提交后尚未推进的轮次。
-        if (this.stopped || !this.chat.getReplyIntent(messageId)) return
-        intent.queue!.shift()
-        intent.completed.push(agentId)
+        intent.queue = intent.queue?.filter((id) => id !== agentId) ?? []
+        if (!intent.completed.includes(agentId)) intent.completed.push(agentId)
         intent.attempts = 0
         intent.retryAt = undefined
         // 角色提出的新问题由其已提交消息持有独立请求，恢复时沿消息身份去重。
         this.chat.saveReplyIntent(messageId, intent)
         for (const id of intent.queue!) await push('stronghold_agent_queued', { agentId: id })
       } catch (error) {
+        if (signal?.aborted) throw error
+        source = this.chat.getReplyIntent(messageId)
+        if (this.stopped || !source || source.intent.status !== 'pending') return
+        intent = source.intent
         await push('stronghold_agent_failed', { agentId, error: error instanceof Error ? error.message : String(error) })
         // 单个角色最多尝试三次，随后保留失败状态并让本轮其他角色继续。
         if (intent.attempts >= 2) {
-          intent.queue!.shift()
-          intent.completed.push(agentId)
+          intent.queue = intent.queue?.filter((id) => id !== agentId) ?? []
+          if (!intent.completed.includes(agentId)) intent.completed.push(agentId)
           intent.failedAgentIds = [...(intent.failedAgentIds ?? []), agentId]
           intent.attempts = 0
           intent.allowSummon = false

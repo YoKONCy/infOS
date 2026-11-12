@@ -11,6 +11,9 @@ import type { EventNoteDraftCommitter } from '../memory/eventNoteDraftCommitter'
 import type { KernelScheduler, KernelScheduledExecutionContext } from '../../kernel/kernelScheduler'
 import { createLogger } from '../../lib/logger'
 import { canonicalValue } from '../llm/promptCache'
+import { parseStrongholdParticipation } from '@infos/shared'
+import type { StrongholdLifeService } from './strongholdLifeService'
+import type { FlowStateService } from '../flow/flowStateService'
 
 const logger = createLogger('StrongholdTurnService')
 type SceneOptions = {
@@ -39,6 +42,8 @@ export class StrongholdTurnService {
     private readonly agentManager: AgentManager,
     private readonly allowsAutonomy: (agentId: string) => boolean = () => false,
     private readonly claimAttention?: (threadId: string, agentId: string) => { signal: AbortSignal; release(): void } | null,
+    private readonly life?: StrongholdLifeService,
+    private readonly flowState?: Pick<FlowStateService, 'get'>,
   ) {}
 
   async execute(roomId: string, agentId: string, pairId?: string, options: SceneOptions = {}): Promise<SceneOutcome> {
@@ -46,6 +51,13 @@ export class StrongholdTurnService {
     if (options.autonomous && !this.allowsAutonomy(agentId)) return { summonedAgentIds: [] }
     if (pairId && !(await this.groupChat.isPairActive(roomId, pairId))) return { summonedAgentIds: [] }
     const thread = await this.threads.getMainThread(agentId)
+    if (options.autonomous && options.sourceMessageId === undefined && this.life &&
+      ['occupied', 'resting'].includes(this.life.participation({ agentId, threadId: thread.id, generation: thread.generation })?.data.state ?? ''))
+      return { summonedAgentIds: [] }
+    if (options.autonomous && options.sourceMessageId === undefined && this.life &&
+      this.life.participation({ agentId, threadId: thread.id, generation: thread.generation })?.data.state === 'listening' &&
+      this.life.watches.list({ agentId, threadId: thread.id, generation: thread.generation }, roomId).length)
+      return { summonedAgentIds: [] }
     if (options.expectedThread && (thread.id !== options.expectedThread.threadId ||
       thread.generation !== options.expectedThread.generation)) throw new Error('THREAD_GENERATION_STALE')
     let outcome: SceneOutcome = { summonedAgentIds: [] }
@@ -118,6 +130,14 @@ export class StrongholdTurnService {
     if (!roomAgents.includes(agentId) || !this.agentManager.listAgents().some((agent) => agent.id === agentId && agent.isEnabled))
       return { summonedAgentIds: [] }
     const environment = JSON.parse(room.environmentJson ?? '{}') as Record<string, unknown>
+    const sourceMessage = options.sourceMessageId === undefined ? undefined :
+      history.find((message) => message.id === options.sourceMessageId) ?? (this.life ? this.groupChat.getMessageEvent(options.sourceMessageId) : undefined)
+    if (this.life && options.sourceMessageId !== undefined && !sourceMessage) throw new Error('STRONGHOLD_SOURCE_WITHDRAWN')
+    const retrievalSource = sourceMessage ?? (!options.autonomous && options.sourceMessageId === undefined
+      ? [...history].reverse().find((message) => message.role === 'user' || message.role === 'assistant') : undefined)
+    const currentGoal = options.autonomous && options.sourceMessageId === undefined
+      ? (await this.flowState?.get(thread.id, agentId))?.currentGoal ?? '' : ''
+    const responseContext = this.life ? this.groupChat.getExecutionCause(options.sourceMessageId, agentId).response : undefined
     const content = [
       `当前据点房间：${room.name}\n房间说明：${room.description ?? '无'}\n房间环境：${JSON.stringify(canonicalValue(environment))}`,
       `当前在场角色ID列表：${roomAgents.join('、') || '无'}`,
@@ -129,8 +149,12 @@ export class StrongholdTurnService {
         ? '你获得一次据点空闲活动机会。结合当前心流和真实亲历，决定是否值得分享、走动、邀请伙伴或继续休息；没有值得表达的内容可以安静结束。'
         : '当前有需要你处理的据点消息，请结合发言者与上下文回应。',
       options.sourceMessageId ? `本次待回应消息ID：${options.sourceMessageId}` : '',
-      '本次回复投递到当前房间，房间移动从下一次执行生效。分享与普通陈述只更新亲历。需要具体伙伴回答问题或接受邀请时，使用 stronghold_summon_agents 指定接收者。得到回答后可以自然结束。',
+      sourceMessage && !history.some((message) => message.id === sourceMessage.id)
+        ? `本次待回应原文（历史资料）：${this.escapeXml(JSON.stringify({ senderId: sourceMessage.senderId, content: sourceMessage.content }))}` : '',
+      responseContext ? `本次回应关系：${JSON.stringify(responseContext)}。response 阶段处理原发起内容，必要追问指向原发起者；settlement 阶段完成澄清或回报结算。新的独立话题随后按正常空闲机会接续。` : '',
+      '本次回复投递到当前房间，房间移动从下一次执行生效。分享新内容时可在 participation 中留出接话机会。需要具体伙伴回答问题时，使用 stronghold_summon_agents 指定接收者。请求统一按交流阶段安排，后续独立话题等待正常空闲机会。得到回答后自然结算当前事项。',
       '结束时可在 finish_task.next_activity 指定休息、等待某人回答或等待已有任务。等待在场伙伴回答会随本次发言发出定向请求。等待由真实事件恢复，可以安静结束。',
+      '通过 finish_task.participation 提交本次参与姿态和发言目的。分享新内容用 share，提问用 question，回答用 answer，简短附和用 acknowledge，结束话题用 close。addressedTo 可指定在场伙伴。程序依据已提交的真实内容安排接话。旁听、专注和休息可以静默结束，持续关注使用 stronghold_watch，共同活动和邀请使用 stronghold_activity。',
     ].join('\n\n')
     const roundId = options.roundId ?? pairId
     const push = (action: string, payload: Record<string, unknown>) => this.gateway.broadcast({
@@ -138,14 +162,20 @@ export class StrongholdTurnService {
       payload: { action, roomId, roundId, pairId, agentId, ...payload }, timestamp: Date.now(),
     })
     await push('stronghold_agent_started', {})
+    this.life?.watches.beginProcessing({ agentId, threadId: thread.id, generation: thread.generation, roomId, pairId,
+      sourceMessageId: options.sourceMessageId, signal: execution.signal })
+    const retrievalQuery = this.life
+      ? this.life.retrievalQuery(agentId, roomId, retrievalSource?.id, currentGoal)
+      : retrievalSource?.content ?? currentGoal
     const generator = this.turns.streamTurn({
-      threadId: thread.id, agentId, expectedGeneration: thread.generation, content,
+      threadId: thread.id, agentId, expectedGeneration: thread.generation, content, retrievalQuery,
       inputPersistence: 'ephemeral', outputPersistence: 'ephemeral',
       internalScene: {
         roomId,
         pairId,
         disabledTools: options.allowSummon === false ? ['stronghold_summon_agents'] : [],
         messageCount: history.filter((message) => message.role === 'user' || message.role === 'assistant').length,
+        sourceMessageId: options.sourceMessageId,
       },
       signal: execution.signal, execution: execution.descriptor,
       onUsage: execution.consume, beginIo: execution.beginIo,
@@ -178,11 +208,14 @@ export class StrongholdTurnService {
     }
     const finalBlocks = completed.contentBlocks.filter((block) => block.kind === 'narration' && block.phase === 'final')
     const finish = [...completed.toolCalls].reverse().find((call) => call.name === 'finish_task' && !call.isError)
+    const participation = finish?.args.participation === undefined ? undefined : parseStrongholdParticipation(finish.args.participation)
     const silent = finish && !String(finish.args.reply ?? '').trim() && !finalBlocks.length
     const reply = silent ? '' : finalBlocks.length
       ? finalBlocks.map((block) => block.kind === 'narration' ? block.content : '').join('\n')
       : completed.reply
     if (!reply.trim()) {
+      this.life?.finishSilent({ agentId, threadId: thread.id, generation: thread.generation, roomId, pairId,
+        sourceMessageId: options.sourceMessageId, signal: execution.signal }, `silent:${execution.descriptor.executionId}`, participation, options.sourceMessageId)
       await push('stronghold_agent_completed', { silent: true })
       return { summonedAgentIds: [] }
     }
@@ -194,7 +227,8 @@ export class StrongholdTurnService {
       mentions: summons.summonedAgentIds, requestReplies: summons.summonedAgentIds.length > 0,
       execution: { threadId: thread.id, generation: thread.generation, executionId: execution.descriptor.executionId,
         sourcePairId: requestedPairId, sourceMessageId: options.sourceMessageId },
-      metadata: { rawContent: completed.rawContent, toolCalls: completed.toolCalls, contentBlocks: completed.contentBlocks, contextManifest: completed.contextManifest },
+      metadata: { rawContent: completed.rawContent, toolCalls: completed.toolCalls, contentBlocks: completed.contentBlocks, contextManifest: completed.contextManifest,
+        lifeResult: participation },
     })
     await this.memories.commit({
       toolCalls: completed.toolCalls, agentId, threadId: thread.id, pairId, channel: 'group',

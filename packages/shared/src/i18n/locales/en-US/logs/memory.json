@@ -1,4 +1,5 @@
 {
+  "清理旧检索状态失败，将在下次启动时重试：{0}": "Failed to remove obsolete retrieval state. Cleanup will be retried at the next startup: {0}",
   "定时补记尚未完成，保留周期进度等待重试": "The scheduled replenishment has not been completed, and the cycle progress is retained for retry.",
   "后台事件补记失败，已延迟重试": "Background event re-recording failed and retry has been delayed.",
   "Agent 八小时补记周期已完成": "Agent eight-hour re-recording cycle has been completed",

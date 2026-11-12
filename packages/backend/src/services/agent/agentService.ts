@@ -98,6 +98,7 @@ export interface AgentServiceDeps {
 
 export interface CompiledRunParams {
   sceneRoomId?: string
+  sceneSourceMessageId?: number
   workContextBase?: ChatMessage[]
   conversation?: import('@infos/shared').ConversationActions
   characterStateVersion?: { revision: number }
@@ -334,6 +335,7 @@ export class AgentService {
       agentId: params.agentId,
       threadContext: {
         sceneRoomId: params.sceneRoomId,
+        sceneSourceMessageId: params.sceneSourceMessageId,
         conversation: params.conversation,
         browserScope: params.browserScope,
         requestedBy: params.requestedBy,

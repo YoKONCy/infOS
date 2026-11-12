@@ -9,6 +9,9 @@ import type { StrongholdReplyIntent } from '@infos/backend/services/stronghold/g
 import { ConversationTurnService } from '@infos/backend/services/conversation/conversationTurnService'
 import { StrongholdService } from '@infos/backend/services/stronghold/strongholdService'
 import { GroupChatService } from '@infos/backend/services/stronghold/groupChatService'
+import { StrongholdLifeService } from '@infos/backend/services/stronghold/strongholdLifeService'
+import type { FlowStateService } from '@infos/backend/services/flow/flowStateService'
+import { ThreadRepository } from '@infos/backend/repositories/thread.repo'
 import { createDrizzleConnection, closeDrizzleConnection } from '@infos/backend/database'
 import { GroupChatDispatcher } from '@infos/backend/services/stronghold/groupChatDispatcher'
 import {
@@ -16,6 +19,7 @@ import {
   strongholdFacilities,
   strongholdRooms,
   groupChatMembers,
+  groupChatRooms,
 } from '@infos/backend/database/schema'
 
 async function readJson(response: Response) {
@@ -107,6 +111,7 @@ function createCtx() {
       }),
       getSceneReply: vi.fn(() => undefined),
       getReplyIntent: vi.fn((id: number) => replySources.get(id)),
+      isReplySourceCurrent: vi.fn(() => true),
       saveReplyIntent: vi.fn((id: number, intent: StrongholdReplyIntent) => {
         const source = replySources.get(id)
         if (source) source.intent = intent
@@ -146,7 +151,7 @@ function createCtx() {
       saveMessagePair: vi.fn(() => Promise.resolve({ userMessage: {}, assistantMessage: {} })),
     },
     contextCompiler: {
-      compile: vi.fn((_input: unknown) =>
+      compile: vi.fn((_threadId: unknown, _agentId?: unknown, _options?: unknown) =>
         Promise.resolve({ messages: [{ role: 'system', content: '人设' }], manifest: { disabledTools: [] } }),
       ),
     },
@@ -164,7 +169,7 @@ function createCtx() {
   return ctx
 }
 
-function createTurnService(ctx: ReturnType<typeof createCtx>) {
+function createTurnService(ctx: ReturnType<typeof createCtx>, life?: StrongholdLifeService, flowState?: Pick<FlowStateService, 'get'>) {
   const turns = new ConversationTurnService({
     threadService: ctx.threadService,
     contextCompiler: ctx.contextCompiler,
@@ -193,6 +198,9 @@ function createTurnService(ctx: ReturnType<typeof createCtx>) {
     ctx.gatewayHub as never,
     ctx.agentManager as never,
     () => true,
+    undefined,
+    life,
+    flowState,
   )
   ctx.strongholdRoundService = new StrongholdRoundService(
     ctx.groupChatService as never, ctx.strongholdService as never,
@@ -935,6 +943,7 @@ describe('StrongholdRouter', () => {
     expect(ctx.contextCompiler.compile).toHaveBeenCalledWith('main_pero', 'pero', expect.objectContaining({
       internalScene: true,
       appendThreadMessages: false,
+      retrievalQuery: '你好',
     }))
     expect(ctx.threadService.saveMessagePair).not.toHaveBeenCalled()
     expect(ctx.agentService.chatStreamWithCompiledMessages).toHaveBeenCalledWith(
@@ -950,12 +959,43 @@ describe('StrongholdRouter', () => {
     expect(runArgs.messages.some((item) => item.content.includes('当前在场角色ID列表：pero'))).toBe(
       true,
     )
-    expect(
-      runArgs.messages.some((item) => item.content.includes('房间移动从下一回合生效')),
-    ).toBe(true)
     expect(ctx.groupChatService.sendMessage).toHaveBeenCalledWith(
-      expect.objectContaining({ roomId: 'room-1', senderId: 'pero', role: 'assistant' }),
+      expect.objectContaining({ roomId: 'room-1', senderId: 'pero', role: 'assistant',
+        execution: expect.objectContaining({ threadId: 'main_pero', generation: 1 }),
+      }),
     )
+  })
+
+  it.each([
+    { autonomous: false, query: 'user\n上次一起读的小猫故事讲到哪里了' },
+    { autonomous: true, query: '和伙伴分享昨晚的梦' },
+  ])('据点实际执行按来源或空闲目标独立检索 $autonomous', async ({ autonomous, query }) => {
+    const db = createDrizzleConnection(':memory:')
+    try {
+      const ctx = createCtx()
+      const stored = new ThreadRepository(db).ensureMainThread('pero')
+      const main = { ...await ctx.threadService.getThread(stored.id), id: stored.id, agentId: 'pero', generation: stored.generation }
+      ctx.threadService.getMainThread.mockResolvedValue(main)
+      ctx.threadService.getThread.mockResolvedValue(main)
+      db.insert(strongholdRooms).values({ id: 'room-1', name: '客厅', facilityId: 1 }).run()
+      db.insert(groupChatRooms).values({ id: 'room-1', name: '客厅', creatorId: 'system' }).run()
+      db.insert(agentLocations).values({ agentId: 'pero', roomId: 'room-1' }).run()
+      const chat = new GroupChatService(db, () => true)
+      ctx.groupChatService = chat as never
+      const source = chat.commitMessage({ roomId: 'room-1', senderId: 'user', role: 'user', content: '上次一起读的小猫故事讲到哪里了' })
+      // 来源超出可见历史窗口时，执行器仍读取原消息作为本次线索。
+      vi.spyOn(chat, 'getVisibleHistoryByBudget').mockResolvedValue([])
+      const life = new StrongholdLifeService(db, chat, () => true, () => true)
+      const get = vi.fn().mockResolvedValue({ currentGoal: '和伙伴分享昨晚的梦', privateFacts: '尚未分享的私人细节' })
+      await createTurnService(ctx, life, { get }).execute('room-1', 'pero', undefined, {
+        autonomous, sourceMessageId: autonomous ? undefined : source.id,
+      })
+      expect(ctx.contextCompiler.compile).toHaveBeenCalledWith(stored.id, 'pero', expect.objectContaining({ retrievalQuery: query }))
+      const compiledOptions = ctx.contextCompiler.compile.mock.calls[0]?.[2] as unknown as { currentInput: { content: string } }
+      expect(compiledOptions.currentInput.content).toContain('当前据点房间：客厅')
+    } finally {
+      closeDrizzleConnection(db)
+    }
   })
 
   it('据点回合应只注入其他在场角色的公开档案并转义 XML', async () => {

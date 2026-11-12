@@ -1857,3 +1857,4 @@ export const conversationQueueItems = sqliteTable(
   ],
 )
 export { homeRecords } from './homeSchema'
+export { strongholdLifeRecords } from './strongholdLifeSchema'

@@ -1,0 +1,188 @@
+{
+  "id": "stronghold-life",
+  "name": "据点生活",
+  "version": "1.0.0",
+  "author": "infOS Team",
+  "description": "共同活动、邀请和事件关注。",
+  "type": "tool",
+  "entry": "index.ts",
+  "category": "core",
+  "platforms": [
+    "windows",
+    "linux",
+    "darwin",
+    "docker"
+  ],
+  "userCopy": {
+    "stronghold_activity": {
+      "label": "共同活动",
+      "description": "发起活动、邀请伙伴并维护共同进展。"
+    },
+    "stronghold_watch": {
+      "label": "持续关注",
+      "description": "等到关心的事情发生后再接续。"
+    }
+  },
+  "tools": [
+    {
+      "name": "stronghold_activity",
+      "description": "list 查询当前状态与修订。管理当前据点的共同活动。create 发起，update 更新进展，join/leave 调整自己的参与，pause/resume/end 管理活动，invite 邀请在场伙伴，respond 回应收到的邀请。更新操作提供现场中的 id 和 revision，回应邀请使用邀请的 id 和 revision。",
+      "display": {
+        "label": "共同活动",
+        "icon": "users",
+        "color": "purple",
+        "style": "stronghold"
+      },
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "action": {
+            "type": "string",
+            "enum": [
+              "list",
+              "create",
+              "update",
+              "join",
+              "leave",
+              "pause",
+              "resume",
+              "end",
+              "invite",
+              "respond"
+            ]
+          },
+          "id": {
+            "type": "string"
+          },
+          "revision": {
+            "type": "integer",
+            "minimum": 1
+          },
+          "title": {
+            "type": "string",
+            "maxLength": 120
+          },
+          "description": {
+            "type": "string",
+            "maxLength": 2000
+          },
+          "progress": {
+            "type": "string",
+            "maxLength": 2000
+          },
+          "agentIds": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "maxItems": 5
+          },
+          "memberStatus": {
+            "type": "string",
+            "enum": [
+              "participating",
+              "observing",
+              "away",
+              "left"
+            ]
+          },
+          "response": {
+            "type": "string",
+            "enum": [
+              "accepted",
+              "declined",
+              "later",
+              "cancelled"
+            ]
+          },
+          "expiresAt": {
+            "type": "integer",
+            "description": "邀请有效截止的 Unix 毫秒时间，可省略。"
+          }
+        },
+        "required": [
+          "action"
+        ],
+        "additionalProperties": false
+      }
+    },
+    {
+      "name": "stronghold_watch",
+      "description": "list 查询当前状态与修订。登记或取消自己的持续关注。程序匹配真实消息、被提及、成员出入、环境字段、邀请回应、活动变化或约定到期，再将相关变化合并接续。intent 保存到时需要考虑的事情。condition 中 message/arrival/departure 提供 actorId，environment 提供 key，activity/invitation 提供 objectId，time 提供 Unix 毫秒 at。",
+      "display": {
+        "label": "持续关注",
+        "icon": "clock",
+        "color": "purple",
+        "style": "stronghold"
+      },
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "action": {
+            "type": "string",
+            "enum": [
+              "list",
+              "set",
+              "cancel"
+            ]
+          },
+          "id": {
+            "type": "string"
+          },
+          "revision": {
+            "type": "integer",
+            "minimum": 1
+          },
+          "intent": {
+            "type": "string",
+            "maxLength": 1000
+          },
+          "continuous": {
+            "type": "boolean"
+          },
+          "expiresAt": {
+            "type": "integer"
+          },
+          "condition": {
+            "type": "object",
+            "properties": {
+              "kind": {
+                "type": "string",
+                "enum": [
+                  "message",
+                  "mentioned",
+                  "arrival",
+                  "departure",
+                  "environment",
+                  "invitation",
+                  "activity",
+                  "time"
+                ]
+              },
+              "actorId": {
+                "type": "string"
+              },
+              "objectId": {
+                "type": "string"
+              },
+              "key": {
+                "type": "string"
+              },
+              "at": {
+                "type": "integer"
+              }
+            },
+            "required": [
+              "kind"
+            ],
+            "additionalProperties": false
+          }
+        },
+        "required": [
+          "action"
+        ],
+        "additionalProperties": false
+      }
+    }
+  ]
+}

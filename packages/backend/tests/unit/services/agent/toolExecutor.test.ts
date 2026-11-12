@@ -139,7 +139,9 @@ describe('RegistryToolExecutor', () => {
     const executor = new RegistryToolExecutor(registry)
     const approvals = new ApprovalService()
     executor.setPolicyRuntime(new PolicyEngine(), approvals)
-    approvals.onRequested((request) => approvals.resolve(request.id, 'allow_once'))
+    approvals.onRequested((request) => {
+      approvals.resolve(request.id, 'allow_once')
+    })
     const context = {
       agentId: 'pero',
       threadId: 'nit-chat',

@@ -15,7 +15,7 @@ import { t as __t } from '../../lib/i18n'
  */
 
 import type { BuiltinTool } from '../index'
-import { normalizeCharacterState, type NextAgentActivity } from '@infos/shared'
+import { normalizeCharacterState, parseStrongholdParticipation, type NextAgentActivity } from '@infos/shared'
 import type { ToolContext } from '../../services/agent/toolRegistry'
 import { toolFailure, toolSuccess } from '../../services/execution/toolResult'
 import { createLogger } from '../../lib/logger'
@@ -189,6 +189,14 @@ export const finishTaskTool: BuiltinTool = {
   name: 'finish_task',
 
   async execute(args, ctx) {
+    if (args.participation !== undefined) {
+      try {
+        if (ctx.channel !== 'group' || !ctx.sceneRoomId) throw new Error('STRONGHOLD_PARTICIPATION_INVALID')
+        parseStrongholdParticipation(args.participation)
+      } catch {
+        return toolFailure('STRONGHOLD_PARTICIPATION_INVALID', __t('server.tools', '请在据点提供有效的参与状态和发言目的。'))
+      }
+    }
     // 主线可以先独立发表消息，再结算执行；侧线和任务继续校验交付正文。
     const reply = typeof args.reply === 'string' ? args.reply.trim() : ''
     if (!reply && !ctx.conversation && ctx.channel !== 'group') {

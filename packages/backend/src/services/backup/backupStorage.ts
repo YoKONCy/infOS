@@ -5,6 +5,7 @@ import { randomUUID } from 'node:crypto'
 import { setTimeout as delay } from 'node:timers/promises'
 import Database from 'better-sqlite3'
 import { isSnapshotProgramPath, isSnapshotTransientPath } from '@infos/shared'
+import { removeObsoleteRetrievalState } from '../maintenance/obsoleteRetrievalState'
 
 export const BACKUP_STATE = '.backup-state'
 export const LOCAL_FILES = new Set([
@@ -180,6 +181,7 @@ export async function installBackupTree(
   receipt?: Record<string, unknown>,
 ): Promise<void> {
   await recoverBackupRestore(dataDir)
+  removeObsoleteRetrievalState(prepared)
   const id = randomUUID()
   const directory = path.join(dataDir, BACKUP_STATE, 'restore', id)
   const incoming = path.join(directory, 'incoming')

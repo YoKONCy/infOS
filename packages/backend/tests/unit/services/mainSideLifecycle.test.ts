@@ -12,6 +12,7 @@ import { DEFAULT_CHARACTER_STATE } from '@infos/shared'
 import { RuntimeStateService } from '../../../src/services/runtime/runtimeStateService'
 import { StrongholdRoundService } from '../../../src/services/stronghold/strongholdRoundService'
 import { ResetService } from '../../../src/services/maintenance/resetService'
+import { FlowStateRepository } from '../../../src/repositories/flowState.repo'
 
 let db: ReturnType<typeof createDrizzleConnection>
 let threads: ThreadRepository
@@ -22,6 +23,73 @@ beforeEach(() => {
 afterEach(() => closeDrizzleConnection(db))
 
 describe('主侧会话的数据生命周期', () => {
+  it.each(['prepare', 'execute'] as const)('据点在 %s 期间新增的回应接收者持续保留', async (stage) => {
+    db.insert(agentLocations).values([{ agentId: 'pero', roomId: 'living' }, { agentId: 'nana', roomId: 'living' }]).run()
+    const chat = new GroupChatService(db, () => true)
+    const message = await chat.sendMessage({ roomId: 'living', senderId: 'user', role: 'user', content: '大家聊聊', pairId: 'round', requestReplies: true })
+    let started!: () => void
+    let proceed!: () => void
+    const entered = new Promise<void>((resolve) => { started = resolve })
+    const gate = new Promise<void>((resolve) => { proceed = resolve })
+    const executed: string[] = []
+    const rounds = new StrongholdRoundService(
+      chat,
+      { getRoomAgents: async () => ['pero', 'nana'] } as never,
+      { decideNextTurn: async () => {
+        if (stage === 'prepare') { started(); await gate }
+        return { agentIds: ['pero'], reason: '接续伙伴' }
+      } } as never,
+      { execute: async (_room: string, agentId: string) => {
+        executed.push(agentId)
+        if (stage === 'execute' && agentId === 'pero') { started(); await gate }
+        return { summonedAgentIds: [] }
+      } } as never,
+      { listAgents: () => ['pero', 'nana'].map((id) => ({ id, isEnabled: true })) } as never,
+      { getThread: (id: string) => threads.getThread(id) } as never,
+      { broadcast: async () => {} } as never,
+    )
+    const running = rounds.kick(message.id)
+    await entered
+    try {
+      expect(await chat.requestRepliesTo(message.id, ['nana'], false)).toBe(true)
+    } finally {
+      proceed()
+      await running
+    }
+    expect(executed).toEqual(stage === 'prepare' ? ['nana'] : ['pero', 'nana'])
+    expect(chat.getReplyIntent(message.id)?.intent).toMatchObject({ status: 'completed', completed: executed, queue: [] })
+  })
+
+  it('逻辑导入降为侧线的旧亲历保留归档，新据点只读取当前主线', async () => {
+    const original = threads.ensureMainThread('pero')
+    db.insert(agentLocations).values({ agentId: 'pero', roomId: 'living' }).run()
+    const chat = new GroupChatService(db, () => true)
+    const old = await chat.sendMessage({ roomId: 'living', senderId: 'user', role: 'user', content: '归档经历', pairId: 'old' })
+    db.$client.prepare("UPDATE threads SET thread_kind='side' WHERE id=?").run(original.id)
+    const current = threads.ensureMainThread('pero')
+
+    expect(await chat.getVisibleHistoryPairs('pero')).toEqual([])
+    expect(await chat.requestRepliesTo(old.id, ['pero'])).toBe(false)
+    await chat.sendMessage({ roomId: 'living', senderId: 'user', role: 'user', content: '当前经历', pairId: 'new' })
+    expect((await chat.getVisibleHistoryPairs('pero')).map((item) => item.content)).toEqual(['当前经历'])
+    expect((await threads.queryExperiences(current.id)).map((item) => item.content)).toEqual(['当前经历'])
+    expect((await threads.queryExperiences(original.id)).map((item) => item.content)).toEqual(['归档经历'])
+    expect((await chat.getHistory('living')).map((item) => item.content)).toEqual(['归档经历', '当前经历'])
+  })
+
+  it('同一交流的其他消息仍有效时，已撤回来源阻止迟到回复提交', async () => {
+    const main = threads.ensureMainThread('pero')
+    const chat = new GroupChatService(db, () => true)
+    await chat.sendMessage({ roomId: 'living', senderId: 'user', role: 'user', content: '共同话题', pairId: 'round' })
+    const source = await chat.sendMessage({ roomId: 'living', senderId: 'nana', role: 'assistant', content: '待撤回的问题', pairId: 'round' })
+    db.update(groupChatMessages).set({ status: 'deleted' }).where(eq(groupChatMessages.id, source.id)).run()
+
+    await expect(chat.sendMessage({ roomId: 'living', senderId: 'pero', role: 'assistant', content: '迟到回复', pairId: 'round',
+      execution: { threadId: main.id, generation: 1, sourcePairId: 'round', sourceMessageId: source.id },
+    })).rejects.toThrow('STRONGHOLD_SOURCE_WITHDRAWN')
+    expect((await chat.getHistory('living')).map((item) => item.content)).toEqual(['共同话题'])
+  })
+
   it('角色进入其他据点后，模型历史按当前房间选择自己的亲历', async () => {
     threads.ensureMainThread('pero')
     db.insert(groupChatRooms).values([
@@ -193,7 +261,12 @@ describe('主侧会话的数据生命周期', () => {
     expect((await threads.queryExperiences(nana.id)).map((item) => item.content)).toEqual(['第一条'])
     const restored = new GroupChatService(db, (id) => ['pero', 'nana'].includes(id))
     expect((await restored.getVisibleHistoryPairs('nana')).map((item) => item.content)).toEqual(['第一条'])
+    const flow = new FlowStateRepository(db)
+    await flow.save({ threadId: pero.id, agentId: 'pero', currentGoal: '整理客厅', generation: 1 })
+    await flow.save({ threadId: nana.id, agentId: 'nana', currentGoal: '继续读书', generation: 1 })
     await threads.resetMainThread(pero.id)
+    expect(await flow.get(pero.id, 'pero')).toBeNull()
+    expect(await flow.get(nana.id, 'nana')).toMatchObject({ currentGoal: '继续读书' })
     expect(await threads.queryExperiences(pero.id)).toEqual([])
     expect((await threads.queryExperiences(nana.id)).map((item) => item.content)).toEqual(['第一条'])
     await group.sendMessage({ roomId: 'living', senderId: 'user', role: 'user', content: '新代次', pairId: 'new-round' })

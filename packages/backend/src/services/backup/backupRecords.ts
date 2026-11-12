@@ -18,6 +18,7 @@ export const MODULE_TABLES: Partial<Record<BackupModule, string[]>> = {
     'agent_experiences',
     'group_chat_messages',
     'group_chat_rooms',
+    'stronghold_life_records',
     'social_messages',
   ],
   memory: [
@@ -248,6 +249,9 @@ export function selectBackupRecords(
         rows =
           table === 'group_chat_messages'
             ? rows.filter((row) => (!selection.agentIds.length && !selection.threadIds.length) || sceneMessages.has(Number(row.id)))
+            : table === 'stronghold_life_records'
+              ? rows.filter((row) => (!selection.agentIds.length && !selection.threadIds.length) ||
+                  threads.has(String(row.thread_id)) || (row.thread_id === null && sceneRooms.has(String(row.room_id))))
             : table === 'group_chat_rooms'
               ? rows.filter((row) => (!selection.agentIds.length && !selection.threadIds.length) || sceneRooms.has(String(row.id)))
           : table === 'social_messages'
@@ -296,6 +300,15 @@ interface Column {
 }
 const columns = (db: Database.Database, table: string) =>
   db.prepare(`PRAGMA table_info(${quote(table)})`).all() as Column[]
+
+/** 心流以会话与角色的唯一索引定位记录，其余备份表使用声明的主键。 */
+function recordKeys(table: string, fields: Column[]): Column[] {
+  const keys = fields.filter((column) => column.pk ||
+    (table === 'flow_states' && ['thread_id', 'agent_id'].includes(column.name)))
+  if (!keys.length) throw new Error('BACKUP_TABLE_UNSUPPORTED')
+  return keys
+}
+
 function naturalKeys(db: Database.Database, table: string): string[][] {
   const indices = db.prepare(`PRAGMA index_list(${quote(table)})`).all() as {
     name: string
@@ -343,10 +356,7 @@ function sameRecordContext(source: BackupRow, target: BackupRow): boolean {
   ].every((key) => !(key in source) || source[key] === target[key])
 }
 export function recordConflicts(db: Database.Database, table: string, rows: BackupRow[]): number {
-  const keys = columns(db, table)
-    .filter((column) => column.pk)
-    .map((column) => column.name)
-  if (!keys.length) throw new Error('BACKUP_TABLE_UNSUPPORTED')
+  const keys = recordKeys(table, columns(db, table)).map((column) => column.name)
   const query = db.prepare(
     `SELECT * FROM ${quote(table)} WHERE ${keys.map((key) => `${quote(key)} IS ?`).join(' AND ')}`,
   )
@@ -400,7 +410,7 @@ export function mergeBackupRecords(
   for (const [table, rows] of tables) {
     if (!TABLES.has(table) || !hasTable(db, table)) throw new Error('BACKUP_TABLE_UNSUPPORTED')
     const cols = columns(db, table)
-    const keys = cols.filter((column) => column.pk)
+    const keys = recordKeys(table, cols)
     primary.set(table, keys)
     for (const row of rows)
       if (
@@ -470,6 +480,8 @@ export function mergeBackupRecords(
   const referenceTable: Record<string, string> = {
     source_message_id: 'group_chat_messages',
     sourceMessageId: 'group_chat_messages',
+    causedByMessageId: 'group_chat_messages',
+    openingMessageId: 'group_chat_messages',
     afterMessageId: 'group_chat_messages',
     lastSceneMessageId: 'group_chat_messages',
     experienceId: 'agent_experiences',
@@ -482,6 +494,8 @@ export function mergeBackupRecords(
     parent_id: 'thread_messages',
   }
   function rewrite(value: unknown, key = ''): unknown {
+    if (['responseContexts', 'watchIdsByAgent'].includes(key) && value && typeof value === 'object' && !Array.isArray(value))
+      return Object.fromEntries(Object.entries(value).map(([id, entry]) => [policy.agentTargets[id] ?? id, rewrite(entry)]))
     if (['messageRevisions', 'memorySourceRevisions'].includes(key) && value && typeof value === 'object' && !Array.isArray(value)) {
       return Object.fromEntries(Object.entries(value).map(([id, revision]) => [
         String(numbers.get('thread_messages')?.get(Number(id)) ?? id), revision,
@@ -558,8 +572,28 @@ export function mergeBackupRecords(
           const metadata = JSON.parse(row.metadata_json)
           if (metadata.replyIntent) {
             metadata.replyIntent.status = 'completed'
+            metadata.replyIntent.queue = []
+            metadata.replyIntent.deferredAgentIds = []
+            delete metadata.replyIntent.retryAt
+            delete metadata.replyIntent.deferredUntil
             row.metadata_json = JSON.stringify(metadata)
           }
+        }
+        if (table === 'stronghold_life_records' && typeof row.data_json === 'string') {
+          const data = JSON.parse(row.data_json)
+          // 逻辑导入保留生活资料，认知接续由导入后的有效主线重新确认。
+          if (row.kind === 'watch') { data.status = 'cancelled'; data.pendingMessageIds = []; delete data.requestMessageId; delete data.processingMessageIds }
+          if (row.kind === 'invitation' && ['pending', 'later'].includes(data.status)) data.status = 'cancelled'
+          if (row.kind === 'exchange') data.status = 'closed'
+          if (row.kind === 'exchange') {
+            const original = JSON.parse(String(source.data_json))
+            data.lastMessageId = numbers.get('group_chat_messages')?.get(original.lastMessageId) ?? original.lastMessageId
+          }
+          if (row.kind === 'activity' && data.status !== 'ended') {
+            data.status = 'paused'
+            data.members = data.members.map((member: { status: string }) => ({ ...member, status: member.status === 'left' ? 'left' : 'away' }))
+          }
+          row.data_json = JSON.stringify(data)
         }
         if (table === 'configs') {
           const key = String(row.key)

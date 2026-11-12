@@ -51,6 +51,8 @@ Social、Arca、Coding等Application通过Realm Capability、Shared Port和Bound
 
 对话栏的 Skills 选择通过 `GET/PUT /api/chat/threads/:id/skills` 读写，持久化于 `threads.enabled_skills_json`，默认 `[]`。接口只管理普通 desktop 会话，在会话空闲时允许保存，并校验所选 ID 属于角色与 Channel 当前可用的技能；旧库启动时补齐字段。导入、安装或角色授权使技能成为候选，不会自动加入会话。
 
+本地导入由 `SkillLoader.importFromPath` 校验目录与清单，将资源复制到用户技能目录后重建索引。同步目录复制显式传入 `filter`，沿用 Node 的逐项遍历、链接与错误处理语义。此路径用于兼容 Windows / Node 22.23.4 环境下可复现的原生目录复制进程崩溃。
+
 `CapabilityGate.resolve` 省略选择参数时只查询候选清单；传入会话选择时，按 ID 与角色授权取交集，直接读取完整 `SKILL.md` 正文。`ContextCompiler` 继续使用 `skill_menu` 变量向框架提供这些完整指引，保留已有框架的引用；正文作为数据插入，不递归执行模板。极简模式、ambient、follow_up 与 Realm 执行均不装配这段指引。切换选择会释放会话热轨迹与保存的工具观察缓存，后续轮次按当前选择重编译，历史消息保持原样。
 
 `load_skill`、临时解锁工具和加载后的工具菜单刷新路径已移除。技能的 `requiredTools`、`allowed-tools` 与子技能依赖只声明需求，不授予额外权限或自动启用其他技能。已选技能的 references/assets/scripts 可通过 `skill_list_resources`、`skill_read_resource` 按需读取；未选择技能时不提供这些定义，执行器在 Hook 改写参数后还会复核所选技能与角色授权。派发后台任务时复制来源会话的 Skills 选择到独立 Thread，后续修改来源会话不追溯更改已派发任务。

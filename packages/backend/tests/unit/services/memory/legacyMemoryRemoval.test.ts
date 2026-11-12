@@ -1,11 +1,12 @@
 import Database from 'better-sqlite3'
-import { existsSync, mkdirSync, rmSync, writeFileSync } from 'node:fs'
-import { join } from 'node:path'
+import { existsSync, mkdirSync, rmSync, symlinkSync, writeFileSync } from 'node:fs'
+import { dirname, join } from 'node:path'
 import { tmpdir } from 'node:os'
 import { afterEach, describe, expect, it } from 'vitest'
 import { closeDrizzleConnection, createDrizzleConnection } from '@infos/backend/database'
 import { MemoryStoreRegistry } from '@infos/backend/repositories/storeRegistry'
 import type { PathResolver } from '@infos/backend/core/pathResolver'
+import { removeObsoleteRetrievalState } from '@infos/backend/services/maintenance/obsoleteRetrievalState'
 
 const temporaryPaths: string[] = []
 
@@ -20,6 +21,25 @@ afterEach(() => {
 })
 
 describe('旧长记忆链路清理', () => {
+  it('退役检索状态按受管路径清理，工作区同名文件与目录链接按原归属保存', () => {
+    const root = join(process.env.PERO_DATA_DIR!, `obsolete-retrieval-${Date.now()}`)
+    temporaryPaths.push(root)
+    const data = join(root, 'data')
+    const retired = ['agent_pero/rnn_desktop.bin', 'agent_nana/rnn_group.bin',
+      'shared/rnn_proj.bin', 'shared/rnn_output.bin', 'shared/rnn_mingru.bin']
+    const retained = ['agent_pero/memory.tdb', 'agent_pero/workspace/rnn_desktop.bin',
+      'shared/rnn_custom.bin', 'principals/pero/workspace/rnn_mingru.bin', 'outside/rnn_desktop.bin']
+    for (const relative of [...retired, ...retained]) {
+      const file = join(data, relative)
+      mkdirSync(dirname(file), { recursive: true })
+      writeFileSync(file, relative)
+    }
+    symlinkSync(join(data, 'outside'), join(data, 'agent_link'), 'junction')
+    removeObsoleteRetrievalState(data)
+    for (const relative of retired) expect(existsSync(join(data, relative))).toBe(false)
+    for (const relative of retained) expect(existsSync(join(data, relative))).toBe(true)
+  })
+
   it('既有 SQLite 连接时应物理删除全部旧记忆表', () => {
     const root = join(tmpdir(), `infos-legacy-db-${Date.now()}-${Math.random()}`)
     temporaryPaths.push(root)

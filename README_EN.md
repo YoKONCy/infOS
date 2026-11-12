@@ -364,9 +364,7 @@ Vector and graph storage use the upstream **TriviumDB** npm package; TypeScript 
                                             ├─ SA-PPR diffusion          node count/token budget enforced
                                             ├─ FISTA residual search
                                             ├─ DPP diversity
-                                            ├─ ContextRNN bias
-                                            ├─ Leiden community boost
-                                            └─ Online feedback learning
+                                            └─ Leiden community boost
                          │                         │
                          └────────────┬────────────┘
                                       ▼
@@ -409,64 +407,31 @@ infOS separates “automatic memory recall” from “Agent-initiated graph quer
 | **Automatic RAG** | Context compilation for each turn | Vector + BM25 by default; optional SA-PPR pipeline under Core Memory → RAG Configuration → Advanced Retrieval | Always adds the physical timeline tail and each hit's direct predecessor without consuming `top_k` |
 | **Active graph query** | `query_event_notes` tool | Deterministic BFS | Strict direction, edge-label, maximum-depth, maximum-node, and return-token budgets; unaffected by the SA-PPR switch |
 
-Advanced automatic RAG calls TriviumDB `searchAdvanced()`. `Enable SA-PPR advanced pipeline` is the master switch. When it is off, both frontend and backend force FISTA, DPP, ContextRNN, Leiden, and the feedback loop off.
+Advanced automatic RAG calls TriviumDB `searchAdvanced()`. `Enable SA-PPR advanced pipeline` is the master switch, with separate switches for FISTA, DPP, and Leiden.
 
-| Module | Purpose | Configuration relationship |
-| :--- | :--- | :--- |
-| SA-PPR | Diffuse from vector anchors through event relations to recall graph-related but semantically distant events | Master switch; diffusion depth, teleport probability, and minimum score are configurable |
-| FISTA | Recover weak residual signals unexplained by the base candidates | Depends on SA-PPR; independently switchable |
-| DPP | Reduce semantic redundancy among final candidates | Depends on SA-PPR; independently switchable |
-| ContextRNN | Generate an Embedding-sized `diffusionBias` from the current dialog trajectory | Depends on SA-PPR; independently switchable |
-| Leiden | Discover event communities and boost them using the Query or ContextRNN direction | Depends on SA-PPR; independently switchable |
-| Feedback loop | After a reply is successfully persisted, train minGRU and output weights from implicit memory-use signals | Depends on SA-PPR; independently switchable |
+| Module | Responsibility | Configuration |
+| --- | --- | --- |
+| SA-PPR | Retrieve through the event graph using the current query vector | Advanced pipeline master switch |
+| FISTA | Supplement weaker associations from residual signals | Requires SA-PPR; independently switchable |
+| DPP | Reduce semantic repetition among retrieved results | Requires SA-PPR; independently switchable |
+| Leiden | Discover event communities and weight them using the current query vector | Requires SA-PPR; independently switchable |
 
 <details>
-<summary><b>Go deeper: ContextRNN, Leiden, and the retrieval feedback loop</b></summary>
+<summary><b>Go deeper — query-driven advanced retrieval</b></summary>
 
-### Three Cognitive Components of Advanced Automatic RAG
-
-Each component handles one thing: **ContextRNN** senses "what we're talking about now", **Leiden clustering** automatically groups memories by topic, and the **feedback loop** corrects itself afterward.
-
-#### A. ContextRNN — Dialog Trajectory Awareness (minGRU)
-
-It acts as a continuously updated dialog-direction sensor. When SA-PPR and ContextRNN are enabled, each automatic RAG query updates a lightweight **minGRU** hidden state (256 dimensions), then projects it into a diffusion bias matching the current Embedding dimension:
-
-```
-  z_t = σ(W_z @ x_t)                    Gate
-  h̃_t = W_h @ x_t                      Candidate state
-  h_{t+1} = (1 - z_t) ⊙ h_t + z_t ⊙ h̃_t   State update
-```
-
-- **Generate diffusion bias**: `diffusionBias = W_out × h_t`, passed to TriviumDB to steer SA-PPR diffusion
-- **Dynamic input dimension**: Projection matrices follow the current Memory Store Embedding dimension instead of assuming 1536
-- **State persistence**: Checkpoint every minute and save hidden states plus online-learned weights on shutdown
-- **Implementation**: Retrieval-domain TypeScript minGRU + `ContextRnn`
-
-#### B. Leiden Clustering — Automatic Community Discovery
-
-Automatic RAG can call TriviumDB `leidenCluster()` to discover event communities. It measures each centroid against the Query/ContextRNN direction and uses that affinity as an advanced-candidate ranking boost. When ContextRNN is disabled, Leiden still works independently with the Query Embedding.
-
-#### C. Retrieval Feedback Loop — Implicit Signal Collection
-
-Feedback applies only to advanced automatic-RAG hits for the current Pair. Traces are isolated by Pair ID so concurrent Threads cannot overwrite each other. After the Assistant reply is successfully persisted, the system derives implicit positive or negative feedback from whether event topics/participants appear in the reply, then updates minGRU and the output matrix online. Ephemeral turns do not train, and training failures never fail an already completed reply.
-
-#### Advanced Automatic-RAG Real-time Flow
+Leiden clustering uses TriviumDB `leidenCluster()` to obtain event communities and their centroids. Affinity between the current query vector and those centroids contributes to candidate ranking. Each query reads the current retrieval configuration. Retrieval revisions invalidate in-flight results when memories are deleted or restored.
 
 ```text
-  User input ──→ Query Embedding
-                 ├─ Optional ContextRNN update and diffusionBias
-                 ├─ TriviumDB searchAdvanced
-                 │  ├─ Vector/text anchoring
-                 │  ├─ Optional FISTA
-                 │  ├─ SA-PPR graph diffusion
-                 │  └─ Optional DPP
-                 ├─ Optional Leiden community boost
-                 ├─ Select top_k
-                 ├─ Add timeline tail and direct predecessors
-                 └─ Prompt injection → LLM → optional Pair-level feedback training
+Current query → Embedding → searchAdvanced()
+                              ├─ SA-PPR graph diffusion
+                              ├─ Optional FISTA residual expansion
+                              └─ Optional DPP diversity selection
+                            → Optional Leiden community weighting
+                            → Timeline supplements and token-budget selection
+                            → ContextCompiler assembly
 ```
 
-> This flow belongs only to automatic RAG. `query_event_notes` always uses deterministic BFS and never passes through ContextRNN, SA-PPR, Leiden, FISTA, DPP, or feedback training.
+The `query_event_notes` tool performs deterministic BFS graph queries with edge-type, direction, and output-budget controls.
 
 </details>
 

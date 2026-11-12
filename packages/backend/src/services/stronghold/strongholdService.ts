@@ -36,6 +36,25 @@ type FacilityRow = typeof strongholdFacilities.$inferSelect
 type RoomRow = typeof strongholdRooms.$inferSelect
 type LocationRow = typeof agentLocations.$inferSelect
 type ButlerRow = typeof butlerConfigs.$inferSelect
+export interface StrongholdOperationSource {
+  agentId?: string
+  threadId: string
+  generation?: number
+  pairId?: string
+  sourceMessageId?: number
+  operationId?: string
+  signal?: AbortSignal
+}
+export interface StrongholdSceneChange {
+  roomId: string
+  actorId: string
+  kind: 'arrival' | 'departure' | 'environment'
+  key?: string
+  before?: unknown
+  after?: unknown
+  audience?: string[]
+  source?: StrongholdOperationSource
+}
 
 export interface CreateFacilityInput {
   name: string
@@ -54,6 +73,8 @@ export interface CreateRoomInput {
 // ── Service ──
 
 export class StrongholdService {
+  private onLifeChange?: (change: StrongholdSceneChange) => void
+  setLifeLifecycle(callback: (change: StrongholdSceneChange) => void): void { this.onLifeChange = callback }
   constructor(
     private db: DrizzleDb,
     private isRegisteredAgent: (agentId: string) => boolean,
@@ -283,17 +304,19 @@ export class StrongholdService {
 
   // ─── 环境变量 ───
 
-  async updateEnvironment(roomId: string, key: string, value: unknown): Promise<void> {
+  async updateEnvironment(roomId: string, key: string, value: unknown, source?: StrongholdOperationSource): Promise<void> {
     const room = await this.getRoom(roomId)
     if (!room) throw new AppError('NOT_FOUND', { message: `房间 ${roomId} 不存在` })
 
-    const env = JSON.parse(room.environmentJson ?? '{}') as Record<string, unknown>
-    env[key] = value
-
-    await this.db
-      .update(strongholdRooms)
-      .set({ environmentJson: JSON.stringify(env) })
-      .where(eq(strongholdRooms.id, roomId))
+    this.db.transaction((tx) => {
+      const current = tx.select().from(strongholdRooms).where(eq(strongholdRooms.id, roomId)).get()!
+      const env = JSON.parse(current.environmentJson ?? '{}') as Record<string, unknown>
+      const before = env[key]
+      if (JSON.stringify(before) === JSON.stringify(value)) return
+      env[key] = value
+      tx.update(strongholdRooms).set({ environmentJson: JSON.stringify(env) }).where(eq(strongholdRooms.id, roomId)).run()
+      this.onLifeChange?.({ roomId, actorId: 'user', kind: 'environment', key, before, after: value, source })
+    })
   }
 
   // ─── Agent 位置 ───
@@ -346,7 +369,7 @@ export class StrongholdService {
     }
   }
 
-  async moveAgent(agentId: string, roomId: string): Promise<LocationRow> {
+  async moveAgent(agentId: string, roomId: string, source?: StrongholdOperationSource): Promise<LocationRow> {
     this.requireRegisteredAgent(agentId)
     const room = await this.getRoom(roomId)
     if (!room) throw new AppError('NOT_FOUND', { message: `房间 ${roomId} 不存在` })
@@ -358,19 +381,28 @@ export class StrongholdService {
 
     // 位置与成员资格一起提交，消息事务据此固定实际在场者。
     const location = this.db.transaction((tx) => {
+      const previous = tx.select().from(agentLocations).where(eq(agentLocations.agentId, agentId)).get()
+      const previousAudience = previous ? tx.select({ agentId: agentLocations.agentId }).from(agentLocations)
+        .where(eq(agentLocations.roomId, previous.roomId)).all().map((entry) => entry.agentId) : []
       const membership = tx.select().from(groupChatMembers).where(and(
         eq(groupChatMembers.agentId, agentId),
         eq(groupChatMembers.roomId, roomId),
       )).get()
       tx.delete(groupChatMembers).where(eq(groupChatMembers.agentId, agentId)).run()
       tx.insert(groupChatMembers).values({ roomId, agentId, role: membership?.role ?? 'member' }).run()
-      return tx.insert(agentLocations)
+      const updated = tx.insert(agentLocations)
         .values({ agentId, roomId })
         .onConflictDoUpdate({
           target: agentLocations.agentId,
           set: { roomId, updatedAt: sql`datetime('now', 'localtime')` },
         })
         .returning().get()!
+      if (previous?.roomId !== roomId) {
+        if (previous) this.onLifeChange?.({ roomId: previous.roomId, actorId: agentId, kind: 'departure',
+          before: previous.roomId, after: roomId, audience: previousAudience, source })
+        this.onLifeChange?.({ roomId, actorId: agentId, kind: 'arrival', before: previous?.roomId, after: roomId, source })
+      }
+      return updated
     })
 
     logger.debug(__t('logs.stronghold', 'Agent {0} 移动到房间 {1}', [agentId, room.name]))

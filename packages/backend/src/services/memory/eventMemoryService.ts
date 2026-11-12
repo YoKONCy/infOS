@@ -18,10 +18,8 @@ import type {
 import type { TransactionOperation } from 'triviumdb'
 import { isMemoryBackgroundEnabled } from '@infos/shared'
 import type { EmbeddingService } from '../embedding/embeddingService'
-import type { ContextRnnRuntime } from '../retrieval/contextRnnRuntime'
 import {
   DEFAULT_MEMORY_RUNTIME_CONFIG,
-  isContextRnnFeedbackEnabled,
   type MemoryRuntimeConfig,
 } from './memoryRuntimeConfig'
 import type { MemoryStoreRegistry } from '../../repositories/storeRegistry'
@@ -103,16 +101,6 @@ export class AutomaticRagStageError extends Error {
   }
 }
 
-export interface AutomaticRagTrace {
-  agentId: string
-  channel: string
-  query: string
-  queryEmbedding: number[]
-  notes: EventNote[]
-  contextBias?: Float32Array
-  rnnGeneration?: number
-}
-
 export class EventMemoryService {
   private packageHooks?: import('../../packages/packageAgentFlow').PackageFlowEmitter
   setPackageHooks(hooks: import('../../packages/packageAgentFlow').PackageFlowEmitter): void {
@@ -130,8 +118,6 @@ export class EventMemoryService {
   }
   invalidateForDeletion(): void {
     this.retrievalRevision++
-    this.automaticRagTraces.clear()
-    this.contextRnnRuntime?.invalidate()
   }
   async restore(id: string): Promise<void> {
     const note = await this.repo.findById(id)
@@ -155,9 +141,7 @@ export class EventMemoryService {
   }
   private nextTdbId?: number
   private onCommitted?: (note: EventNote) => void | Promise<void>
-  private contextRnnRuntime?: ContextRnnRuntime
   private getRuntimeConfig?: () => Promise<MemoryRuntimeConfig>
-  private automaticRagTraces = new Map<string, AutomaticRagTrace>()
 
   constructor(
     private repo: EventNoteRepository,
@@ -169,70 +153,8 @@ export class EventMemoryService {
     this.onCommitted = listener
   }
 
-  setAdvancedRetrieval(
-    contextRnnRuntime: ContextRnnRuntime,
-    getRuntimeConfig: () => Promise<MemoryRuntimeConfig>,
-  ): void {
-    this.contextRnnRuntime = contextRnnRuntime
+  setRuntimeConfigProvider(getRuntimeConfig: () => Promise<MemoryRuntimeConfig>): void {
     this.getRuntimeConfig = getRuntimeConfig
-  }
-
-  /** 配置保存后立即停用 RNN，清除不能继续用于训练的旧检索轨迹。 */
-  syncAdvancedRetrievalConfig(config: MemoryRuntimeConfig): void {
-    const advanced = this.embeddings.isAvailable
-      ? config.advanced
-      : { ...config.advanced, enableContextRnn: false, enableFeedback: false }
-    this.contextRnnRuntime?.configure(advanced)
-    if (!isContextRnnFeedbackEnabled(advanced)) this.automaticRagTraces.clear()
-  }
-
-  takeAutomaticRagTrace(traceId: string): AutomaticRagTrace | undefined {
-    const trace = this.automaticRagTraces.get(traceId)
-    this.automaticRagTraces.delete(traceId)
-    return trace
-  }
-
-  async applyRetrievalFeedback(traceId: string, reply: string): Promise<void> {
-    const trace = this.takeAutomaticRagTrace(traceId)
-    if (!trace || !this.embeddings.isAvailable || !isMemoryBackgroundEnabled(this.background, trace.agentId)) return
-    const backgroundSignal = this.background?.agentSignal?.(trace.agentId) ?? this.background?.signal
-    const runtime = this.contextRnnRuntime
-    if (!runtime || !this.getRuntimeConfig) return
-    const { agentId, channel } = trace
-    const beforeLoad = runtime.generation
-    const config = await this.getRuntimeConfig()
-    if (
-      runtime.generation !== beforeLoad ||
-      !this.embeddings.isAvailable ||
-      backgroundSignal?.aborted
-    )
-      return
-    this.syncAdvancedRetrievalConfig(config)
-    if (!runtime.feedbackEnabled || trace.rnnGeneration === undefined) return
-    const rnn = runtime.peek(trace.rnnGeneration)
-    if (!rnn) return
-    const normalizedReply = reply.toLocaleLowerCase()
-    const positive = trace.notes.some((note) => {
-      const terms = [...note.topics, ...note.participants]
-        .map((term) => term.trim().toLocaleLowerCase())
-        .filter((term) => term.length >= 2)
-      return terms.some((term) => normalizedReply.includes(term))
-    })
-    const target =
-      trace.contextBias && trace.notes[0]
-        ? await this.safeVector(trace.notes[0].narrative)
-        : undefined
-    // Embedding 请求期间可能关闭管线；迟到反馈不得重新创建实例或修改已停用的权重。
-    if (backgroundSignal?.aborted || !runtime.feedbackEnabled || runtime.peek(trace.rnnGeneration) !== rnn) return
-    rnn.trainMinGru(agentId, channel, new Float32Array(trace.queryEmbedding), positive)
-    if (trace.contextBias && target) {
-      rnn.updateOutputWeights(
-        rnn.getHiddenState(agentId, channel),
-        trace.contextBias,
-        new Float32Array(target),
-        positive,
-      )
-    }
   }
 
   async create(
@@ -478,7 +400,6 @@ export class EventMemoryService {
     const store = this.stores.getAgentStore(note.agentId, 'main')
     const node = store.get<TdbEventPayload>(note.tdbId)
     if (node) store.updatePayload(note.tdbId, { ...node.payload, status: 'archived', operationId })
-    this.automaticRagTraces.clear()
     store.flush()
     await this.repo.markOperationCommitted(operationId)
   }
@@ -1001,7 +922,6 @@ export class EventMemoryService {
     query: string,
     topK = 10,
     channel = 'desktop',
-    traceId?: string,
     onProgress?: (progress: AutomaticRagProgress) => void | Promise<void>,
     options: AutomaticRagOptions = {},
   ): Promise<EventNote[]> {
@@ -1018,43 +938,23 @@ export class EventMemoryService {
     // 命中先去掉可见来源与重复正文，再截取 top_k，让空出的名额由后续候选递补。
     const refineHits = (ranked: EventNote[]) =>
       dedupeByNarrative(ranked.filter((note) => !visible(note))).slice(0, topK)
-    const runtime = this.contextRnnRuntime
-    const beforeLoad = runtime?.generation
     const config = this.getRuntimeConfig ? await this.getRuntimeConfig() : undefined
     if (stale()) return []
-    const configIsCurrent = beforeLoad === runtime?.generation
-    if (config && configIsCurrent) this.syncAdvancedRetrievalConfig(config)
-    const rnnGeneration = configIsCurrent ? runtime?.generation : undefined
     const advanced = config?.advanced
-    let queryEmbedding: number[] = []
-    let contextBias: Float32Array | undefined
-    let usedRnnGeneration: number | undefined
     let hits: EventNote[]
     // 直接前驱限额；只有基础管线的相关度门槛开启时才收紧。
     let maxPrevious = Number.POSITIVE_INFINITY
 
     if (advanced?.enableSaPpr && this.embeddings.isAvailable) {
       await onProgress?.({ stage: 'embedding', message: __t('server.memory', '正在拉取记忆……') })
-      queryEmbedding = await this.safeVector(query)
+      const queryEmbedding = await this.safeVector(query)
       if (stale()) return []
-      if (advanced.enableContextRnn && rnnGeneration !== undefined) {
-        const rnn = runtime?.acquire(rnnGeneration)
-        if (rnn) {
-          if (!options.preview) rnn.update(agentId, channel, queryEmbedding)
-          contextBias = rnn.generateBias(agentId, channel)
-          usedRnnGeneration = rnnGeneration
-        }
-      }
       const store = this.stores.ensureTextIndexReady(agentId, channel)
       await onProgress?.({
         stage: 'retrieval',
         message: __t('server.memory', '正在拉取记忆……'),
       })
       if (stale()) return []
-      if (usedRnnGeneration !== undefined && !runtime?.peek(usedRnnGeneration)) {
-        contextBias = undefined
-        usedRnnGeneration = undefined
-      }
       const advancedHits = store.searchAdvanced(queryEmbedding, {
         topK: Math.max(topK * 3, topK),
         expandDepth: advanced.expandDepth,
@@ -1065,10 +965,8 @@ export class EventMemoryService {
         enableDpp: advanced.enableDpp,
         enableTextHybridSearch: true,
         customQueryText: query,
-        diffusionBias: contextBias ? Array.from(contextBias) : undefined,
       })
       const rerankers = [
-        contextBias ? 'ContextRNN' : '',
         advanced.enableLeiden ? 'Leiden' : '',
         advanced.enableDpp ? 'DPP' : '',
       ].filter(Boolean)
@@ -1084,7 +982,7 @@ export class EventMemoryService {
       })
       if (stale()) return []
       const clusterBonus = advanced.enableLeiden
-        ? this.leidenClusterBonus(store, contextBias ?? new Float32Array(queryEmbedding))
+        ? this.leidenClusterBonus(store, new Float32Array(queryEmbedding))
         : new Map<number, number>()
       hits = advancedHits
         .sort(
@@ -1170,23 +1068,6 @@ export class EventMemoryService {
           budgeted.droppedCount,
         ]),
       )
-    if (
-      !options.preview &&
-      traceId &&
-      usedRnnGeneration !== undefined &&
-      runtime?.feedbackEnabled &&
-      runtime.peek(usedRnnGeneration)
-    ) {
-      this.automaticRagTraces.set(traceId, {
-        agentId,
-        channel,
-        query,
-        queryEmbedding,
-        notes: hits,
-        contextBias,
-        rnnGeneration: usedRnnGeneration,
-      })
-    }
     await onProgress?.({
       stage: 'completed',
       message: __t('server.memory', '记忆上下文已就绪，共注入 {0} 个事件', [notes.length]),

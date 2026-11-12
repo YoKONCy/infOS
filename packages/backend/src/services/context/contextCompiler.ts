@@ -301,15 +301,17 @@ export interface ContextCompileOptions {
   generationType?: import('@infos/shared').PromptGenerationType
   /** 临时输入也参加框架的深度编排，但不持久化到历史。 */
   currentInput?: LlmMessage
-  retrievalQuery?: string
+  /** null 表示本次没有检索线索，旧调用方的空字符串继续沿历史正文回退。 */
+  retrievalQuery?: string | null
   appendThreadMessages?: boolean
   /** 模型可用输入窗口；不足时优先逐轮移除最久远的工作上下文。 */
   maxInputTokens?: number
   /** 当前触发轮次；该pair只保留user原生API消息，不进入XML历史。 */
   currentPairId?: string
+  /** 本次表达素材与版本记录的执行身份。 */
+  expressionRunId?: string
   currentMessageId?: number
   excludeMessageIds?: number[]
-  retrievalTraceId?: string
   /** 请求级关闭跨Thread连续性；用于已有独立视角状态机的场景。 */
   disableContinuity?: boolean
   /** 预算预览只统计本地上下文，不请求 Embedding 或 Reranker。 */
@@ -526,8 +528,10 @@ export class ContextCompiler {
       historyTimeAnchors,
     )
 
-    // ── 3. 提取最后一条 user 消息作为检索查询 ──
-    const lastUserMessage = options.retrievalQuery?.trim() || this.extractLastUserMessage(messages)
+    // ── 3. 选取本次检索文本，显式空线索跳过自动召回 ──
+    const lastUserMessage = options.retrievalQuery === null
+      ? ''
+      : options.retrievalQuery?.trim() || this.extractLastUserMessage(messages)
 
     // ── 4. 能力门控解析（同步 CPU 计算前置，以便与记忆/知识库多路检索并行） ──
     // CapabilityGate 是能力解析的单一权威来源，统一返回工具白名单/Skills/prompt_fragments/
@@ -591,7 +595,6 @@ export class ContextCompiler {
               lastUserMessage,
               channelMemoryConfig?.retrievalLimit ?? 10,
               channel,
-              options.retrievalTraceId ?? options.currentPairId,
               options.onRagProgress,
               {
                 tokenBudget: channelMemoryConfig?.memoryTokenBudget ?? 0,

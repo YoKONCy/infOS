@@ -23,7 +23,7 @@ import { t as __t } from '../../lib/i18n'
 
 import type { AgentManager } from '../agent/agentManager'
 import type { GroupChatService } from './groupChatService'
-import type { CreateRoomInput, StrongholdService } from './strongholdService'
+import type { CreateRoomInput, StrongholdService, StrongholdOperationSource } from './strongholdService'
 import type { LlmService, ModelConfig } from '../llm/llmService'
 import type { MdpEngine } from '../prompt/mdpEngine'
 import { parseLlmJson } from '../../shared/llmJsonParser'
@@ -50,6 +50,7 @@ export interface ButlerCommandInput {
   command?: string
   action?: ButlerAction
   requesterId?: string
+  source?: StrongholdOperationSource
 }
 
 export interface ButlerCommandResult {
@@ -128,7 +129,7 @@ export class ButlerService {
     } else {
       for (const action of actions) {
         try {
-          const result = await this.runAction(input.roomId, action)
+          const result = await this.runAction(input.roomId, action, input.source)
           lines.push(result.message)
           successCount++
         } catch (err) {
@@ -379,7 +380,7 @@ export class ButlerService {
   // 确定性执行层（安全）
   // ─────────────────────────────────────────
 
-  private async runAction(roomId: string, action: ButlerAction): Promise<ButlerCommandResult> {
+  private async runAction(roomId: string, action: ButlerAction, source?: StrongholdOperationSource): Promise<ButlerCommandResult> {
     switch (action.type) {
       case 'status': {
         const facilities = await this.strongholdService.listFacilities()
@@ -416,7 +417,7 @@ export class ButlerService {
       }
       case 'summon_all': {
         const agents = this.agentManager.listAgents().filter((agent) => agent.isEnabled)
-        await Promise.all(agents.map((agent) => this.strongholdService.moveAgent(agent.id, roomId)))
+        await Promise.all(agents.map((agent) => this.strongholdService.moveAgent(agent.id, roomId, source)))
         return {
           action: action.type,
           message: __t('server.stronghold', '已将所有已启用 Agent 叫到当前房间：{0}', [
@@ -429,7 +430,7 @@ export class ButlerService {
         const agent = this.findEnabledAgent(action.agentId)
         const targetRoomId = action.targetRoomId ?? roomId
         const targetRoom = await this.requireRoom(targetRoomId)
-        const location = await this.strongholdService.moveAgent(agent.id, targetRoomId)
+        const location = await this.strongholdService.moveAgent(agent.id, targetRoomId, source)
         return {
           action: action.type,
           message: __t('server.stronghold', '已将 {0} 叫到「{1}」。', [
@@ -457,7 +458,7 @@ export class ButlerService {
         if (!action.key || String(action.value ?? '').length > 40) {
           throw new Error('环境变量参数不合法')
         }
-        await this.strongholdService.updateEnvironment(targetRoomId, action.key, action.value)
+        await this.strongholdService.updateEnvironment(targetRoomId, action.key, action.value, source)
         const updated = await this.requireRoom(targetRoomId)
         return {
           action: action.type,

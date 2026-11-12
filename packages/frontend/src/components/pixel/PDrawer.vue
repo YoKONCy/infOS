@@ -114,10 +114,13 @@ onBeforeUnmount(() => {
   height: 100%;
   display: flex;
   flex-direction: column;
-  background: var(--ui-bg-surface);
+  background: color-mix(in oklab, var(--ui-bg-surface) 96%, transparent);
+  backdrop-filter: blur(20px) saturate(168%);
   color: var(--ui-text-primary);
   border-left: 1px solid var(--ui-border-default);
-  box-shadow: -12px 0 40px #00000012;
+  box-shadow:
+    var(--ui-crystal-highlight, inset 0 1px 0 rgba(255, 255, 255, 0.85)),
+    var(--ui-shadow-panel);
   font-family: var(--ui-font-sans);
   outline: none;
 }

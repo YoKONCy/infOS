@@ -14,9 +14,7 @@ type Section = 'desktop' | 'group' | 'advanced'
 type ExtensionKey =
   | 'enableFista'
   | 'enableDpp'
-  | 'enableContextRnn'
   | 'enableLeiden'
-  | 'enableFeedback'
 const section = ref<Section>('desktop')
 const config = ref<MemoryRuntimeConfig | null>(null)
 const saved = ref('')
@@ -60,26 +58,14 @@ const extensions = computed<
     tag: 'DPP',
   },
   {
-    key: 'enableContextRnn',
-    label: t('ui.rag', '对话轨迹'),
-    description: t('ui.rag', '参考近期对话调整检索方向'),
-    tag: 'ContextRNN',
-  },
-  {
     key: 'enableLeiden',
     label: t('ui.rag', '事件聚类'),
     description: t('ui.rag', '利用相关事件分组辅助检索'),
     tag: 'Leiden',
   },
-  {
-    key: 'enableFeedback',
-    label: t('ui.rag', '反馈学习'),
-    description: t('ui.rag', '根据记忆引用情况调整检索'),
-    tag: '',
-  },
 ])
 
-// 与后端依赖关系保持一致：关闭主管线会关闭子模块，反馈依赖对话轨迹。
+// 与后端依赖关系保持一致，关闭主管线时同步关闭检索增强。
 watch(
   () => config.value?.advanced.enableSaPpr,
   (enabled) => {
@@ -87,16 +73,7 @@ watch(
     const advanced = config.value.advanced
     advanced.enableFista = false
     advanced.enableDpp = false
-    advanced.enableContextRnn = false
     advanced.enableLeiden = false
-    advanced.enableFeedback = false
-  },
-  { flush: 'sync' },
-)
-watch(
-  () => config.value?.advanced.enableContextRnn,
-  (enabled) => {
-    if (!enabled && config.value) config.value.advanced.enableFeedback = false
   },
   { flush: 'sync' },
 )
@@ -316,11 +293,7 @@ onBeforeUnmount(() => {
                     v-for="option in extensions"
                     :key="option.key"
                     class="rag-switch-row"
-                    :class="{
-                      'is-disabled':
-                        !config.advanced.enableSaPpr ||
-                        (option.key === 'enableFeedback' && !config.advanced.enableContextRnn),
-                    }"
+                    :class="{ 'is-disabled': !config.advanced.enableSaPpr }"
                   >
                     <div class="rag-row-copy">
                       <label :id="`rag-option-${option.key}`">
@@ -328,19 +301,11 @@ onBeforeUnmount(() => {
                         <span v-if="option.tag" class="rag-tag">{{ option.tag }}</span>
                       </label>
                       <p>{{ option.description }}</p>
-                      <small
-                        v-if="option.key === 'enableFeedback' && !config.advanced.enableContextRnn"
-                      >
-                        {{ t('ui.rag', '需先开启对话轨迹') }}
-                      </small>
                     </div>
                     <PSwitch
                       v-model="config.advanced[option.key]"
                       :aria-labelledby="`rag-option-${option.key}`"
-                      :disabled="
-                        !config.advanced.enableSaPpr ||
-                        (option.key === 'enableFeedback' && !config.advanced.enableContextRnn)
-                      "
+                      :disabled="!config.advanced.enableSaPpr"
                     />
                   </div>
                 </div>

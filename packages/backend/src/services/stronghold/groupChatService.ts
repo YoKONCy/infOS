@@ -22,6 +22,7 @@ import type { DrizzleDb } from '../../database'
 import { KernelOutboxRepository } from '../../kernel/kernelOutboxRepository'
 import { stableHistoryWindow, invalidatePromptReplay } from '../llm/promptCache'
 import { tokenCounter } from '../tokenizer/tokenCounter'
+import { STRONGHOLD_QUIET_WINDOW_MS, type StrongholdReplyAdmission, type StrongholdReplyOptions, type StrongholdResponseContext } from './strongholdCausality'
 
 // ── 类型 ──
 
@@ -46,6 +47,11 @@ export interface StrongholdReplyIntent {
   summonReason?: string
   attempts: number
   retryAt?: number
+  deferredAgentIds?: string[]
+  deferredUntil?: number
+  responseContexts?: Record<string, StrongholdResponseContext>
+  watchIdsByAgent?: Record<string, string[]>
+  freshInitiativeAgentIds?: string[]
 }
 
 /** 发送消息的输入 */
@@ -60,6 +66,8 @@ export interface SendMessageInput {
   metadata?: Record<string, unknown>
   requestReplies?: boolean
   deliveryKey?: string
+  /** 领域事件固定发生时的实际可见范围。 */
+  audienceAgentIds?: string[]
   audienceScope?: { agentId: string; threadId: string; generation: number; sourcePairId: string }
   execution?: { threadId: string; generation: number; executionId?: import('@infos/shared').KernelExecutionId; sourcePairId?: string; sourceMessageId?: number }
 }
@@ -79,6 +87,17 @@ export interface PerspectiveMessage {
 // ── Service ──
 
 export class GroupChatService {
+  private onMessageCommitted?: (message: MessageRow) => void
+  private admitReply?: (message: MessageRow, agentId: string, options: StrongholdReplyOptions) => StrongholdReplyAdmission
+  private canResumeReply?: (message: MessageRow) => boolean
+
+  setLifeLifecycle(onMessage: (message: MessageRow) => void,
+    admitReply?: (message: MessageRow, agentId: string, options: StrongholdReplyOptions) => StrongholdReplyAdmission,
+    canResumeReply?: (message: MessageRow) => boolean): void {
+    this.onMessageCommitted = onMessage
+    this.admitReply = admitReply
+    this.canResumeReply = canResumeReply
+  }
   constructor(
     private db: DrizzleDb,
     private isEnabledAgent: (agentId: string) => boolean,
@@ -138,6 +157,11 @@ export class GroupChatService {
    * 2. 返回保存的消息 (调用方负责触发调度)
    */
   async sendMessage(input: SendMessageInput): Promise<MessageRow> {
+    return this.commitMessage(input)
+  }
+
+  /** 领域状态、公共事件、亲历与 Outbox 可在调用方的同一事务提交。 */
+  commitMessage(input: SendMessageInput): MessageRow {
     return this.db.transaction((tx) => {
       if (input.audienceScope) {
         const scope = input.audienceScope
@@ -158,11 +182,12 @@ export class GroupChatService {
           main.generation !== input.execution.generation || main.status !== 'active') {
           throw new Error('THREAD_GENERATION_STALE')
         }
-        if (input.execution.sourcePairId) {
+        if (input.execution.sourcePairId || input.execution.sourceMessageId !== undefined) {
           const source = tx.select({ id: groupChatMessages.id }).from(groupChatMessages)
             .where(and(
               eq(groupChatMessages.roomId, input.roomId),
-              eq(groupChatMessages.pairId, input.execution.sourcePairId),
+              input.execution.sourcePairId ? eq(groupChatMessages.pairId, input.execution.sourcePairId) : undefined,
+              input.execution.sourceMessageId === undefined ? undefined : eq(groupChatMessages.id, input.execution.sourceMessageId),
               eq(groupChatMessages.status, 'active'),
             )).get()
           if (!source) throw new Error('STRONGHOLD_SOURCE_WITHDRAWN')
@@ -187,7 +212,7 @@ export class GroupChatService {
             deliveryKey: input.deliveryKey,
           }),
         }).returning().get()!
-      const present = tx.select({ agentId: agentLocations.agentId }).from(agentLocations)
+      const present = input.audienceAgentIds ?? tx.select({ agentId: agentLocations.agentId }).from(agentLocations)
         .where(eq(agentLocations.roomId, input.roomId)).all().map((row) => row.agentId)
       const targets: StrongholdReplyIntent['targets'] = []
       for (const agentId of new Set([...present, input.senderId])) {
@@ -230,6 +255,7 @@ export class GroupChatService {
         payload: { roomId: input.roomId, messageId: message.id, pairId: input.pairId },
       })
       tx.insert(kernelOutboxEvents).values(outbox.toRow(event)).run()
+      this.onMessageCommitted?.(message)
       return message
     })
   }
@@ -283,6 +309,8 @@ export class GroupChatService {
       eq(groupChatMessages.status, 'active'),
       sql`json_extract(${groupChatMessages.metadataJson}, '$.replyIntent.status') = 'pending'`,
       sql`coalesce(json_extract(${groupChatMessages.metadataJson}, '$.replyIntent.retryAt'), 0) <= ${Date.now()}`,
+      sql`(coalesce(json_array_length(json_extract(${groupChatMessages.metadataJson}, '$.replyIntent.deferredAgentIds')), 0) = 0
+        OR coalesce(json_array_length(json_extract(${groupChatMessages.metadataJson}, '$.replyIntent.queue')), 0) > 0)`,
     )).orderBy(asc(groupChatMessages.id)).limit(50).all().map((row) => row.id)
   }
 
@@ -302,6 +330,11 @@ export class GroupChatService {
 
   /** 等待条件匹配后把回应请求附到真实来源；先持久化，再由轮次服务恢复。 */
   async requestRepliesTo(messageId: number, agentIds: string[], autonomous = true, scope?: { threadId: string; generation: number }): Promise<boolean> {
+    return this.commitReplyRequest(messageId, agentIds, autonomous, scope, { kind: 'wait' })
+  }
+
+  commitReplyRequest(messageId: number, agentIds: string[], autonomous = true,
+    scope?: { threadId: string; generation: number }, options: StrongholdReplyOptions = {}): boolean {
     return this.db.transaction((tx) => {
       const message = tx.select().from(groupChatMessages).where(and(eq(groupChatMessages.id, messageId), eq(groupChatMessages.status, 'active'))).get()
       if (!message || !message.pairId) return false
@@ -309,7 +342,8 @@ export class GroupChatService {
       const intent = metadata.replyIntent as StrongholdReplyIntent | undefined
       const targets = tx.select({ agentId: agentExperiences.agentId, threadId: threads.id, generation: threads.generation })
         .from(agentExperiences).innerJoin(threads, and(eq(threads.id, agentExperiences.threadId), eq(threads.generation, agentExperiences.generation)))
-        .where(and(eq(agentExperiences.sourceMessageId, messageId), eq(agentExperiences.withdrawn, false), eq(threads.status, 'active'))).all()
+        .where(and(eq(agentExperiences.sourceMessageId, messageId), eq(agentExperiences.withdrawn, false),
+          eq(threads.threadKind, 'main'), eq(threads.status, 'active'))).all()
       const rawMentions: unknown = JSON.parse(message.mentionsJson ?? '[]')
       const mentions = Array.isArray(rawMentions) ? rawMentions.filter((value): value is string => typeof value === 'string') : []
       const requested = [...new Set(agentIds)].filter((id) => targets.some((target) => target.agentId === id &&
@@ -318,17 +352,126 @@ export class GroupChatService {
       if (!requested.length) return false
       const completed = intent?.completed ?? []
       const declared = mentions.includes('@all') ? targets.map((target) => target.agentId) : mentions
-      const queue = [...new Set([...(intent?.queue ?? declared), ...requested])]
+      const candidates = [...new Set([...(intent?.queue ?? declared), ...requested])]
         .filter((id) => !completed.includes(id) && targets.some((target) => target.agentId === id))
-      if (!queue.length) return requested.every((id) => completed.includes(id))
+      if (!candidates.length) return requested.every((id) => completed.includes(id))
+      const queue: string[] = []
+      const deferred = new Set(intent?.deferredAgentIds ?? [])
+      const responseContexts: Record<string, StrongholdResponseContext> = Object.assign(Object.create(null), intent?.responseContexts)
+      const watchIdsByAgent: Record<string, string[]> = Object.assign(Object.create(null), intent?.watchIdsByAgent)
+      for (const agentId of candidates) {
+        const admission = this.admitReply?.(message, agentId, options)
+        if (intent?.queue?.includes(agentId) || !admission || admission.mode === 'immediate') {
+          queue.push(agentId)
+          deferred.delete(agentId)
+        } else deferred.add(agentId)
+        if (admission?.response && !intent?.queue?.includes(agentId)) responseContexts[agentId] = admission.response
+        if (options.watchIds?.length && requested.includes(agentId))
+          watchIdsByAgent[agentId] = [...new Set([...(watchIdsByAgent[agentId] ?? []), ...options.watchIds])]
+      }
       const replyIntent: StrongholdReplyIntent = { ...intent, targets,
         status: 'pending', autonomous: intent?.autonomous ?? autonomous, queue,
         initialQueue: intent?.initialQueue ?? queue, completed, attempts: intent?.attempts ?? 0,
+        deferredAgentIds: [...deferred], deferredUntil: deferred.size ? intent?.deferredUntil ?? Date.now() + STRONGHOLD_QUIET_WINDOW_MS : undefined,
+        responseContexts, watchIdsByAgent,
         reason: '等待的真实事件已到达', allowSummon: true, allowAutoFollowUp: false }
       tx.update(groupChatMessages).set({ metadataJson: JSON.stringify({ ...metadata, replyIntent }) })
         .where(eq(groupChatMessages.id, messageId)).run()
       return true
     })
+  }
+
+  /** 回应阶段和关注消费身份随实际执行来源传播，旧消息沿角色身份推导回应阶段。 */
+  getExecutionCause(messageId: number | undefined, agentId: string): {
+    response?: StrongholdResponseContext; watchIds: string[]; watchAgentIds: string[]
+  } {
+    const message = messageId === undefined ? undefined : this.getMessageEvent(messageId)
+    if (!message) return { watchIds: [], watchAgentIds: [] }
+    const metadata = JSON.parse(message.metadataJson)
+    const intent = metadata.replyIntent as StrongholdReplyIntent | undefined
+    const initiatorId = message.role === 'system' ? metadata.lifeEvent?.actorId : message.senderId
+    const response = (intent?.responseContexts && Object.hasOwn(intent.responseContexts, agentId) ? intent.responseContexts[agentId] : undefined) ??
+      (message.role !== 'user' && typeof initiatorId === 'string' && initiatorId !== 'system'
+        ? { phase: 'response' as const, openingMessageId: message.id, initiatorId } : undefined)
+    const ownWatches = intent?.watchIdsByAgent && Object.hasOwn(intent.watchIdsByAgent, agentId) ? intent.watchIdsByAgent[agentId]! : []
+    const fresh = intent?.freshInitiativeAgentIds?.includes(agentId)
+    return { response,
+      watchIds: [...new Set<string>([...(fresh ? [] : metadata.lifeWatchIds ?? []), ...ownWatches])],
+      watchAgentIds: [...new Set<string>([...(fresh ? [] : metadata.lifeWatchAgentIds ?? []), ...(ownWatches.length ? [agentId] : [])])],
+    }
+  }
+
+  /** 延后请求仅由正常空闲机会领取，周期恢复保持其等待状态。 */
+  claimDeferredReply(roomId: string, agentId: string): number | undefined {
+    return this.db.transaction((tx) => {
+      const rows = tx.select().from(groupChatMessages).where(and(eq(groupChatMessages.roomId, roomId),
+        eq(groupChatMessages.status, 'active'), sql`json_extract(${groupChatMessages.metadataJson}, '$.replyIntent.status') = 'pending'`,
+        sql`coalesce(json_extract(${groupChatMessages.metadataJson}, '$.replyIntent.deferredUntil'), 0) <= ${Date.now()}`,
+        sql`EXISTS (SELECT 1 FROM json_each(json_extract(${groupChatMessages.metadataJson}, '$.replyIntent.deferredAgentIds')) WHERE value = ${agentId})`,
+      )).orderBy(asc(groupChatMessages.id)).all()
+      for (const message of rows) {
+        const metadata = JSON.parse(message.metadataJson)
+        const intent = metadata.replyIntent as StrongholdReplyIntent
+        const valid = this.deferredTargetIsCurrent(message, intent, agentId)
+        const deferredAgentIds = intent.deferredAgentIds!.filter((id) => id !== agentId)
+        const queue = valid ? [...new Set([...(intent.queue ?? []), agentId])] : intent.queue ?? []
+        this.saveReplyIntent(message.id, { ...intent, queue, deferredAgentIds,
+          freshInitiativeAgentIds: valid ? [...new Set([...(intent.freshInitiativeAgentIds ?? []), agentId])] : intent.freshInitiativeAgentIds,
+          status: queue.length || deferredAgentIds.length ? 'pending' : 'completed' })
+        if (valid) return message.id
+      }
+      return undefined
+    })
+  }
+
+  hasDeferredReply(roomId: string, agentId: string): boolean {
+    return Boolean(this.db.select({ id: groupChatMessages.id }).from(groupChatMessages).where(and(
+      eq(groupChatMessages.roomId, roomId), eq(groupChatMessages.status, 'active'),
+      sql`json_extract(${groupChatMessages.metadataJson}, '$.replyIntent.status') = 'pending'`,
+      sql`EXISTS (SELECT 1 FROM json_each(json_extract(${groupChatMessages.metadataJson}, '$.replyIntent.deferredAgentIds')) WHERE value = ${agentId})`,
+    )).get())
+  }
+
+  isReplySourceCurrent(message: MessageRow): boolean {
+    return this.canResumeReply?.(message) ?? true
+  }
+
+  pruneDeferredReplies(threadId?: string, pairId?: string, roomId?: string): void {
+    this.db.transaction(() => {
+      const rows = this.db.select().from(groupChatMessages).where(and(eq(groupChatMessages.status, 'active'),
+        roomId ? eq(groupChatMessages.roomId, roomId) : undefined,
+        sql`json_extract(${groupChatMessages.metadataJson}, '$.replyIntent.status') = 'pending'`,
+        sql`coalesce(json_array_length(json_extract(${groupChatMessages.metadataJson}, '$.replyIntent.deferredAgentIds')), 0) > 0`,
+      )).all()
+      for (const message of rows) {
+        const metadata = JSON.parse(message.metadataJson)
+        const intent = metadata.replyIntent as StrongholdReplyIntent
+        const invalidateSource = (threadId && metadata.threadId === threadId) || (pairId && message.pairId === pairId)
+        const deferredAgentIds = intent.deferredAgentIds!.filter((id) => !invalidateSource &&
+          (!threadId || intent.targets.find((target) => target.agentId === id)?.threadId !== threadId) &&
+          this.deferredTargetIsCurrent(message, intent, id))
+        if (deferredAgentIds.length === intent.deferredAgentIds!.length) continue
+        this.saveReplyIntent(message.id, { ...intent, deferredAgentIds,
+          status: intent.queue?.length || deferredAgentIds.length ? 'pending' : 'completed' })
+      }
+    })
+  }
+
+  private deferredTargetIsCurrent(message: MessageRow, intent: StrongholdReplyIntent, agentId: string): boolean {
+    if (!this.isReplySourceCurrent(message)) return false
+    const metadata = JSON.parse(message.metadataJson)
+    const target = intent.targets.find((entry) => entry.agentId === agentId)
+    if (!target || !this.isEnabledAgent(agentId)) return false
+    const witness = this.db.select({ id: agentExperiences.id }).from(agentExperiences)
+      .innerJoin(threads, and(eq(threads.id, agentExperiences.threadId), eq(threads.generation, agentExperiences.generation)))
+      .innerJoin(agentLocations, and(eq(agentLocations.agentId, agentId), eq(agentLocations.roomId, message.roomId)))
+      .where(and(eq(agentExperiences.sourceMessageId, message.id), eq(agentExperiences.agentId, agentId),
+        eq(agentExperiences.threadId, target.threadId), eq(agentExperiences.generation, target.generation),
+        eq(agentExperiences.withdrawn, false), eq(threads.threadKind, 'main'), eq(threads.status, 'active'))).get()
+    if (!witness) return false
+    if (!metadata.threadId) return true
+    const author = this.db.select().from(threads).where(eq(threads.id, metadata.threadId)).get()
+    return author?.threadKind === 'main' && author.status === 'active' && author.generation === metadata.threadGeneration
   }
 
   /** 获取房间消息总数（对话日志列表展示用，避免拉取全量）。 */
@@ -396,7 +539,8 @@ export class GroupChatService {
     const perceived = this.db.select({ message: groupChatMessages }).from(agentExperiences)
       .innerJoin(groupChatMessages, eq(groupChatMessages.id, agentExperiences.sourceMessageId))
       .innerJoin(threads, and(eq(threads.id, agentExperiences.threadId), eq(threads.generation, agentExperiences.generation)))
-      .where(and(eq(agentExperiences.agentId, agentId), eq(agentExperiences.withdrawn, false), eq(groupChatMessages.status, 'active'),
+      .where(and(eq(agentExperiences.agentId, agentId), eq(agentExperiences.withdrawn, false),
+        eq(threads.threadKind, 'main'), eq(threads.status, 'active'), eq(groupChatMessages.status, 'active'),
         roomId === undefined ? undefined : eq(groupChatMessages.roomId, roomId)))
       .orderBy(desc(agentExperiences.id)).all().map((row) => row.message)
     const recentPairs = [...new Set(perceived.map((row) => row.pairId ?? `message:${row.id}`))]

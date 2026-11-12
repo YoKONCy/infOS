@@ -51,9 +51,7 @@ export interface MemoryRuntimeConfig {
     minScore: number
     enableFista: boolean
     enableDpp: boolean
-    enableContextRnn: boolean
     enableLeiden: boolean
-    enableFeedback: boolean
   }
 }
 

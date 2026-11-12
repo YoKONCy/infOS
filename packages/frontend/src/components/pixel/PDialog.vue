@@ -176,9 +176,12 @@ function close() {
   flex-direction: column;
   overflow: hidden;
   color: var(--ui-text-primary);
-  background: var(--dash-panel-bg);
-  border: 3px solid var(--ui-border-strong);
-  box-shadow: var(--ui-shadow-lg);
+  background: color-mix(in oklab, var(--ui-bg-surface) 97%, transparent);
+  backdrop-filter: blur(20px) saturate(168%);
+  border: 2px solid var(--ui-border-strong);
+  box-shadow:
+    var(--ui-crystal-highlight, inset 0 1px 0 rgba(255, 255, 255, 0.88)),
+    var(--ui-shadow-lg);
 }
 
 .p-dialog-header {

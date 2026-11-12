@@ -266,8 +266,8 @@ export class SkillLoader {
       })
     }
 
-    // 递归复制
-    cpSync(sourcePath, destPath, { recursive: true })
+    // 显式 filter 使用逐项复制，绕开 Windows / Node 22.23.4 原生目录复制崩溃，保留链接语义。
+    cpSync(sourcePath, destPath, { recursive: true, filter: () => true })
     logger.info(__t('logs.capabilities', 'Skill 已导入: {0}', [folderName]), {
       sourcePath,
       destPath,

@@ -26,6 +26,19 @@
     "parameters": {
       "type": "object",
       "properties": {
+        "participation": {
+          "type": "object",
+          "description": "据点本次参与决定。share 或 question 为当前伙伴登记接话意图，程序按发起、回应与结算阶段安排。回应中的必要追问交还原发起者，独立新话题等待正常空闲机会。answer、acknowledge、close 结算当前回应。可静默提交旁听、专注或休息。",
+          "properties": {
+            "state": { "type": "string", "enum": ["available", "listening", "conversing", "occupied", "resting"] },
+            "purpose": { "type": "string", "enum": ["share", "question", "answer", "acknowledge", "close"] },
+            "addressedTo": { "type": "array", "items": { "type": "string" }, "maxItems": 5 },
+            "exchangeId": { "type": "string" },
+            "activityId": { "type": "string" },
+            "expectedRevision": { "type": "integer", "minimum": 0 }
+          },
+          "required": ["state"], "additionalProperties": false
+        },
         "next_activity": {
           "type": "object",
           "description": "角色主会话或据点执行结束后的等待意图。据点等待在场伙伴回答时，本次发言自动形成定向请求。等待时释放执行，由真实消息或任务结果恢复。",

@@ -105,9 +105,12 @@ useEventListener(window, 'keydown', ((e: KeyboardEvent) => {
   min-width: 160px;
   max-width: min(360px, calc(100vw - 20px));
   transform-origin: top left;
-  background: var(--dash-panel-elevated);
+  background: color-mix(in oklab, var(--ui-bg-surface) 96%, transparent);
+  backdrop-filter: blur(18px) saturate(168%);
   border: 2px solid var(--ui-border-strong);
-  box-shadow: var(--ui-shadow-md);
+  box-shadow:
+    var(--ui-crystal-highlight, inset 0 1px 0 rgba(255, 255, 255, 0.88)),
+    var(--ui-shadow-md);
   padding: 4px 0;
 }
 

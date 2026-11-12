@@ -93,9 +93,6 @@ export interface ConversationTurnDeps {
     modelId?: number,
   ) => Promise<import('../llm/llmService').ModelConfig | null>
   estimateInitialInputTokens?: AgentService['estimateInitialInputTokens']
-  retrievalFeedback?: {
-    applyRetrievalFeedback(traceId: string, reply: string): Promise<void>
-  }
 }
 
 export interface PrepareTurnParams {
@@ -104,7 +101,9 @@ export interface PrepareTurnParams {
   sourceMessageIds?: number[]
   expectedGeneration?: number
   /** 主应用场景适配器提供真实来源，HTTP 对话请求无法设置。 */
-  internalScene?: { roomId: string; pairId: string; disabledTools: string[]; messageCount?: number }
+  internalScene?: { roomId: string; pairId: string; disabledTools: string[]; messageCount?: number; sourceMessageId?: number }
+  /** 宿主提供的独立检索文本；显式空字符串表示本次没有检索线索。 */
+  retrievalQuery?: string
   /** 感知陪伴可以跳过长记忆检索，输入资料仅用于本次执行。 */
   disableMemoryRetrieval?: boolean
   /** 宿主提供的临时感知快照。 */
@@ -535,12 +534,14 @@ export class ConversationTurnService {
         inputPersistence === 'ephemeral' || params.realmId
           ? { role: 'user', content: params.content }
           : undefined,
-      retrievalQuery: params.content,
+      retrievalQuery: params.retrievalQuery === undefined
+        ? params.content
+        : params.retrievalQuery.trim() || null,
       disableMemoryRetrieval: params.disableMemoryRetrieval,
       signal: params.signal,
       maxInputTokens,
       currentPairId: inputPersistence === 'persistent' && !continuous ? pairId : undefined,
-      retrievalTraceId: pairId,
+      expressionRunId: pairId,
       currentMessageId: inputPersistence === 'persistent' ? inputSources.at(-1)?.messageId : undefined,
       excludeMessageIds: regeneration?.replacementMessageIds,
       capabilityScope: params.capabilityScope,
@@ -780,6 +781,7 @@ export class ConversationTurnService {
         pairId: prepared.pairId,
         generation: prepared.generation,
         sceneRoomId: params.internalScene?.roomId,
+        sceneSourceMessageId: params.internalScene?.sourceMessageId,
         characterStateVersion: prepared.characterStateVersion,
         disabledTools: prepared.disabledTools,
         interactionMode: prepared.interactionMode,
@@ -814,7 +816,6 @@ export class ConversationTurnService {
         persistenceStarted = true
         assistantMessage = await this.persistAssistant(prepared, completed, params.signal)
         if (!prepared.continuous) await this.commitEventNoteDrafts(prepared, completed, assistantMessage)
-        await this.submitRetrievalFeedback(prepared, completed)
       }
       if (prepared.promptVariableCommit)
         await this.deps.contextCompiler.commitPromptVariables(prepared.promptVariableCommit)
@@ -1008,7 +1009,6 @@ export class ConversationTurnService {
       if (params.outputPersistence !== 'ephemeral' && (prepared.capabilityScope !== 'perception' || reply.trim())) {
         assistantMessage = await this.persistAssistant(prepared, completed, params.signal)
         if (!prepared.continuous) await this.commitEventNoteDrafts(prepared, completed, assistantMessage)
-        await this.submitRetrievalFeedback(prepared, completed)
       }
       if (prepared.promptVariableCommit)
         await this.deps.contextCompiler.commitPromptVariables(prepared.promptVariableCommit)
@@ -1419,18 +1419,6 @@ export class ConversationTurnService {
       })
     } catch (error) {
       logger.warn(__t('logs.conversation', '回复已保存，记事等待后台重试'), { threadId: prepared.threadId, error })
-    }
-  }
-
-  private async submitRetrievalFeedback(
-    prepared: PreparedTurn,
-    completed: CompletedTurn,
-  ): Promise<void> {
-    if (prepared.inputPersistence !== 'persistent') return
-    try {
-      await this.deps.retrievalFeedback?.applyRetrievalFeedback(prepared.pairId, completed.reply)
-    } catch (error) {
-      logger.warn(__t('logs.conversation', '检索反馈提交失败，不影响已完成回复'), { error })
     }
   }
 

@@ -419,8 +419,8 @@ describe('createConfigRouter', () => {
       code: 'OK',
       data: { imported: 1, skipped: 1 },
     })
-    expect(ctx.configRepo.set).toHaveBeenCalledWith('b', '3')
-    expect(ctx.configRepo.set).not.toHaveBeenCalledWith('a', '2')
+    expect(await ctx.configRepo.get('b')).toBe('3')
+    expect(await ctx.configRepo.get('a')).toBe('1')
   })
 })
 

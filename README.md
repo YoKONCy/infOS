@@ -364,9 +364,7 @@ PeroperoChat 的陪伴体验，建立在 infOS 的记忆引擎之上——这是
                                   ├─ SA-PPR 图扩散              Token 预算严格受控
                                   ├─ FISTA 残差寻隐
                                   ├─ DPP 多样性采样
-                                  ├─ ContextRNN 扩散偏置
-                                  ├─ Leiden 社区加权
-                                  └─ 检索反馈在线学习
+                                  └─ Leiden 社区加权
                  │                         │
                  └────────────┬────────────┘
                               ▼
@@ -409,64 +407,31 @@ infOS 将“系统自动想起记忆”和“Agent 主动查图”拆成两条�
 | **自动 RAG** | 每轮上下文编译 | 默认向量 + BM25；可在「核心记忆 → RAG 配置 → 高级检索」启用 SA-PPR 高级管线 | 固定补充物理时间轴末尾与每个命中事件的直接前驱，均不占 `top_k` |
 | **主动图查询** | `query_event_notes` 工具 | 确定性 BFS | 严格遵守方向、边标签、最大深度、最大节点数与返回 Token 预算；不受 SA-PPR 开关影响 |
 
-自动 RAG 的高级模式调用 TriviumDB `searchAdvanced()`。`启用 SA-PPR 高级管线` 是总开关；关闭后 FISTA、DPP、ContextRNN、Leiden 和反馈闭环会被前后端共同强制关闭。
+自动 RAG 的高级模式调用 TriviumDB `searchAdvanced()`。`启用 SA-PPR 高级管线` 是总开关，FISTA、DPP 与 Leiden 通过各自开关选择参与。
 
-| 模块 | 作用 | 配置关系 |
-| :--- | :--- | :--- |
-| SA-PPR | 从向量锚点沿事件关系图扩散，召回语义距离较远但图上相关的事件 | 高级管线总开关，可配置扩散深度、回跳概率和最低分数 |
-| FISTA | 从基础候选未解释的残差中补充弱信号 | 依赖 SA-PPR，可独立开关 |
-| DPP | 降低最终候选之间的语义重复 | 依赖 SA-PPR，可独立开关 |
-| ContextRNN | 根据当前对话轨迹生成与 Embedding 同维度的 `diffusionBias` | 依赖 SA-PPR，可独立开关 |
-| Leiden | 发现事件社区，并按 Query 或 ContextRNN 方向计算社区加权 | 依赖 SA-PPR，可独立开关 |
-| 反馈闭环 | 在回复成功持久化后，根据命中记忆是否被回答引用在线训练 minGRU 和输出权重 | 依赖 SA-PPR，可独立开关 |
+| 模块 | 职责 | 配置关系 |
+| --- | --- | --- |
+| SA-PPR | 根据当前查询向量及事件关系图扩散召回 | 高级管线总开关 |
+| FISTA | 从残差信号中补充较弱的关联线索 | 依赖 SA-PPR，可独立开关 |
+| DPP | 降低召回结果的语义重复 | 依赖 SA-PPR，可独立开关 |
+| Leiden | 发现事件社区，按当前查询向量计算社区加权 | 依赖 SA-PPR，可独立开关 |
 
 <details>
-<summary><b>深入阅读：ContextRNN、Leiden 与检索反馈闭环</b></summary>
+<summary><b>深入阅读：查询驱动的高级检索</b></summary>
 
-### 高级自动 RAG 的三个认知构件
-
-这三个构件各管一件事：**ContextRNN** 感知"现在在聊什么"，**Leiden 聚类** 自动把记忆分主题，**反馈闭环** 负责事后纠错。
-
-#### A. ContextRNN — 对话轨迹感知 (minGRU)
-
-它像一个持续更新的“对话方向感知器”。启用 SA-PPR 与 ContextRNN 后，每轮自动 RAG 会使用 Query Embedding 更新轻量级 **minGRU** 隐状态（256 维），再投影成与当前 Embedding 配置相同维度的扩散偏置：
-
-```
-  z_t = σ(W_z @ x_t)                    门控
-  h̃_t = W_h @ x_t                      候选状态
-  h_{t+1} = (1 - z_t) ⊙ h_t + z_t ⊙ h̃_t   状态更新
-```
-
-- **生成扩散偏置**：`diffusionBias = W_out × h_t`，交给 TriviumDB 调制 SA-PPR 扩散方向
-- **动态输入维度**：投影矩阵跟随当前 Memory Store 的 Embedding 维度，不再固定为 1536
-- **隐状态持久化**：每分钟 checkpoint，并在系统关闭时保存状态和在线学习权重
-- **实现**：Retrieval 域纯 TypeScript minGRU + `ContextRnn`
-
-#### B. Leiden 聚类 — 自动社区发现
-
-自动 RAG 可调用 TriviumDB `leidenCluster()` 发现事件社区，并计算 Query/ContextRNN 方向与各社区质心的亲和度，将其作为高级候选排序加权。ContextRNN 关闭时，Leiden 仍可使用 Query Embedding 独立工作。
-
-#### C. 检索反馈闭环 — 隐式信号采集
-
-反馈只针对当前 Pair 的高级自动 RAG 命中，Trace 以 Pair ID 隔离，避免并发 Thread 相互覆盖。Assistant 回复成功持久化后，系统通过事件 topics/participants 是否出现在回复中生成隐式正负反馈，并在线更新 minGRU 与输出矩阵；临时回合不训练，训练失败也不会影响已经完成的回复。
-
-#### 高级自动 RAG 实时流程
+Leiden 聚类通过 TriviumDB `leidenCluster()` 取得事件社区与质心，当前查询向量与质心的亲和度用于候选加权。每次查询读取当前检索配置，记忆删除和恢复通过检索版本校验使在途旧结果失效。
 
 ```text
-  用户输入 ──→ Query Embedding
-               ├─ 可选 ContextRNN 更新并生成 diffusionBias
-               ├─ TriviumDB searchAdvanced
-               │  ├─ 向量/文本锚定
-               │  ├─ 可选 FISTA
-               │  ├─ SA-PPR 图扩散
-               │  └─ 可选 DPP
-               ├─ 可选 Leiden 社区加权
-               ├─ 截取 top_k
-               ├─ 补时间轴末尾与直接前驱
-               └─ 注入 Prompt → LLM → 可选 Pair 级反馈训练
+本次查询 → Embedding → searchAdvanced()
+                         ├─ SA-PPR 图扩散
+                         ├─ 可选 FISTA 残差补充
+                         └─ 可选 DPP 多样性选择
+                       → 可选 Leiden 社区加权
+                       → 时间轴补充与 Token 预算选择
+                       → ContextCompiler 装配
 ```
 
-> 这条流程只属于自动 RAG。`query_event_notes` 始终走确定性 BFS，不经过 ContextRNN、SA-PPR、Leiden、FISTA、DPP 或反馈训练。
+主动查询 `query_event_notes` 沿确定性 BFS、边类型、方向和返回预算完成图查询。
 
 </details>
 

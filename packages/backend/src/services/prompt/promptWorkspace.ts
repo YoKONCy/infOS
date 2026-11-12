@@ -57,6 +57,7 @@ const TEMPLATE_LABELS: Record<string, string> = {
   'components/rules/system_core': '基础规则',
   'components/rules/wholesome_mode': '健全模式',
   'components/output/output_constraint': '输出约定',
+  'components/expression/selfminding': 'SelfMind 引导',
   'components/abilities/interaction_mode': '交互模式',
   'components/abilities/private_flow_protocol': '私有心流',
   'components/abilities/task_plan': '行动计划',

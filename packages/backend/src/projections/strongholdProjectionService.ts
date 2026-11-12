@@ -8,10 +8,11 @@ import type {
 } from '@infos/shared'
 import type { GroupChatService } from '../services/stronghold/groupChatService'
 import { tokenCounter } from '../services/tokenizer/tokenCounter'
+import type { StrongholdLifeService } from '../services/stronghold/strongholdLifeService'
 
 /** 据点房间领域事实到 committed Surface 的可重建投影。 */
 export class StrongholdProjectionService {
-  constructor(private readonly groupChat: GroupChatService) {}
+  constructor(private readonly groupChat: GroupChatService, private readonly life?: StrongholdLifeService) {}
 
   async getSnapshot(roomId: string, limit = 100): Promise<StrongholdProjectionSnapshot> {
     const room = await this.groupChat.getRoom(roomId)
@@ -42,6 +43,7 @@ export class StrongholdProjectionService {
       members: members.map((member) => ({ agentId: member.agentId, role: member.role })),
       messages,
       surfaces,
+      life: this.life?.snapshot(roomId),
     }
   }
 

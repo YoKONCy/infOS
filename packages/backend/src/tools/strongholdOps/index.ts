@@ -81,7 +81,8 @@ export const strongholdMoveToRoomTool: BuiltinTool = {
         })
       }
 
-      await service.moveAgent(agentId, room.id)
+      await service.moveAgent(agentId, room.id, { agentId: ctx.agentId, threadId: ctx.threadId, generation: ctx.generation, pairId: ctx.pairId,
+        sourceMessageId: ctx.sceneSourceMessageId, operationId: ctx.toolCallId, signal: ctx.signal })
 
       // 获取房间内其他角色
       const agents = await service.getRoomAgents(room.id)
@@ -220,7 +221,10 @@ export const strongholdSetEnvironmentTool: BuiltinTool = {
 
       // 尝试解析为数字
       const numValue = Number(value)
-      await service.updateEnvironment(room.id, key, isNaN(numValue) ? value : numValue)
+      await service.updateEnvironment(room.id, key, isNaN(numValue) ? value : numValue, {
+        agentId: ctx.agentId, threadId: ctx.threadId, generation: ctx.generation, pairId: ctx.pairId,
+        sourceMessageId: ctx.sceneSourceMessageId, operationId: ctx.toolCallId, signal: ctx.signal,
+      })
 
       const env = JSON.parse((await service.getRoom(room.id))?.environmentJson ?? '{}')
 
@@ -274,7 +278,7 @@ export const strongholdSummonAgentsTool: BuiltinTool = {
       success: true,
       queued_agent_ids: accepted,
       rejected,
-      message: __t('server.tools', '已请求{0}在当前角色发言后依次接话。', [accepted.join('、')]),
+      message: __t('server.tools', '已登记向{0}的接话请求。', [accepted.join('、')]),
     })
   },
 }
@@ -305,6 +309,8 @@ export const strongholdCallButlerTool: BuiltinTool = {
         roomId: room.id,
         command: request,
         requesterId: ctx.agentId,
+        source: { agentId: ctx.agentId, threadId: ctx.threadId, generation: ctx.generation, pairId: ctx.pairId,
+          sourceMessageId: ctx.sceneSourceMessageId, operationId: ctx.toolCallId, signal: ctx.signal },
       })
       return JSON.stringify({ success: true, ...result })
     } catch (err) {

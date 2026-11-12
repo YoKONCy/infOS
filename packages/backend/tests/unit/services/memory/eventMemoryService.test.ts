@@ -6,7 +6,7 @@ import { EventNoteRepository } from '@infos/backend/repositories/eventNote.repo'
 import { ThreadRepository } from '@infos/backend/repositories/thread.repo'
 import { MemoryStoreRegistry } from '@infos/backend/repositories/storeRegistry'
 import { EventMemoryService } from '@infos/backend/services/memory/eventMemoryService'
-import { ContextRnnRuntime } from '@infos/backend/services/retrieval/contextRnnRuntime'
+import { DEFAULT_MEMORY_RUNTIME_CONFIG } from '@infos/backend/services/memory/memoryRuntimeConfig'
 import { EventReflectionService } from '@infos/backend/services/memory/eventReflectionService'
 import { DailyNotesService } from '@infos/backend/services/memory/dailyNotesService'
 import { MemoryAgentScope } from '@infos/backend/services/memory/memoryAgentScope'
@@ -919,15 +919,8 @@ describe('EventMemoryService真实双库存储', () => {
     const store = stores.getAgentStore('pero')
     const searchAdvanced = vi.spyOn(store, 'searchAdvanced')
     const leidenCluster = vi.spyOn(store, 'leidenCluster')
-    const rnn = {
-      update: vi.fn(),
-      generateBias: vi.fn(() => new Float32Array([0, 1, 0, 0])),
-    }
-    service.setAdvancedRetrieval(new ContextRnnRuntime(() => rnn as never), async () => ({
-      channels: {
-        desktop: { historyTokenBudget: 16384, contextPairs: 20, enableAutoRag: true, retrievalLimit: 8 },
-        group: { historyTokenBudget: 16384, contextPairs: 20, enableAutoRag: true, retrievalLimit: 3 },
-      },
+    service.setRuntimeConfigProvider(async () => ({
+      ...structuredClone(DEFAULT_MEMORY_RUNTIME_CONFIG),
       advanced: {
         enableSaPpr: true,
         expandDepth: 3,
@@ -935,9 +928,7 @@ describe('EventMemoryService真实双库存储', () => {
         minScore: -1,
         enableFista: true,
         enableDpp: true,
-        enableContextRnn: true,
         enableLeiden: true,
-        enableFeedback: true,
       },
     }))
 
@@ -947,7 +938,6 @@ describe('EventMemoryService真实双库存储', () => {
       '高级记忆检索',
       2,
       'desktop',
-      'pair-advanced',
       (event) => {
         progress.push(event)
       },
@@ -972,12 +962,7 @@ describe('EventMemoryService真实双库存储', () => {
       }),
     )
     expect(leidenCluster).toHaveBeenCalledWith({ withCentroids: true })
-    expect(service.takeAutomaticRagTrace('pair-advanced')).toMatchObject({
-      agentId: 'pero',
-      channel: 'desktop',
-      query: '高级记忆检索',
-    })
-    expect(service.takeAutomaticRagTrace('pair-advanced')).toBeUndefined()
+    expect(searchAdvanced.mock.calls[0]?.[0]).toEqual([0, 1, 0, 0])
 
     stores.closeAll()
     closeDrizzleConnection(db)

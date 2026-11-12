@@ -96,6 +96,24 @@ describe('内置提示词正文升级', () => {
     expect(unchanged.body).toBe(body)
     expect(custom.body).toBe(`${oldBody}\n我的表达要求`)
   })
+
+  it('已知原样输出约定升级独立 SelfMind 引用，用户改写沿原正文装配', () => {
+    const body = readFileSync(
+      new URL('../../../../src/services/mdp/prompts/components/output/output_constraint.md', import.meta.url), 'utf8',
+    ).replaceAll('\r\n', '\n').trim()
+    const legacy = readFileSync(
+      new URL('../../../fixtures/prompts/output-constraint-v3.3.md', import.meta.url), 'utf8',
+    ).replaceAll('\r\n', '\n').trim()
+    expect(builtinBodyHash(legacy)).toBe('a8d5418c414725854b998265de3a691959d69c62feb31f649b6ca77e55c9f1c5')
+    const original = { ...document(body), id: 'components/output/output_constraint' }
+    const unchanged = { ...original, body: legacy }
+    const custom = { ...original, body: `${legacy}\n我的自定义引导` }
+    synchronizeBuiltinDocument(unchanged, original)
+    synchronizeBuiltinDocument(custom, original)
+    expect(unchanged.body).toBe(body)
+    expect(unchanged.body).toContain('component("components/expression/selfminding")')
+    expect(custom.body).toBe(`${legacy}\n我的自定义引导`)
+  })
   it('未改写的旧记忆反思说明升级人格约束，用户追加内容保持原样', () => {
     const body =
       '维护Agent事件记忆关系图。只允许caused_by、same_event、same_topic。caused_by必须有明确因果，时间先后或相似不够。archive只能在事件错误、被更完整事件高度覆盖或不应继续普通检索时为true，且不可恢复。revision仅用于修复主事件的记叙、重要度、情感或结构化标签；archiveOverlaps仅列出被主事件高度覆盖且应归档的候选ID。返回严格JSON：{"links":[],"removeLinks":[],"archive":false,"revision":null,"archiveOverlaps":[]}。'

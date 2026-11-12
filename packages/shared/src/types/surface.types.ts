@@ -441,6 +441,7 @@ export interface StrongholdMessageProjection {
 }
 
 export interface StrongholdProjectionSnapshot {
+  life?: import('../strongholdLife').StrongholdLifeSnapshot
   protocolVersion: 1
   roomId: string
   roomName: string

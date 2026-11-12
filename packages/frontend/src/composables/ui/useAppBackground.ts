@@ -8,6 +8,14 @@ import {
   type AppBackgroundSettings,
 } from '../../api/modules/systemApi'
 
+export type WallpaperTone = 'dark' | 'balanced' | 'bright'
+
+export interface WallpaperToneMetrics {
+  tone: WallpaperTone
+  luma: number
+  contrast: number
+}
+
 export const DEFAULT_APP_BACKGROUND: AppBackgroundSettings = {
   enabled: false,
   opacity: 0.95,
@@ -26,8 +34,12 @@ export const DEFAULT_APP_BACKGROUND: AppBackgroundSettings = {
 export const APP_BACKGROUND_PRESETS = [
   {
     id: 'clear',
+    icon: 'sparkle',
     get label() {
       return __t('ui.ui', '通透')
+    },
+    get hint() {
+      return __t('ui.ui', '最大化展示壁纸原画细节')
     },
     opacity: 0.95,
     blur: 0,
@@ -37,8 +49,12 @@ export const APP_BACKGROUND_PRESETS = [
   },
   {
     id: 'balanced',
+    icon: 'palette',
     get label() {
       return __t('ui.ui', '均衡')
+    },
+    get hint() {
+      return __t('ui.ui', '兼顾壁纸氛围与日常阅读')
     },
     opacity: 0.95,
     blur: 0,
@@ -48,8 +64,12 @@ export const APP_BACKGROUND_PRESETS = [
   },
   {
     id: 'focus',
+    icon: 'book',
     get label() {
       return __t('ui.ui', '专注')
+    },
+    get hint() {
+      return __t('ui.ui', '柔化背景突出长文与代码')
     },
     opacity: 0.75,
     blur: 5,
@@ -179,6 +199,7 @@ export function useAppBackground() {
         ),
       ),
       '--app-material-blur': `${value.surfaceBlur}px`,
+      '--app-material-saturate': value.surfaceBlur > 0 ? '172%' : '100%',
     }
   })
   const activePreset = computed(
@@ -197,8 +218,16 @@ export function useAppBackground() {
   function applyPreset(id: string): void {
     const preset = APP_BACKGROUND_PRESETS.find((item) => item.id === id)
     if (!preset) return
-    const { id: _id, label: _label, ...values } = preset
-    Object.assign(settings.value, values, { brightness: 1, saturation: 1, contrast: 1 })
+    Object.assign(settings.value, {
+      opacity: preset.opacity,
+      blur: preset.blur,
+      overlayOpacity: preset.overlayOpacity,
+      surfaceOpacity: preset.surfaceOpacity,
+      surfaceBlur: preset.surfaceBlur,
+      brightness: 1,
+      saturation: 1,
+      contrast: 1,
+    })
   }
 
   async function load(): Promise<void> {

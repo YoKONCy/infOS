@@ -2,7 +2,7 @@ import { createDrizzleConnection, closeDrizzleConnection } from '@infos/backend/
 import Database from 'better-sqlite3'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import type { KernelExecutionDescriptor, KernelExecutionId, KernelProcessId } from '@infos/shared'
-import { kernelOutboxEvents, threadMessages, threads } from '@infos/backend/database/schema'
+import { kernelOutboxEvents } from '@infos/backend/database/schema'
 import {
   ExecutionRuntime,
   KernelOutboxDispatcher,
@@ -126,9 +126,7 @@ describe('消息事务 Outbox', () => {
       principalId: 'nana',
       payload: {},
     })
-    await (db as unknown as ReturnType<typeof drizzle>)
-      .insert(kernelOutboxEvents)
-      .values(outbox.toRow(fixed))
+    await db.insert(kernelOutboxEvents).values(outbox.toRow(fixed))
     createEvent.mockReturnValue(fixed)
 
     await expect(

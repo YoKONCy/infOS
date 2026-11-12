@@ -139,39 +139,46 @@ Arc 式现代空间结构
 4. 大面积背景必须使用中性色；饱和色仅用于小面积强调。
 5. 文本与背景必须满足基本可读性，禁止浅色文字叠加浅色渐变。
 
-### 4.2 浅色主题建议令牌
+### 4.2 浅色主题令牌（清透冷瓷）
 
 ```css
 :root,
 [data-theme='light'] {
-  /* 环境 */
-  --ui-bg-canvas: #f6f7fb;
-  --ui-bg-sidebar: rgba(244, 245, 249, 0.92);
+  color-scheme: light;
+  accent-color: var(--ui-accent-primary);
+
+  /* 环境（底板微冷蓝灰 -> 侧栏柔瓷 -> 卡片纯白） */
+  --ui-bg-canvas: #f2f5fb;
+  --ui-bg-sidebar: rgba(235, 240, 249, 0.95);
   --ui-bg-surface: #ffffff;
-  --ui-bg-surface-soft: #fafbfc;
-  --ui-bg-elevated: rgba(255, 255, 255, 0.94);
-  --ui-bg-hover: rgba(15, 23, 42, 0.045);
-  --ui-bg-active: rgba(244, 114, 182, 0.1);
+  --ui-bg-surface-soft: #f5f7fc;
+  --ui-bg-elevated: rgba(255, 255, 255, 0.97);
+  --ui-bg-hover: rgba(15, 23, 42, 0.05);
+  --ui-bg-active: rgba(219, 39, 119, 0.095);
 
   /* 文字 */
-  --ui-text-primary: #171923;
-  --ui-text-secondary: #596174;
-  --ui-text-tertiary: #8b93a7;
-  --ui-text-disabled: #b7bdc9;
+  --ui-text-primary: #121723;
+  --ui-text-secondary: #475266;
+  --ui-text-tertiary: #6d7890;
+  --ui-text-disabled: #9ca6ba;
   --ui-text-inverse: #ffffff;
 
-  /* 线条 */
-  --ui-border-subtle: rgba(15, 23, 42, 0.07);
-  --ui-border-default: rgba(15, 23, 42, 0.11);
-  --ui-border-strong: rgba(15, 23, 42, 0.2);
+  /* 线条与晶透双层高光 */
+  --ui-border-subtle: rgba(15, 23, 42, 0.085);
+  --ui-border-default: rgba(15, 23, 42, 0.14);
+  --ui-border-strong: rgba(15, 23, 42, 0.24);
+  --ui-crystal-highlight: inset 0 1px 0 rgba(255, 255, 255, 0.92);
+  --ui-card-dual-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.92),
+    0 2px 10px rgba(15, 23, 42, 0.055);
 
   /* 品牌与语义 */
-  --ui-accent-primary: #ec4899;
-  --ui-accent-primary-soft: rgba(236, 72, 153, 0.11);
-  --ui-accent-sky: #0ea5e9;
-  --ui-accent-sky-soft: rgba(14, 165, 233, 0.11);
-  --ui-accent-purple: #8b5cf6;
-  --ui-accent-purple-soft: rgba(139, 92, 246, 0.11);
+  --ui-accent-primary: #db2777;
+  --ui-accent-primary-soft: rgba(219, 39, 119, 0.1);
+  --ui-accent-sky: #0284c7;
+  --ui-accent-sky-soft: rgba(2, 132, 199, 0.1);
+  --ui-accent-purple: #7c3aed;
+  --ui-accent-purple-soft: rgba(124, 58, 237, 0.1);
   --ui-success: #059669;
   --ui-warning: #d97706;
   --ui-danger: #dc2626;
@@ -218,6 +225,15 @@ Arc 式现代空间结构
 - 新增 `--ui-*` 令牌用于现代框架、卡片、文字、边框和主题切换。
 - 迁移期允许新旧令牌共存，但新 MainView 和新组件必须优先使用 `--ui-*`。
 - 禁止在业务组件中重复定义同义颜色。
+
+### 4.5 自定义壁纸四层光学分层
+
+启用应用背景（`[data-app-background='active']`，见 `AppWallpaper.vue`、`useAppBackground.ts`、`app-background.css`、`light-theme.css`）时，界面按四层合成，避免浅色发脏与文字透底：
+
+1. **原画层（Artwork Layer）**：`blur: 0` 时保持原画锐利，不在浅色模式下强制追加模糊；`cover` 模式下支持在设置页实时预览框内直接拖拽调整 `positionX / positionY` 焦点。
+2. **自适应光学垫底层（Adaptive Optical Scrim + Veil）**：壁纸加载完成时通过 `24×24` 离屏 `<canvas>` 单次采样亮度与明暗跨度，输出 `data-wallpaper-tone="dark|balanced|bright"`。暗图在浅色模式下自动垫入柔雾提亮层、亮图在深色模式下自动压暗，再叠加 `color-mix(in oklab, ...)` 主题遮罩。
+3. **高饱和晶透壳层（Frosted Shell & Anti-Ghosting Overlays）**：标题栏、导航、侧栏等固定壳层使用 `backdrop-filter: blur(var(--app-material-blur)) saturate(var(--app-material-saturate, 172%))` 防止壁纸透过半透明白底泛灰；二级浮层（折叠面板、Popover、Drawer、Dialog、右键菜单）提升至 `95%–97%` 实度并配合毛玻璃，防止穿透底层文字。
+4. **阅读卡片层（Dual Crystal Border Cards）**：消息列表内气泡不使用逐项 `backdrop-filter` 以保证滚动帧率，改用高实度阅读填充配合外层 `1px` 深色轮廓与内层 `inset 0 1px 0` 纯白高光（`--app-crystal-border` / `--app-crystal-shadow`），并根据 `data-wallpaper-tone` 微调描边强度。
 
 ---
 

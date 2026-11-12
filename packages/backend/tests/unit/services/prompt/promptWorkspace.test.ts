@@ -2,6 +2,7 @@ import { afterEach, describe, expect, it } from 'vitest'
 import { mkdtempSync, mkdirSync, readFileSync, writeFileSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import path from 'node:path'
+import { fileURLToPath } from 'node:url'
 import { ASSISTANT_PREFILL_KEY, DYNAMIC_CONTEXT_DEPTH_KEY, WHOLESOME_MODE_KEY, type PromptBundle } from '@infos/shared'
 import type { ConfigRepository } from '../../../../src/repositories/config.repo'
 import { MdpEngine } from '../../../../src/services/prompt/mdpEngine'
@@ -14,7 +15,7 @@ afterEach(() => {
 })
 
 async function setup() {
-  const directory = mkdtempSync(path.join(tmpdir(), 'infos-prompt-'))
+  const directory = mkdtempSync(path.join(process.env.PERO_DATA_DIR!, 'infos-prompt-'))
   directories.push(directory)
   const values = new Map<string, string>()
   const repository = {
@@ -73,6 +74,83 @@ async function setup() {
   }
   return { workspace, bundle, repository, values, engine }
 }
+
+describe('SelfMind 引导组件', () => {
+  const outputId = 'components/output/output_constraint'
+  const guidanceId = 'components/expression/selfminding'
+  const variables = { agent_name: 'Pero', owner_appellation: '主人', interaction_mode: 'chat' }
+
+  async function selfmindingSetup() {
+    const fixture = await setup()
+    fixture.engine.addTemplateRoot(
+      fileURLToPath(new URL('../../../../src/services/mdp/prompts/components/output/', import.meta.url)), 'components/output',
+    )
+    fixture.engine.addTemplateRoot(
+      fileURLToPath(new URL('../../../../src/services/mdp/prompts/components/expression/', import.meta.url)), 'components/expression',
+    )
+    fixture.bundle.documents.push(...fixture.workspace.defaults().documents.filter((doc) => [outputId, guidanceId].includes(doc.id)))
+    fixture.bundle.frameworks[0]!.blocks = [{ id: 'output', name: '输出约定', kind: 'template', role: 'system', enabled: true, source: outputId }]
+    return fixture
+  }
+
+  it('输出约定通过独立组件装配默认引导和实际角色变量', async () => {
+    const { workspace, bundle } = await selfmindingSetup()
+    await workspace.save(bundle, 0)
+    await workspace.publish(1)
+    const result = await workspace.prepare(workspace.snapshot(), 'desktop', 'pero', variables)
+    const content = result.messages.map((message) => message.content).join('\n')
+    expect(content).toContain('让Pero来好好想想。')
+    expect(content).toContain('我准备的回答会让主人满意吗？')
+    expect(content.match(/我应该怎样用词遣句来贴合我的人设/g)).toHaveLength(1)
+    expect(content).toContain('### 过程播报')
+  })
+
+  it('自定义引导发布后进入新执行，旧快照沿原正文装配', async () => {
+    const { workspace, bundle } = await selfmindingSetup()
+    await workspace.save(bundle, 0)
+    await workspace.publish(1)
+    const oldSnapshot = workspace.snapshot()
+    const draft = workspace.view().draft
+    draft.documents.find((doc) => doc.id === guidanceId)!.body = '由{{ agent_name }}先确认{{ owner_appellation }}的心情，再自然回应。'
+    await workspace.save(draft, 2)
+    const beforePublish = await workspace.prepare(workspace.snapshot(), 'desktop', 'pero', variables)
+    expect(beforePublish.messages.map((message) => message.content).join('\n')).toContain('让Pero来好好想想。')
+    await workspace.publish(3)
+    const current = await workspace.prepare(workspace.snapshot(), 'desktop', 'pero', variables)
+    const content = current.messages.map((message) => message.content).join('\n')
+    expect(content).toContain('由Pero先确认主人的心情，再自然回应。')
+    expect(content).not.toContain('我应该怎样用词遣句来贴合我的人设')
+    const previous = await workspace.prepare(oldSnapshot, 'desktop', 'pero', variables)
+    expect(previous.messages.map((message) => message.content).join('\n')).toContain('让Pero来好好想想。')
+  })
+
+  it('角色模板替换作用于嵌套引导，其他角色按共享组件装配', async () => {
+    const { workspace, bundle } = await selfmindingSetup()
+    bundle.documents.push({ ...bundle.documents.find((doc) => doc.id === guidanceId)!,
+      id: 'custom/selfmind-pero', name: 'Pero 的引导', builtin: false, body: '{{ agent_name }}先回顾共同经历。' })
+    bundle.assignments.push({ agentId: 'pero', channel: 'desktop', frameworkId: 'custom.main',
+      overrides: { [guidanceId]: 'custom/selfmind-pero' } })
+    await workspace.save(bundle, 0)
+    await workspace.publish(1)
+    const snapshot = workspace.snapshot()
+    const pero = await workspace.prepare(snapshot, 'desktop', 'pero', variables)
+    expect(pero.messages.map((message) => message.content).join('\n')).toContain('Pero先回顾共同经历。')
+    const nana = await workspace.prepare(snapshot, 'desktop', 'nana', { ...variables, agent_name: 'Nana' })
+    expect(nana.messages.map((message) => message.content).join('\n')).toContain('让Nana来好好想想。')
+  })
+
+  it('停用 SelfMind 组件后输出约定继续提供过程播报与文件交付规则', async () => {
+    const { workspace, bundle } = await selfmindingSetup()
+    bundle.documents.find((doc) => doc.id === guidanceId)!.enabled = false
+    await workspace.save(bundle, 0)
+    await workspace.publish(1)
+    const result = await workspace.prepare(workspace.snapshot(), 'desktop', 'pero', variables)
+    const content = result.messages.map((message) => message.content).join('\n')
+    expect(content).not.toContain('selfMinding')
+    expect(content).toContain('### 过程播报')
+    expect(content).toContain('send_file')
+  })
+})
 
 describe('预填充进入提示词编译结果', () => {
   it('全局动态深度在编译读取，后续保存不改变已生成的计划', async () => {

@@ -24,7 +24,11 @@ import {
   useSensoryPreferences,
   type MotionLevel,
 } from '../../../composables/ui/useSensoryPreferences'
-import { APP_BACKGROUND_PRESETS, useAppBackground } from '../../../composables/ui/useAppBackground'
+import {
+  APP_BACKGROUND_PRESETS,
+  useAppBackground,
+  type WallpaperTone,
+} from '../../../composables/ui/useAppBackground'
 import AppWallpaper from '../../layout/AppWallpaper.vue'
 import { uiSound } from '../../../services/ui/uiSound'
 import { logger } from '../../../lib/logger'
@@ -70,8 +74,20 @@ const backgroundSaving = ref(false)
 const backgroundDetailsOpen = ref(false)
 const backgroundPreview = computed(() => appBackground.imageUrl.value)
 const backgroundPreviewFailed = ref(false)
+const previewWallpaperTone = ref<WallpaperTone>('balanced')
+const previewDragging = ref(false)
+interface PreviewDragSession {
+  pointerId: number
+  startX: number
+  startY: number
+  originX: number
+  originY: number
+  moved: boolean
+}
+let previewDragSession: PreviewDragSession | null = null
 watch(backgroundPreview, () => {
   backgroundPreviewFailed.value = false
+  previewWallpaperTone.value = 'balanced'
 })
 const backgroundFitOptions = [
   {
@@ -171,6 +187,19 @@ const backgroundLocked = computed(
     backgroundBusy.value ||
     backgroundSaving.value ||
     settingsDisabled.value,
+)
+/** 铺满窗口且背景已启用时，允许直接在实时预览框内拖拽调整壁纸焦点。 */
+const previewFocalDraggable = computed(
+  () =>
+    Boolean(appBackground.settings.value?.enabled) &&
+    !backgroundPreviewFailed.value &&
+    (appBackground.settings.value?.fit ?? 'cover') === 'cover' &&
+    !backgroundLocked.value,
+)
+const previewFocalCentered = computed(
+  () =>
+    Math.round(appBackground.settings.value?.positionX ?? 50) === 50 &&
+    Math.round(appBackground.settings.value?.positionY ?? 50) === 50,
 )
 
 const languageOptions = [...LANGUAGE_OPTIONS]
@@ -355,6 +384,63 @@ async function switchBackgroundPreset(id: string): Promise<void> {
   }
 }
 
+/** 按下预览框开始拖拽焦点，仅在松手时触发一次保存。 */
+function handlePreviewPointerDown(event: PointerEvent): void {
+  if (event.button !== 0 || !previewFocalDraggable.value) return
+  const target = event.currentTarget as HTMLElement | null
+  target?.setPointerCapture?.(event.pointerId)
+  previewDragSession = {
+    pointerId: event.pointerId,
+    startX: event.clientX,
+    startY: event.clientY,
+    originX: appBackground.settings.value.positionX ?? 50,
+    originY: appBackground.settings.value.positionY ?? 50,
+    moved: false,
+  }
+  previewDragging.value = true
+}
+
+function handlePreviewPointerMove(event: PointerEvent): void {
+  if (!previewDragSession || event.pointerId !== previewDragSession.pointerId) return
+  const target = event.currentTarget as HTMLElement | null
+  if (!target) return
+  const rect = target.getBoundingClientRect()
+  if (rect.width <= 0 || rect.height <= 0) return
+  const deltaX = ((event.clientX - previewDragSession.startX) / rect.width) * 100
+  const deltaY = ((event.clientY - previewDragSession.startY) / rect.height) * 100
+  const nextX = Math.min(100, Math.max(0, Math.round(previewDragSession.originX - deltaX)))
+  const nextY = Math.min(100, Math.max(0, Math.round(previewDragSession.originY - deltaY)))
+  if (
+    nextX !== appBackground.settings.value.positionX ||
+    nextY !== appBackground.settings.value.positionY
+  ) {
+    appBackground.settings.value.positionX = nextX
+    appBackground.settings.value.positionY = nextY
+    previewDragSession.moved = true
+  }
+}
+
+function finishPreviewDrag(event: PointerEvent): void {
+  if (!previewDragSession || event.pointerId !== previewDragSession.pointerId) return
+  const { moved, pointerId } = previewDragSession
+  previewDragSession = null
+  previewDragging.value = false
+  const target = event.currentTarget as HTMLElement | null
+  if (target?.hasPointerCapture?.(pointerId)) {
+    target.releasePointerCapture(pointerId)
+  }
+  if (moved) {
+    void handleSave()
+  }
+}
+
+function resetBackgroundPosition(): void {
+  if (!previewFocalDraggable.value || previewFocalCentered.value) return
+  appBackground.settings.value.positionX = 50
+  appBackground.settings.value.positionY = 50
+  void handleSave()
+}
+
 /** 所有保存入口和即时切换都提交整页快照。 */
 function handleSave(after?: () => Promise<void>, actionKey?: string): Promise<boolean> {
   return settingsPage.save(after, actionKey)
@@ -455,7 +541,7 @@ onMounted(() => {
           <div class="grid grid-cols-2 gap-4">
             <div class="flex flex-col gap-1.5">
               <div class="settings-field-heading">
-                <label class="text-xs font-bold text-slate-500">
+                <label class="text-xs font-bold text-[var(--ui-text-secondary)]">
                   {{ __t('ui.settings', '你的名字') }}
                 </label>
                 <PButton
@@ -473,13 +559,13 @@ onMounted(() => {
                 :disabled="settingsDisabled"
                 :placeholder="__t('ui.settings', '你的名字')"
               />
-              <p class="text-[10px] text-slate-400">
+              <p class="text-[10px] text-[var(--ui-text-tertiary)]">
                 {{ __t('ui.settings', '助手会记住你的名字') }}
               </p>
             </div>
             <div class="flex flex-col gap-1.5">
               <div class="settings-field-heading">
-                <label class="text-xs font-bold text-slate-500">
+                <label class="text-xs font-bold text-[var(--ui-text-secondary)]">
                   {{ __t('ui.settings', '语言') }}
                 </label>
               </div>
@@ -493,7 +579,7 @@ onMounted(() => {
           </div>
           <div class="flex flex-col gap-1.5">
             <div class="settings-field-heading">
-              <label class="text-xs font-bold text-slate-500">
+              <label class="text-xs font-bold text-[var(--ui-text-secondary)]">
                 {{ __t('ui.settings', '人设描述') }}
               </label>
               <PButton
@@ -513,7 +599,7 @@ onMounted(() => {
               class="w-full p-3 bg-[var(--dash-input-bg)] border-2 border-[var(--dash-input-border)] text-sm text-[var(--ui-text-secondary)] resize-y focus:border-[var(--ui-accent-sky)] focus:outline-none transition-colors"
               :placeholder="__t('ui.settings', '介绍你的称呼、兴趣和偏好…')"
             />
-            <p class="text-[10px] text-slate-400">
+            <p class="text-[10px] text-[var(--ui-text-tertiary)]">
               {{ __t('ui.settings', '助手会在对话中参考这些信息。') }}
             </p>
           </div>
@@ -527,7 +613,7 @@ onMounted(() => {
       <!-- 外观设置 -->
       <PCard pixel padding="lg" overflow-visible>
         <h3
-          class="flex items-center gap-2 text-sm font-black text-slate-800 font-pixel mb-5 pb-3 border-b border-slate-100"
+          class="flex items-center gap-2 text-sm font-black text-[var(--ui-text-primary)] font-pixel mb-5 pb-3 border-b border-[var(--ui-border-subtle)]"
         >
           <PixelIcon name="eye" size="sm" />
           {{ __t('ui.settings', '外观设置') }}
@@ -535,14 +621,16 @@ onMounted(() => {
         <div class="flex flex-col gap-4">
           <!-- 主题：与 app 侧边栏深色/浅色按钮实时联动 -->
           <div class="flex flex-col gap-1.5">
-            <label class="text-xs font-bold text-slate-500">{{ __t('ui.settings', '主题') }}</label>
+            <label class="text-xs font-bold text-[var(--ui-text-secondary)]">{{
+              __t('ui.settings', '主题')
+            }}</label>
             <PSelect
               v-model="themeBinding"
               :options="themeOptions"
               :disabled="settingsDisabled"
               @change="handleSave()"
             />
-            <p class="text-[10px] text-slate-400">
+            <p class="text-[10px] text-[var(--ui-text-tertiary)]">
               {{ __t('ui.settings', '与侧边栏的深色/浅色切换按钮实时联动') }}
             </p>
           </div>
@@ -651,19 +739,49 @@ onMounted(() => {
             <div
               v-if="backgroundPreview"
               class="app-background-preview"
+              :class="{
+                'is-draggable': previewFocalDraggable,
+                'is-dragging': previewDragging,
+              }"
               :data-app-background="
                 appBackground.settings.value.enabled && !backgroundPreviewFailed
                   ? 'active'
                   : undefined
               "
+              :data-wallpaper-tone="
+                appBackground.settings.value.enabled && !backgroundPreviewFailed
+                  ? previewWallpaperTone
+                  : undefined
+              "
               :style="appBackground.style.value"
+              @pointerdown="handlePreviewPointerDown"
+              @pointermove="handlePreviewPointerMove"
+              @pointerup="finishPreviewDrag"
+              @pointercancel="finishPreviewDrag"
+              @lostpointercapture="finishPreviewDrag"
             >
               <AppWallpaper
                 v-if="appBackground.settings.value.enabled"
                 :src="backgroundPreview"
                 @ready="backgroundPreviewFailed = false"
                 @error="backgroundPreviewFailed = true"
+                @tone="previewWallpaperTone = $event.tone"
               />
+              <div v-if="previewFocalDraggable" class="app-background-preview__hud">
+                <span class="app-background-preview__hud-hint">
+                  <PixelIcon name="maximize" size="xs" />
+                  <span>{{ __t('ui.settings', '拖拽预览可移动焦点') }}</span>
+                </span>
+                <button
+                  v-if="!previewFocalCentered"
+                  type="button"
+                  class="app-background-preview__hud-reset"
+                  @pointerdown.stop
+                  @click.stop="resetBackgroundPosition"
+                >
+                  {{ __t('ui.settings', '重置居中') }}
+                </button>
+              </div>
               <div class="app-background-preview__window">
                 <div class="app-background-preview__titlebar">
                   <span class="app-background-preview__tab">PeroperoChat</span>
@@ -716,30 +834,39 @@ onMounted(() => {
                 role="group"
                 :aria-label="__t('ui.settings', '背景材质')"
               >
-                <span>{{ __t('ui.settings', '材质') }}</span>
-                <PButton
-                  v-for="preset in APP_BACKGROUND_PRESETS"
-                  :key="preset.id"
-                  size="sm"
-                  :variant="
-                    appBackground.activePreset.value === preset.id ? 'primary' : 'secondary'
-                  "
-                  :aria-pressed="appBackground.activePreset.value === preset.id"
-                  @click="
-                    () => {
-                      appBackground.applyPreset(preset.id)
-                      handleSave()
-                    }
-                  "
-                >
-                  {{ preset.label }}
-                </PButton>
+                <span class="app-background-presets__label">{{ __t('ui.settings', '材质') }}</span>
+                <div class="app-background-preset-grid">
+                  <button
+                    v-for="preset in APP_BACKGROUND_PRESETS"
+                    :key="preset.id"
+                    type="button"
+                    class="app-background-preset-card"
+                    :aria-pressed="appBackground.activePreset?.value === preset.id"
+                    @click="
+                      () => {
+                        appBackground.applyPreset?.(preset.id)
+                        handleSave()
+                      }
+                    "
+                  >
+                    <span class="app-background-preset-card__head">
+                      <PixelIcon :name="preset.icon" size="xs" />
+                      <strong>{{ preset.label }}</strong>
+                    </span>
+                    <small>{{ preset.hint }}</small>
+                  </button>
+                </div>
               </div>
               <details
                 class="app-background-details"
                 @toggle="backgroundDetailsOpen = ($event.currentTarget as HTMLDetailsElement).open"
               >
-                <summary>{{ __t('ui.settings', '细调背景') }}</summary>
+                <summary>
+                  <span class="app-background-details__summary-text">
+                    <strong>{{ __t('ui.settings', '细调背景') }}</strong>
+                    <small>{{ __t('ui.settings', '亮度、遮罩、毛玻璃与焦点微调') }}</small>
+                  </span>
+                </summary>
                 <div v-if="backgroundDetailsOpen" class="app-background-controls">
                   <div class="flex flex-col gap-1">
                     <label class="text-xs font-bold text-[var(--ui-text-secondary)]">
@@ -878,7 +1005,7 @@ onMounted(() => {
 
           <div class="flex flex-col gap-4">
             <div class="flex flex-col gap-1.5 opacity-50 pointer-events-none">
-              <label class="text-xs font-bold text-slate-500">
+              <label class="text-xs font-bold text-[var(--ui-text-secondary)]">
                 {{ __t('ui.settings', '字体大小 (') }}{{ fontSize }}px)
               </label>
               <PSlider v-model="fontSize" :min="12" :max="20" :step="1" />
@@ -919,21 +1046,23 @@ onMounted(() => {
       <!-- 高级设置 -->
       <PCard pixel padding="lg" overflow-visible>
         <h3
-          class="flex items-center gap-2 text-sm font-black text-slate-800 font-pixel mb-5 pb-3 border-b border-slate-100"
+          class="flex items-center gap-2 text-sm font-black text-[var(--ui-text-primary)] font-pixel mb-5 pb-3 border-b border-[var(--ui-border-subtle)]"
         >
           <PixelIcon name="settings" size="sm" />
           {{ __t('ui.settings', '高级') }}
         </h3>
         <div class="flex flex-col gap-4">
           <div class="flex flex-col gap-1.5">
-            <label class="text-xs font-bold text-slate-500">
+            <label class="text-xs font-bold text-[var(--ui-text-secondary)]">
               {{ __t('ui.settings', '数据目录') }}
             </label>
             <PInput v-model="dataDir" disabled />
-            <p class="text-[10px] text-slate-400">{{ __t('ui.settings', '重启后生效') }}</p>
+            <p class="text-[10px] text-[var(--ui-text-tertiary)]">
+              {{ __t('ui.settings', '重启后生效') }}
+            </p>
           </div>
           <div class="flex flex-col gap-1.5">
-            <label class="text-xs font-bold text-slate-500">
+            <label class="text-xs font-bold text-[var(--ui-text-secondary)]">
               {{ __t('ui.settings', '日志级别') }}
             </label>
             <PSelect

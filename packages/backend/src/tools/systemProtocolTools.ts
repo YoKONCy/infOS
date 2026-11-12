@@ -43,6 +43,8 @@ export const STRONGHOLD_CHANNEL_TOOLS = new Set([
   'stronghold_set_environment',
   'stronghold_summon_agents',
   'stronghold_call_butler',
+  'stronghold_activity',
+  'stronghold_watch',
 ])
 
 /** 判断工具是否属于据点通道的上游白名单。 */

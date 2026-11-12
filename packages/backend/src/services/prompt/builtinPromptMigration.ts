@@ -13,6 +13,7 @@ const legacyBodies: Record<string, readonly string[]> = {
   'components/output/output_constraint': [
     'e565322797295df1ad7c05db8bb20a1cbe7097026c15f229cf69ec4d227bfaec',
     'edfec3d206fa6b20f4adb66cd2ccc646de46ecb4af15cba29917b6f21402b9ae',
+    'a8d5418c414725854b998265de3a691959d69c62feb31f649b6ca77e55c9f1c5',
   ],
   'apps/social/social_rules': ['02fc8edf9ebb6cd959581c856d42305029246cf2adf4e011026b4b9390cc6232'],
   'tasks/runtime/memory.extract': [

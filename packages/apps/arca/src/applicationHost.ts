@@ -81,7 +81,7 @@ export class ArcaApplicationHost {
           appId: 'infos.arca',
           instanceId: this.instanceId,
           name: 'Arca',
-          appVersion: '0.9.12',
+          appVersion: '0.9.13',
           adapterVersion: '1.0.0',
           state: 'ready',
           endpoints: arcaAdapterManifest.endpoints,

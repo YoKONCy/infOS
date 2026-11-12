@@ -632,6 +632,7 @@ export function useStronghold() {
     fetchFacilities,
     fetchRooms,
     fetchAgentProfiles,
+    fetchMessages,
     sendMessage,
     deleteMessage,
     callButler,

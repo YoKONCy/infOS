@@ -42,9 +42,7 @@ const advancedConfigSchema = z.object({
   minScore: z.number().min(-1).max(1),
   enableFista: z.boolean(),
   enableDpp: z.boolean(),
-  enableContextRnn: z.boolean(),
   enableLeiden: z.boolean(),
-  enableFeedback: z.boolean(),
 })
 
 /** 核心记忆中管理的主 Agent 记忆运行配置。Social 应用配置不属于此合同。 */
@@ -65,18 +63,10 @@ const memoryRuntimeConfigShape = z
           ...config.advanced,
           enableFista: false,
           enableDpp: false,
-          enableContextRnn: false,
           enableLeiden: false,
-          enableFeedback: false,
         },
       }
-    return {
-      ...config,
-      advanced: {
-        ...config.advanced,
-        enableFeedback: config.advanced.enableContextRnn && config.advanced.enableFeedback,
-      },
-    }
+    return config
   })
 
 /** 读取与保存共用：先补齐旧版本缺失字段，再做严格校验。 */
@@ -86,15 +76,6 @@ export const memoryRuntimeConfigSchema = z.preprocess(
 )
 
 export type MemoryRuntimeConfig = z.infer<typeof memoryRuntimeConfigShape>
-
-/** RNN 是高级检索的可选子模块，不能独立于高级管线运行。 */
-export function isContextRnnEnabled(advanced: MemoryRuntimeConfig['advanced']): boolean {
-  return advanced.enableSaPpr && advanced.enableContextRnn
-}
-
-export function isContextRnnFeedbackEnabled(advanced: MemoryRuntimeConfig['advanced']): boolean {
-  return isContextRnnEnabled(advanced) && advanced.enableFeedback
-}
 
 /** 同时遵守 Thread Policy 与通道级自动 RAG 开关。 */
 export function shouldRunAutoRag(
@@ -125,9 +106,7 @@ export const DEFAULT_MEMORY_RUNTIME_CONFIG: MemoryRuntimeConfig = {
     minScore: 0.1,
     enableFista: false,
     enableDpp: false,
-    enableContextRnn: false,
     enableLeiden: false,
-    enableFeedback: false,
   },
 }
 

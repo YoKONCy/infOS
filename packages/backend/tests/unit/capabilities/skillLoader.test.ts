@@ -1,4 +1,4 @@
-import { mkdirSync, rmSync, writeFileSync } from 'node:fs'
+import { mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { tmpdir } from 'node:os'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
@@ -210,7 +210,9 @@ description: 生成图像
   describe('导入与删除', () => {
     it('importFromPath 应当验证并复制本地 Skill 到用户目录', () => {
       const sourceDir = join(rootDir, 'source-skill')
-      mkdirSync(sourceDir, { recursive: true })
+      mkdirSync(join(sourceDir, 'references', 'nested'), { recursive: true })
+      const reference = Buffer.from([0, 1, 254, 255])
+      writeFileSync(join(sourceDir, 'references', 'nested', 'sample.bin'), reference)
       writeFileSync(
         join(sourceDir, 'SKILL.md'),
         `---
@@ -229,6 +231,8 @@ description: 用户导入
         name: 'source-skill',
         description: '用户导入',
       })
+      expect(readFileSync(join(userDir, folderName, 'references', 'nested', 'sample.bin')))
+        .toEqual(reference)
     })
 
     it('importFromPath 来源无效时应当抛出验证错误', () => {

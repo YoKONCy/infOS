@@ -1,3 +1,4 @@
+import assert from 'node:assert/strict'
 import { existsSync, mkdirSync, mkdtempSync, symlinkSync, writeFileSync } from 'node:fs'
 import path from 'node:path'
 import { beforeEach, describe, expect, it } from 'vitest'
@@ -24,10 +25,11 @@ beforeEach(async () => {
 describe('角色记事本', () => {
   it('首次编译给出文件位置，目录与正文按正常写入懒创建', async () => {
     const [region] = await provider.provide(request)
+    assert(region)
     expect(region.content).toContain('notes/MEMORY.md')
     expect(existsSync(path.join(root, 'notes'))).toBe(false)
     await workspace.write('pero', 'notes/MEMORY.md', '主人喜欢红茶。', 'group')
-    expect((await provider.provide(request))[0].content).toContain('主人喜欢红茶。')
+    expect((await provider.provide(request))[0]!.content).toContain('主人喜欢红茶。')
   })
 
   it('主文件每次编译固定内容与指纹，附页和其他角色资料按需单独读取', async () => {
@@ -36,8 +38,10 @@ describe('角色记事本', () => {
     await workspace.ensureWorkspace('nana')
     await workspace.write('nana', 'notes/MEMORY.md', 'Nana 的私人要点。', 'group')
     const [first] = await provider.provide(request)
+    assert(first)
     await workspace.write('pero', 'notes/MEMORY.md', '主人现在喜欢绿茶。', 'group')
     const [next] = await provider.provide(request)
+    assert(next)
     expect(first.content).toContain('主人喜欢红茶。')
     expect(first.content).not.toContain('详细工作过程')
     expect(first.content).not.toContain('Nana 的私人要点')

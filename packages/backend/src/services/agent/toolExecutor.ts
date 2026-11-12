@@ -569,6 +569,7 @@ export class RegistryToolExecutor implements ToolExecutor {
     source: string,
     runtimeContext?: {
       sceneRoomId?: string
+      sceneSourceMessageId?: number
       conversation?: import('@infos/shared').ConversationActions
       threadId?: string
       channel?: string
@@ -763,6 +764,7 @@ export class RegistryToolExecutor implements ToolExecutor {
         const context: ToolContext = {
           conversation: runtimeContext?.conversation,
           sceneRoomId: runtimeContext?.sceneRoomId,
+          sceneSourceMessageId: runtimeContext?.sceneSourceMessageId,
           realmId: runtimeContext?.realmId,
           source,
           agentId,
@@ -1603,6 +1605,7 @@ export class RegistryToolExecutor implements ToolExecutor {
       const context: ToolContext = {
         conversation: runtimeContext?.conversation,
         sceneRoomId: runtimeContext?.sceneRoomId,
+        sceneSourceMessageId: runtimeContext?.sceneSourceMessageId,
         requestedBy: runtimeContext?.requestedBy,
         source,
         agentId,

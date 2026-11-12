@@ -50,6 +50,7 @@ export interface ToolContext {
   /** AIOS: 对话通道（desktop/companion/social/group） */
   channel: string
   sceneRoomId?: string
+  sceneSourceMessageId?: number
   /** 当前对话轮次 ID，文件变更快照按此绑定。 */
   pairId?: string
   generation?: number

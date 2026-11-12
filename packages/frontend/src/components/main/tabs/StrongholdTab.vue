@@ -20,6 +20,7 @@ import { useMobileLayout } from '../../../composables/ui/useMobileLayout'
 import { PixelIcon, PButton, PDialog } from '../../pixel'
 import HistoryExportDialog from '../../chat/HistoryExportDialog.vue'
 import StrongholdChat from '../../stronghold/StrongholdChat.vue'
+import StrongholdLifePanel from '../../stronghold/StrongholdLifePanel.vue'
 import { useStronghold } from '../../../composables/useStronghold'
 import type { Room } from '../../../api/modules/strongholdApi'
 import { strongholdApi } from '../../../api/modules/strongholdApi'
@@ -46,6 +47,8 @@ const {
   agentProfiles,
   currentRoomAgents,
   messages,
+  roomProjection,
+  fetchMessages,
   isLoadingMessages,
   isSendingMessage,
   isAwaitingReply,
@@ -57,6 +60,12 @@ const {
   deleteMessage,
   callButler,
 } = useStronghold()
+
+function participationLabel(agentId: string): string {
+  const state = roomProjection.value?.life?.participants.find((entry) => entry.agentId === agentId)?.state ?? 'available'
+  const labels = { available: '有空', listening: '旁听中', conversing: '交谈中', occupied: '专注中', resting: '休息中' }
+  return __t('ui.stronghold', labels[state])
+}
 
 async function exportCurrentHistory(_options: HistoryExportOptions): Promise<void> {
   if (!currentRoom.value) return
@@ -623,7 +632,7 @@ async function submitButler(): Promise<void> {
                   </div>
                   <div class="sh-roommate-info">
                     <span class="sh-roommate-name">{{ agent.name }}</span>
-                    <span class="sh-roommate-status">{{ __t('ui.navigation', '在本房间') }}</span>
+                    <span class="sh-roommate-status">{{ participationLabel(agent.agentId) }}</span>
                   </div>
                 </div>
               </div>
@@ -632,6 +641,15 @@ async function submitButler(): Promise<void> {
                 <span>{{ __t('ui.navigation', '这个房间还没人哦') }}</span>
               </div>
             </section>
+
+            <StrongholdLifePanel
+              v-if="currentRoom && roomProjection?.life"
+              :key="currentRoom.id"
+              :room-id="currentRoom.id"
+              :life="roomProjection.life"
+              :agents="currentRoomAgents"
+              @refresh="fetchMessages(currentRoom.id)"
+            />
 
             <!-- 据点全部居民 -->
             <section class="sh-section">

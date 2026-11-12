@@ -119,9 +119,7 @@ import { ModelRepository } from './repositories/model.repo'
 import { ModelService } from './services/model/modelService'
 import { EventMemoryService } from './services/memory/eventMemoryService'
 import { loadMemoryRuntimeConfig } from './services/memory/memoryRuntimeConfig'
-import { ContextRnn } from './services/retrieval/contextRnn'
-import { ContextRnnRuntime } from './services/retrieval/contextRnnRuntime'
-import { forgetRetrievalState } from './services/maintenance/forgetRetrievalState'
+import { removeObsoleteRetrievalState } from './services/maintenance/obsoleteRetrievalState'
 import { EventNoteDraftCommitter } from './services/memory/eventNoteDraftCommitter'
 import { EventMemoryFallbackService } from './services/memory/eventMemoryFallbackService'
 import { memoryPersonaResolver } from './services/memory/memoryPersona'
@@ -249,6 +247,7 @@ import { setSchedulerService } from './tools/scheduler'
 import { WorkspaceCheckpointService } from './services/workspace/workspaceCheckpointService'
 import { WorkspaceBrowserService } from './services/workspace/workspaceBrowserService'
 import { LocalWorkspaceService } from './services/workspace/workspaceService'
+import { WorkspaceDirectoryContextProvider } from './services/workspace/workspaceDirectoryContext'
 import { ExecutionSessionManager } from './services/execution/executionSession'
 import { LocalPolicyRunner } from './services/execution/sandboxRunner'
 import { TerminalManager } from './services/execution/terminalManager'
@@ -272,6 +271,9 @@ import { ButlerService } from './services/stronghold/butlerService'
 import { GroupChatService } from './services/stronghold/groupChatService'
 import { GroupChatDispatcher } from './services/stronghold/groupChatDispatcher'
 import { StrongholdRoundService } from './services/stronghold/strongholdRoundService'
+import { StrongholdLifeService } from './services/stronghold/strongholdLifeService'
+import { StrongholdLifeContextProvider } from './services/stronghold/strongholdLifeContext'
+import { setStrongholdLifeService } from './tools/strongholdLife'
 import { createEnvelope } from './services/gateway/types'
 import { SqliteSocialStoragePort } from './applications/sqliteSocialStoragePort'
 // 注意：社交系统（SocialBridge/ImageCacheManager/StickerService/平台适配器/SocialMessageRepository）
@@ -498,6 +500,7 @@ export interface AppContext {
   strongholdService: StrongholdService
   strongholdTurnService: StrongholdTurnService
   strongholdRoundService: StrongholdRoundService
+  strongholdLifeService: StrongholdLifeService
   butlerService: ButlerService
   groupChatService: GroupChatService
   groupChatDispatcher: GroupChatDispatcher
@@ -591,6 +594,11 @@ export async function createAppContext(config: AppConfig): Promise<AppContext> {
 
   // ── 1. 核心基础设施 ──
   const pathResolver = new PathResolver(config.runtimeEnv)
+  try {
+    removeObsoleteRetrievalState(pathResolver.resolve('@data'))
+  } catch (error) {
+    logger.warn(__t('logs.memory', '清理旧检索状态失败，将在下次启动时重试：{0}', [String(error)]))
+  }
   const assetRegistry = new AssetRegistry(pathResolver)
 
   // WorkspaceService 仍供终端、脚本及搜索工具定位 Principal Workspace。
@@ -953,6 +961,7 @@ export async function createAppContext(config: AppConfig): Promise<AppContext> {
 
   setWorkContextClearDeps(workContextClears, toolContextService)
   const contextRegionRegistry = new ContextRegionRegistry()
+  contextRegionRegistry.register(new WorkspaceDirectoryContextProvider(workspaceService))
   contextRegionRegistry.register(new NotebookContextProvider(workspaceService))
   contextRegionRegistry.register(new ObserverContextRegionProvider(agentStateRepository))
   const contextCompiler = new ContextCompiler(
@@ -1265,11 +1274,7 @@ export async function createAppContext(config: AppConfig): Promise<AppContext> {
   eventMemoryService.setPackageHooks(internalFlow)
   eventMemoryService.setBackgroundPolicy(memoryBackground)
   eventMemoryService.setPrivacyPolicy(privacyPolicy)
-  const contextRnn = new ContextRnnRuntime(
-    () => new ContextRnn(pathResolver, { inputDim: storeRegistry.getDimension() }),
-  )
-  eventMemoryService.setAdvancedRetrieval(contextRnn, () => loadMemoryRuntimeConfig(configRepo))
-  kernelLifecycle.defer(() => contextRnn.dispose())
+  eventMemoryService.setRuntimeConfigProvider(() => loadMemoryRuntimeConfig(configRepo))
   contextCompiler.setEventMemoryService(eventMemoryService)
   const eventNoteDraftCommitter = new EventNoteDraftCommitter(
     eventMemoryService,
@@ -1335,7 +1340,6 @@ export async function createAppContext(config: AppConfig): Promise<AppContext> {
       eventMemoryService.invalidateForDeletion()
       eventReflection.invalidateForDeletion()
       await dailyNotes.invalidateForDeletion()
-      forgetRetrievalState(pathResolver)
     },
     removeDiary: (agentId, name) => dailyNotes.removeGeneratedFile(agentId, name),
     listAgentIds: () => agentManager.listAgents().map((agent) => agent.id),
@@ -1443,23 +1447,6 @@ export async function createAppContext(config: AppConfig): Promise<AppContext> {
   // 旧 ChatResetService 保留为 deprecated 文件，不再实例化
 
   const scheduler = kernelScheduler
-  scheduler.registerPeriodic({
-    name: 'context-rnn-checkpoint',
-    displayName: __t('server.container.ts', 'ContextRNN 状态保存'),
-    description: __t(
-      'server.container.ts',
-      '仅在 ContextRNN 已启用且存在变更时保存状态与在线学习权重',
-    ),
-    intervalMs: 60 * 1000,
-    class: 'maintenance',
-    priority: 0,
-    resourceKey: 'context-rnn-checkpoint',
-    shouldRun: () => memoryBackground.enabled && contextRnn.hasPendingChanges,
-    handler: async () => {
-      eventMemoryService.syncAdvancedRetrievalConfig(await loadMemoryRuntimeConfig(configRepo))
-      if (memoryBackground.enabled) contextRnn.checkpoint()
-    },
-  })
   // 危险区域重置服务（复用主库连接，三个分级重置均在此执行）
   const resetService = new ResetService(db)
 
@@ -2014,7 +2001,6 @@ export async function createAppContext(config: AppConfig): Promise<AppContext> {
     },
     getAgentModelConfig: modelRoles.bindAgent(),
     getModelConfigById: (id) => modelRoles.resolveById(id),
-    retrievalFeedback: eventMemoryService,
     getThreadModelConfig: (threadId, agentId, modelId) =>
       threadModelService.resolve(threadId, agentId, modelId),
   })
@@ -2276,10 +2262,23 @@ export async function createAppContext(config: AppConfig): Promise<AppContext> {
     await petStateService.rollbackRoomPair(roomId, pairId)
     await flowStateService.rollbackScene(roomId, pairId)
     await companionSchedulerService.discardSceneActivity(roomId, pairId)
+    strongholdLifeService.invalidate(undefined, pairId, roomId)
   },
   )
   const allowsStrongholdAutonomy = (agentId: string) => isEnabledAgent(agentId) &&
     companionSchedulerService.getAgentSettings(agentId).strongholdActivity && !companionSchedulerService.perceptionPermit.stopped
+  const strongholdLifeService = new StrongholdLifeService(db, groupChatService, isEnabledAgent, allowsStrongholdAutonomy,
+    (id) => id === 'user' ? __t('server.stronghold', '你') : id === 'system' ? __t('server.stronghold', '据点') : agentManager.getAgent(id)?.name ?? id)
+  groupChatService.setLifeLifecycle((message) => strongholdLifeService.onMessage(message),
+    (message, agentId, options) => strongholdLifeService.admitReply(message, agentId, options),
+    (message) => strongholdLifeService.canResumeReply(message))
+  contextRegionRegistry.register(new StrongholdLifeContextProvider(strongholdLifeService))
+  threadService.setActivityInvalidator(async (threadId, sourceIds) => {
+    await companionSchedulerService.discardThreadActivity(threadId, sourceIds)
+    if (sourceIds) for (const id of sourceIds) strongholdLifeService.invalidate(threadId, id)
+    else strongholdLifeService.invalidate(threadId)
+  })
+  strongholdService.setLifeLifecycle((change) => strongholdLifeService.onSceneChange(change))
   const strongholdTurnService = new StrongholdTurnService(
     strongholdService,
     groupChatService,
@@ -2297,6 +2296,8 @@ export async function createAppContext(config: AppConfig): Promise<AppContext> {
       const signal = runtimeStateService.getAbortSignal(threadId)!
       return { signal, release: () => runtimeStateService.unregisterTask(threadId, signal) }
     },
+    strongholdLifeService,
+    flowStateService,
   )
   const groupChatDispatcher = new GroupChatDispatcher(groupChatService)
   const strongholdRoundService = new StrongholdRoundService(
@@ -2331,7 +2332,7 @@ export async function createAppContext(config: AppConfig): Promise<AppContext> {
     approvalService,
     agentInputService,
   )
-  const strongholdProjection = new StrongholdProjectionService(groupChatService)
+  const strongholdProjection = new StrongholdProjectionService(groupChatService, strongholdLifeService)
   registerApplicationKernelObjectAdapters({
     registry: kernelObjects,
     apps: appManager,
@@ -2530,6 +2531,7 @@ export async function createAppContext(config: AppConfig): Promise<AppContext> {
     groupChatService,
     groupChatDispatcher,
     strongholdRoundService,
+    strongholdLifeService,
 
     // 注意：社交桥接（SocialBridge）已迁移到 packages/apps/social/runtime/socialBridge.ts
     // 由 SocialAppRuntime 独立管理，不再通过主 AppContext 暴露
@@ -2592,12 +2594,10 @@ export async function createAppContext(config: AppConfig): Promise<AppContext> {
         },
       }
 
-      const retrievalConfig = await loadMemoryRuntimeConfig(configRepo)
       // 先检查并关闭旧句柄；保留原文件，切换失败时可以恢复旧配置而不丢索引。
       storeRegistry.setDimension(newConfig.dimension)
       eventMemoryService.invalidateForDeletion()
       embeddingService.reconfigure(newConfig)
-      eventMemoryService.syncAdvancedRetrievalConfig(retrievalConfig)
       knowledgeService.embeddingChanged()
     },
 
@@ -2663,6 +2663,7 @@ export async function createAppContext(config: AppConfig): Promise<AppContext> {
  * 4. 扫描资产 (AssetRegistry)
  */
 export async function initAppContext(ctx: AppContext): Promise<void> {
+  setStrongholdLifeService(ctx.strongholdLifeService)
   // 0. 注册内置社交应用 runtime factory
   // AIOS: 内置Social通过受信任Runtime注册表创建
   // 用动态 import 延迟加载 social runtime（避免 tsconfig 路径冲突）
@@ -3004,8 +3005,6 @@ export async function initAppContext(ctx: AppContext): Promise<void> {
         ['running', 'completed', 'waiting'].includes(source.status))
     },
     resumeTaskWait: async (wait, task) => {
-      // 已有 resume 交付负责接续原会话，共用其持久投递身份。
-      if (task.completionAction === 'resume') return
       const deliveryId = `activity-task:${wait.threadId}:${wait.generation}:${wait.sourcePairId}:${task.id}`
       const content = '【等待的任务结果已到达】\n以下为真实任务资料，请按当前场景处理结果。\n' +
         JSON.stringify({ taskId: task.id, status: task.status, result: task.result, error: task.errorMessage })
@@ -3141,6 +3140,21 @@ export async function initAppContext(ctx: AppContext): Promise<void> {
     },
   })
   ctx.kernelLifecycle.defer(() => ctx.companionSchedulerService.shutdown())
+  ctx.kernelScheduler.registerPeriodic({
+    name: 'agent-activity-recovery',
+    displayName: __t('server.container.ts', '角色条件等待恢复'),
+    description: __t('server.container.ts', '依据真实消息与任务结果恢复角色等待，重试尚未完成的投递'),
+    intervalMs: 5000,
+    class: 'maintenance',
+    shouldRun: () => ctx.companionSchedulerService.hasPendingActivities(),
+    handler: async () => ctx.companionSchedulerService.recoverPendingActivities(),
+  })
+  ctx.kernelScheduler.registerPeriodic({
+    name: 'stronghold-life-recovery', displayName: __t('server.container.ts', '据点生活接续'),
+    description: __t('server.container.ts', '核对交流、活动、邀请与关注并接续真实事件'),
+    intervalMs: 5000, class: 'maintenance',
+    handler: async () => { ctx.strongholdLifeService.recover(); ctx.strongholdRoundService.resumePending() },
+  })
   logger.info(__t('logs.container.ts', '全局主动行为调度器已恢复，对所有已启用角色生效'))
 
   // 7. 据点系统初始化

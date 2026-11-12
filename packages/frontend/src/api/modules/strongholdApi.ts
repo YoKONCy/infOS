@@ -7,7 +7,7 @@
  * @module packages/frontend/src/api/modules/strongholdApi
  */
 
-import type { StrongholdProjectionSnapshot } from '@infos/shared'
+import type { StrongholdLifeSnapshot, StrongholdProjectionSnapshot } from '@infos/shared'
 import { apiClient } from '../client'
 
 // ── 类型定义 ──
@@ -118,6 +118,11 @@ export type ButlerAction =
 // ── API ──
 
 export const strongholdApi = {
+  setPresence: (roomId: string, present: boolean, operationId: string) =>
+    apiClient.post<StrongholdLifeSnapshot>(`/stronghold/rooms/${roomId}/presence`, { present, operationId }),
+
+  activity: (roomId: string, command: StrongholdActivityCommand, operationId: string) =>
+    apiClient.post<unknown>(`/stronghold/rooms/${roomId}/activities`, { command, operationId }),
   // ═══ 设施 ═══
 
   /** 获取所有设施 */
@@ -211,4 +216,13 @@ export const strongholdApi = {
 
   /** 切换管家启用状态 */
   toggleButler: (enabled: boolean) => apiClient.put<void>('/stronghold/butler/toggle', { enabled }),
+}
+
+export interface StrongholdActivityCommand {
+  action: 'create' | 'update' | 'join' | 'leave' | 'pause' | 'resume' | 'end' | 'invite' | 'respond'
+  id?: string
+  revision?: number
+  title?: string
+  agentIds?: string[]
+  response?: 'accepted' | 'declined' | 'later' | 'cancelled'
 }

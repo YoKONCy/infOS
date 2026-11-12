@@ -1,5 +1,42 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { ProactiveService } from '../../../src/services/companion/proactiveService'
+import type { BackgroundTaskInfo } from '../../../src/services/task/backgroundTaskService'
+import { readTaskLifecycle } from '../../../src/services/task/taskLifecycle'
+
+function backgroundTask(overrides: Partial<BackgroundTaskInfo>): BackgroundTaskInfo {
+  return {
+    id: 'task',
+    revision: 1,
+    lifecycle: readTaskLifecycle(undefined, '等待任务完成'),
+    agentId: 'pero',
+    threadId: 'background-task',
+    targetThreadId: null,
+    parentTaskId: null,
+    title: '测试任务',
+    instruction: '等待任务完成',
+    status: 'running',
+    progress: null,
+    currentStage: null,
+    result: null,
+    errorMessage: null,
+    toolCallCount: 0,
+    priority: 0,
+    requestedBy: 'agent',
+    completionAction: 'notify',
+    category: 'agent_task',
+    inputQuestion: null,
+    inputContext: null,
+    metadata: {},
+    execution: null,
+    checkpoint: null,
+    createdAt: '2026-10-20T12:00:00Z',
+    startedAt: '2026-10-20T12:00:00Z',
+    completedAt: null,
+    readAt: null,
+    updatedAt: '2026-10-20T12:00:00Z',
+    ...overrides,
+  }
+}
 
 const services: ProactiveService[] = []
 beforeEach(() => {
@@ -22,6 +59,7 @@ type Target = {
 }
 function fixture(store = new Map<string, string>()) {
   const enabled = ['nana', 'pero']
+  const tasks = new Map<string, BackgroundTaskInfo>()
   const threads = new Map<string, Target>(
     enabled.map((agentId) => [
       agentId,
@@ -53,6 +91,10 @@ function fixture(store = new Map<string, string>()) {
     getThread: vi.fn(async (id: string) => [...threads.values()].find((thread) => thread.id === id) ?? null),
     groupMessages: vi.fn(async (_roomId: string, _afterId: number, _senderId?: string) => [] as Array<{ id: number; senderId: string }>),
     resumeGroupWait: vi.fn(async (_messageId: number, _agentId: string) => true),
+    getTask: vi.fn(async (taskId: string) => tasks.get(taskId) ?? null),
+    resumeTaskWait: vi.fn(async () => {}),
+    currentRoom: vi.fn(async () => 'living'),
+    activitySourceActive: vi.fn(async () => true),
     runStronghold: vi.fn(async (_agentId: string, _signal: AbortSignal) => '据点发言'),
     run: vi.fn(
       async (_input: {
@@ -72,10 +114,107 @@ function fixture(store = new Map<string, string>()) {
   }
   const service = new ProactiveService(config as never)
   services.push(service)
-  return { service, deps, store, enabled, threads }
+  return { service, deps, store, enabled, threads, tasks }
 }
 
 describe('角色主动行为与全局继承', () => {
+  it('主动模式关闭时重启恢复条件等待，投递失败保留现场并沿真实来源重试', async () => {
+    const original = fixture()
+    await original.service.initialize(original.deps)
+    original.deps.groupMessages.mockResolvedValue([{ id: 10, senderId: 'pero' }])
+    await original.service.recordNextActivity({ kind: 'wait_message', senderId: 'user' }, {
+      source: 'group', channel: 'group', agentId: 'pero', threadId: 'pero-first', sessionId: 'pero-first',
+      generation: 1, pairId: 'question', sceneRoomId: 'living',
+    })
+    const restored = fixture(new Map(original.store))
+    restored.deps.groupMessages.mockResolvedValue([{ id: 11, senderId: 'user' }])
+    restored.deps.resumeGroupWait.mockRejectedValueOnce(new Error('暂时无法投递'))
+
+    await restored.service.initialize(restored.deps)
+    expect(restored.service.getState().settings.mode).toBe('off')
+    expect(restored.service.hasPendingActivities()).toBe(true)
+    await restored.service.recoverPendingActivities()
+    expect(restored.deps.resumeGroupWait.mock.calls).toEqual([
+      [11, 'pero', expect.objectContaining({ sourcePairId: 'question', afterMessageId: 10, generation: 1 })],
+      [11, 'pero', expect.objectContaining({ sourcePairId: 'question', afterMessageId: 10, generation: 1 })],
+    ])
+    expect(restored.service.hasPendingActivities()).toBe(false)
+    expect(JSON.parse(restored.store.get('proactive.state')!).agents.pero.waiting).toBeUndefined()
+    await restored.service.recoverPendingActivities()
+    expect(restored.deps.resumeGroupWait).toHaveBeenCalledTimes(2)
+    expect(restored.deps.run).not.toHaveBeenCalled()
+    expect(restored.deps.runStronghold).not.toHaveBeenCalled()
+  })
+
+  it.each(['generation', 'source', 'location', 'disabled'] as const)(
+    '等待恢复时按 %s 变化淘汰旧现场', async (change) => {
+      const f = fixture()
+      await f.service.initialize(f.deps)
+      await f.service.recordNextActivity({ kind: 'wait_message', senderId: 'user' }, {
+        source: 'group', channel: 'group', agentId: 'pero', threadId: 'pero-first', sessionId: 'pero-first',
+        generation: 1, pairId: 'old-source', sceneRoomId: 'living',
+      })
+      f.deps.groupMessages.mockResolvedValue([{ id: 11, senderId: 'user' }])
+      if (change === 'generation') f.threads.get('pero')!.generation = 2
+      if (change === 'source') f.deps.activitySourceActive.mockResolvedValue(false)
+      if (change === 'location') f.deps.currentRoom.mockResolvedValue('study')
+      if (change === 'disabled') f.enabled.splice(f.enabled.indexOf('pero'), 1)
+
+      await f.service.recoverPendingActivities()
+
+      expect(f.service.hasPendingActivities()).toBe(false)
+      expect(f.deps.resumeGroupWait).not.toHaveBeenCalled()
+      expect(JSON.parse(f.store.get('proactive.state')!).agents.pero.waiting).toBeUndefined()
+    },
+  )
+
+  it.each([
+    { scene: 'desktop', target: 'pero-first', status: 'completed', deliveries: 0 },
+    { scene: 'desktop', target: 'pero-first', status: 'failed', deliveries: 0 },
+    { scene: 'desktop', target: 'pero-first', status: 'cancelled', deliveries: 1 },
+    { scene: 'desktop', target: 'side-thread', status: 'completed', deliveries: 1 },
+    { scene: 'group', target: 'pero-first', status: 'completed', deliveries: 1 },
+  ] as const)('$scene 等待 $status 任务时按目标 $target 复用正式回填', async ({ scene, target, status, deliveries }) => {
+    const f = fixture()
+    const task = backgroundTask({ completionAction: 'send_to_chat',
+      targetThreadId: target, metadata: { targetThreadGeneration: 1 } })
+    f.tasks.set(task.id, task)
+    await f.service.initialize(f.deps)
+    await f.service.recordNextActivity({ kind: 'wait_task', taskId: task.id }, {
+      source: scene, channel: scene, agentId: 'pero', threadId: 'pero-first', sessionId: 'pero-first',
+      generation: 1, pairId: 'waiting-task', ...(scene === 'group' ? { sceneRoomId: 'living' } : {}),
+    })
+
+    task.status = status
+    await f.service.notifyTask(task)
+    await f.service.notifyTask(task)
+
+    expect(f.deps.resumeTaskWait).toHaveBeenCalledTimes(deliveries)
+    expect(f.service.hasPendingActivities()).toBe(false)
+    expect(JSON.parse(f.store.get('proactive.state')!).agents.pero.waiting).toBeUndefined()
+  })
+
+  it('关闭主动模式时任务接续暂时失败，维护恢复仍可完成投递', async () => {
+    const f = fixture()
+    const task = backgroundTask({})
+    f.tasks.set(task.id, task)
+    await f.service.initialize(f.deps)
+    await f.service.recordNextActivity({ kind: 'wait_task', taskId: task.id }, {
+      source: 'desktop', channel: 'desktop', agentId: 'pero', threadId: 'pero-first', sessionId: 'pero-first',
+      generation: 1, pairId: 'waiting-task',
+    })
+    task.status = 'completed'
+    f.deps.resumeTaskWait.mockRejectedValueOnce(new Error('队列暂时不可用'))
+    await expect(f.service.notifyTask(task)).rejects.toThrow('队列暂时不可用')
+    expect(f.service.hasPendingActivities()).toBe(true)
+
+    await f.service.recoverPendingActivities()
+
+    expect(f.service.hasPendingActivities()).toBe(false)
+    expect(f.deps.resumeTaskWait).toHaveBeenCalledTimes(2)
+    expect(f.deps.run).not.toHaveBeenCalled()
+  })
+
   it('两项设置独立继承，移除角色覆盖后实时采用全局默认', async () => {
     const f = fixture()
     await f.service.initialize(f.deps)

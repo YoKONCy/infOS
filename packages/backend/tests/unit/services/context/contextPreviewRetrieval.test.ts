@@ -53,6 +53,7 @@ function fixture(
       getActiveMessages: activeMessages,
       getConversationTimeAnchors: timeAnchors,
       listExperiences: experiences,
+      conversations: { open: vi.fn(() => []) },
     } as never,
     { getAgent: vi.fn().mockReturnValue(undefined) } as never,
     { get: vi.fn().mockResolvedValue(null) } as never,
@@ -76,6 +77,39 @@ function fixture(
 }
 
 describe('场景上下文与角色连续性', () => {
+  it.each([{ count: 1, limit: 1, ids: ['3'] }, { count: 3, limit: 2, ids: ['2', '3'] }])('据点选入 $count 条正式消息时，另一场景窗口取二分之一并向上取整', async ({ count, limit, ids }) => {
+    const f = fixture('desktop')
+    f.threadGet.mockResolvedValue({ id: 'thread-test', agentId: 'test', channel: 'desktop', threadKind: 'main',
+      generation: 1, interactionMode: 'chat', disabledTools: [], contextPolicy: null })
+    const source = [
+      { id: 1, role: 'user', content: '较早私聊', revision: 1, metadataJson: '{}' },
+      { id: 2, role: 'assistant', content: '第二条私聊', revision: 1, metadataJson: '{}' },
+      { id: 3, role: 'user', content: '第三条私聊', revision: 1, metadataJson: '{}' },
+    ]
+    f.activeMessages.mockImplementation(async (_id: string, requested: number) => source.slice(-requested))
+    const compiled = await f.compiler.compile('thread-test', 'test', {
+      internalScene: true, sceneMessageCount: count,
+      currentInput: { role: 'user', content: '当前据点输入' }, disableMemoryRetrieval: true,
+    })
+    expect(f.activeMessages).toHaveBeenCalledWith('thread-test', limit, { conversationOnly: true })
+    const regions = compiled.manifest.regions.filter((region) => region.providerId === 'infos.context.scene-history' && region.selected)
+    expect(regions.flatMap((region) => region.sourceObjectRefs.map((ref) => ref.objectId))).toEqual(ids)
+    const request = JSON.stringify(compileModelRequest(compiled.messages, 0).messages)
+    expect(request).toContain('第三条私聊')
+    expect(request).not.toContain('较早私聊')
+  })
+
+  it('侧会话使用自己的历史和心流，场景原文按主线范围选择', async () => {
+    const f = fixture('desktop')
+    const compiled = await f.compiler.compile('thread-test', 'test', {
+      currentInput: { role: 'user', content: '侧会话输入' },
+    })
+    expect(f.experiences).not.toHaveBeenCalled()
+    expect(f.activeMessages).not.toHaveBeenCalled()
+    expect(f.flowGet).toHaveBeenCalledWith('thread-test', 'test')
+    expect(compiled.manifest.regions.filter((region) => region.providerId === 'infos.context.scene-history')).toEqual([])
+  })
+
   it.each(['realm', 'stronghold'] as const)('%s 按场景合同装配历史与心流', async (scene) => {
     const { compiler, threadGet, conversationHistory, activeMessages, flowGet, renderSlots, automaticRag } = fixture('desktop')
     threadGet.mockResolvedValue({ id: 'thread-test', agentId: 'test', channel: 'desktop',
@@ -438,6 +472,35 @@ describe('预算预览与远程记忆检索隔离', () => {
     }
   })
 
+  it('显式空线索跳过自动记忆检索，场景正文仍进入模型，旧空字符串沿历史回退', async () => {
+    const { compiler, automaticRag } = fixture('group')
+    const scene = '房间环境、成员档案、历史和执行指令组成的完整场景'
+    const compiled = await compiler.compile('thread-test', 'test', {
+      currentInput: { role: 'user', content: scene }, retrievalQuery: null,
+    })
+    expect(automaticRag).not.toHaveBeenCalled()
+    expect(compiled.manifest.hasMemoryRetrieval).toBe(false)
+    expect(compileModelRequest(compiled.messages, 0).messages.at(-1)?.content).toBe(scene)
+    await compiler.compile('thread-test', 'test', { retrievalQuery: '' })
+    expect(automaticRag).toHaveBeenCalledWith('test', '历史问题', expect.any(Number), 'group',
+      undefined, expect.any(Object))
+  })
+
+  it('记忆、知识与事实召回共同使用本次独立线索', async () => {
+    const { compiler, automaticRag } = fixture('group')
+    const recall = vi.fn().mockResolvedValue({ knowledge: '', facts: '', documentHits: 0, factHits: 0 })
+    compiler.setKnowledgeRecallService({ recall } as never)
+    await compiler.compile('thread-test', 'test', {
+      currentInput: { role: 'user', content: '完整房间环境、档案与执行指令' }, retrievalQuery: '小猫回家的故事',
+    })
+    expect(automaticRag).toHaveBeenCalledWith('test', '小猫回家的故事', expect.any(Number), 'group',
+      undefined, expect.any(Object))
+    expect(recall).toHaveBeenCalledWith('小猫回家的故事', expect.any(Set), undefined)
+    recall.mockClear()
+    await compiler.compile('thread-test', 'test', { retrievalQuery: null })
+    expect(recall).toHaveBeenCalledWith('', expect.any(Set), undefined)
+  })
+
   it.each(['desktop', 'group'] as const)(
     '%s 的草稿和空草稿预览都不检索，正常对话仍检索',
     async (channel) => {
@@ -461,7 +524,6 @@ describe('预算预览与远程记忆检索隔离', () => {
         '正常发送',
         expect.any(Number),
         channel,
-        undefined,
         undefined,
         expect.objectContaining({ preview: false, tokenBudget: channel === 'desktop' ? 2000 : 1000,
           visibleSource: { threadId: 'thread-test', messageIds: ['1'], messageRevisions: { '1': 1 }, completePairIds: [] } }),

@@ -24,20 +24,21 @@ function createModelDeps(
 }
 
 describe('记忆运行配置', () => {
-  it('高级管线开启但 ContextRNN 关闭时，也强制关闭反馈训练', async () => {
+  it('旧检索配置中的退役开关在读取时剥离，有效高级参数按原值解析', async () => {
     const get = vi.fn().mockResolvedValue(
       JSON.stringify({
         channels: {
           desktop: { contextPairs: 20, enableAutoRag: true, retrievalLimit: 8 },
           group: { contextPairs: 20, enableAutoRag: true, retrievalLimit: 3 },
         },
-        advanced: { enableSaPpr: true, enableContextRnn: false, enableFeedback: true },
+        advanced: { enableSaPpr: true, enableContextRnn: true, enableFeedback: true, expandDepth: 4 },
       }),
     )
     const config = await loadMemoryRuntimeConfig({ get })
     expect(config.advanced.enableSaPpr).toBe(true)
-    expect(config.advanced.enableContextRnn).toBe(false)
-    expect(config.advanced.enableFeedback).toBe(false)
+    expect(config.advanced.expandDepth).toBe(4)
+    expect(config.advanced).not.toHaveProperty('enableContextRnn')
+    expect(config.advanced).not.toHaveProperty('enableFeedback')
   })
   it('应迁移旧字段并将旧retrievalLimit=0转换为关闭自动RAG', async () => {
     const get = vi.fn().mockResolvedValue(
@@ -62,9 +63,7 @@ describe('记忆运行配置', () => {
         enableSaPpr: false,
         enableFista: false,
         enableDpp: false,
-        enableContextRnn: false,
         enableLeiden: false,
-        enableFeedback: false,
       },
     })
     expect(shouldRunAutoRag(true, config.channels.desktop)).toBe(false)
@@ -82,9 +81,7 @@ describe('记忆运行配置', () => {
         advanced: {
           enableSaPpr: false,
           enableFista: true,
-          enableContextRnn: true,
           enableLeiden: true,
-          enableFeedback: true,
         },
       }),
     )
@@ -95,9 +92,7 @@ describe('记忆运行配置', () => {
       enableSaPpr: false,
       enableFista: false,
       enableDpp: false,
-      enableContextRnn: false,
       enableLeiden: false,
-      enableFeedback: false,
     })
   })
 })

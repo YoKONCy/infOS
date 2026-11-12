@@ -39,5 +39,8 @@
   "请选择当前场景中的其他角色或用户。": "Choose another character or the user in the current scene.",
   "请选择当前角色的已有任务。": "Choose an existing task owned by this character.",
   "这位伙伴已关闭据点自由活动。": "This companion has stronghold free activity turned off.",
-  "请提供本次发言，作为等待的来源。": "Include the message that establishes this wait."
+  "请提供本次发言，作为等待的来源。": "Include the message that establishes this wait.",
+  "请在据点提供有效的参与状态和发言目的。": "Provide a valid participation state and speaking purpose in the stronghold.",
+  "据点状态已变化，请查看当前现场并使用最新编号和修订重试。": "The stronghold state has changed. Check the current scene and retry with the latest IDs and revisions.",
+  "已登记向{0}的接话请求。": "Registered a reply request for {0}."
 }

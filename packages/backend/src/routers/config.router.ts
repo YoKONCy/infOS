@@ -40,10 +40,6 @@ import {
   ASSISTANT_PREFILL_KEY,
   DYNAMIC_CONTEXT_DEPTH_KEY,
 } from '@infos/shared'
-import {
-  MEMORY_RUNTIME_CONFIG_KEY,
-  loadMemoryRuntimeConfig,
-} from '../services/memory/memoryRuntimeConfig'
 
 const logger = createLogger('ConfigRouter')
 
@@ -310,10 +306,6 @@ export function createConfigRouter(ctx: AppContext) {
   router.put('/', zValidator('json', setConfigSchema), async (c) => {
     const { key, value } = c.req.valid('json')
     await ctx.configRepo.set(key, value)
-    if (key === MEMORY_RUNTIME_CONFIG_KEY)
-      ctx.eventMemoryService.syncAdvancedRetrievalConfig(
-        await loadMemoryRuntimeConfig(ctx.configRepo),
-      )
 
     // 日志级别热更新（system.logLevel 配置变更时立即生效）
     applyLogLevelHotReload(key, value)
@@ -349,10 +341,6 @@ export function createConfigRouter(ctx: AppContext) {
     await ctx.configRepo.delete(key)
     if (key === LANGUAGE_CONFIG_KEY) setLocale(getAutomaticLocale())
     for (const { prefix, method } of HOT_RELOAD_MAP) if (key.startsWith(prefix)) await ctx[method]()
-    if (key === MEMORY_RUNTIME_CONFIG_KEY)
-      ctx.eventMemoryService.syncAdvancedRetrievalConfig(
-        await loadMemoryRuntimeConfig(ctx.configRepo),
-      )
     await ctx.appManager?.notifyConfigChanged?.([key])
     if (key === LANGUAGE_CONFIG_KEY) await ctx.gatewayHub.pushStateUpdate({ language: null })
     return c.json({ code: 'OK', message: __t('server.routers', '配置 "{0}" 已删除', [key]) })
@@ -384,11 +372,6 @@ export function createConfigRouter(ctx: AppContext) {
     }
 
     // 批量完成后统一触发热更新 (每个 service 最多一次)
-    if (items.some((item) => item.key === MEMORY_RUNTIME_CONFIG_KEY)) {
-      ctx.eventMemoryService.syncAdvancedRetrievalConfig(
-        await loadMemoryRuntimeConfig(ctx.configRepo),
-      )
-    }
     for (const method of pendingReloads) {
       logger.info(__t('logs.routers', '批量配置变更，触发 {0}', [method]))
       await ctx[
@@ -454,11 +437,6 @@ export function createConfigRouter(ctx: AppContext) {
       }
     }
 
-    if (Object.prototype.hasOwnProperty.call(data, MEMORY_RUNTIME_CONFIG_KEY)) {
-      ctx.eventMemoryService.syncAdvancedRetrievalConfig(
-        await loadMemoryRuntimeConfig(ctx.configRepo),
-      )
-    }
     const reloads = new Set(
       HOT_RELOAD_MAP.filter(({ prefix }) => changedKeys.some((key) => key.startsWith(prefix))).map(
         ({ method }) => method,

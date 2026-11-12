@@ -1,13 +1,7 @@
-/* 无底图时，主页面共用粉紫渐变与淡斜纹；只装饰页面承托面，不改变阅读卡片和代码主题。 */
+/* 无底图时，主页面共用清透冷瓷底板与极轻漫射光；只承托工作区，不叠加斜纹或改变代码主题。 */
 .main-view-root:not([data-app-background='active']) {
   --app-default-surface:
-    repeating-linear-gradient(
-      45deg,
-      transparent 0,
-      transparent 14px,
-      var(--convo-texture-line) 14px,
-      var(--convo-texture-line) 15px
-    ),
+    linear-gradient(180deg, var(--canvas-grad-top) 0%, var(--canvas-grad-bottom) 46%),
     radial-gradient(ellipse at 82% 8%, var(--convo-air-top) 0%, transparent 58%),
     radial-gradient(ellipse at 4% 92%, var(--convo-air-bottom) 0%, transparent 58%),
     var(--convo-paper-tint);
@@ -43,27 +37,27 @@
  */
 [data-app-background='active'] {
   --app-shell-fill: color-mix(
-    in srgb,
+    in oklab,
     var(--ui-bg-surface-soft) calc(var(--app-shell-opacity) * 100%),
     transparent
   );
   --app-panel-fill: color-mix(
-    in srgb,
+    in oklab,
     var(--ui-bg-surface) calc(var(--app-panel-opacity) * 100%),
     transparent
   );
   --app-soft-fill: color-mix(
-    in srgb,
+    in oklab,
     var(--ui-bg-surface-soft) calc(var(--app-panel-opacity) * 100%),
     transparent
   );
   --app-reading-fill: color-mix(
-    in srgb,
+    in oklab,
     var(--ui-bg-surface) calc(var(--app-reading-opacity) * 100%),
     transparent
   );
   --app-inset-reading-fill: color-mix(
-    in srgb,
+    in oklab,
     var(--ui-bg-surface) calc(var(--app-inset-reading-opacity) * 100%),
     transparent
   );
@@ -75,12 +69,12 @@
   --surface-transition-panel: var(--app-soft-fill);
 }
 
-/* 标题栏与主导航各用一层材质；不模糊滚动中的每张卡片。 */
+/* 标题栏与主导航各用一层高饱和晶透毛玻璃；不模糊滚动中的每张卡片。 */
 .main-view-root[data-app-background='active'] > .desktop-tabbar {
   position: relative;
   z-index: 1;
   background: var(--app-shell-fill);
-  backdrop-filter: blur(var(--app-material-blur));
+  backdrop-filter: blur(var(--app-material-blur)) saturate(var(--app-material-saturate, 172%));
 }
 .main-view-root[data-app-background='active'] .desktop-tabbar .desktop-tab-selection {
   background: var(--app-panel-fill);
@@ -92,7 +86,7 @@
 .main-view-root[data-app-background='active'] .main-home-surface .main-statusbar,
 .main-view-root[data-app-background='active'] .desktop-app-surface .desktop-browser-toolbar {
   background: var(--app-shell-fill);
-  backdrop-filter: blur(var(--app-material-blur));
+  backdrop-filter: blur(var(--app-material-blur)) saturate(var(--app-material-saturate, 172%));
 }
 .main-view-root[data-app-background='active'] .main-home-surface .main-nav-pixel-bg {
   display: none;
@@ -125,12 +119,12 @@
   opacity: 0;
 }
 
-/* 伙伴、据点与角色索引保留各自结构，共用透景侧栏。 */
+/* 伙伴、据点与角色索引保留各自结构，共用高饱和透景侧栏。 */
 .main-view-root[data-app-background='active']
   .main-tab-content
   :is(.chat-sidebar, .chat-main-header, .sh-left, .sh-main-header, .atlas-index) {
   background: var(--app-shell-fill);
-  backdrop-filter: blur(var(--app-material-blur));
+  backdrop-filter: blur(var(--app-material-blur)) saturate(var(--app-material-saturate, 172%));
 }
 
 /* 消息和输入只用有厚度的底色，不给长列表逐项增加毛玻璃合成层。 */
@@ -147,23 +141,30 @@
 }
 .main-view-root[data-app-background='active'] .main-tab-content .msg-bubble-user {
   background: color-mix(
-    in srgb,
+    in oklab,
     var(--user-bubble-bg) calc(var(--app-reading-opacity) * 100%),
     transparent
   );
 }
 .main-view-root[data-app-background='active'] .main-tab-content :is(.deck-status, .deck-footer) {
-  background: color-mix(in srgb, var(--ui-bg-surface-soft) 55%, transparent);
+  background: color-mix(in oklab, var(--ui-bg-surface-soft) 55%, transparent);
 }
 .main-view-root[data-app-background='active'] .main-tab-content .editor-surface textarea {
   background: transparent;
+}
+
+/* 二级悬浮弹层使用高遮蔽晶透材质，阻断底层聊天文字与插画线条穿透叠字。 */
+.main-view-root[data-app-background='active'] :is(.deck-popover, .flow-popover) {
+  background: color-mix(in oklab, var(--ui-bg-surface) 95%, transparent);
+  backdrop-filter: blur(max(18px, var(--app-material-blur, 16px)))
+    saturate(var(--app-material-saturate, 172%));
 }
 
 /* 工作区共用一块透景底板；内部列与标题不再各自叠加完整材质。 */
 .main-view-root[data-app-background='active'] .workspace-tab .workspace-commandbar,
 .main-view-root[data-app-background='active'] .workspace-tab .workspace-body {
   background: var(--app-panel-fill);
-  backdrop-filter: blur(var(--app-material-blur));
+  backdrop-filter: blur(var(--app-material-blur)) saturate(var(--app-material-saturate, 172%));
 }
 .main-view-root[data-app-background='active']
   .workspace-tab
@@ -231,7 +232,7 @@
 }
 .main-view-root[data-app-background='active'] .main-tab-content :is(.terminal-panel, .sa-terminal) {
   background: var(--app-reading-fill);
-  backdrop-filter: blur(var(--app-material-blur));
+  backdrop-filter: blur(var(--app-material-blur)) saturate(var(--app-material-saturate, 172%));
   color: var(--ui-text-primary);
 }
 .main-view-root[data-app-background='active'] .terminal-panel .terminal-header {

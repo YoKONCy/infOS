@@ -59,7 +59,6 @@ export function createMaintenanceRouter(ctx: AppContext) {
   router.put('/memory-config', zValidator('json', memoryRuntimeConfigSchema), async (c) => {
     const config = c.req.valid('json')
     await ctx.configRepo.setJson(MEMORY_RUNTIME_CONFIG_KEY, config)
-    ctx.eventMemoryService.syncAdvancedRetrievalConfig(config)
     return c.json({
       code: 'OK',
       message: __t('server.routers', '记忆运行配置已更新'),

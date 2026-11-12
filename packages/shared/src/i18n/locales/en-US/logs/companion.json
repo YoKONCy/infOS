@@ -15,5 +15,6 @@
   "主动状态推送失败": "Active status push failed",
   "陪看插话失败: {0}": "Watch-along remark failed: {0}",
   "预读没写出台词: {0}，回复 {1} 字": "Pre-read wrote no lines: {0}, reply {1} chars",
-  "预读备台词失败: {0}": "Pre-read script failed: {0}"
+  "预读备台词失败: {0}": "Pre-read script failed: {0}",
+  "条件等待恢复失败，保留现场等待重试": "Conditional wait recovery failed, retaining state for retry"
 }

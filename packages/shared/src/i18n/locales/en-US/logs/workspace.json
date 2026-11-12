@@ -3,5 +3,6 @@
   "回滚未完成，恢复材料已保留：{0}": "Rollback is not completed, recovery materials have been retained: {0}",
   "回滚未完成，已恢复本次修改的文件：{0}": "The rollback is not completed and the modified file has been restored: {0}",
   "创建 workspace: {0}": "creates workspace: {0}",
+  "读取工作区根目录概览失败：{0}": "Failed to read the workspace root listing: {0}",
   "请求的 cwd 不存在或不是目录，回退到 workspace: {0}": "The requested cwd does not exist or is not a directory, fallback to workspace: {0}"
 }

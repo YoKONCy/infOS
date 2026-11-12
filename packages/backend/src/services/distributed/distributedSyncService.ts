@@ -18,7 +18,7 @@ import {
   TRIVIUM_VERSION,
 } from '../../repositories/triviumFiles'
 
-const APP_VERSION = '0.9.12'
+const APP_VERSION = '0.9.13'
 const BUNDLE_VERSION = 3
 const SCHEMA_VERSION = 2
 const MAX_FILE_COUNT = 100_000

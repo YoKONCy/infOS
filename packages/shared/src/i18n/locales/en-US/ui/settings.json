@@ -717,7 +717,6 @@
   "RAG 相关事件数量": "RAG related events",
   "控制混合检索返回的相关 EventNote 数量；时间轴末尾事件和直接前驱不占该数量。": "controls the number of related EventNotes returned by hybrid retrieval; events at the end of the timeline and direct predecessors do not account for this number.",
   "高级配置": "advanced configuration",
-  "SA-PPR 认知检索、ContextRNN、Leiden 与反馈学习": "SA-PPR cognitive retrieval, ContextRNN, Leiden and feedback learning",
   "启用 SA-PPR 高级管线": "enables SA-PPR advanced pipeline",
   "仅代替每次对话的自动 RAG 召回管线；Agent 主动调用工具查询时，继续使用确定性图谱遍历": "only replaces the automatic RAG recall pipeline for each conversation; when the Agent actively calls the tool query, it continues to use deterministic graph traversal",
   "扩散深度": "diffusion depth",
@@ -727,11 +726,8 @@
   "补充基础候选未解释的弱信号。": "complements the weak signal unexplained by the underlying candidate.",
   "DPP 多样性采样": "DPP diversity sampling",
   "降低最终结果之间的语义重复。": "reduces semantic duplication between final results.",
-  "用对话轨迹生成图扩散方向偏置。": "generates graph diffusion direction bias with dialogue trajectories.",
   "Leiden 聚类": "Leiden clustering",
   "发现事件社区并用活跃社区辅助检索。": "discovers event communities and assists retrieval with active communities.",
-  "反馈闭环": "feedback closed loop",
-  "需先开启 ContextRNN，根据回答引用情况训练权重。": "needs to open ContextRNN first and train the weights based on the citations of the answers.",
   "最近对话": "recent conversations",
   "系统健康": "system health",
   "全部格式": "all formats",
@@ -1529,5 +1525,8 @@
   "等待回答": "Waiting for a reply",
   "等待任务": "Waiting for a task",
   "回复策略": "Reply Strategy",
-  "输入消息…": "Type a message…"
+  "输入消息…": "Type a message…",
+  "拖拽预览可移动焦点": "Drag preview to adjust focal point",
+  "重置居中": "Reset center",
+  "亮度、遮罩、毛玻璃与焦点微调": "Fine-tune brightness, scrim, frosted glass & focal point"
 }

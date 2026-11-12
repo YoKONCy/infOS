@@ -487,6 +487,7 @@ export interface ToolExecutor {
     source: string,
     context?: {
       sceneRoomId?: string
+      sceneSourceMessageId?: number
       conversation?: import('@infos/shared').ConversationActions
       threadId?: string
       channel?: string
@@ -587,6 +588,7 @@ export async function* runReActLoop(params: {
    */
   threadContext?: {
     sceneRoomId?: string
+    sceneSourceMessageId?: number
     conversation?: import('@infos/shared').ConversationActions
     browserScope?: import('@infos/shared').AgentBrowserScope
     requestedBy?: 'user' | 'agent'

@@ -96,7 +96,7 @@ export function expressionPackageMessage(
             options.disableMemoryRetrieval ||
             options.disableReferenceRetrieval,
           ),
-          runId: options.retrievalTraceId ?? options.currentPairId ?? input.pairId ?? undefined,
+          runId: options.expressionRunId ?? options.currentPairId ?? input.pairId ?? undefined,
         })
       : ''
   return expressionContent
@@ -114,7 +114,7 @@ export function recordExpressionTurn(
   options: ContextCompileOptions,
   input: { agentId: string; threadId: string; pairId?: string | null; promptRevision?: string },
 ): void {
-  const expressionPairId = options.retrievalTraceId ?? options.currentPairId ?? input.pairId
+  const expressionPairId = options.expressionRunId ?? options.currentPairId ?? input.pairId
   if (
     expressionPairId &&
     !options.expressionPreview &&

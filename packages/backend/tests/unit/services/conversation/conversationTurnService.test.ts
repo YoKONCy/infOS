@@ -538,6 +538,30 @@ describe('ConversationTurnService 初始提示词快照', () => {
     expect(commitPromptVariables).toHaveBeenCalledWith(change)
   })
 
+  it.each([
+    { query: undefined, expected: '完整据点场景输入' },
+    { query: '  小猫的故事  ', expected: '小猫的故事' },
+    { query: '  ', expected: null },
+  ])('独立检索输入按显式设置传入编译器 $query', async ({ query, expected }) => {
+    const compile = vi.fn().mockResolvedValue({ messages: [], manifest: { disabledTools: [] } })
+    const service = new ConversationTurnService({
+      threadService: {
+        assertGeneration: vi.fn().mockResolvedValue(undefined),
+        getThread: vi.fn().mockResolvedValue({ id: 'main_pero', agentId: 'pero', threadKind: 'main',
+          generation: 1, channel: 'desktop', disabledTools: [] }),
+      },
+      contextCompiler: { characterStateRevision: vi.fn().mockResolvedValue(0), compile },
+      attachmentService: { validateForBinding: vi.fn().mockResolvedValue([]) },
+    } as never)
+    const prepared = await service.prepareTurn({ threadId: 'main_pero', content: '完整据点场景输入',
+      inputPersistence: 'ephemeral', outputPersistence: 'ephemeral', retrievalQuery: query,
+      internalScene: { roomId: 'living', pairId: 'scene', disabledTools: [] } })
+    expect(compile).toHaveBeenCalledWith('main_pero', 'pero', expect.objectContaining({
+      retrievalQuery: expected, currentInput: { role: 'user', content: '完整据点场景输入' },
+    }))
+    expect(prepared.messages.at(-1)).toEqual({ role: 'user', content: '完整据点场景输入' })
+  })
+
   it('历史后指令不抢占当前用户的图片附件，临时输入也不会重复追加', async () => {
     const input = { role: 'user', content: '请看图片' }
     const post = { role: 'user', content: '【系统指令】\n后置要求' }
@@ -900,41 +924,6 @@ describe('ConversationTurnService 初始提示词快照', () => {
       outputPersistence: 'ephemeral',
     })
     expect(commit).not.toHaveBeenCalled()
-  })
-
-  it('仅在持久化回复后按Pair提交反馈，且反馈失败不影响回复', async () => {
-    const feedback = vi.fn().mockRejectedValue(new Error('反馈训练失败'))
-    const service = new ConversationTurnService({
-      threadService: {
-        assertGeneration: vi.fn().mockResolvedValue(undefined),
-        getThread: vi.fn().mockResolvedValue({ generation: 1, threadKind: 'side',
-          id: 'thread-1',
-          agentId: 'nana',
-          channel: 'desktop',
-          disabledTools: [],
-        }),
-        appendUserMessage: vi.fn().mockResolvedValue({ id: 1 }),
-        appendAssistantMessage: vi.fn().mockResolvedValue({ id: 2 }),
-      },
-      contextCompiler: { characterStateRevision: vi.fn().mockResolvedValue(0),
-        compile: vi.fn().mockResolvedValue({
-          messages: [{ role: 'user', content: '调用记忆' }],
-          manifest: { disabledTools: [] },
-        }),
-      },
-      agentService: { chatWithCompiledMessages: vi.fn().mockResolvedValue('已使用记忆') },
-      attachmentService: {
-        bindOutgoing: vi.fn().mockResolvedValue(undefined),
-        validateForBinding: vi.fn().mockResolvedValue([]),
-      },
-      imageUnderstandingService: { transcribe: vi.fn() },
-      retrievalFeedback: { applyRetrievalFeedback: feedback },
-    } as never)
-
-    const result = await service.executeTurn({ threadId: 'thread-1', content: '调用记忆' })
-
-    expect(result.reply).toBe('已使用记忆')
-    expect(feedback).toHaveBeenCalledWith(result.pairId, '已使用记忆')
   })
 
   it('持久对话编译不再因窗口轮数同步触发后台补记', async () => {

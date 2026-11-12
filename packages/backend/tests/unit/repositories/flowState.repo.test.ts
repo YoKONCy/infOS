@@ -1,6 +1,6 @@
 import { createDrizzleConnection, closeDrizzleConnection } from '@infos/backend/database'
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
-import { flowStateRevisions, flowStates } from '@infos/backend/database/schema'
+import { flowStateRevisions } from '@infos/backend/database/schema'
 import { FlowStateRepository } from '@infos/backend/repositories/flowState.repo'
 
 let db: ReturnType<typeof createDrizzleConnection>

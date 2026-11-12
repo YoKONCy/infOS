@@ -74,7 +74,7 @@ infOS 的颜色、阴影、圆角都定义为 CSS 变量，主题覆盖这些变
 | ------------ | ------------------------------------------------------------------------------------------------------------------------------------------------- |
 | 背景         | `--ui-bg-canvas`、`--ui-bg-sidebar`、`--ui-bg-surface`、`--ui-bg-surface-soft`、`--ui-bg-elevated`、`--ui-bg-hover`、`--ui-bg-active`             |
 | 文字         | `--ui-text-primary`、`--ui-text-secondary`、`--ui-text-tertiary`、`--ui-text-disabled`、`--ui-text-inverse`                                       |
-| 边框         | `--ui-border-subtle`、`--ui-border-default`、`--ui-border-strong`                                                                                 |
+| 边框         | `--ui-border-subtle`、`--ui-border-default`、`--ui-border-strong`、`--ui-crystal-highlight`、`--ui-card-dual-shadow`                              |
 | 强调与语义   | `--ui-accent-primary`、`--ui-accent-sky`、`--ui-accent-purple`（各带 `-soft`）、`--ui-success`、`--ui-warning`、`--ui-danger`、`--ui-focus-color` |
 | 设置面板     | `--dash-panel-bg`、`--dash-panel-soft`、`--dash-panel-border`、`--dash-input-bg`、`--dash-input-border` 等                                        |
 | 阴影与遮罩   | `--ui-shadow-*`、`--ui-glow-*`、`--ui-overlay-backdrop`                                                                                           |

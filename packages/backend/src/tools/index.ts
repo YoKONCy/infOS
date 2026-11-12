@@ -46,6 +46,7 @@ import screenVisionManifest from './screenVision/manifest.json'
 import skillResourcesManifest from './skillResources/manifest.json'
 import socialOpsManifest from './socialOps/manifest.json'
 import strongholdOpsManifest from './strongholdOps/manifest.json'
+import strongholdLifeManifest from './strongholdLife/manifest.json'
 import systemInfoManifest from './systemInfo/manifest.json'
 import terminalExecutorManifest from './terminalExecutor/manifest.json'
 import terminalSessionManifest from './terminalSession/manifest.json'
@@ -154,6 +155,7 @@ import {
   remoteTerminalCloseTool,
 } from './remoteTerminal'
 import { codeSearcherTool } from './codeSearcher'
+import { strongholdActivityTool, strongholdWatchTool } from './strongholdLife'
 import { fileSearchTool } from './fileSearch'
 import {
   setReminderTool,
@@ -298,6 +300,8 @@ const ALL_BUILTIN_TOOLS: BuiltinTool[] = [
   strongholdCallButlerTool,
 
   // ── 事件记忆 ──
+  strongholdActivityTool,
+  strongholdWatchTool,
   queryEventNotesTool,
   clearWorkContextTool,
 
@@ -473,6 +477,7 @@ for (const manifest of [
   screenVisionManifest,
   socialOpsManifest,
   strongholdOpsManifest,
+  strongholdLifeManifest,
   systemInfoManifest,
   terminalExecutorManifest,
   terminalSessionManifest,

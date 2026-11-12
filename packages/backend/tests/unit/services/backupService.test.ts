@@ -27,7 +27,7 @@ import {
   recoverBackupRestore,
   snapshotOfflineTree,
 } from '@infos/backend/services/backup/backupStorage'
-import { mergeBackupRecords, redactBackupRow } from '@infos/backend/services/backup/backupRecords'
+import { mergeBackupRecords, recordConflicts, redactBackupRow } from '@infos/backend/services/backup/backupRecords'
 import { BackupService } from '@infos/backend/services/backup/backupService'
 import { createBackupRouter, isBackupDownloadRequest } from '@infos/backend/routers/backup.router'
 import { createAuthMiddleware } from '@infos/backend/middleware/auth'
@@ -52,7 +52,7 @@ async function withImportFixture(
     backupId: string
   }) => Promise<void>,
   password = '',
-  legacyLanguage?: string,
+  legacyCache?: { path: string; content: string },
 ) {
   const root = directory(),
     source = path.join(root, 'source')
@@ -89,11 +89,12 @@ async function withImportFixture(
     warnings: [],
   }
   const archive = path.join(root, 'backup.infos-backup')
-  if (legacyLanguage !== undefined) {
-    const languageBytes = Buffer.from(legacyLanguage)
-    writeFileSync(path.join(source, 'client-language.txt'), languageBytes)
-    manifest.files.push({ path: 'client-language.txt', size: languageBytes.length,
-      sha256: createHash('sha256').update(languageBytes).digest('hex') })
+  if (legacyCache) {
+    const cacheBytes = Buffer.from(legacyCache.content)
+    mkdirSync(path.dirname(path.join(source, legacyCache.path)), { recursive: true })
+    writeFileSync(path.join(source, legacyCache.path), cacheBytes)
+    manifest.files.push({ path: legacyCache.path, size: cacheBytes.length,
+      sha256: createHash('sha256').update(cacheBytes).digest('hex') })
   }
   async function* records(): AsyncGenerator<{ table: string; row: BackupRow }> {
     // 完整包保留 SQLite 文件，不重复输出逻辑记录。
@@ -126,13 +127,77 @@ async function withImportFixture(
 }
 
 describe('数据备份与恢复的关键路径', () => {
-  it('旧完整备份中的启动语言缓存可以通过完整校验并预览', async () => {
+  it('心流按会话与角色定位导入冲突，并支持跳过及替换', () => {
+    const db = createDrizzleConnection(':memory:')
+    const sqlite = db.$client
+    try {
+      sqlite.exec("INSERT INTO threads(id,agent_id) VALUES ('thread','pero'); INSERT INTO flow_states(thread_id,agent_id,current_goal) VALUES ('thread','pero','原目标')")
+      const row = { thread_id: 'thread', agent_id: 'pero', current_goal: '导入目标', private_facts: '笔记见 notes/INDEX.md' }
+      expect(recordConflicts(sqlite, 'flow_states', [row])).toBe(1)
+      mergeBackupRecords(sqlite, new Map([['flow_states', [row]]]), { conflict: 'skip', agentTargets: {} }, randomUUID())
+      expect(sqlite.prepare('SELECT current_goal FROM flow_states').get()).toEqual({ current_goal: '原目标' })
+
+      mergeBackupRecords(sqlite, new Map([['flow_states', [row]]]), { conflict: 'replace', agentTargets: {} }, randomUUID())
+
+      expect(sqlite.prepare('SELECT current_goal,private_facts FROM flow_states').all()).toEqual([
+        { current_goal: '导入目标', private_facts: '笔记见 notes/INDEX.md' },
+      ])
+    } finally { closeDrizzleConnection(db) }
+  })
+
+  it('逻辑导入重写角色设置与心流归属，结算旧据点请求并移除等待现场', () => {
+    const db = createDrizzleConnection(':memory:')
+    const sqlite = db.$client
+    try {
+      sqlite.exec("INSERT INTO threads(id,agent_id,thread_kind) VALUES ('local-main','pero','main'); INSERT INTO flow_states(thread_id,agent_id,current_goal) VALUES ('local-main','pero','当前主线')")
+      const tables = new Map<string, BackupRow[]>([
+        ['threads', [{ id: 'source-main', agent_id: 'source', thread_kind: 'main', channel: 'desktop', generation: 1 }]],
+        ['flow_states', [{ thread_id: 'source-main', agent_id: 'source', current_goal: '导入心流', private_facts: '参见记事本', revision: 3 }]],
+        ['group_chat_rooms', [{ id: 'living', name: '客厅', creator_id: 'system' }]],
+        ['group_chat_messages', [{ id: 1, room_id: 'living', sender_id: 'source', role: 'assistant', content: '历史邀请', pair_id: 'old-round',
+          metadata_json: JSON.stringify({ replyIntent: { status: 'pending', targets: [{ agentId: 'source', threadId: 'source-main', generation: 1 }], completed: [], attempts: 0 } }),
+        }]],
+        ['agent_experiences', [{ id: 1, agent_id: 'source', thread_id: 'source-main', generation: 1, source_message_id: 1, room_id: 'living', occurred_at: '2026-11-10 12:00:00' }]],
+        ['configs', [
+          { key: 'proactive.settings', value: JSON.stringify({ mode: 'off', strongholdActivity: false, agents: { source: { mode: 'companion', strongholdActivity: true } } }) },
+          { key: 'proactive.state', value: JSON.stringify({ agents: { source: { consecutiveMessages: 0, nextEligibleAt: 0,
+            waiting: { kind: 'wait_message', threadId: 'source-main', generation: 1, sourcePairId: 'old-round', afterMessageId: 1, roomId: 'living', senderId: 'user' },
+          } } }) },
+        ]],
+      ])
+
+      mergeBackupRecords(sqlite, tables, { conflict: 'replace', agentTargets: { source: 'pero' } }, randomUUID())
+
+      const imported = sqlite.prepare("SELECT id,thread_kind FROM threads WHERE id!='local-main'").get() as { id: string; thread_kind: string }
+      expect(imported.thread_kind).toBe('side')
+      expect(sqlite.prepare('SELECT thread_id,agent_id,current_goal FROM flow_states ORDER BY current_goal').all()).toEqual([
+        { thread_id: imported.id, agent_id: 'pero', current_goal: '导入心流' },
+        { thread_id: 'local-main', agent_id: 'pero', current_goal: '当前主线' },
+      ])
+      const settings = JSON.parse((sqlite.prepare("SELECT value FROM configs WHERE key='proactive.settings'").get() as { value: string }).value)
+      expect(settings.agents).toEqual({ pero: { mode: 'companion', strongholdActivity: true } })
+      const state = JSON.parse((sqlite.prepare("SELECT value FROM configs WHERE key='proactive.state'").get() as { value: string }).value)
+      expect(state.agents).toEqual({ pero: { consecutiveMessages: 0, nextEligibleAt: 0 } })
+      const scene = sqlite.prepare('SELECT id,metadata_json FROM group_chat_messages').get() as { id: number; metadata_json: string }
+      expect(JSON.parse(scene.metadata_json).replyIntent.status).toBe('completed')
+      expect(sqlite.prepare('SELECT agent_id,thread_id,source_message_id FROM agent_experiences').get()).toEqual({
+        agent_id: 'pero', thread_id: imported.id, source_message_id: scene.id,
+      })
+    } finally { closeDrizzleConnection(db) }
+  })
+
+  it.each([
+    { path: 'client-language.txt', content: 'en-US' },
+    { path: 'client-default-agent.txt', content: 'pero' },
+    { path: 'agent_pero/rnn_desktop.bin', content: '旧隐状态' },
+    { path: 'shared/rnn_mingru.bin', content: '旧循环权重' },
+  ])('旧完整备份中的 $path 可以通过完整校验并预览', async (cache) => {
     await withImportFixture(async ({ service, archive }) => {
       const preview = await service.previewFile(archive)
       expect(preview.manifest.files).toEqual(expect.arrayContaining([
-        expect.objectContaining({ path: 'client-language.txt', size: 5 }),
+        expect.objectContaining({ path: cache.path, size: Buffer.byteLength(cache.content) }),
       ]))
-    }, '', 'en-US')
+    }, '', cache)
   })
 
   it('加密备份缺口令或口令错误时在预约前拒绝，修正后仍使用同一原文件', async () => {

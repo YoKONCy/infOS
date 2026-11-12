@@ -77,6 +77,8 @@ describe('Steam 自动云存档生命周期', () => {
     expect(isCloudSaveChange('kernel/node-identity.json')).toBe(false)
     expect(isCloudSaveChange('client-language.txt')).toBe(false)
     expect(isCloudSaveChange('principals/pero/workspace/client-language.txt')).toBe(true)
+    expect(isCloudSaveChange('client-default-agent.txt')).toBe(false)
+    expect(isCloudSaveChange('principals/pero/workspace/client-default-agent.txt')).toBe(true)
     expect(isCloudSaveChange('tools/NapCat/node.exe')).toBe(false)
     expect(isCloudSaveChange('data/tools/NapCat/napcat/static/app.js')).toBe(false)
     expect(isCloudSaveChange('tools/NapCat/napcat/logs/current.log')).toBe(false)
@@ -97,10 +99,12 @@ describe('Steam 自动云存档生命周期', () => {
     await mkdir(path.join(fixture.root, 'cloud-cache'), { recursive: true })
     await writeFile(path.join(fixture.root, 'cloud-cache', 'checkpoint'), 'not business data')
     expect(await cloudDataFingerprint(fixture.root)).toBe(changed)
-    await writeFile(path.join(fixture.root, 'client-language.txt'), 'en-US')
-    expect(await cloudDataFingerprint(fixture.root)).toBe(changed)
-    await rm(path.join(fixture.root, 'client-language.txt'))
-    expect(await cloudDataFingerprint(fixture.root)).toBe(changed)
+    for (const name of ['client-language.txt', 'client-default-agent.txt']) {
+      await writeFile(path.join(fixture.root, name), '客户端本机偏好')
+      expect(await cloudDataFingerprint(fixture.root)).toBe(changed)
+      await rm(path.join(fixture.root, name))
+      expect(await cloudDataFingerprint(fixture.root)).toBe(changed)
+    }
   })
   it('退出前重新捕获最后的正文，而不是只复用启动时的检查点', async () => {
     await manager.prepareStartup()

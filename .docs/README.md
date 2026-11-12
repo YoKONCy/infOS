@@ -26,6 +26,7 @@ A 类维护跨领域架构，B 类维护具体子系统的调用链和运行契�
 | 客户端桌面能力 | [B02 桌面自动化](./B02_DESKTOP_AUTOMATION.md)、[B11 桌宠 HUD](./B11_PET_HUD.md) |
 | 知识与状态 | [B03 文档知识库](./B03_DOCUMENT_KNOWLEDGE.md)、[B06 天气](./B06_WEATHER.md)、[B10 角色状态](./B10_CHARACTER_STATE.md) |
 | 社交应用 | [B21 社交能力](./B21_SOCIAL_CAPABILITIES.md)、[B04 状态卡片](./B04_SOCIAL_STATUS_CARDS.md)、[B05 NapCat 管理页](./B05_NAPCAT_WEBUI.md) |
+| 据点生活 | [B32 据点生活、活动与关注](./B32_STRONGHOLD_LIFE.md)、[主侧会话与亲历](./B26_MAIN_SIDE_THREADS.md) |
 | 工具、资源与文档 | [B07 工具扩展](./B07_TOOLS_AND_EXTENSIONS.md)、[B12 消息资源](./B12_MESSAGE_RESOURCES.md)、[B24 文档工具](./B24_DOCUMENT_TOOLS.md) |
 | 会话与任务 | [B09 交互模式](./B09_THREAD_INTERACTION_MODE.md)、[B13 任务计划](./B13_TASK_PLANS.md)、[B19 执行模式](./B19_THREAD_EXECUTION_MODES.md)、[B20 主动工作](./B20_PROACTIVE_WORK.md)、[B26 对话队列](./B26_CONVERSATION_QUEUE.md) |
 | 桌面生活与外壳 | [B31 共同的家](./B31_COMMON_HOME.md)、[桌面感知](./B_PERCEPTION.md)、[桌面外壳](./P03_DESKTOP_SHELL.md)、[桌面预制件](./P11_DESKTOP_PREFABS.md) |

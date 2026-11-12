@@ -1,8 +1,6 @@
 {
   "据点回复恢复": "Stronghold reply recovery",
   "恢复尚未完成的据点回复，按原轮次和主线代次继续投递": "Resume unfinished Stronghold replies using their original turn and main-thread generation.",
-  "ContextRNN 状态保存": "ContextRNN state saving",
-  "仅在 ContextRNN 已启用且存在变更时保存状态与在线学习权重": "Save state and online learning weights only when ContextRNN is enabled and there are changes",
   "八小时记忆补记": "Eight hours of memory supplement\nEvery time",
   "每累计在线八小时，按模型容量分批补记未主动记录或审阅的对话": "is online for eight hours in total, conversations that are not actively recorded or reviewed will be recorded in batches according to the model capacity.",
   "事件关系维护": "event relationship maintenance",
@@ -19,5 +17,9 @@
   "检查任务等待条件并投递待发送的结果": "checks task waiting conditions and delivers the results to be sent.",
   "[常驻] 记忆运行维护": "[Resident] Memory operation and maintenance",
   "记忆运行维护": "memory operation and maintenance",
-  "{0} 有新消息": "{0} has new news"
+  "{0} 有新消息": "{0} has new news",
+  "角色条件等待恢复": "Character conditional wait recovery",
+  "依据真实消息与任务结果恢复角色等待，重试尚未完成的投递": "Resume character waits from actual messages and task results, retrying unfinished deliveries",
+  "据点生活接续": "Stronghold life recovery",
+  "核对交流、活动、邀请与关注并接续真实事件": "Reconcile exchanges, activities, invitations and watches, then continue from actual events"
 }

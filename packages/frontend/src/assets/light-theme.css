@@ -1,24 +1,24 @@
 /**
- * 已确认的浅色材质：沿用现有布局、品牌色与像素轮廓。
+ * 浅色晶透冷瓷光学材质：沿用现有布局、品牌色与像素轮廓，强化浅色及自定义壁纸下的通透度与阅读边界。
  * 只作用于主应用及设置页的背景预览，深色与独立子应用保持原样。
  */
 :root[data-theme='light'] :is(.main-view-root, .app-background-preview) {
-  --ui-text-tertiary: #7b8498;
-  --ui-border-default: rgba(15, 23, 42, 0.1);
-  --ui-border-strong: rgba(15, 23, 42, 0.16);
+  --ui-text-tertiary: #6d7890;
+  --ui-border-default: rgba(15, 23, 42, 0.14);
+  --ui-border-strong: rgba(15, 23, 42, 0.24);
 }
 
-/* 均衡参数对应稿中的 86% 面板、94% 阅读层；保持用户细调有效，100% 仍为实色。 */
+/* 均衡参数对应清透毛玻璃壳层与高不透明度阅读瓷卡；保持用户细调有效，100% 仍为实色。 */
 :root[data-theme='light']
   :is(.main-view-root, .app-background-preview)[data-app-background='active'] {
-  --app-light-panel-opacity: clamp(0.55, calc(0.3 + var(--app-panel-opacity, 0.8) * 0.7), 1);
-  --app-light-reading-opacity: clamp(0.9, calc(0.4 + var(--app-reading-opacity, 0.9) * 0.6), 1);
-  --app-light-input-opacity: clamp(0.7, calc(0.5 + var(--app-panel-opacity, 0.8) * 0.5), 1);
-  --app-light-chat-rail-opacity: clamp(0.55, calc(0.1 + var(--app-panel-opacity, 0.8) * 0.9), 1);
-  --app-light-chat-header-opacity: clamp(0.55, calc(-0.1 + var(--app-panel-opacity, 0.8) * 1.1), 1);
-  --app-light-chat-paper-opacity: clamp(0.9, calc(0.6 + var(--app-reading-opacity, 0.9) * 0.4), 1);
-  --app-light-user-paper-opacity: clamp(0.9, calc(0.75 + var(--app-panel-opacity, 0.8) * 0.25), 1);
-  --app-light-workspace-opacity: clamp(0.55, calc(-0.3 + var(--app-panel-opacity, 0.8) * 1.3), 1);
+  --app-light-panel-opacity: clamp(0.55, calc(0.32 + var(--app-panel-opacity, 0.8) * 0.68), 1);
+  --app-light-reading-opacity: clamp(0.9, calc(0.45 + var(--app-reading-opacity, 0.9) * 0.55), 1);
+  --app-light-input-opacity: clamp(0.74, calc(0.52 + var(--app-panel-opacity, 0.8) * 0.48), 1);
+  --app-light-chat-rail-opacity: clamp(0.56, calc(0.14 + var(--app-panel-opacity, 0.8) * 0.86), 1);
+  --app-light-chat-header-opacity: clamp(0.6, calc(-0.04 + var(--app-panel-opacity, 0.8) * 1.04), 1);
+  --app-light-chat-paper-opacity: clamp(0.91, calc(0.62 + var(--app-reading-opacity, 0.9) * 0.38), 1);
+  --app-light-user-paper-opacity: clamp(0.91, calc(0.76 + var(--app-panel-opacity, 0.8) * 0.24), 1);
+  --app-light-workspace-opacity: clamp(0.56, calc(-0.26 + var(--app-panel-opacity, 0.8) * 1.26), 1);
   /* 工作区底板更通透后，编辑器与终端的内层仍补足到同一阅读目标。 */
   --app-light-inset-reading-opacity: clamp(
     0.12,
@@ -29,9 +29,9 @@
     1
   );
 
-  --app-shell-fill: rgb(250 251 254 / var(--app-light-panel-opacity));
+  --app-shell-fill: rgb(246 249 254 / var(--app-light-panel-opacity));
   --app-panel-fill: rgb(255 255 255 / var(--app-light-panel-opacity));
-  --app-soft-fill: rgb(250 251 254 / var(--app-panel-opacity, 0.8));
+  --app-soft-fill: rgb(246 249 254 / var(--app-panel-opacity, 0.8));
   --app-reading-fill: rgb(255 255 255 / var(--app-light-reading-opacity));
   --app-inset-reading-fill: rgb(255 255 255 / var(--app-light-inset-reading-opacity));
   --dash-panel-bg: var(--app-panel-fill);
@@ -39,77 +39,103 @@
   --dash-panel-elevated: var(--app-reading-fill);
   --dash-input-bg: rgb(255 255 255 / var(--app-light-input-opacity));
 
-  --app-light-chat-rail: rgb(250 251 254 / var(--app-light-chat-rail-opacity));
-  --app-light-chat-header: rgb(253 253 255 / var(--app-light-chat-header-opacity));
+  --app-light-chat-rail: rgb(246 249 254 / var(--app-light-chat-rail-opacity));
+  --app-light-chat-header: rgb(251 253 255 / var(--app-light-chat-header-opacity));
   --app-light-chat-paper: rgb(255 255 255 / var(--app-light-chat-paper-opacity));
-  --app-light-image-blur: max(2px, var(--app-image-blur, 0px));
+
+  /* 双层晶透边界：外层冷暗轮廓防白图融边，内层纯白高光防深图发脏 */
+  --app-crystal-border: rgba(15, 23, 42, 0.145);
+  --app-crystal-border-strong: rgba(15, 23, 42, 0.23);
+  --app-crystal-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.94),
+    0 2px 10px rgba(15, 23, 42, 0.06);
 }
 
-/* 标签栏维持稳定底色，内容侧栏继续透景。 */
-:root[data-theme='light'] .main-view-root[data-app-background='active'] > .desktop-tabbar {
-  background: #ffffff;
-}
-
-/* 画布只柔化一次；保留用户的亮度、饱和度、对比度和更高的模糊值。 */
+/* 深色浓烈插画在浅色模式下自动抬升毛玻璃饱和度与内侧白边高光，杜绝水泥脏灰感。 */
 :root[data-theme='light']
-  :is(.main-view-root, .app-background-preview)[data-app-background='active']
-  > .app-wallpaper
-  img {
-  inset: calc(var(--app-light-image-blur) * -2);
-  width: calc(100% + var(--app-light-image-blur) * 4);
-  height: calc(100% + var(--app-light-image-blur) * 4);
-  filter: blur(var(--app-light-image-blur)) brightness(var(--app-image-brightness, 1))
-    saturate(var(--app-image-saturation, 1)) contrast(var(--app-image-contrast, 1));
+  :is(.main-view-root, .app-background-preview)[data-app-background='active'][data-wallpaper-tone='dark'] {
+  --app-material-saturate: 185%;
+  --app-crystal-border: rgba(15, 23, 42, 0.165);
+  --app-crystal-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.96),
+    0 3px 12px rgba(15, 23, 42, 0.075);
 }
 
-/* 模型卡片保留原来的蓝色短轨，底板接入统一透景材质。 */
+/* 纯白/高调插画在浅色模式下自动强化外轮廓与柔和景深投影，防止白色气泡隐形。 */
+:root[data-theme='light']
+  :is(.main-view-root, .app-background-preview)[data-app-background='active'][data-wallpaper-tone='bright'] {
+  --app-crystal-border: rgba(15, 23, 42, 0.21);
+  --app-crystal-border-strong: rgba(15, 23, 42, 0.3);
+  --app-crystal-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.98),
+    0 4px 14px rgba(15, 23, 42, 0.09);
+}
+
+/* 标签栏维持稳定冷瓷底色，内容侧栏继续高饱和透景。 */
+:root[data-theme='light'] .main-view-root[data-app-background='active'] > .desktop-tabbar {
+  background: rgba(248, 250, 254, 0.96);
+  border-bottom-color: var(--app-crystal-border);
+}
+
+/* 模型卡片保留原来的蓝色短轨，底板接入统一晶透材质与高光边。 */
 :root[data-theme='light'] .main-view-root[data-app-background='active'] .model-config-card {
   background:
     linear-gradient(90deg, var(--ui-accent-sky) 0 34px, transparent 34px) top left / 72px 2px
       no-repeat,
     var(--dash-panel-bg);
+  border-color: var(--app-crystal-border);
+  box-shadow: var(--app-crystal-shadow);
 }
 
-/* 三大聊天页共用阅读材质，保留各自的列布局、像素轮廓与品牌色。 */
+/* 三大聊天页共用高饱和毛玻璃侧栏与双层晶透阅读卡片，保留列布局、像素轮廓与品牌色。 */
 :root[data-theme='light']
   .main-view-root[data-app-background='active']
   :is(.chat-sidebar, .sh-left, .sh-right) {
   background: var(--app-light-chat-rail);
-  backdrop-filter: blur(var(--app-material-blur));
+  backdrop-filter: blur(var(--app-material-blur)) saturate(var(--app-material-saturate, 172%));
+  box-shadow: inset -1px 0 0 rgba(255, 255, 255, 0.72);
 }
 :root[data-theme='light']
   .main-view-root[data-app-background='active']
   :is(.chat-main-header, .sh-main-header, .copilot-header) {
   background: var(--app-light-chat-header);
+  backdrop-filter: blur(var(--app-material-blur)) saturate(var(--app-material-saturate, 172%));
+  box-shadow: inset 0 -1px 0 rgba(255, 255, 255, 0.65);
 }
 :root[data-theme='light'] .main-view-root[data-app-background='active'] :is(.chat-main, .sh-main) {
-  background: rgba(255, 255, 255, 0.1);
+  background: rgba(255, 255, 255, 0.04);
 }
 :root[data-theme='light']
   .main-view-root[data-app-background='active']
   .main-tab-content
   .msg-bubble-assistant {
   background: var(--app-light-chat-paper);
-  border-color: var(--ui-border-default);
+  border-color: var(--app-crystal-border);
+  box-shadow: var(--app-crystal-shadow);
 }
 :root[data-theme='light']
   .main-view-root[data-app-background='active']
   .main-tab-content
   .msg-bubble-user {
   background: color-mix(
-    in srgb,
+    in oklab,
     var(--user-bubble-bg) calc(var(--app-light-user-paper-opacity) * 100%),
     transparent
   );
+  border-color: color-mix(in oklab, var(--user-bubble-border) 75%, var(--app-crystal-border));
+  border-right-color: var(--user-bubble-accent);
+  box-shadow: var(--app-crystal-shadow);
 }
 :root[data-theme='light'] .main-view-root[data-app-background='active'] .main-tab-content .deck {
   background: var(--app-light-chat-paper);
+  border-color: var(--app-crystal-border-strong);
+  box-shadow: var(--app-crystal-shadow);
 }
 :root[data-theme='light']
   .main-view-root[data-app-background='active']
   .main-tab-content
   :is(.deck-status, .deck-footer) {
-  background: color-mix(in srgb, var(--ui-bg-surface-soft) 55%, transparent);
+  background: color-mix(in oklab, var(--ui-bg-surface-soft) 58%, transparent);
 }
 :root[data-theme='light']
   .main-view-root[data-app-background='active']
@@ -123,21 +149,22 @@
   .main-tab-content
   .msg-narration-card {
   background:
-    linear-gradient(145deg, rgba(255, 255, 255, 0.16), transparent 38%),
-    color-mix(in srgb, var(--ui-bg-surface) 90%, var(--ui-accent-purple-soft));
-  border-color: color-mix(in srgb, var(--ui-accent-purple) 23%, var(--ui-border-subtle));
+    linear-gradient(145deg, rgba(255, 255, 255, 0.32), transparent 42%),
+    color-mix(in oklab, var(--ui-bg-surface) 92%, var(--ui-accent-purple-soft));
+  border-color: color-mix(in oklab, var(--ui-accent-purple) 26%, var(--app-crystal-border));
+  box-shadow: var(--app-crystal-shadow);
 }
 :root[data-theme='light']
   .main-view-root[data-app-background='active']
   .main-tab-content
   .sh-roommate {
-  background: color-mix(in srgb, var(--ui-bg-surface) 38%, transparent);
+  background: color-mix(in oklab, var(--ui-bg-surface) 44%, transparent);
 }
 :root[data-theme='light']
   .main-view-root[data-app-background='active']
   .main-tab-content
   .sh-right-header {
-  background: color-mix(in srgb, var(--ui-bg-surface-soft) 28%, transparent);
+  background: color-mix(in oklab, var(--ui-bg-surface-soft) 32%, transparent);
 }
 
 /* 工作区主体共用底板，协作消息与输入使用同一阅读层，不增加逐消息模糊。 */
@@ -151,7 +178,7 @@
   .main-view-root[data-app-background='active']
   .workspace-tab
   .workspace-copilot {
-  background: color-mix(in srgb, var(--ui-bg-surface-soft) 20%, transparent);
+  background: color-mix(in oklab, var(--ui-bg-surface-soft) 22%, transparent);
 }
 :root[data-theme='light']
   .main-view-root[data-app-background='active']
@@ -159,11 +186,13 @@
   .workspace-body
   :is(.msg-bubble-assistant, .deck) {
   background: var(--app-light-chat-paper);
+  border-color: var(--app-crystal-border);
+  box-shadow: var(--app-crystal-shadow);
 }
 :root[data-theme='light']
   .main-view-root[data-app-background='active']
   .workspace-tab
   .workspace-body
   .copilot-context {
-  background: color-mix(in srgb, var(--ui-bg-surface-soft) 38%, transparent);
+  background: color-mix(in oklab, var(--ui-bg-surface-soft) 40%, transparent);
 }

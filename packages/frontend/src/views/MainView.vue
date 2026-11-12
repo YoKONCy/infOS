@@ -56,7 +56,7 @@ import { useConversationNavigation } from '../composables/chat/useConversationNa
 import { useTaskNavigation } from '../composables/main/useTaskNavigation'
 import { useRemoteNotifications } from '../composables/main/useRemoteNotifications'
 import { useProactiveMessageHandler } from '../composables/main/useProactiveMessages'
-import { useAppBackground } from '../composables/ui/useAppBackground'
+import { useAppBackground, type WallpaperTone } from '../composables/ui/useAppBackground'
 import { useCustomTheme } from '../composables/ui/useCustomTheme'
 import {
   useNotificationStore,
@@ -319,6 +319,7 @@ function openDesktopSecuritySettings(): void {
 }
 const appBackground = useAppBackground()
 const backgroundReadyUrl = ref('')
+const wallpaperTone = ref<WallpaperTone>('balanced')
 const backgroundEnabled = computed(
   () => appBackground.settings.value.enabled && appBackground.hasImage.value,
 )
@@ -330,6 +331,7 @@ watch(
   [appBackground.imageUrl, backgroundEnabled],
   () => {
     backgroundReadyUrl.value = ''
+    wallpaperTone.value = 'balanced'
   },
   { flush: 'sync' },
 )
@@ -339,6 +341,7 @@ function handleBackgroundReady(src: string): void {
 function handleBackgroundError(src: string): void {
   if (src !== appBackground.imageUrl.value) return
   backgroundReadyUrl.value = ''
+  wallpaperTone.value = 'balanced'
   logger.warn('MainView', __t('logs.frontend.navigation', '应用背景图片加载失败，保留默认页面材质'))
 }
 
@@ -771,6 +774,7 @@ onMounted(() => {
     class="main-view-root"
     :class="{ 'main-view-root--hidden': !windowVisible }"
     :data-app-background="showsAppBackground ? 'active' : undefined"
+    :data-wallpaper-tone="showsAppBackground ? wallpaperTone : undefined"
     :style="appBackground.style.value"
   >
     <DesktopOnboarding
@@ -783,6 +787,7 @@ onMounted(() => {
     <AppWallpaper
       v-if="backgroundEnabled"
       :src="appBackground.imageUrl.value"
+      @tone="wallpaperTone = $event.tone"
       @ready="handleBackgroundReady"
       @error="handleBackgroundError"
     />

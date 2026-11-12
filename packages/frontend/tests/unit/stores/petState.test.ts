@@ -8,12 +8,13 @@ import { usePetStateStore } from '@infos/frontend/stores/usePetStateStore'
 const api = vi.hoisted(() => ({ getPetState: vi.fn() }))
 vi.mock('@infos/frontend/api/modules/agentApi', () => ({ agentApi: api }))
 
-function response(agentId: string, state: CharacterState): ApiResponse<PetStateResponse> {
+function response(agentId: string, state: Partial<CharacterState>): ApiResponse<PetStateResponse> {
   return {
     code: 'OK',
     message: '获取成功',
     data: {
       agentId,
+      ...DEFAULT_CHARACTER_STATE,
       ...state,
       clickMessages: {},
       idleMessages: [],

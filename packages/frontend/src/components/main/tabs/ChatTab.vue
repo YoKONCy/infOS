@@ -1495,9 +1495,7 @@ watch(
   padding: 12px;
   border-top: 1px solid var(--ui-border-subtle);
   flex-shrink: 0;
-  background:
-    repeating-linear-gradient(90deg, transparent, transparent 11px, rgba(236, 72, 153, 0.025) 12px),
-    var(--ui-bg-surface-soft);
+  background: var(--ui-bg-surface-soft);
 }
 
 .chat-new-session-btn {
@@ -1650,20 +1648,14 @@ watch(
     radial-gradient(ellipse at 4% 92%, var(--convo-air-bottom) 0%, transparent 58%);
 }
 
-/* 极淡斜纹覆盖空白区域；文字、工具卡片和输入栏始终位于纹理上方。 */
+/* 顶部微亮高光承托阅读底板；文字、工具卡片和输入栏始终位于底板上方。 */
 .chat-main::after {
   content: '';
   position: absolute;
   inset: 0;
   pointer-events: none;
   z-index: 0;
-  background: repeating-linear-gradient(
-    45deg,
-    transparent 0,
-    transparent 14px,
-    var(--convo-texture-line) 14px,
-    var(--convo-texture-line) 15px
-  );
+  background: linear-gradient(180deg, var(--canvas-grad-top) 0%, var(--canvas-grad-bottom) 46%);
 }
 
 .chat-main-header {

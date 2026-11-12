@@ -223,7 +223,7 @@ export class ProactiveService {
     }
     await this.config.set(SETTINGS_KEY, JSON.stringify(this.settings))
     await this.budget.initialize(this.day === new Intl.DateTimeFormat('en-CA', {timeZone: this.settings.timeZone}).format(new Date()) ? this.state.dailyRuns : 0)
-    await this.changeActivity(() => this.recoverActivities())
+    await this.recoverPendingActivities()
     await this.persist()
     this.schedule()
   }
@@ -399,7 +399,7 @@ export class ProactiveService {
       // 先登记等待再检查权威结果，覆盖任务在登记过程中结束的竞态。
       if (state.waiting?.taskId) {
         const task = await this.deps.getTask?.(state.waiting.taskId)
-        if (task) await this.completeTaskWait(task)
+        if (task && await this.completeTaskWait(task)) await this.persist()
       }
     })
   }
@@ -428,7 +428,20 @@ export class ProactiveService {
   }
 
   async notifyTask(task: BackgroundTaskInfo): Promise<void> {
-    return this.changeActivity(() => this.completeTaskWait(task))
+    return this.changeActivity(async () => {
+      if (await this.completeTaskWait(task)) await this.persist()
+    })
+  }
+
+  hasPendingActivities(): boolean {
+    return [...this.agents.values()].some((state) => Boolean(state.waiting))
+  }
+
+  /** 条件恢复由真实事件驱动，关闭空闲主动模式时也可重试未完成投递。 */
+  recoverPendingActivities(): Promise<void> {
+    return this.changeActivity(async () => {
+      if (await this.recoverActivities()) await this.persist()
+    })
   }
 
   async noteSceneActivity(agentId: string, messageId: number): Promise<void> {
@@ -475,6 +488,7 @@ export class ProactiveService {
   }
 
   private async currentWait(agentId: string, wait: ActivityWait): Promise<boolean> {
+    if (!this.deps?.listAgents().includes(agentId)) return false
     const thread = await this.deps?.getThread?.(wait.threadId)
     if (!thread || thread.agentId !== agentId || thread.status !== 'active' || thread.generation !== wait.generation) return false
     if (wait.kind === 'wait_message' && wait.senderId !== 'user' &&
@@ -483,43 +497,63 @@ export class ProactiveService {
     return this.deps?.activitySourceActive ? this.deps.activitySourceActive(wait) : true
   }
 
-  private async completeTaskWait(task: BackgroundTaskInfo): Promise<void> {
-    if (!['completed', 'failed', 'cancelled'].includes(task.status)) return
+  private async completeTaskWait(task: BackgroundTaskInfo): Promise<boolean> {
+    if (!['completed', 'failed', 'cancelled'].includes(task.status)) return false
     const state = this.agents.get(task.agentId)
     const wait = state?.waiting
-    if (!state || wait?.kind !== 'wait_task' || wait.taskId !== task.id) return
+    if (!state || wait?.kind !== 'wait_task' || wait.taskId !== task.id) return false
     const current = await this.currentWait(task.agentId, wait)
-    if (!current && this.deps?.isBusy(task.agentId)) return
-    if (current) await this.deps?.resumeTaskWait?.(wait, task)
+    if (!current && this.deps?.isBusy(task.agentId)) return false
+    // 同一主线的正式任务回填已有持久投递身份，其他场景的显式等待独立接续。
+    const automaticResume = !wait.roomId && !task.parentTaskId &&
+      task.completionAction === 'send_to_chat' && task.targetThreadId === wait.threadId &&
+      ['completed', 'failed'].includes(task.status) &&
+      (task.metadata.targetThreadGeneration === undefined || task.metadata.targetThreadGeneration === wait.generation)
+    if (current && !automaticResume) await this.deps?.resumeTaskWait?.(wait, task)
     delete state.waiting
     state.quietRuns = 0
     state.nextEligibleAt = Date.now() + this.interval(this.getAgentSettings(task.agentId).mode)
-    await this.persist()
+    return true
   }
 
-  private async recoverActivities(onlyAgentId?: string): Promise<void> {
+  private async recoverActivities(onlyAgentId?: string): Promise<boolean> {
+    let changed = false
     for (const [agentId, state] of this.agents) {
       if (onlyAgentId && agentId !== onlyAgentId) continue
       const wait = state.waiting
       if (!wait) continue
-      if (!await this.currentWait(agentId, wait)) {
-        if (!this.deps?.isBusy(agentId)) delete state.waiting
-        continue
-      }
-      if (wait.kind === 'wait_task' && wait.taskId) {
-        const task = await this.deps?.getTask?.(wait.taskId)
-        if (task) await this.completeTaskWait(task)
-        else delete state.waiting
-      } else if (wait.roomId) {
-        const messages = await this.deps?.groupMessages?.(wait.roomId, wait.afterMessageId, wait.senderId,
-          wait.senderId === 'user' ? undefined : wait.sourcePairId) ?? []
-        const reply = messages.find((message) => message.senderId === wait.senderId)
-        if (reply) {
-          if (await this.deps?.resumeGroupWait?.(reply.id, agentId, wait)) delete state.waiting
-          else wait.afterMessageId = reply.id
+      try {
+        if (!await this.currentWait(agentId, wait)) {
+          if (!this.deps?.isBusy(agentId)) {
+            delete state.waiting
+            changed = true
+          }
+          continue
         }
+        if (wait.kind === 'wait_task' && wait.taskId) {
+          const task = await this.deps?.getTask?.(wait.taskId)
+          if (task) {
+            const completed = await this.completeTaskWait(task)
+            changed = completed || changed
+          } else {
+            delete state.waiting
+            changed = true
+          }
+        } else if (wait.roomId) {
+          const messages = await this.deps?.groupMessages?.(wait.roomId, wait.afterMessageId, wait.senderId,
+            wait.senderId === 'user' ? undefined : wait.sourcePairId) ?? []
+          const reply = messages.find((message) => message.senderId === wait.senderId)
+          if (reply) {
+            if (await this.deps?.resumeGroupWait?.(reply.id, agentId, wait)) delete state.waiting
+            else wait.afterMessageId = reply.id
+            changed = true
+          }
+        }
+      } catch (error) {
+        logger.warn(__t('logs.companion', '条件等待恢复失败，保留现场等待重试'), { agentId, error })
       }
     }
+    return changed
   }
 
   async checkNow(): Promise<ProactiveState> {
@@ -699,7 +733,7 @@ export class ProactiveService {
       this.state.dailyRuns = 0
     }
     const ids = [...new Set(this.deps.listAgents())].sort()
-    await this.changeActivity(() => this.recoverActivities())
+    await this.recoverPendingActivities()
     for (const id of this.agents.keys()) if (!ids.includes(id)) this.agents.delete(id)
     const offset = ids.indexOf(this.cursor) + 1
     const ordered = [...ids.slice(offset), ...ids.slice(0, offset)]

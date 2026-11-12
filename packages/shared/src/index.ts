@@ -410,6 +410,7 @@ export * from './taskPlan'
 export * from './workspacePreview'
 export * from './tokenUsage'
 export * from './proactive'
+export * from './strongholdLife'
 export * from './fileMutationPreview'
 export * from './executionMode'
 export * from './completionAlerts'
@@ -482,7 +483,7 @@ export * from './desktopCards'
 export * from './desktopSafety'
 export * from './desktopSensitive'
 export type * from './types/backup.types'
-export { isSnapshotProgramPath, isSnapshotTransientPath } from './snapshotPaths'
+export { isObsoleteRetrievalStatePath, isSnapshotClientCachePath, isSnapshotProgramPath, isSnapshotTransientPath } from './snapshotPaths'
 export type {
   IndexScope,
   IndexMaintenanceDiagnostic,

@@ -69,9 +69,16 @@ describe('DistributedSyncService 完整快照', () => {
     await writeFile(path.join(dataDir, 'config.json'), '{"apiKey":"secret"}')
     await writeFile(path.join(dataDir, 'client-language.txt'), 'zh-CN')
     await writeFile(path.join(dataDir, 'principals', 'pero', 'workspace', 'client-language.txt'), '用户的语言资料')
+    await writeFile(path.join(dataDir, 'client-default-agent.txt'), 'pero')
+    await writeFile(path.join(dataDir, 'principals', 'pero', 'workspace', 'client-default-agent.txt'), '用户的角色资料')
     await writeFile(path.join(dataDir, 'gateway_token.json'), 'machine-token')
     await writeFile(path.join(dataDir, 'kernel', 'nodes.json'), 'machine-node')
     await writeFile(path.join(dataDir, 'logs', 'runtime.log'), 'log')
+    await mkdir(path.join(dataDir, 'agent_pero'), { recursive: true })
+    await mkdir(path.join(dataDir, 'shared'), { recursive: true })
+    await writeFile(path.join(dataDir, 'agent_pero', 'rnn_desktop.bin'), '旧隐状态')
+    await writeFile(path.join(dataDir, 'shared', 'rnn_mingru.bin'), '旧权重')
+    await writeFile(path.join(dataDir, 'principals', 'pero', 'workspace', 'rnn_mingru.bin'), '用户文件')
     const backup = vi.fn(async (target: string) => writeFile(target, 'sqlite-snapshot'))
     const service = new DistributedSyncService(
       dataDir,
@@ -89,9 +96,14 @@ describe('DistributedSyncService 完整快照', () => {
     expect(paths).toContain('principals/pero/workspace/note.md')
     expect(paths).toContain('principals/pero/workspace/client-language.txt')
     expect(paths).not.toContain('client-language.txt')
+    expect(paths).toContain('principals/pero/workspace/client-default-agent.txt')
+    expect(paths).not.toContain('client-default-agent.txt')
     expect(paths).not.toContain('gateway_token.json')
     expect(paths).not.toContain('kernel/nodes.json')
     expect(paths).not.toContain('logs/runtime.log')
+    expect(paths).not.toContain('agent_pero/rnn_desktop.bin')
+    expect(paths).not.toContain('shared/rnn_mingru.bin')
+    expect(paths).toContain('principals/pero/workspace/rnn_mingru.bin')
     expect(paths.some((file) => file.startsWith('.store-upgrades/'))).toBe(false)
     expect(bundle.manifest).toMatchObject({
       bundleVersion: 3,
@@ -328,12 +340,23 @@ describe('DistributedSyncService 完整快照', () => {
     const key = randomBytes(32)
     let encrypted = await source.createEncryptedSnapshot(key.toString('base64'))
     const bundle = decryptBundle(encrypted, key)
-    if (format !== 'binary') {
-      const language = Buffer.from('en-US')
-      bundle.files['client-language.txt'] = language.toString('base64')
-      bundle.manifest.files.push({ path: 'client-language.txt', sizeBytes: language.length,
-        sha256: createHash('sha256').update(language).digest('hex') })
-      bundle.manifest.totalBytes += language.length
+    // 模拟早期快照仍携带本机缓存，三个读取格式都须校验正文并保留目标端偏好。
+    for (const [file, content] of Object.entries({ 'client-language.txt': 'en-US', 'client-default-agent.txt': 'pero' })) {
+      const bytes = Buffer.from(content)
+      bundle.files[file] = bytes.toString('base64')
+      bundle.manifest.files.push({ path: file, sizeBytes: bytes.length,
+        sha256: createHash('sha256').update(bytes).digest('hex') })
+      bundle.manifest.totalBytes += bytes.length
+    }
+    if (format === 'binary') {
+      const manifest = Buffer.from(JSON.stringify(bundle.manifest))
+      const length = Buffer.alloc(4)
+      length.writeUInt32BE(manifest.length)
+      const files = bundle.manifest.files.map((file) => Buffer.from(bundle.files[file.path]!, 'base64'))
+      encrypted = encryptPayload(Buffer.concat([
+        Buffer.from('INFOSS3\n'), gzipSync(Buffer.concat([length, manifest, ...files])),
+      ]), key)
+    } else {
       bundle.manifest.bundleVersion = format === 'legacy-v1' ? 1 : 2
       encrypted = encryptBundle(bundle, key)
     }
@@ -342,6 +365,7 @@ describe('DistributedSyncService 完整快照', () => {
     await mkdir(path.join(targetDir, 'kernel'), { recursive: true })
     await writeFile(path.join(targetDir, 'gateway_token.json'), 'target-token')
     await writeFile(path.join(targetDir, 'client-language.txt'), 'zh-CN')
+    await writeFile(path.join(targetDir, 'client-default-agent.txt'), 'nana')
     await writeFile(path.join(targetDir, 'kernel', 'nodes.json'), 'target-node')
     await writeFile(
       path.join(targetDir, 'distributed', 'server-credentials.key'),
@@ -371,6 +395,7 @@ describe('DistributedSyncService 完整快照', () => {
     await expect(readFile(path.join(targetDir, 'binary.dat'))).resolves.toEqual(binary)
     await expect(readFile(path.join(targetDir, 'empty.dat'))).resolves.toHaveLength(0)
     await expect(readFile(path.join(targetDir, 'client-language.txt'), 'utf8')).resolves.toBe('zh-CN')
+    await expect(readFile(path.join(targetDir, 'client-default-agent.txt'), 'utf8')).resolves.toBe('nana')
     await expect(readFile(path.join(targetDir, 'gateway_token.json'), 'utf8')).resolves.toBe(
       'target-token',
     )

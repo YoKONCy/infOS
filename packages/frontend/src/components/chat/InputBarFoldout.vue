@@ -58,6 +58,7 @@ function place(): void {
     '--app-soft-fill',
     '--app-reading-fill',
     '--app-material-blur',
+    '--app-material-saturate',
   ]) {
     const value = style.getPropertyValue(name).trim()
     if (value) variables[name] = value
@@ -352,13 +353,14 @@ defineExpose({ close })
   overscroll-behavior: contain;
   border: 1px solid var(--ui-border-strong);
   border-radius: 2px;
-  background: var(--app-reading-fill, var(--ui-bg-elevated));
+  background: color-mix(in oklab, var(--ui-bg-surface) 95%, transparent);
   color: var(--ui-text-primary);
-  backdrop-filter: blur(var(--app-material-blur, 12px));
+  backdrop-filter: blur(max(18px, var(--app-material-blur, 16px)))
+    saturate(var(--app-material-saturate, 172%));
   box-shadow:
-    inset 0 1px 0 color-mix(in srgb, var(--ui-text-primary) 7%, transparent),
+    var(--ui-crystal-highlight, inset 0 1px 0 rgba(255, 255, 255, 0.9)),
     4px 4px 0 var(--ui-border-subtle),
-    0 14px 32px rgb(0 0 0 / 18%);
+    0 14px 32px rgb(15 23 42 / 16%);
 }
 .input-foldout-panel__head {
   display: flex;

@@ -11,34 +11,41 @@
 
 :root,
 [data-theme='light'] {
-  /* ── 环境 ── */
-  --ui-bg-canvas: #f6f7fb;
-  --ui-bg-sidebar: rgba(244, 245, 249, 0.92);
-  --ui-bg-surface: #ffffff;
-  --ui-bg-surface-soft: #fafbfc;
-  --ui-bg-elevated: rgba(255, 255, 255, 0.94);
-  --ui-bg-hover: rgba(15, 23, 42, 0.045);
-  --ui-bg-active: rgba(244, 114, 182, 0.1);
+  color-scheme: light;
+  accent-color: var(--ui-accent-primary);
 
-  /* ── 文字 ── */
-  --ui-text-primary: #171923;
-  --ui-text-secondary: #596174;
-  --ui-text-tertiary: #8b93a7;
-  --ui-text-disabled: #b7bdc9;
+  /* ── 环境（清透冷瓷层次：底板微冷蓝灰 -> 侧栏柔瓷 -> 卡片纯白） ── */
+  --ui-bg-canvas: #f2f5fb;
+  --ui-bg-sidebar: rgba(235, 240, 249, 0.95);
+  --ui-bg-surface: #ffffff;
+  --ui-bg-surface-soft: #f5f7fc;
+  --ui-bg-elevated: rgba(255, 255, 255, 0.97);
+  --ui-bg-hover: rgba(15, 23, 42, 0.05);
+  --ui-bg-active: rgba(219, 39, 119, 0.095);
+
+  /* ── 文字（强化白底可读对比度） ── */
+  --ui-text-primary: #121723;
+  --ui-text-secondary: #475266;
+  --ui-text-tertiary: #6d7890;
+  --ui-text-disabled: #9ca6ba;
   --ui-text-inverse: #ffffff;
 
-  /* ── 边框 ── */
-  --ui-border-subtle: rgba(15, 23, 42, 0.07);
-  --ui-border-default: rgba(15, 23, 42, 0.11);
-  --ui-border-strong: rgba(15, 23, 42, 0.2);
+  /* ── 边框与晶透双层高光 ── */
+  --ui-border-subtle: rgba(15, 23, 42, 0.085);
+  --ui-border-default: rgba(15, 23, 42, 0.14);
+  --ui-border-strong: rgba(15, 23, 42, 0.24);
+  --ui-crystal-highlight: inset 0 1px 0 rgba(255, 255, 255, 0.92);
+  --ui-card-dual-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.92),
+    0 2px 10px rgba(15, 23, 42, 0.055);
 
-  /* ── 品牌与语义 ── */
-  --ui-accent-primary: #ec4899;
-  --ui-accent-primary-soft: rgba(236, 72, 153, 0.11);
-  --ui-accent-sky: #0ea5e9;
-  --ui-accent-sky-soft: rgba(14, 165, 233, 0.11);
-  --ui-accent-purple: #8b5cf6;
-  --ui-accent-purple-soft: rgba(139, 92, 246, 0.11);
+  /* ── 品牌与语义（浅色底板加深饱和与明度对比，不刺眼不发虚） ── */
+  --ui-accent-primary: #db2777;
+  --ui-accent-primary-soft: rgba(219, 39, 119, 0.1);
+  --ui-accent-sky: #0284c7;
+  --ui-accent-sky-soft: rgba(2, 132, 199, 0.1);
+  --ui-accent-purple: #7c3aed;
+  --ui-accent-purple-soft: rgba(124, 58, 237, 0.1);
   --ui-focus-color: var(--ui-accent-primary);
   --ui-success: #059669;
   --ui-success-soft: rgba(5, 150, 105, 0.11);
@@ -48,66 +55,68 @@
   --ui-danger-soft: rgba(220, 38, 38, 0.11);
 
   /* ── 阴影 ── */
-  --ui-shadow-xs: 0 1px 2px rgba(15, 23, 42, 0.04);
-  --ui-shadow-sm: 0 2px 8px rgba(15, 23, 42, 0.055);
-  --ui-shadow-md: 0 8px 24px rgba(15, 23, 42, 0.085);
-  --ui-shadow-lg: 0 18px 48px rgba(15, 23, 42, 0.14);
+  --ui-shadow-xs: 0 1px 2px rgba(15, 23, 42, 0.045);
+  --ui-shadow-sm: 0 2px 8px rgba(15, 23, 42, 0.06);
+  --ui-shadow-md: 0 8px 24px rgba(15, 23, 42, 0.09);
+  --ui-shadow-lg: 0 18px 48px rgba(15, 23, 42, 0.15);
   --ui-shadow-panel: -12px 0 40px rgba(15, 23, 42, 0.16);
-  --ui-glow-pink: 0 0 24px rgba(236, 72, 153, 0.16);
-  --ui-glow-sky: 0 0 24px rgba(14, 165, 233, 0.15);
-  --ui-glow-purple: 0 0 24px rgba(139, 92, 246, 0.16);
+  --ui-glow-pink: 0 0 22px rgba(219, 39, 119, 0.15);
+  --ui-glow-sky: 0 0 22px rgba(2, 132, 199, 0.14);
+  --ui-glow-purple: 0 0 22px rgba(124, 58, 237, 0.15);
 
   /* ── 遮罩 ── */
-  --ui-overlay-backdrop: rgba(15, 23, 42, 0.38);
+  --ui-overlay-backdrop: rgba(15, 23, 42, 0.36);
   --ui-overlay-blur: 8px;
 
   /* ── 滚动条 ── */
   --ui-scrollbar-size: 8px;
-  --ui-scrollbar-track: rgba(71, 85, 105, 0.045);
-  --ui-scrollbar-thumb: rgba(100, 116, 139, 0.46);
-  --ui-scrollbar-thumb-hover: rgba(100, 116, 139, 0.72);
-  --ui-scrollbar-thumb-active: #7c75a3;
-  --ui-scrollbar-highlight: rgba(255, 255, 255, 0.32);
+  --ui-scrollbar-track: rgba(71, 85, 105, 0.05);
+  --ui-scrollbar-thumb: rgba(100, 116, 139, 0.48);
+  --ui-scrollbar-thumb-hover: rgba(71, 85, 105, 0.72);
+  --ui-scrollbar-thumb-active: #7c3aed;
+  --ui-scrollbar-highlight: rgba(255, 255, 255, 0.4);
   --ui-scrollbar-shade: rgba(15, 23, 42, 0.08);
 
   /* Dashboard 面板语义层 */
   --dash-panel-bg: #ffffff;
-  --dash-panel-elevated: rgba(255, 255, 255, 0.96);
-  --dash-panel-soft: #f8fafc;
-  --dash-panel-border: rgba(15, 23, 42, 0.1);
-  --dash-panel-shadow: 0 10px 30px rgba(15, 23, 42, 0.07);
+  --dash-panel-elevated: rgba(255, 255, 255, 0.97);
+  --dash-panel-soft: #f3f6fc;
+  --dash-panel-border: rgba(15, 23, 42, 0.13);
+  --dash-panel-shadow: 0 8px 24px rgba(15, 23, 42, 0.06);
   --dash-input-bg: #ffffff;
-  --dash-input-border: rgba(15, 23, 42, 0.14);
-  --dash-table-header: rgba(14, 165, 233, 0.08);
+  --dash-input-border: rgba(15, 23, 42, 0.18);
+  --dash-table-header: rgba(2, 132, 199, 0.075);
   --dash-table-stripe: rgba(15, 23, 42, 0.025);
-  --dash-empty-bg: rgba(148, 163, 184, 0.08);
+  --dash-empty-bg: rgba(148, 163, 184, 0.09);
   --dash-tooltip-bg: #0f172a;
 
   /* ── 底板纹理与渐变 ── */
-  /* 浅色：深灰点阵 + 顶部向下微亮渐变 */
-  --canvas-dot-color: rgba(15, 23, 42, 0.045);
+  --canvas-dot-color: rgba(15, 23, 42, 0.04);
   --canvas-dot-size: 1px;
   --canvas-dot-spacing: 24px;
-  --canvas-grad-top: rgba(255, 255, 255, 0.1);
+  --canvas-grad-top: rgba(255, 255, 255, 0.42);
   --canvas-grad-bottom: rgba(255, 255, 255, 0);
 
-  /* ── 对话区纸面 + 气流（浅色） ── */
-  --convo-paper-tint: var(--ui-bg-surface-soft);
-  --convo-air-top: rgba(236, 72, 153, 0.055);
-  --convo-air-bottom: rgba(14, 165, 233, 0.045);
-  --convo-texture-line: rgba(15, 23, 42, 0.018);
-  --convo-edge-glow: rgba(15, 23, 42, 0.05);
+  /* ── 对话区冷瓷底板 + 极轻漫射光（移除杂乱斜纹） ── */
+  --convo-paper-tint: var(--ui-bg-canvas);
+  --convo-air-top: rgba(219, 39, 119, 0.042);
+  --convo-air-bottom: rgba(2, 132, 199, 0.042);
+  --convo-texture-line: transparent;
+  --convo-edge-glow: rgba(15, 23, 42, 0.045);
 
   /* ── 据点量子点阵 + 流场线（浅色） ── */
   --sh-dot-color: rgba(15, 23, 42, 0.035);
   --sh-dot-size: 1.2px;
   --sh-dot-spacing: 8px;
-  --sh-flow-top: rgba(236, 72, 153, 0.08);
-  --sh-flow-bottom: rgba(14, 165, 233, 0.06);
-  --sh-radar-tint: var(--ui-bg-surface-soft);
+  --sh-flow-top: rgba(219, 39, 119, 0.065);
+  --sh-flow-bottom: rgba(2, 132, 199, 0.055);
+  --sh-radar-tint: var(--ui-bg-canvas);
 }
 
 [data-theme='dark'] {
+  color-scheme: dark;
+  accent-color: var(--ui-accent-purple);
+
   /* ── 环境 ── */
   --ui-bg-canvas: #0e1016;
   --ui-bg-sidebar: rgba(18, 20, 29, 0.94);
@@ -124,10 +133,14 @@
   --ui-text-disabled: #525968;
   --ui-text-inverse: #11131a;
 
-  /* ── 边框 ── */
+  /* ── 边框与晶透双层高光 ── */
   --ui-border-subtle: rgba(255, 255, 255, 0.065);
   --ui-border-default: rgba(255, 255, 255, 0.11);
   --ui-border-strong: rgba(255, 255, 255, 0.2);
+  --ui-crystal-highlight: inset 0 1px 0 rgba(255, 255, 255, 0.07);
+  --ui-card-dual-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.06),
+    0 3px 12px rgba(0, 0, 0, 0.28);
 
   /* ── 品牌与语义 ── */
   --ui-accent-primary: #f472b6;

@@ -3,7 +3,7 @@ import Database from 'better-sqlite3'
 import { eq } from 'drizzle-orm'
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 import { FileSnapshotRepository } from '@infos/backend/repositories/fileSnapshot.repo'
-import { fileChangeSnapshots, threadMessages, threads } from '@infos/backend/database/schema'
+import { fileChangeSnapshots, threadMessages } from '@infos/backend/database/schema'
 
 let db: ReturnType<typeof createDrizzleConnection>
 let sqlite: Database.Database

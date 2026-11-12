@@ -281,6 +281,12 @@ ApprovalService 持久保存 `pending / approved / denied / expired / consumed`�
 
 ## 12. 工作区与上下文
 
+工作、聊天模式的桌面对话每轮编译时通过 `WorkspaceDirectoryContextProvider` 读取当前角色工作区的直属目录项，以必选 Context Region 提供 `@principal/` 根目录名称清单。该入口同时覆盖 MainThread 与 SideThread，随新建、重命名和删除刷新。目录名称附加 `/`，文件及链接保留名称，排序为目录优先、名称升序。文件正文、子目录条目和链接目标沿文件工具按需访问。
+
+概览使用 `readdir` 的目录项类型，快照指纹只取名称清单及固定说明，正文或文件时间变化沿用同一指纹。根目录尚未创建时提供空清单，读取异常时提供暂不可用状态并记录本地化日志。主应用极简模式、后台任务、据点及子应用按各自上下文范围装配。
+
+源码入口为 `services/workspace/workspaceDirectoryContext.ts`，由 Backend 容器注册到 ContextRegionRegistry，进入 ContextCompiler 的统一快照与预算装配。
+
 工作区文件树、终端和 Copilot 共用当前 Agent 的真实 `desktop` Thread；后端核验 Agent、Thread 与 ExecutionSession 的所有权。切换 Agent/Thread 时清理终端引用与选区，同时保护编辑器未保存内容。
 
 - 文件树按层懒加载。保存使用 SHA-256 乐观锁与原子写入；截断预览不能覆盖完整文件。

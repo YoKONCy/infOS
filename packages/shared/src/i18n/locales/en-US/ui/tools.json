@@ -164,5 +164,9 @@
   "NIT 演算式": "NIT expression",
   "表达式": "Expr",
   "改动预览": "Diff preview",
-  "已设好": "Scheduled"
+  "已设好": "Scheduled",
+  "共同活动": "Shared activities",
+  "发起活动、邀请伙伴并维护共同进展。": "Start activities, invite companions and track shared progress.",
+  "持续关注": "Ongoing watch",
+  "等到关心的事情发生后再接续。": "Continue when something you are watching for happens."
 }

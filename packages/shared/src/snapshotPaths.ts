@@ -31,11 +31,23 @@ export function isSnapshotProgramPath(relative: string): boolean {
   )
 }
 
+/** 根级客户端偏好属于本机缓存，工作区内的同名文件仍是用户资料。 */
+export function isSnapshotClientCachePath(relative: string): boolean {
+  const normalized = relative.replaceAll('\\', '/').toLowerCase()
+  return normalized === 'client-language.txt' || normalized === 'client-default-agent.txt'
+}
+
+/** 仅匹配已退役检索模块的受管状态文件，供升级清理与快照过滤共用。 */
+export function isObsoleteRetrievalStatePath(relative: string): boolean {
+  const normalized = relative.replaceAll('\\', '/').toLowerCase()
+  return /^(?:agent_[^/]+\/rnn_[\w.-]+|shared\/rnn_(?:proj|output|mingru))\.bin$/.test(normalized)
+}
+
 /** 运行日志和缓存按已知位置排除，工作区资料与账号数据库继续保存。 */
 export function isSnapshotTransientPath(relative: string): boolean {
   const normalized = relative.replaceAll('\\', '/').toLowerCase()
-  // 客户端启动语言由本机缓存提供，正式语言配置随主库同步。
-  if (normalized === 'client-language.txt') return true
+  if (isSnapshotClientCachePath(normalized)) return true
+  if (isObsoleteRetrievalStatePath(normalized)) return true
   if (/^data\/logs(?:\/|$)/.test(normalized)) return true
   const path = napCatPath(relative)
   return path !== undefined && (

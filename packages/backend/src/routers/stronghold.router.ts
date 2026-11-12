@@ -18,9 +18,39 @@ import { Hono } from 'hono'
 import { randomUUID } from 'node:crypto'
 import type { AppContext } from '../container'
 import { AppError } from '../lib/appError'
+import { z } from 'zod'
+import { validate } from '../lib/validation'
+import { strongholdActivityInputSchema } from '../services/stronghold/strongholdActivityService'
+
+function lifeOperation<T>(action: () => T): T {
+  try {
+    return action()
+  } catch (error) {
+    if (!(error instanceof AppError)) throw error
+    throw new AppError(error.code, {
+      message: __t('server.tools', '据点状态已变化，请查看当前现场并使用最新编号和修订重试。'),
+      data: { reason: error.message }, cause: error,
+    })
+  }
+}
 
 export function createStrongholdRouter(ctx: AppContext) {
   const router = new Hono()
+  router.get('/rooms/:roomId/life', (c) => {
+    return c.json({ code: 'OK', data: ctx.strongholdLifeService.snapshot(c.req.param('roomId')) })
+  })
+  router.post('/rooms/:roomId/presence', validate('json', z.object({ present: z.boolean(), operationId: z.string().uuid() })), (c) => {
+    const roomId = c.req.param('roomId')
+    const input = c.req.valid('json')
+    lifeOperation(() => ctx.strongholdLifeService.setPresence(roomId, input.present, input.operationId))
+    return c.json({ code: 'OK', data: ctx.strongholdLifeService.snapshot(roomId) })
+  })
+  router.post('/rooms/:roomId/activities', validate('json', z.object({ operationId: z.string().uuid(), command: strongholdActivityInputSchema })), (c) => {
+    const input = c.req.valid('json')
+    const result = lifeOperation(() => ctx.strongholdLifeService.activities.execute({ agentId: 'user', threadId: 'user', generation: 0,
+      roomId: c.req.param('roomId') }, input.operationId, input.command))
+    return c.json({ code: 'OK', data: result })
+  })
 
   // ═══ 设施管理 ═══
 

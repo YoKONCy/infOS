@@ -56,6 +56,7 @@ import {
   achievements,
   configs,
   homeRecords,
+  strongholdLifeRecords,
 } from '../../database/schema'
 import { createLogger } from '../../lib/logger'
 import { disposeExecutionOwner } from '../../tools/productivityRuntimeHolder'
@@ -89,7 +90,7 @@ export class ResetService {
         ['thread_messages', threadMessages], ['thread_character_state_events', threadCharacterStateEvents],
         ['agent_experiences', agentExperiences], ['flow_states', flowStates],
         ['flow_state_revisions', flowStateRevisions], ['thread_summaries', threadSummaries],
-        ['conversation_logs', conversationLogs], ['group_chat_messages', groupChatMessages],
+        ['conversation_logs', conversationLogs], ['group_chat_messages', groupChatMessages], ['stronghold_life_records', strongholdLifeRecords],
         ['message_attachments', messageAttachments], ['file_change_snapshots', fileChangeSnapshots],
         ['task_plan_mutations', taskPlanMutations], ['task_plans', taskPlans],
       ] as const
@@ -177,6 +178,7 @@ export class ResetService {
       ['thread_summaries', threadSummaries],
       ['conversation_logs', conversationLogs],
       ['group_chat_messages', groupChatMessages],
+      ['stronghold_life_records', strongholdLifeRecords],
       ['message_attachments', messageAttachments],
       ['file_change_snapshots', fileChangeSnapshots],
     ]

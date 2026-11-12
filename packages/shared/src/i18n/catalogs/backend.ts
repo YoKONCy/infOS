@@ -216,9 +216,6 @@ import messages155 from '../locales/en-US/logs/model.json'
 import messages156 from '../locales/zh-CN/server/model.json'
 import messages157 from '../locales/zh-TW/server/model.json'
 import messages158 from '../locales/en-US/server/model.json'
-import messages159 from '../locales/zh-CN/logs/retrieval.json'
-import messages160 from '../locales/zh-TW/logs/retrieval.json'
-import messages161 from '../locales/en-US/logs/retrieval.json'
 import messages162 from '../locales/zh-CN/logs/runtime.json'
 import messages163 from '../locales/zh-TW/logs/runtime.json'
 import messages164 from '../locales/en-US/logs/runtime.json'
@@ -438,9 +435,6 @@ registerCatalog('logs.model', 'en-US', messages155)
 registerCatalog('server.model', 'zh-CN', messages156)
 registerCatalog('server.model', 'zh-TW', messages157)
 registerCatalog('server.model', 'en-US', messages158)
-registerCatalog('logs.retrieval', 'zh-CN', messages159)
-registerCatalog('logs.retrieval', 'zh-TW', messages160)
-registerCatalog('logs.retrieval', 'en-US', messages161)
 registerCatalog('logs.runtime', 'zh-CN', messages162)
 registerCatalog('logs.runtime', 'zh-TW', messages163)
 registerCatalog('logs.runtime', 'en-US', messages164)

@@ -121,8 +121,8 @@ describe('ButlerService 规则引擎（兜底）', () => {
 
     expect(result.action).toBe('summon_all')
     expect(strongholdService.moveAgent).toHaveBeenCalledTimes(2)
-    expect(strongholdService.moveAgent).toHaveBeenCalledWith('pero', 'room-1')
-    expect(strongholdService.moveAgent).toHaveBeenCalledWith('nana', 'room-1')
+    expect(strongholdService.moveAgent).toHaveBeenCalledWith('pero', 'room-1', undefined)
+    expect(strongholdService.moveAgent).toHaveBeenCalledWith('nana', 'room-1', undefined)
     expect(groupChatService.sendMessage).toHaveBeenCalledTimes(2)
     expect(groupChatService.sendMessage).toHaveBeenNthCalledWith(
       1,
@@ -140,8 +140,8 @@ describe('ButlerService 规则引擎（兜底）', () => {
     await service.execute({ roomId: 'room-1', command: '把 PERO 叫到这里来' })
     await service.execute({ roomId: 'room-1', command: '把 娜娜 叫到当前房间' })
 
-    expect(strongholdService.moveAgent).toHaveBeenNthCalledWith(1, 'pero', 'room-1')
-    expect(strongholdService.moveAgent).toHaveBeenNthCalledWith(2, 'nana', 'room-1')
+    expect(strongholdService.moveAgent).toHaveBeenNthCalledWith(1, 'pero', 'room-1', undefined)
+    expect(strongholdService.moveAgent).toHaveBeenNthCalledWith(2, 'nana', 'room-1', undefined)
   })
 
   it('应执行结构化创建房间和环境修改', async () => {
@@ -157,7 +157,7 @@ describe('ButlerService 规则引擎（兜底）', () => {
     })
 
     expect(strongholdService.createRoom).toHaveBeenCalledWith({ facilityId: 1, name: '书房' })
-    expect(strongholdService.updateEnvironment).toHaveBeenCalledWith('room-1', '音乐', 'Lo-Fi')
+    expect(strongholdService.updateEnvironment).toHaveBeenCalledWith('room-1', '音乐', 'Lo-Fi', undefined)
   })
 
   it('非维护请求不应产生结构化越权动作', async () => {
@@ -229,7 +229,7 @@ describe('ButlerService LLM 理解层', () => {
       expect.objectContaining({ user_query: '把客厅温度调到 26 度' }),
       undefined,
     )
-    expect(strongholdService.updateEnvironment).toHaveBeenCalledWith('room-1', '温度', 26)
+    expect(strongholdService.updateEnvironment).toHaveBeenCalledWith('room-1', '温度', 26, undefined)
     // 旁白 + 执行结果都在汇总消息里
     expect(result.message).toContain('管家轻轻把恒温器调到 26 度')
     // 请求 + 结果两条 system 消息

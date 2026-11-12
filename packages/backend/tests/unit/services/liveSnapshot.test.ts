@@ -96,24 +96,31 @@ describe('在线一致性快照', () => {
     }
   })
 
-  it.each(['改写', '删除'])('捕获期间%s本机语言缓存仍可导出，工作区同名文件正常保留', async (operation) => {
+  it.each(['改写', '删除'])('捕获期间%s本机客户端缓存仍可导出，工作区同名文件正常保留', async (operation) => {
     const f = fixture()
-    const cache = path.join(f.data, 'client-language.txt')
-    const note = 'principals/pero/workspace/client-language.txt'
+    const caches = ['client-language.txt', 'client-default-agent.txt']
     const destination = path.join(f.root, 'snapshot')
-    writeFileSync(cache, 'zh-CN')
-    mkdirSync(path.dirname(path.join(f.data, note)), { recursive: true })
-    writeFileSync(path.join(f.data, note), '用户记录的语言说明')
+    const workspace = 'principals/pero/workspace'
+    mkdirSync(path.join(f.data, workspace), { recursive: true })
+    for (const name of caches) {
+      writeFileSync(path.join(f.data, name), '原本机偏好')
+      writeFileSync(path.join(f.data, workspace, name), '用户记录的偏好说明')
+    }
     try {
       await captureLiveSnapshot(f.data, destination, f.main, {
         captureSnapshot: (target, pin) => {
           f.stores.captureSnapshot(target, pin)
-          if (operation === '删除') rmSync(cache)
-          else writeFileSync(cache, 'en-US')
+          for (const name of caches) {
+            const cache = path.join(f.data, name)
+            if (operation === '删除') rmSync(cache)
+            else writeFileSync(cache, '更新后的本机偏好')
+          }
         },
       })
-      expect(existsSync(path.join(destination, 'client-language.txt'))).toBe(false)
-      expect(readFileSync(path.join(destination, note), 'utf8')).toBe('用户记录的语言说明')
+      for (const name of caches) {
+        expect(existsSync(path.join(destination, name))).toBe(false)
+        expect(readFileSync(path.join(destination, workspace, name), 'utf8')).toBe('用户记录的偏好说明')
+      }
       expect(readFileSync(path.join(destination, 'account.json'), 'utf8')).toBe('固定配置')
     } finally {
       f.stores.closeAll()
@@ -131,12 +138,17 @@ describe('在线一致性快照', () => {
       'tools/NapCat/napcat/plugins/builtin/index.mjs': '官方插件',
       'data/tools/NapCat/QQNT.dll': '旧发行文件',
       'data/logs/old.log': '旧日志',
+      'agent_pero/rnn_desktop.bin': '旧隐状态',
+      'shared/rnn_proj.bin': '旧投影权重',
+      'shared/rnn_output.bin': '旧输出权重',
+      'shared/rnn_mingru.bin': '旧循环权重',
     }
     const retained = {
       'tools/NapCat/napcat/config/webui.json': '账号配置',
       'tools/NapCat/napcat/plugins/custom/addon.node': '用户插件',
       'tools/NapCat/.infos-quick-login-account': '快速登录',
       'principals/pero/workspace/tools/NapCat/node.exe': '用户文件',
+      'principals/pero/workspace/rnn_mingru.bin': '用户同名文件',
     }
     try {
       for (const [relative, content] of Object.entries({ ...excluded, ...retained })) {
@@ -155,21 +167,42 @@ describe('在线一致性快照', () => {
     }
   })
 
-  it.each(['zh-CN', null])('旧快照中的语言缓存沿用目标端状态 %s', async (language) => {
+  it('安装旧快照时清理退役状态并按原路径恢复工作区文件', async () => {
+    const root = temporaryRoot()
+    const data = path.join(root, 'data')
+    const prepared = path.join(root, 'prepared')
+    await mkdir(data)
+    const retired = ['agent_pero/rnn_desktop.bin', 'shared/rnn_mingru.bin']
+    const userFile = 'principals/pero/workspace/rnn_mingru.bin'
+    for (const relative of [...retired, userFile]) {
+      await mkdir(path.dirname(path.join(prepared, relative)), { recursive: true })
+      writeFileSync(path.join(prepared, relative), relative)
+    }
+    await installBackupTree(data, prepared)
+    for (const relative of retired) expect(existsSync(path.join(data, relative))).toBe(false)
+    expect(await readFile(path.join(data, userFile), 'utf8')).toBe(userFile)
+  })
+
+  it.each([
+    { file: 'client-language.txt', localValue: 'zh-CN', sourceValue: 'en-US' },
+    { file: 'client-language.txt', localValue: null, sourceValue: 'en-US' },
+    { file: 'client-default-agent.txt', localValue: 'nana', sourceValue: 'pero' },
+    { file: 'client-default-agent.txt', localValue: null, sourceValue: 'pero' },
+  ])('旧快照中的 $file 沿用目标端状态 $localValue', async ({ file, localValue, sourceValue }) => {
     const root = temporaryRoot()
     const data = path.join(root, 'data')
     const prepared = path.join(root, 'prepared')
     await mkdir(data)
     await mkdir(prepared)
-    writeFileSync(path.join(prepared, 'client-language.txt'), 'en-US')
+    writeFileSync(path.join(prepared, file), sourceValue)
     writeFileSync(path.join(prepared, 'account.json'), '恢复的业务配置')
-    if (language !== null) writeFileSync(path.join(data, 'client-language.txt'), language)
+    if (localValue !== null) writeFileSync(path.join(data, file), localValue)
 
     await installBackupTree(data, prepared)
 
-    expect(existsSync(path.join(data, 'client-language.txt'))).toBe(language !== null)
-    if (language !== null)
-      expect(await readFile(path.join(data, 'client-language.txt'), 'utf8')).toBe(language)
+    expect(existsSync(path.join(data, file))).toBe(localValue !== null)
+    if (localValue !== null)
+      expect(await readFile(path.join(data, file), 'utf8')).toBe(localValue)
     expect(await readFile(path.join(data, 'account.json'), 'utf8')).toBe('恢复的业务配置')
   })
 

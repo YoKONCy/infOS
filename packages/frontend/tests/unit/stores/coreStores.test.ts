@@ -267,20 +267,24 @@ describe('useAgentStore', () => {
     expect(store.error).toBe('网络异常')
   })
 
-  it('应当切换活跃 Agent 并刷新列表', async () => {
+  it('切换窗口绑定时保留已加载的角色列表', async () => {
     const store = useAgentStore()
-    // 第七阶段修复（批次 C）：改用 runtimeApi.setWindowAgent 而非 agentApi.setActive
+    const agents = [
+      { id: 'pero', name: 'Pero', isEnabled: true, isActive: true },
+      { id: 'assistant', name: 'Assistant', isEnabled: true, isActive: false },
+    ]
     apiMocks.runtimeSetWindowAgent.mockResolvedValue({ code: 'OK' })
-    apiMocks.agentList.mockResolvedValue({
-      data: [{ id: 'assistant', name: 'Assistant', isEnabled: true, isActive: true }],
-    })
+    apiMocks.agentList.mockResolvedValue({ data: agents })
+    apiMocks.agentActive.mockResolvedValue({ data: agents[0] })
+    await store.fetchAgents()
+    apiMocks.agentList.mockClear()
 
     await store.switchAgent('assistant')
 
-    // 断言调用了 runtimeApi.setWindowAgent，参数为 (windowId, 'assistant')
     expect(apiMocks.runtimeSetWindowAgent).toHaveBeenCalledWith(expect.any(String), 'assistant')
     expect(store.activeAgentId).toBe('assistant')
-    expect(store.agents).toHaveLength(1)
+    expect(store.agents).toEqual(agents)
+    expect(apiMocks.agentList).not.toHaveBeenCalled()
   })
 })
 
