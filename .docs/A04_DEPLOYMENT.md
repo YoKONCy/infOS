@@ -55,7 +55,7 @@ Docker 前端镜像在前端构建后运行 `scripts/precompress-web-assets.mjs`
 
 主应用的后端静态入口及 `/applications/arca/`、`/applications/pictoria/` 共用 `StaticAssetService.response`，提供 ETag、Last-Modified、HEAD 和条件命中的 304，条件命中时不读取或传输文件正文。固定文件名不标记 immutable，内容哈希资源允许长期复用。开发代理继续保留 `no-store`，便于 HMR 与源码更新；不将生产缓存规则套到开发接口。
 
-Web 主面板不在首屏后自动预热工作区编辑器与据点模块，改由用户导航时按需加载；Electron 保留本地资源的空闲预热。镜像验收入口 `scripts/docker-runtime-smoke.mjs` 实际比较 gzip 与未压缩资源内容，并验证主模块及像素字体的缓存响应与 304；该验收依赖真实构建镜像，不能由配置文件存在性代替。
+Web 主面板不在首屏后自动预热工作区编辑器与据点模块，改由用户导航时按需加载；Electron 保留本地资源的空闲预热。镜像验收入口 `scripts/docker-runtime-smoke.mjs` 读取实际 HTML 中的入口模块，比较 gzip 与原始响应字节，并验证缓存响应与 304。`boot.ts` 在语言词库就绪后动态载入应用及样式，入口 HTML 可仅声明模块脚本。
 
 ## 2. 核心设计原则
 

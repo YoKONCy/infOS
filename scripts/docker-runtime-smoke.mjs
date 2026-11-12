@@ -6,59 +6,47 @@ const origin = new URL(process.argv[2] ?? 'http://localhost:3000')
 const token = process.env.INFOS_API_TOKEN ?? ''
 const started = []
 
-/** 对真实镜像验证字体与模块的压缩、缓存和升级入口，不以配置文本代替响应。 */
+/** 对真实镜像验证入口模块的压缩、缓存和升级响应。 */
 async function checkStaticCache() {
   const entry = await fetch(origin, { signal: AbortSignal.timeout(15_000) })
   assert.equal(entry.status, 200, 'WEB_ENTRY_UNAVAILABLE')
   assert.match(entry.headers.get('cache-control') ?? '', /no-cache/, 'WEB_ENTRY_CACHE_INVALID')
   const html = await entry.text()
   const script = html.match(/<script\b[^>]*\bsrc=["']([^"']+)["']/i)?.[1]
-  const stylesheet = [...html.matchAll(/<link\b[^>]*>/gi)]
-    .find(([tag]) => /\brel=["']stylesheet["']/i.test(tag))?.[0]
-    .match(/\bhref=["']([^"']+)["']/i)?.[1]
-  assert.ok(script && stylesheet, 'WEB_ENTRY_ASSETS_MISSING')
-  const css = await fetch(new URL(stylesheet, origin), { signal: AbortSignal.timeout(15_000) })
-  assert.equal(css.status, 200, 'WEB_STYLESHEET_UNAVAILABLE')
-  const font = (await css.text()).match(/url\(["']?([^\s)"']+\.ttf)["']?\)/)?.[1]
-  assert.ok(font, 'WEB_PIXEL_FONT_MISSING')
-  for (const address of [new URL(script, origin), new URL(font, css.url)]) {
-    assert.equal(address.origin, origin.origin, 'WEB_ASSET_ORIGIN_CHANGED')
-    const compressed = await fetch(address, {
-      headers: { 'accept-encoding': 'gzip' },
-      signal: AbortSignal.timeout(30_000),
-    })
-    assert.equal(compressed.status, 200, 'WEB_ASSET_UNAVAILABLE')
-    assert.equal(
-      compressed.headers.get('content-encoding'),
-      'gzip',
-      'WEB_ASSET_COMPRESSION_MISSING',
-    )
-    assert.match(compressed.headers.get('vary') ?? '', /accept-encoding/i, 'WEB_ASSET_VARY_MISSING')
-    assert.match(
-      compressed.headers.get('cache-control') ?? '',
-      /immutable/,
-      'WEB_ASSET_LONG_CACHE_MISSING',
-    )
-    const etag = compressed.headers.get('etag')
-    assert.ok(etag, 'WEB_ASSET_ETAG_MISSING')
-    const decoded = Buffer.from(await compressed.arrayBuffer())
-    const plain = await fetch(address, {
-      headers: { 'accept-encoding': 'identity' },
-      signal: AbortSignal.timeout(30_000),
-    })
-    assert.equal(plain.status, 200, 'WEB_ASSET_IDENTITY_UNAVAILABLE')
-    assert.deepEqual(
-      decoded,
-      Buffer.from(await plain.arrayBuffer()),
-      'WEB_ASSET_COMPRESSION_CORRUPTED',
-    )
-    const cached = await fetch(address, {
-      headers: { 'accept-encoding': 'gzip', 'if-none-match': etag },
-      signal: AbortSignal.timeout(15_000),
-    })
-    assert.equal(cached.status, 304, 'WEB_ASSET_CONDITIONAL_CACHE_FAILED')
-    assert.equal((await cached.arrayBuffer()).byteLength, 0, 'WEB_ASSET_304_HAS_BODY')
-  }
+  assert.ok(script, 'WEB_ENTRY_ASSETS_MISSING')
+  const address = new URL(script, origin)
+  assert.equal(address.origin, origin.origin, 'WEB_ASSET_ORIGIN_CHANGED')
+  const compressed = await fetch(address, {
+    headers: { 'accept-encoding': 'gzip' },
+    signal: AbortSignal.timeout(30_000),
+  })
+  assert.equal(compressed.status, 200, 'WEB_ASSET_UNAVAILABLE')
+  assert.equal(compressed.headers.get('content-encoding'), 'gzip', 'WEB_ASSET_COMPRESSION_MISSING')
+  assert.match(compressed.headers.get('vary') ?? '', /accept-encoding/i, 'WEB_ASSET_VARY_MISSING')
+  assert.match(
+    compressed.headers.get('cache-control') ?? '',
+    /immutable/,
+    'WEB_ASSET_LONG_CACHE_MISSING',
+  )
+  const etag = compressed.headers.get('etag')
+  assert.ok(etag, 'WEB_ASSET_ETAG_MISSING')
+  const decoded = Buffer.from(await compressed.arrayBuffer())
+  const plain = await fetch(address, {
+    headers: { 'accept-encoding': 'identity' },
+    signal: AbortSignal.timeout(30_000),
+  })
+  assert.equal(plain.status, 200, 'WEB_ASSET_IDENTITY_UNAVAILABLE')
+  assert.deepEqual(
+    decoded,
+    Buffer.from(await plain.arrayBuffer()),
+    'WEB_ASSET_COMPRESSION_CORRUPTED',
+  )
+  const cached = await fetch(address, {
+    headers: { 'accept-encoding': 'gzip', 'if-none-match': etag },
+    signal: AbortSignal.timeout(15_000),
+  })
+  assert.equal(cached.status, 304, 'WEB_ASSET_CONDITIONAL_CACHE_FAILED')
+  assert.equal((await cached.arrayBuffer()).byteLength, 0, 'WEB_ASSET_304_HAS_BODY')
 }
 
 async function request(application, action, method = 'GET') {
