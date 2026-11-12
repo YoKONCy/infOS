@@ -1,0 +1,151 @@
+/* 二级聚合工作台公共布局（伙伴 / 记忆馆 / 日程） */
+.hub-workspace {
+  display: flex;
+  flex-direction: column;
+  width: 100%;
+  height: 100%;
+  min-width: 0;
+  min-height: 0;
+  overflow: hidden;
+  color: var(--ui-text-primary);
+}
+
+.hub-header {
+  display: flex;
+  flex-shrink: 0;
+  align-items: center;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: 12px 20px;
+  min-height: 52px;
+  padding: 8px 24px;
+  background: var(--app-shell-fill, color-mix(in srgb, var(--ui-bg-surface) 92%, transparent));
+  border-bottom: 1px solid var(--ui-border-default);
+  backdrop-filter: blur(var(--app-material-blur, 12px));
+  z-index: 10;
+}
+
+.hub-brand {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-width: 0;
+  color: var(--ui-text-primary);
+}
+
+.hub-brand-icon {
+  display: inline-grid;
+  place-items: center;
+  width: 26px;
+  height: 26px;
+  padding: 4px;
+  border: 1px solid color-mix(in srgb, var(--ui-accent-primary) 32%, var(--ui-border-default));
+  border-left: 2px solid var(--ui-accent-primary);
+  border-radius: 2px;
+  background: var(--ui-accent-primary-soft);
+  color: var(--ui-accent-primary);
+}
+
+[data-theme='dark'] .hub-brand-icon {
+  border-color: color-mix(in srgb, var(--ui-accent-purple) 34%, var(--ui-border-default));
+  border-left-color: var(--ui-accent-purple);
+  background: var(--ui-accent-purple-soft);
+  color: var(--ui-accent-purple);
+}
+
+.hub-brand-title {
+  margin: 0;
+  font-family: var(--ui-font-pixel);
+  font-size: 14px;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+}
+
+/* 统一反圆角像素分段槽：与下方总览卡片共享硬朗边框与亮底线语言 */
+.hub-tabs {
+  display: inline-flex;
+  align-items: stretch;
+  flex-wrap: wrap;
+  gap: 2px;
+  padding: 2px;
+  border: 1px solid var(--ui-border-default);
+  border-radius: 2px;
+  background: color-mix(in srgb, var(--ui-bg-canvas) 62%, var(--ui-bg-surface-soft));
+}
+
+.hub-tab-btn {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  min-height: 30px;
+  padding: 4px 13px;
+  border: 1px solid transparent;
+  border-radius: 1px;
+  background: transparent;
+  color: var(--ui-text-secondary);
+  font-family: var(--ui-font-pixel);
+  font-size: 12px;
+  line-height: 1.3;
+  cursor: pointer;
+  transition:
+    background-color var(--ui-duration-fast) var(--ui-ease-standard),
+    border-color var(--ui-duration-fast) var(--ui-ease-standard),
+    color var(--ui-duration-fast) var(--ui-ease-standard),
+    box-shadow var(--ui-duration-fast) var(--ui-ease-standard);
+}
+
+.hub-tab-btn:hover {
+  background: var(--ui-bg-hover);
+  color: var(--ui-text-primary);
+}
+
+.hub-tab-btn.is-active {
+  border-color: color-mix(in srgb, var(--ui-accent-primary) 34%, var(--ui-border-default));
+  background: var(--ui-bg-surface);
+  color: var(--ui-accent-primary);
+  box-shadow: inset 0 -2px 0 var(--ui-accent-primary);
+}
+
+[data-theme='dark'] .hub-tab-btn.is-active {
+  border-color: color-mix(in srgb, var(--ui-accent-purple) 40%, var(--ui-border-default));
+  background: color-mix(in srgb, var(--ui-accent-purple) 14%, var(--ui-bg-elevated));
+  color: var(--ui-accent-purple);
+  box-shadow: inset 0 -2px 0 var(--ui-accent-purple);
+}
+
+.hub-tab-btn:focus-visible {
+  outline: 2px solid var(--ui-focus-color);
+  outline-offset: 2px;
+}
+
+.hub-tab-detached {
+  color: var(--ui-text-tertiary);
+}
+
+.hub-stage {
+  position: relative;
+  flex: 1;
+  min-width: 0;
+  min-height: 0;
+  overflow-x: hidden;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+}
+
+.hub-stage--full {
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+
+.hub-stage--full > * {
+  flex: 1;
+  min-height: 0;
+}
+
+@media (max-width: 720px) {
+  .hub-header {
+    padding: 8px 14px;
+  }
+}

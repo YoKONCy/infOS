@@ -118,12 +118,7 @@ async function reset() {
 <template>
   <section class="home-safety">
     <p class="home-safety-intro">
-      {{
-        __t(
-          'ui.desktop',
-          '她动你的文件和程序时的保护规则。删除前要确认、发消息和付款这类敏感操作每次都问，这些关不掉。改完点「保存」才生效。',
-        )
-      }}
+      {{ __t('ui.desktop', '文件与程序操作保护限额；删除与敏感操作始终需你确认，修改后点击「保存」生效。') }}
     </p>
     <MotionSkeleton v-if="!values && !error" variant="card" :rows="2" />
     <template v-if="values">
@@ -148,27 +143,22 @@ async function reset() {
         </div>
       </div>
       <div class="home-safety-group">
-        <h5>{{ __t('ui.desktop', '地图隐私') }}</h5>
+        <h5>{{ __t('ui.desktop', '地点记忆过滤') }}</h5>
         <div class="home-safety-row">
           <div class="home-safety-text">
-            <strong>{{ __t('ui.desktop', '地图里不记的词') }}</strong>
+            <strong>{{ __t('ui.desktop', '屏蔽关键词') }}</strong>
             <p>
-              {{
-                __t(
-                  'ui.desktop',
-                  '含这些词的条目不会记进地图。一行一个，不分大小写；密码、账号这类信息本来就不会记。',
-                )
-              }}
+              {{ __t('ui.desktop', '包含这些词的条目不会记入地点记忆（每行一个，不区分大小写）。') }}
             </p>
           </div>
         </div>
-        <PTextarea v-model="terms" :rows="3" :aria-label="__t('ui.desktop', '地图里不记的词')" />
+        <PTextarea v-model="terms" :rows="3" :aria-label="__t('ui.desktop', '屏蔽关键词')" />
         <p v-if="termsInvalid" role="alert" class="home-error">
           {{ __t('ui.desktop', '最多 100 个词，每个不超过 128 字') }}
         </p>
       </div>
       <p v-if="retentionInvalid" role="alert" class="home-error">
-        {{ __t('ui.desktop', '「活动记录留多久」不能比「一次」的时长还短。') }}
+        {{ __t('ui.desktop', '活动记录保留时长不能短于批量统计时间窗口。') }}
       </p>
       <div class="home-actions">
         <PButton

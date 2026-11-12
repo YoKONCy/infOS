@@ -17,6 +17,7 @@ import SillyTavernFrameworkEditor from './SillyTavernFrameworkEditor.vue'
 import ExpressionTuningPanel from '../../expression/ExpressionTuningPanel.vue'
 import PromptWorkspaceHint from './PromptWorkspaceHint.vue'
 import PromptPerceptionImageSwitch from './PromptPerceptionImageSwitch.vue'
+import PromptReplyStrategyPanel from './PromptReplyStrategyPanel.vue'
 import { usePromptExtraPanels } from '../../../composables/dashboard/usePromptExtraPanels'
 
 const store = useAgentStore()
@@ -213,7 +214,9 @@ function submitActivation() {
 previewAgent.value = store.activeAgentId
 const {
   expressionOpen,
+  strategyOpen,
   openExpression,
+  openStrategy,
   openSection,
 } = usePromptExtraPanels({ section, setSection, syncSource })
 const sections: Array<{ id: PromptSection; label: string; icon: string }> = [
@@ -435,18 +438,14 @@ function addFrameworkOverride() {
       <div>
         <h2>
           <PixelIcon name="edit" />
-          {{ __t('ui.settings', '提示词') }}
-          <span class="status-chip" :class="{ changed: dirty }">
+          {{ __t('ui.navigation', '提示词与策略') }}
+          <span v-if="!strategyOpen" class="status-chip" :class="{ changed: dirty }">
             {{ dirty ? __t('ui.settings', '未保存') : __t('ui.settings', '已保存') }}
           </span>
         </h2>
-        <span class="eyebrow">PROMPT WORKSPACE</span>
       </div>
-      <PromptWorkspaceHint
-        v-if="expressionOpen"
-        
-      />
-      <div v-else class="actions">
+      <PromptWorkspaceHint v-if="expressionOpen" />
+      <div v-else-if="!strategyOpen" class="actions">
         <PButton variant="secondary" size="sm" :disabled="busy || !view" @click="openIndependent">
           {{ __t('ui.settings', '＋ 新建框架') }}
         </PButton>
@@ -482,7 +481,7 @@ function addFrameworkOverride() {
       <button
         v-for="tab in sections"
         :key="tab.id"
-        :class="{ active: !expressionOpen && section === tab.id }"
+        :class="{ active: !expressionOpen && !strategyOpen && section === tab.id }"
         @click="openSection(tab.id)"
       >
         <PixelIcon :name="tab.icon" size="sm" />
@@ -492,8 +491,12 @@ function addFrameworkOverride() {
         <PixelIcon name="edit" size="sm" />
         {{ __t('ui.chat', '表达调教') }}
       </button>
+      <button :class="{ active: strategyOpen }" data-strategy-tab @click="openStrategy">
+        <PixelIcon name="sliders" size="sm" />
+        {{ __t('ui.settings', '回复策略') }}
+      </button>
       <span
-        v-if="!expressionOpen"
+        v-if="!expressionOpen && !strategyOpen"
         class="release-label"
         :title="view?.activeReleaseId"
       >
@@ -501,17 +504,18 @@ function addFrameworkOverride() {
         {{ activeVersion ? new Date(activeVersion.createdAt).toLocaleString() : '—' }}
       </span>
     </nav>
-    <div v-if="error" class="error-banner" role="alert">
+    <div v-if="error && !strategyOpen" class="error-banner" role="alert">
       {{ error }}
       <PButton size="sm" variant="ghost" :disabled="busy" @click="load">
         {{ __t('ui.settings', '重新载入') }}
       </PButton>
     </div>
-    <div v-if="view?.recoveryError" class="error-banner" role="alert">
+    <div v-if="view?.recoveryError && !strategyOpen" class="error-banner" role="alert">
       {{ view.recoveryError }}
     </div>
 
     <ExpressionTuningPanel v-if="expressionOpen" :workspace="expressionWorkspace" />
+    <PromptReplyStrategyPanel v-else-if="strategyOpen" />
     <div v-else-if="view" class="prompt-body" :inert="busy">
       <template v-if="!['assignments', 'versions'].includes(section)">
         <aside class="resource-rail surface">

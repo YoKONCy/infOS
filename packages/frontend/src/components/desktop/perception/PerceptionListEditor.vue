@@ -20,13 +20,14 @@ const parse = (text: string) => [
       .filter(Boolean),
   ),
 ]
-const text = ref(props.value.join('\n'))
-const dirty = computed(() => parse(text.value).join('\n') !== props.value.join('\n'))
+const safeValue = computed(() => (Array.isArray(props.value) ? props.value : []))
+const text = ref(safeValue.value.join('\n'))
+const dirty = computed(() => parse(text.value).join('\n') !== safeValue.value.join('\n'))
 watch(
-  () => props.value,
+  safeValue,
   (value, previous) => {
     // 只有内容真的变了才覆盖，保存后推回来的同一份名单不打断输入。
-    if (value.join('\n') !== previous.join('\n')) text.value = value.join('\n')
+    if (value.join('\n') !== (previous ?? []).join('\n')) text.value = value.join('\n')
   },
 )
 </script>

@@ -1,5 +1,7 @@
 <script setup lang="ts">
-/** ToolCardGeneric — 通用工具遥测面板，采用固定分区与代码轨道。 */
+/** ToolCardGeneric — 通用工具数据面板，采用清晰的中文化分区与等宽轨道。 */
+import { t as __t } from '../../../i18n/index'
+
 defineProps<{ args: string; result?: string; isError?: boolean }>()
 </script>
 <template>
@@ -7,14 +9,14 @@ defineProps<{ args: string; result?: string; isError?: boolean }>()
     <div v-if="args" class="generic-section">
       <header>
         <b>IN</b>
-        <span>ARGUMENTS</span>
+        <span>{{ __t('ui.tools', '调用参数') }}</span>
       </header>
       <pre>{{ args }}</pre>
     </div>
     <div v-if="result" class="generic-section">
       <header>
         <b>OUT</b>
-        <span>{{ isError ? 'ERROR' : 'RESULT' }}</span>
+        <span>{{ isError ? __t('ui.tools', '异常输出') : __t('ui.tools', '返回结果') }}</span>
       </header>
       <pre>{{ result }}</pre>
     </div>
@@ -23,36 +25,35 @@ defineProps<{ args: string; result?: string; isError?: boolean }>()
 <style scoped>
 .generic-inspector {
   display: grid;
-  background: var(--ui-bg-surface);
+  background: transparent;
 }
 .generic-section + .generic-section {
-  border-top: 1px solid var(--ui-border-default);
+  border-top: 1px solid var(--ui-border-subtle);
 }
 .generic-section header {
   display: grid;
-  min-height: 27px;
+  min-height: 28px;
   grid-template-columns: 44px minmax(0, 1fr);
   border-bottom: 1px solid var(--ui-border-subtle);
-  background: var(--ui-bg-surface-soft);
+  background: var(--traj-compartment, var(--ui-bg-surface-soft));
 }
 .generic-section header b {
   display: grid;
   place-items: center;
   border-right: 1px solid var(--ui-border-default);
-  color: var(--tc-accent);
-  font: 800 8px var(--ui-font-mono);
+  color: var(--tc-accent, var(--ui-accent-purple));
+  font: 700 9.5px var(--ui-font-mono);
 }
 .generic-section header span {
-  padding: 0 9px;
+  padding: 0 10px;
   color: var(--ui-text-tertiary);
-  font: 800 8px/27px var(--ui-font-mono);
-  letter-spacing: 0.1em;
+  font: 600 10.5px/28px var(--ui-font-sans);
 }
 .generic-section pre {
   max-height: 220px;
   margin: 0;
   overflow: auto;
-  padding: 9px 11px 9px 54px;
+  padding: 9px 12px 9px 54px;
   background: linear-gradient(
     90deg,
     var(--ui-bg-surface-soft) 43px,
@@ -60,7 +61,7 @@ defineProps<{ args: string; result?: string; isError?: boolean }>()
     transparent 45px
   );
   color: var(--ui-text-secondary);
-  font: 10px/1.55 var(--ui-font-mono);
+  font: 11px/1.6 var(--ui-font-mono);
   white-space: pre-wrap;
   word-break: break-all;
 }

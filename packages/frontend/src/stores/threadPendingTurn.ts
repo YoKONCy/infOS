@@ -150,10 +150,31 @@ export function createPendingTurnTracker(deps: PendingTurnDeps) {
     return { userId, assistantId }
   }
 
+  /** 重新生成马上开跑的一轮：不新增用户消息，立即在末尾插入「正在思考」占位。 */
+  function beginPendingRegeneration(): { userId: string; assistantId: string } {
+    const suffix = `${Date.now()}_${Math.random().toString(36).slice(2, 8)}`
+    const assistantId = `pending-reply:${suffix}`
+    const assistant: ChatMessage = {
+      id: assistantId,
+      role: 'assistant',
+      content: '',
+      timestamp: new Date().toISOString(),
+      senderId: agentId.value,
+      executionRecord: deps.threadKind.value === 'main',
+      isStreaming: true,
+    }
+    messages.value = [...messages.value, assistant]
+    streamingMessageId.value = assistantId
+    generationState.value = 'thinking'
+    ragFailureTrace.value = null
+    ragProgressMessage.value = __t('ui.chat', '正在编译对话上下文')
+    return { userId: '', assistantId }
+  }
+
   /** 提交失败时撤回乐观插入的两条消息。 */
   function cancelPendingTurn(turn: { userId: string; assistantId: string }): void {
     messages.value = messages.value.filter(
-      (message) => message.id !== turn.userId && message.id !== turn.assistantId,
+      (message) => (!turn.userId || message.id !== turn.userId) && message.id !== turn.assistantId,
     )
     if (streamingMessageId.value === turn.assistantId) {
       streamingMessageId.value = null
@@ -168,6 +189,7 @@ export function createPendingTurnTracker(deps: PendingTurnDeps) {
     clearRenderKeys,
     adoptPendingMessages,
     beginPendingTurn,
+    beginPendingRegeneration,
     cancelPendingTurn,
   }
 }

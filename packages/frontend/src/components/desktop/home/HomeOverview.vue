@@ -33,8 +33,8 @@ const tiles = computed<Tile[]>(() => {
   const settings = props.settings
   const status = props.status
   if (!settings) return []
-  const on = __t('ui.desktop', '已开')
-  const off = __t('ui.desktop', '已关')
+  const on = __t('ui.desktop', '已启用')
+  const off = __t('ui.desktop', '已关闭')
   return [
     {
       id: 'desktop',
@@ -50,7 +50,7 @@ const tiles = computed<Tile[]>(() => {
       state: status?.listening
         ? __t('ui.desktop', '正在听')
         : settings.ears.enabled
-          ? __t('ui.desktop', '已开，没在听')
+          ? __t('ui.desktop', '待命')
           : off,
       tone: status?.listening ? 'live' : settings.ears.enabled ? 'on' : 'off',
     },
@@ -60,9 +60,9 @@ const tiles = computed<Tile[]>(() => {
       title: __t('ui.desktop', '陪看'),
       state: status?.companionTitle
         ? status.companionPaused
-          ? __t('ui.desktop', '暂停中')
-          : __t('ui.desktop', '正在陪你看')
-        : __t('ui.desktop', '没在陪看'),
+          ? __t('ui.desktop', '已暂停')
+          : __t('ui.desktop', '陪伴中')
+        : __t('ui.desktop', '未开启'),
       tone: status?.companionTitle && !status.companionPaused ? 'live' : 'off',
     },
     perception.phase.value

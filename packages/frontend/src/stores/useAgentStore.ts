@@ -113,12 +113,21 @@ export const useAgentStore = defineStore('agent', () => {
     if (fetchingAgents) await fetchingAgents
     if (agentId === activeAgentId.value) return
 
-    const windowId = getWindowId()
-    await runtimeApi.setWindowAgent(windowId, agentId)
+    const previousAgentId = activeAgentId.value
+    // 首帧乐观更新当前激活角色，窗口绑定与本地默认角色在后台并行同步，不再串联拉取整表
     activeAgentId.value = agentId
-    if (isElectron()) await invoke('set-client-default-agent', { agentId })
-    // 切换结果在界面上一眼可见，不再弹「已切换」的成功提示
-    await fetchAgents()
+    const windowId = getWindowId()
+    try {
+      await Promise.all([
+        runtimeApi.setWindowAgent(windowId, agentId),
+        isElectron() ? invoke('set-client-default-agent', { agentId }) : Promise.resolve(),
+      ])
+    } catch (err) {
+      if (activeAgentId.value === agentId) {
+        activeAgentId.value = previousAgentId
+      }
+      throw err
+    }
   }
 
   return {

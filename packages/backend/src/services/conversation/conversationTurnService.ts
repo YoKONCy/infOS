@@ -155,6 +155,13 @@ export interface PrepareTurnParams {
   onModelResolved?: (config: import('../llm/llmService').ModelConfig) => void | Promise<void>
   /** 由Kernel Scheduler或父调用预先建立的Execution；传入后本服务只继承，不写其生命周期。 */
   execution?: KernelExecutionDescriptor
+  /** 用户输入或重生成记录校验落盘后立即触发（早于识图转述与 RAG 检索），供流式通道提前建立实时 Surface。 */
+  onInputAccepted?: (info: {
+    threadId: string
+    agentId: string
+    generation: number
+    threadKind: 'main' | 'side'
+  }) => void | Promise<void>
   /** Execution 建立后的观察回调，供 Surface 等系统投影绑定因果身份。 */
   onExecutionStarted?: (execution: KernelExecutionDescriptor) => void | Promise<void>
   /** 从后台任务 checkpoint 恢复的完整 ReAct 消息链。 */
@@ -464,6 +471,15 @@ export class ConversationTurnService {
           replacementMessageIds: regeneration.replacementMessageIds } } : undefined,
       })
       onInputSaved(inputRecord)
+    }
+
+    if (!(params.perception && params.proactive)) {
+      await params.onInputAccepted?.({
+        threadId: thread.id,
+        agentId,
+        generation: thread.generation,
+        threadKind: thread.threadKind,
+      })
     }
 
 

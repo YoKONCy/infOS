@@ -98,18 +98,25 @@ async function historyRequest<T>(
 }
 
 export const chatApi = {
-  regenerate: (threadId: string, messageId: number, revision: number) =>
+  regenerate: (
+    threadId: string,
+    messageId: number,
+    revision: number,
+    clientMessageId = createClientUuid(),
+  ) =>
     apiClient.post<ConversationQueueSnapshot>(`/chat/threads/${encodeURIComponent(threadId)}/regenerate`, {
-      messageId, revision, clientMessageId: createClientUuid(),
+      messageId,
+      revision,
+      clientMessageId,
     }),
-  queueLive: (threadId: string) =>
+  queueLive: (threadId: string, signal?: AbortSignal) =>
     apiClient.request<ConversationSurfaceDescriptor | null>(
       `/chat/queue/${encodeURIComponent(threadId)}/live`,
-      { signal: AbortSignal.timeout(10_000) },
+      { signal: signal ? AbortSignal.any([signal, AbortSignal.timeout(10_000)]) : AbortSignal.timeout(10_000) },
     ),
   queue: (threadId: string, signal?: AbortSignal) =>
     apiClient.request<ConversationQueueSnapshot>(`/chat/queue/${encodeURIComponent(threadId)}`, {
-      signal: signal ?? AbortSignal.timeout(10_000),
+      signal: signal ? AbortSignal.any([signal, AbortSignal.timeout(10_000)]) : AbortSignal.timeout(10_000),
     }),
   enqueue: (input: QueuedConversationInput, clientMessageId: string) =>
     apiClient.post<ConversationQueueSnapshot>(`/chat/queue/${encodeURIComponent(input.threadId)}`, {

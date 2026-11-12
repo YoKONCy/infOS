@@ -55,7 +55,6 @@ const view = ref<'list' | 'graph'>('list')
 const archiveTarget = ref<EventNote | null>(null)
 const archiveSaving = ref(false)
 const deleteTarget = ref<EventNote | null>(null)
-const deleteSource = ref(false)
 const deleting = ref(false)
 const checkedIds = ref<string[]>([])
 const batchAction = ref<'archive' | 'restore' | 'delete' | null>(null)
@@ -108,7 +107,7 @@ async function confirmBatch(): Promise<void> {
   if (!batchAction.value || batchSaving.value) return
   batchSaving.value = true
   try {
-    await memoryApi.batch([...checkedIds.value], batchAction.value, deleteSource.value)
+    await memoryApi.batch([...checkedIds.value], batchAction.value)
     batchAction.value = null
     archive.selected.value = null
     archive.selectedId.value = null
@@ -247,7 +246,7 @@ async function confirmDelete(): Promise<void> {
   if (!deleteTarget.value || deleting.value) return
   deleting.value = true
   try {
-    await memoryApi.deleteNote(deleteTarget.value.id, deleteSource.value)
+    await memoryApi.deleteNote(deleteTarget.value.id)
     deleteTarget.value = null
     archive.selected.value = null
     archive.selectedId.value = null
@@ -265,7 +264,6 @@ async function confirmDelete(): Promise<void> {
   }
 }
 function openDelete(note: EventNote): void {
-  deleteSource.value = false
   deleteTarget.value = note
 }
 function setSection(status: 'active' | 'archived'): void {
@@ -438,12 +436,7 @@ const statBadges = computed(() => [
           v-if="checkedIds.length"
           size="sm"
           variant="danger"
-          @click="
-            () => {
-              deleteSource = false
-              batchAction = 'delete'
-            }
-          "
+          @click="batchAction = 'delete'"
         >
           {{ __t('ui.settings', '永久删除') }}
         </PButton>
@@ -555,12 +548,7 @@ const statBadges = computed(() => [
         :auto-close="false"
         @update:model-value="!$event && (deleteTarget = null)"
         @confirm="confirmDelete"
-      >
-        <label class="flex items-center gap-2 text-ui-text-secondary">
-          <input v-model="deleteSource" type="checkbox" />
-          {{ __t('ui.settings', '同时删除来源对话') }}
-        </label>
-      </PDialog>
+      />
       <PDialog
         :model-value="Boolean(batchAction)"
         :title="
@@ -580,12 +568,7 @@ const statBadges = computed(() => [
         :auto-close="false"
         @update:model-value="!$event && (batchAction = null)"
         @confirm="confirmBatch"
-      >
-        <label v-if="batchAction === 'delete'" class="flex items-center gap-2">
-          <input v-model="deleteSource" type="checkbox" />
-          {{ __t('ui.settings', '同时删除来源对话') }}
-        </label>
-      </PDialog>
+      />
     </div>
   </div>
 </template>

@@ -15,7 +15,6 @@ import CustomThemeSettings from '../CustomThemeSettings.vue'
 import DesktopLayoutSettings from '../../shell/DesktopLayoutSettings.vue'
 import DesktopStartupSettings from '../../shell/DesktopStartupSettings.vue'
 import DesktopCardSettings from '../../shell/DesktopCardSettings.vue'
-import AssistantPrefillSettings from '../AssistantPrefillSettings.vue'
 import UserAvatarSettings from '../../user/UserAvatarSettings.vue'
 import { PixelIcon, PInput, PSelect, PSlider, PSwitch, PButton, PCard } from '../../pixel'
 import { configApi } from '../../../api/modules/configApi'
@@ -33,13 +32,7 @@ import { useNotificationStore } from '../../../stores'
 import { appLocale, applyLanguage } from '../../../i18n'
 import { LANGUAGE_OPTIONS, normalizeLocale } from '@infos/shared/i18n'
 import { resolveSavedMotionLevel } from '../../../lib/sensorySettings'
-import {
-  ASSISTANT_PREFILL_KEY,
-  DYNAMIC_CONTEXT_DEPTH_KEY,
-  WHOLESOME_MODE_KEY,
-  parseAssistantPrefillConfig,
-  parseDynamicContextDepth,
-} from '@infos/shared'
+import { WHOLESOME_MODE_KEY } from '@infos/shared'
 import {
   createSystemSettingsPage,
   provideSystemSettingsPage,
@@ -53,17 +46,6 @@ const notif = useNotificationStore()
 const ownerName = ref('主人')
 const ownerPersona = ref('')
 const wholesomeEnabled = ref(true)
-const assistantPrefill = ref(parseAssistantPrefillConfig())
-const dynamicContextDepth = ref(parseDynamicContextDepth())
-const dynamicContextDepthOptions = computed(() => [
-  { value: 0, label: __t('ui.settings', '贴近当前输入') },
-  { value: 1, label: __t('ui.settings', '前移到上一条输入') },
-])
-function changeDynamicContextDepth(value: string | number): void {
-  if (value !== 0 && value !== 1) return
-  dynamicContextDepth.value = value
-  void handleSave()
-}
 const language = ref<string>(appLocale.value)
 watch(appLocale, (value, previous) => {
   if (language.value === previous) language.value = value
@@ -85,6 +67,7 @@ const appBackground = useAppBackground()
 const backgroundInput = ref<HTMLInputElement | null>(null)
 const backgroundBusy = ref(false)
 const backgroundSaving = ref(false)
+const backgroundDetailsOpen = ref(false)
 const backgroundPreview = computed(() => appBackground.imageUrl.value)
 const backgroundPreviewFailed = ref(false)
 watch(backgroundPreview, () => {
@@ -161,8 +144,6 @@ function settingsItems() {
     ['ui.soundEffects', String(sensory.soundEffects.value)],
     ['system.logLevel', logLevel.value],
     [WHOLESOME_MODE_KEY, String(wholesomeEnabled.value)],
-    [ASSISTANT_PREFILL_KEY, JSON.stringify(assistantPrefill.value)],
-    [DYNAMIC_CONTEXT_DEPTH_KEY, String(dynamicContextDepth.value)],
   ].map(([key, value]) => ({ key: key!, value: value! }))
 }
 registerSettingsParticipant(settingsPage, {
@@ -261,15 +242,11 @@ async function loadSettings() {
       'system.dataDir',
       'system.logLevel',
       WHOLESOME_MODE_KEY,
-      ASSISTANT_PREFILL_KEY,
-      DYNAMIC_CONTEXT_DEPTH_KEY,
     ])
     const d = res.data ?? {}
     ownerName.value = d['owner.name'] ?? '主人'
     ownerPersona.value = d['owner.persona'] ?? ''
     wholesomeEnabled.value = d[WHOLESOME_MODE_KEY] !== 'false'
-    assistantPrefill.value = parseAssistantPrefillConfig(d[ASSISTANT_PREFILL_KEY])
-    dynamicContextDepth.value = parseDynamicContextDepth(d[DYNAMIC_CONTEXT_DEPTH_KEY])
     if (d['user.language']) language.value = normalizeLocale(d['user.language'])
     if (d['ui.fontSize']) fontSize.value = Number(d['ui.fontSize'])
     sensory.motionLevel.value = resolveSavedMotionLevel(d['ui.motionLevel'], d['ui.animations'])
@@ -417,10 +394,6 @@ onMounted(() => {
 <template>
   <div class="user-settings-tab p-8 h-full overflow-y-auto settings-scrollbar">
     <div class="mb-6 flex-shrink-0 relative group/header">
-      <!-- 背景氛围光晕 -->
-      <div
-        class="absolute -right-20 -top-10 w-40 h-40 bg-sky-400/5 blur-[60px] rounded-full pointer-events-none group-hover/header:bg-sky-400/15 transition-all duration-1000"
-      />
       <h2
         class="flex items-center gap-3 text-2xl font-black text-[var(--ui-text-primary)] font-pixel"
       >
@@ -429,16 +402,11 @@ onMounted(() => {
         >
           <PixelIcon name="settings" size="md" />
         </span>
-        <span>{{ __t('ui.settings', '系统设定') }}</span>
+        <span>{{ __t('ui.navigation', '个人与外观') }}</span>
         <span class="opacity-0 group-hover/header:opacity-100 transition-opacity duration-500">
           <PixelIcon name="paw" size="xs" />
         </span>
       </h2>
-      <p
-        class="text-[10px] font-bold uppercase tracking-[0.15em] text-slate-400 mt-1 ml-9 font-pixel"
-      >
-        SYSTEM SETTINGS
-      </p>
     </div>
 
     <div class="flex flex-col gap-6 pr-1">
@@ -474,35 +442,6 @@ onMounted(() => {
           }
         "
       />
-      <AssistantPrefillSettings
-        v-model="assistantPrefill"
-        :disabled="settingsDisabled"
-        @save="handleSave()"
-      />
-      <PCard pixel padding="lg" overflow-visible>
-        <div class="flex flex-wrap items-center justify-between gap-4">
-          <div>
-            <h3
-              class="flex items-center gap-2 text-sm font-black text-[var(--ui-text-primary)] font-pixel"
-            >
-              <PixelIcon name="settings" size="sm" />
-              {{ __t('ui.settings', '动态填充深度') }}
-            </h3>
-            <p class="mt-2 text-xs text-slate-500">
-              {{ __t('ui.settings', '调整状态与检索资料的位置，前移可能增加缓存开销。') }}
-            </p>
-          </div>
-          <div class="w-48">
-            <PSelect
-              :model-value="dynamicContextDepth"
-              :options="dynamicContextDepthOptions"
-              :disabled="settingsDisabled"
-              :aria-label="__t('ui.settings', '动态填充深度')"
-              @update:model-value="changeDynamicContextDepth"
-            />
-          </div>
-        </div>
-      </PCard>
       <!-- 用户人设 -->
       <PCard pixel padding="lg" overflow-visible>
         <h3
@@ -748,7 +687,9 @@ onMounted(() => {
                       {{ __t('ui.settings', '就这样，刚刚好') }}
                     </div>
                   </div>
-                  <div class="app-background-preview__input">CHAR OPS...</div>
+                  <div class="app-background-preview__input">
+                    {{ __t('ui.settings', '输入消息…') }}
+                  </div>
                 </div>
               </div>
             </div>
@@ -794,9 +735,12 @@ onMounted(() => {
                   {{ preset.label }}
                 </PButton>
               </div>
-              <details class="app-background-details">
+              <details
+                class="app-background-details"
+                @toggle="backgroundDetailsOpen = ($event.currentTarget as HTMLDetailsElement).open"
+              >
                 <summary>{{ __t('ui.settings', '细调背景') }}</summary>
-                <div class="app-background-controls">
+                <div v-if="backgroundDetailsOpen" class="app-background-controls">
                   <div class="flex flex-col gap-1">
                     <label class="text-xs font-bold text-[var(--ui-text-secondary)]">
                       {{ __t('ui.settings', '图片可见度') }}

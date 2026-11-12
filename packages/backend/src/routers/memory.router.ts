@@ -132,10 +132,7 @@ export function createMemoryRouter(ctx: AppContext) {
     return c.json({ code: 'OK', message: __t('server.routers', '记忆已恢复') })
   })
   router.delete('/:id', async (c) => {
-    await ctx.privacyDeletionService.deleteMemory(
-      c.req.param('id'),
-      c.req.query('deleteSource') === 'true',
-    )
+    await ctx.privacyDeletionService.deleteMemory(c.req.param('id'))
     return c.json({ code: 'OK', message: __t('server.routers', '记忆已永久删除') })
   })
   router.get('/deletions/status', (c) =>
@@ -152,7 +149,6 @@ export function createMemoryRouter(ctx: AppContext) {
       z.object({
         ids: z.array(z.string().min(1)).min(1).max(100),
         action: z.enum(['archive', 'restore', 'delete']),
-        deleteSource: z.boolean().default(false),
       }),
     ),
     async (c) => {
@@ -168,7 +164,7 @@ export function createMemoryRouter(ctx: AppContext) {
           }
         } else {
           try {
-            await ctx.privacyDeletionService.deleteMemory(id, input.deleteSource)
+            await ctx.privacyDeletionService.deleteMemory(id)
           } catch {
             pending.push(id)
           }

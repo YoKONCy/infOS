@@ -166,8 +166,8 @@ defineEmits<{ select: []; reset: [] }>()
     transition: none;
   }
 }
-:global([data-motion='off']) .main-thread-card,
-:global([data-motion='reduced']) .main-thread-card {
+[data-motion='off'] .main-thread-card,
+[data-motion='reduced'] .main-thread-card {
   transition: none;
 }
 </style>

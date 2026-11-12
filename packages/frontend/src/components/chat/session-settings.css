@@ -92,7 +92,7 @@
     transition: none;
   }
 }
-:global([data-motion='off']) .session-collapse,
-:global([data-motion='reduced']) .session-collapse {
+[data-motion='off'] .session-collapse,
+[data-motion='reduced'] .session-collapse {
   transition: none;
 }

@@ -459,8 +459,11 @@ export function createDrizzleConnection(databasePath: string) {
   const sqlite = new Database(databasePath)
 
   sqlite.pragma('journal_mode = WAL')
-  // 每次事务提交同步 WAL，减少系统崩溃或断电造成已提交聊天记录回退的窗口。
-  sqlite.pragma('synchronous = FULL')
+  // 全局采用 WAL + NORMAL 分级刷盘基线，避免普通写操作在容器挂载卷上触发同步 fsync 阻塞主线程；
+  // 用户输入接收确认边界仍通过 durableQueueWrite 单事务临时提升至 synchronous = FULL。
+  sqlite.pragma('synchronous = NORMAL')
+  sqlite.pragma('journal_size_limit = 67108864')
+  sqlite.pragma('temp_store = MEMORY')
   sqlite.pragma('busy_timeout = 5000')
   sqlite.pragma('cache_size = -20000')
   sqlite.pragma('foreign_keys = ON')

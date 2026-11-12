@@ -403,8 +403,7 @@ function formatTime(ts?: number): string {
         <div class="msg-thinking-panel-header">
           <div>
             <span class="msg-thinking-signal" />
-            <span>THINK TRACE</span>
-            <small>LOCAL ONLY</small>
+            <span>{{ __t('ui.chat', '思考轨迹') }}</span>
           </div>
           <button type="button" :title="__t('ui.chat', '复制碎碎念')" @click="copyThinking">
             <PixelIcon name="copy" size="xs" />
@@ -1042,15 +1041,16 @@ function formatTime(ts?: number): string {
   display: inline-flex;
   align-items: center;
   gap: 6px;
-  height: 26px;
-  padding: 0 9px;
-  margin: 0 0 2px 4px;
-  background: var(--ui-bg-surface-soft);
-  border: 1px dashed rgba(139, 92, 246, 0.3);
-  border-radius: var(--ui-radius-xs);
+  height: 28px;
+  padding: 0 10px;
+  margin: 0 0 3px 4px;
+  background: color-mix(in srgb, var(--ui-accent-purple-soft) 36%, var(--ui-bg-surface));
+  border: 1px solid color-mix(in srgb, var(--ui-accent-purple) 28%, var(--ui-border-default));
+  border-left: 2px solid var(--ui-accent-purple);
+  border-radius: 2px;
   color: var(--ui-accent-purple);
-  font-family: var(--font-mono);
-  font-size: 10px;
+  font-family: var(--ui-font-pixel);
+  font-size: 11px;
   font-weight: 700;
   cursor: pointer;
   transition: all var(--ui-duration-fast);
@@ -1059,17 +1059,16 @@ function formatTime(ts?: number): string {
 .msg-thinking-toggle:hover,
 .msg-thinking-toggle--active {
   background: var(--ui-accent-purple-soft);
-  border-style: solid;
-  box-shadow: 0 0 14px rgba(139, 92, 246, 0.11);
+  border-color: color-mix(in srgb, var(--ui-accent-purple) 52%, var(--ui-border-default));
 }
 
 .msg-thinking-panel {
-  margin: 0 0 4px 4px;
+  margin: 0 0 6px 4px;
   overflow: hidden;
   background: var(--ui-bg-surface-soft);
-  border: 1px solid rgba(139, 92, 246, 0.16);
-  border-left: 3px solid var(--ui-accent-purple);
-  border-radius: var(--ui-radius-sm);
+  border: 1px solid color-mix(in srgb, var(--ui-accent-purple) 24%, var(--ui-border-default));
+  border-left: 2px solid var(--ui-accent-purple);
+  border-radius: 2px;
   animation: thinking-reveal var(--ui-duration-normal) var(--ui-ease-standard);
 }
 
@@ -1077,14 +1076,13 @@ function formatTime(ts?: number): string {
   display: flex;
   justify-content: space-between;
   align-items: center;
-  gap: 20px;
-  padding: 8px 10px;
+  gap: 16px;
+  padding: 7px 10px;
   border-bottom: 1px solid var(--ui-border-subtle);
-  color: var(--ui-text-tertiary);
-  font-family: var(--font-pixel);
-  font-size: 9px;
-  letter-spacing: 0.1em;
-  background: linear-gradient(90deg, var(--ui-accent-purple-soft), var(--ui-accent-sky-soft));
+  color: var(--ui-text-secondary);
+  font-family: var(--ui-font-pixel);
+  font-size: 11px;
+  background: color-mix(in srgb, var(--ui-accent-purple-soft) 42%, var(--ui-bg-surface));
 }
 
 .msg-thinking-panel-header > div,
@@ -1279,6 +1277,7 @@ function formatTime(ts?: number): string {
 
 .msg-actions {
   display: flex;
+  align-items: center;
   gap: 4px;
   opacity: 0;
   transition: opacity var(--ui-duration-fast);

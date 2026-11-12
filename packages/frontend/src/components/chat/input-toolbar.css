@@ -1,88 +1,144 @@
-/* 主设置、会话功能和快捷操作分别成组，边框由整组持有。 */
-.deck-tool-group {
-  display: inline-flex;
-  flex: 0 0 auto;
-  align-items: center;
-  min-height: 36px;
-  padding: 1px;
-  border: 1px solid var(--ui-border-default);
-  border-radius: 0;
-  background: var(--app-soft-fill, var(--ui-bg-surface-soft));
+/* ── 输入栏硬朗分层机械工具轨：哑光中性底面、0px 锐利直角、1px 分仓细线、2px 机械阶梯硬阴影 ── */
+.deck-footer {
+  --mech-bg: var(--app-soft-fill, var(--ui-bg-surface));
+  --mech-bg-soft: var(--ui-bg-surface-soft);
+  --mech-border: var(--ui-border-default);
+  --mech-divider: var(--ui-border-subtle);
+  --mech-step: var(--ui-border-subtle);
+  --mech-shadow:
+    inset 0 1px 0 color-mix(in srgb, var(--ui-text-primary) 5%, transparent),
+    2px 2px 0 var(--mech-step);
+  --mech-shadow-active: inset 1px 1px 0 var(--mech-step);
 }
-.deck-tool-group > * {
-  flex: 0 0 auto;
+
+[data-theme='dark'] .deck-footer {
+  --mech-bg: var(--app-soft-fill, #181b24);
+  --mech-bg-soft: #13161f;
+  --mech-border: rgba(255, 255, 255, 0.11);
+  --mech-divider: rgba(255, 255, 255, 0.075);
+  --mech-step: rgba(0, 0, 0, 0.42);
 }
-.deck-tools > .deck-tool-group > * + * {
-  border-left: 1px solid var(--ui-border-subtle);
+
+/* 统一留出 2px 右下阶梯硬阴影空间，保证所有分仓模块与单仓按键处于同一水平基线 */
+.deck-tools,
+.deck-telemetry,
+.deck-actions,
+.group-footer-tools {
+  padding: 1px 2px 3px 0;
 }
-.deck-tools :deep(.input-tool-trigger)::after {
-  position: absolute;
-  right: 8px;
-  bottom: 1px;
-  left: 8px;
-  height: 2px;
-  background: var(--ui-accent-primary);
-  content: '';
-  pointer-events: none;
-  transform: scaleX(0);
-  transform-origin: left;
+.deck-tools :deep(.input-foldout) {
+  padding: 0;
 }
-.deck-tools :deep(.input-tool-trigger.is-open)::after {
-  transform: scaleX(1);
-}
-.deck-tools :deep(.input-tool-trigger:focus-visible) {
-  outline-offset: -2px;
-}
-.deck-tools :deep(.session-settings-entry .input-foldout__trigger) {
+
+/* 1. Foldout 分仓触发器（会话设置、Skills）对齐 30px 硬朗哑光机械规格 */
+.deck-tools :deep(.input-foldout__trigger) {
   justify-content: flex-start;
   gap: 0;
-  min-width: 168px;
-  height: 36px;
+  height: 30px;
+  min-height: 30px;
   padding: 0;
-  overflow: hidden;
-  border: 1px solid color-mix(in srgb, var(--ui-accent-primary) 32%, var(--ui-border-default));
-  border-left: 3px solid var(--ui-accent-primary);
-  background: var(--app-soft-fill, var(--ui-bg-surface-soft));
+  border: 1px solid var(--mech-border);
+  border-radius: 0;
+  background: var(--mech-bg);
+  color: var(--ui-text-secondary);
+  box-shadow: var(--mech-shadow);
+  font: 11px/1 var(--ui-font-pixel);
 }
-.deck-tools :deep(.session-settings-entry .input-foldout__trigger)::after {
-  content: none;
+.deck-tools :deep(.input-foldout__trigger:hover:not(:disabled)),
+.deck-tools :deep(.input-foldout__trigger.is-open) {
+  border-color: var(--foldout-accent);
+  color: var(--foldout-accent);
+  background: color-mix(in srgb, var(--foldout-accent) 7%, var(--mech-bg));
 }
-.deck-tools :deep(.session-settings-entry .input-foldout__trigger:hover:not(:disabled)),
-.deck-tools :deep(.session-settings-entry .input-foldout__trigger.is-open) {
-  border-color: var(--ui-accent-primary);
-  background: color-mix(in srgb, var(--ui-accent-primary) 6%, var(--ui-bg-surface));
+.deck-tools :deep(.input-foldout__trigger:active:not(:disabled)) {
+  translate: none;
+  transform: translate(1px, 1px);
+  box-shadow: var(--mech-shadow-active);
 }
-.deck-tools :deep(.session-settings-entry.is-compact .input-foldout__trigger) {
-  width: 36px;
-  min-width: 36px;
+
+/* 2. 会话工具与心流双仓模块（左 29px 图标微槽 + 1px 竖线 + 右主文案） */
+.deck-footer .input-tool-trigger--chambered {
+  justify-content: flex-start;
+  gap: 0;
+  padding: 0;
 }
-.deck-tools :deep(.session-settings-entry.is-compact .session-trigger__emblem) {
+.tool-trigger__emblem,
+.flow-trigger__emblem {
+  display: grid;
+  flex: 0 0 29px;
+  align-self: stretch;
+  place-items: center;
+  border-right: 1px solid var(--mech-divider);
+}
+.tool-trigger__emblem {
+  background: color-mix(in srgb, var(--ui-accent-sky) 6%, transparent);
+  color: var(--ui-accent-sky);
+}
+.flow-trigger__emblem {
+  background: color-mix(in srgb, var(--ui-accent-purple) 6%, transparent);
+  color: var(--ui-accent-purple);
+}
+.tool-trigger__body,
+.flow-trigger__body {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 0 8px;
+}
+.deck-tools .input-tool-trigger--chambered:hover:not(:disabled),
+.deck-tools .input-tool-trigger--chambered.is-open {
+  border-color: var(--ui-accent-sky);
+  color: var(--ui-accent-sky);
+  background: color-mix(in srgb, var(--ui-accent-sky) 7%, var(--mech-bg));
+}
+.deck-telemetry .deck-flow-trigger:hover:not(:disabled),
+.deck-telemetry .deck-flow-trigger.is-open {
+  border-color: var(--ui-accent-purple);
+  color: var(--ui-accent-purple);
+  background: color-mix(in srgb, var(--ui-accent-purple) 7%, var(--mech-bg));
+}
+
+/* 3. / 指令 与 + 附件紧凑单仓机械键 */
+.input-cmd-trigger {
+  gap: 4px;
+  padding: 0 8px;
+}
+.cmd-trigger__slash {
+  color: var(--ui-accent-primary);
+  font: 800 10.5px/1 var(--ui-font-mono);
+}
+.deck-tools .deck-tool-icon {
+  color: var(--ui-accent-primary);
+}
+
+/* 4. 紧凑模式与移动端 30px/40px 等宽方形图标键适配 */
+.deck-tools :deep(.session-settings-entry.is-compact .input-foldout__trigger),
+.deck-tools :deep(.skill-controls-entry.is-compact .input-foldout__trigger),
+.deck-tools .input-tool-trigger--chambered.is-compact,
+.deck-telemetry .deck-flow-trigger.is-compact {
+  width: 30px;
+  min-width: 30px;
+  padding: 0;
+}
+.deck-tools :deep(.session-settings-entry.is-compact .session-trigger__emblem),
+.deck-tools .input-tool-trigger--chambered.is-compact .tool-trigger__emblem,
+.deck-telemetry .deck-flow-trigger.is-compact .flow-trigger__emblem {
   flex: 1;
   border-right: 0;
 }
-.deck-tools .deck-tool-group--shortcuts > .input-tool-trigger {
-  padding-inline: 8px;
-  color: var(--ui-text-tertiary);
-}
-.deck-tools .deck-tool-group--shortcuts > .deck-add-file {
-  width: 32px;
-  padding: 0;
-}
-.deck-tools .deck-tool-group--shortcuts > .input-tool-trigger:hover,
-.deck-tools .deck-tool-group--shortcuts > .input-tool-trigger.is-open {
-  color: var(--ui-accent-primary);
-}
-.deck-actions > button {
-  min-height: 36px;
-  border-radius: 0;
-}
 .deck--compact .deck-tools {
-  gap: 6px;
+  gap: 5px;
 }
-:global(html[data-mobile]) .deck-tools :deep(.session-settings-entry.is-compact .input-foldout__trigger) {
+html[data-mobile] .deck-tools :deep(.session-settings-entry.is-compact .input-foldout__trigger),
+html[data-mobile] .deck-tools :deep(.skill-controls-entry.is-compact .input-foldout__trigger),
+html[data-mobile] .deck-tools .input-tool-trigger--chambered.is-compact,
+html[data-mobile] .deck-telemetry .deck-flow-trigger.is-compact {
   width: 40px;
   min-width: 40px;
-}
-:global(html[data-mobile]) .deck-actions > button {
+  height: 40px;
   min-height: 40px;
+}
+html[data-mobile] .deck-actions > button {
+  min-height: 40px;
+  height: 40px;
 }

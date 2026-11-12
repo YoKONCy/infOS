@@ -352,8 +352,8 @@ defineExpose({ drop })
     transition: none;
   }
 }
-:global([data-motion='off']) .card-transfer__actions button,
-:global([data-motion='reduced']) .card-transfer__actions button {
+[data-motion='off'] .card-transfer__actions button,
+[data-motion='reduced'] .card-transfer__actions button {
   transition: none;
 }
 </style>

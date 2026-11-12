@@ -28,16 +28,20 @@ import type { Ref } from 'vue'
 export function useMessageVisibility(
   chatContainer: Ref<HTMLElement | null>,
   onVisibilityChange?: (element: HTMLElement, visible: boolean) => void,
+  onBatchVisibilityChange?: (changes: Array<readonly [HTMLElement, boolean]>) => void,
 ) {
   const observer = ref<IntersectionObserver | null>(null)
   const visibility = new WeakMap<HTMLElement, boolean>()
   const elements = new Set<HTMLElement>()
-  const pausedAnimations = new WeakMap<HTMLElement, Animation[]>()
   const mainVisible = inject('infos:main-surface-visible', shallowRef(true))
   let activated = true
   let observerGeneration = 0
 
-  function setVisible(el: HTMLElement, visible: boolean): void {
+  function setVisible(
+    el: HTMLElement,
+    visible: boolean,
+    batch?: Array<readonly [HTMLElement, boolean]>,
+  ): void {
     if (visibility.get(el) === visible) return
     visibility.set(el, visible)
     if (visible) {
@@ -46,6 +50,7 @@ export function useMessageVisibility(
       pauseMessage(el)
     }
     onVisibilityChange?.(el, visible)
+    batch?.push([el, visible] as const)
   }
 
   function createObserver() {
@@ -58,6 +63,7 @@ export function useMessageVisibility(
     )
       return
 
+    chatContainer.value.classList.remove('chat-surface-paused')
     const generation = ++observerGeneration
     observer.value = new IntersectionObserver(
       (entries) => {
@@ -68,10 +74,12 @@ export function useMessageVisibility(
           document.hidden
         )
           return
+        const batch: Array<readonly [HTMLElement, boolean]> = []
         for (const entry of entries) {
           const el = entry.target as HTMLElement
-          if (elements.has(el)) setVisible(el, entry.isIntersecting)
+          if (elements.has(el)) setVisible(el, entry.isIntersecting, batch)
         }
+        if (batch.length) onBatchVisibilityChange?.(batch)
       },
       {
         root: chatContainer.value,
@@ -87,59 +95,46 @@ export function useMessageVisibility(
     observerGeneration++
     observer.value?.disconnect()
     observer.value = null
-    for (const element of elements) setVisible(element, false)
+    chatContainer.value?.classList.add('chat-surface-paused')
+    const batch: Array<readonly [HTMLElement, boolean]> = []
+    for (const element of elements) setVisible(element, false, batch)
+    if (batch.length) onBatchVisibilityChange?.(batch)
   }
 
   // ── 暂停策略 ──
 
-  function pauseMessage(el: HTMLElement) {
-    el.classList.add('msg-paused')
-
-    // 暂停 Web Animations API 动画
-    try {
-      const animations = el
-        .getAnimations({ subtree: true })
-        .filter((a) => a.playState === 'running')
-      for (const animation of animations) animation.pause()
-      pausedAnimations.set(el, animations)
-    } catch {
-      // getAnimations 不支持时静默
-    }
-
-    // 暂停视频/音频
-    el.querySelectorAll<HTMLMediaElement>('video, audio').forEach((m) => {
+  function pauseMediaList(list: HTMLCollectionOf<HTMLMediaElement>) {
+    for (let i = 0; i < list.length; i++) {
+      const m = list[i]!
       if (!m.paused) {
         m.dataset.wasPlaying = 'true'
         m.pause()
       }
-    })
-
-    // 不再固化消息高度。聊天内容可能因流式 Markdown、公式字体和折叠面板持续变高，
-    // contain-intrinsic-size 会让短消息在恢复可见后保留过大的历史占位。
+    }
   }
 
-  function resumeMessage(el: HTMLElement) {
-    el.classList.remove('msg-paused')
-    // 消息内容可能在不可见期间因流式渲染、公式字体加载而改变高度；
-    // 恢复时必须清除旧固化尺寸，避免浏览器继续保留异常的大块占位。
-    el.style.removeProperty('contain-intrinsic-size')
-
-    // 恢复 Web Animations
-    try {
-      for (const animation of pausedAnimations.get(el) ?? [])
-        if (animation.playState === 'paused') animation.play()
-      pausedAnimations.delete(el)
-    } catch {
-      // 静默
-    }
-
-    // 恢复视频/音频
-    el.querySelectorAll<HTMLMediaElement>('video, audio').forEach((m) => {
+  function resumeMediaList(list: HTMLCollectionOf<HTMLMediaElement>) {
+    for (let i = 0; i < list.length; i++) {
+      const m = list[i]!
       if (m.dataset.wasPlaying === 'true') {
         void m.play().catch(() => {})
         delete m.dataset.wasPlaying
       }
-    })
+    }
+  }
+
+  function pauseMessage(el: HTMLElement) {
+    el.classList.add('msg-paused')
+    // 仅在存在音视频元素时暂停，避免对 60 条消息逐棵子树执行同步 getAnimations 强制样式重算
+    pauseMediaList(el.getElementsByTagName('video'))
+    pauseMediaList(el.getElementsByTagName('audio'))
+  }
+
+  function resumeMessage(el: HTMLElement) {
+    el.classList.remove('msg-paused')
+    el.style.removeProperty('contain-intrinsic-size')
+    resumeMediaList(el.getElementsByTagName('video'))
+    resumeMediaList(el.getElementsByTagName('audio'))
   }
 
   // ── 公开 API ──
@@ -150,7 +145,11 @@ export function useMessageVisibility(
     elements.add(messageEl)
     if (!observer.value) createObserver()
     observer.value?.observe(messageEl)
-    if (!observer.value) setVisible(messageEl, false)
+    if (!observer.value) {
+      const batch: Array<readonly [HTMLElement, boolean]> = []
+      setVisible(messageEl, false, batch)
+      if (batch.length) onBatchVisibilityChange?.(batch)
+    }
   }
 
   /** 停止观察 */

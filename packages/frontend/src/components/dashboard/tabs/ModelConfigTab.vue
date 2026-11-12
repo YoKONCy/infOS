@@ -433,7 +433,7 @@ function connectionName(model: LlmModel) {
 </script>
 
 <template>
-  <div class="model-config-layout p-8 h-full flex flex-col overflow-hidden">
+  <div class="model-config-layout model-config-tab p-8 h-full flex flex-col overflow-hidden">
     <!-- 头部 + 子选项卡 -->
     <div
       class="flex flex-wrap items-start justify-between gap-4 mb-6 flex-shrink-0 relative group/header"
@@ -470,9 +470,6 @@ function connectionName(model: LlmModel) {
             <span class="font-pixel">{{ __t('ui.settings', '向量模型') }}</span>
           </button>
         </div>
-        <p class="text-[10px] font-bold uppercase tracking-[0.15em] text-slate-400 ml-7 font-pixel">
-          {{ currentTab === 'llm' ? 'LLM MODEL MANAGEMENT' : 'VECTOR CONFIGURATION' }}
-        </p>
       </div>
       <div class="flex flex-wrap gap-2 items-center whitespace-nowrap">
         <template v-if="currentTab === 'llm'">
@@ -700,16 +697,22 @@ function connectionName(model: LlmModel) {
     </MotionList>
 
     <!-- 向量模型配置 -->
-    <div v-else class="flex-1 overflow-y-auto flex flex-col gap-6">
-      <PCard pixel padding="lg">
+    <div
+      v-else
+      class="model-vector-sections flex-1 min-h-0 overflow-y-auto flex flex-col gap-6 pr-2 pb-2"
+    >
+      <PCard pixel padding="lg" class="shrink-0">
         <div class="flex items-center justify-between gap-4">
-          <div>
-            <h4 class="font-pixel font-bold">{{ __t('ui.settings', '向量功能') }}</h4>
-            <p class="text-xs text-slate-400 mt-1">
+          <div class="min-w-0">
+            <h4 class="text-sm font-black text-slate-800 font-pixel">
+              {{ __t('ui.settings', '向量功能') }}
+            </h4>
+            <p class="text-xs text-slate-400 mt-1.5">
               {{ __t('ui.settings', '生成向量并用于检索') }}
             </p>
           </div>
           <PSwitch
+            class="flex-shrink-0"
             :model-value="embeddingEnabled"
             :disabled="!embeddingSwitchReady || embeddingSwitchSaving || isSavingVector"
             :aria-label="__t('ui.settings', '向量功能')"
@@ -920,7 +923,7 @@ function connectionName(model: LlmModel) {
         </template>
         <div
           v-else
-          class="p-4 bg-slate-50 border border-slate-200 text-center text-[13px] text-slate-400"
+          class="reranker-disabled p-4 bg-slate-50 border border-slate-200 text-center text-[13px] text-slate-400"
         >
           <p>{{ __t('ui.settings', 'Reranker 已关闭') }}</p>
         </div>
@@ -2129,6 +2132,11 @@ function connectionName(model: LlmModel) {
   .agent-assign-trigger::after {
     display: none;
   }
+}
+
+/* 向量配置纵向滚动区：禁止子卡片参与负剩余空间收缩，防止带 overflow: hidden 的卡片被压扁裁切 */
+.model-vector-sections > * {
+  flex-shrink: 0;
 }
 
 /* 模型卡片按实际内容宽度排成三列，窄屏逐级收为两列和单列。 */

@@ -125,6 +125,12 @@ const {
 } = useExecutionLevels(() => props.executionMode)
 
 const modelName = computed(() => modelSettings.value?.effective.name || __t('ui.chat', '未配置'))
+const triggerAccent = computed(() => {
+  if (executionRaised.value) return 'var(--ui-warning)'
+  if (shownMode.value === 'work') return 'var(--ui-accent-sky)'
+  if (shownMode.value === 'minimal') return 'var(--ui-success)'
+  return 'var(--ui-accent-primary)'
+})
 const triggerHint = computed(() =>
   executionRaised.value
     ? __t('ui.input-controls', '执行权限已放开：{0}', [
@@ -166,12 +172,11 @@ defineExpose({ close: (restoreFocus = false) => foldout.value?.close(restoreFocu
   <InputBarFoldout
     ref="foldout"
     class="session-settings-entry"
-    variant="text"
     :label="currentMode.label"
     :title="__t('ui.input-controls', '会话设置')"
     :hint="triggerHint"
     icon="settings"
-    accent="var(--ui-accent-purple)"
+    :accent="triggerAccent"
     :busy="modeBusy"
     :compact="compact"
     :scope-key="scopeKey"
@@ -199,7 +204,7 @@ defineExpose({ close: (restoreFocus = false) => foldout.value?.close(restoreFocu
       </span>
       <PixelIcon
         v-if="!compact"
-        name="chevron-down"
+        name="chevron-up"
         size="xs"
         class="session-trigger__chevron"
         :class="{ 'is-open': open }"
@@ -306,49 +311,51 @@ defineExpose({ close: (restoreFocus = false) => foldout.value?.close(restoreFocu
 .session-trigger__emblem {
   display: grid;
   align-self: stretch;
-  flex: 0 0 30px;
+  flex: 0 0 29px;
   place-items: center;
-  border-right: 1px solid color-mix(in srgb, var(--ui-accent-primary) 22%, var(--ui-border-subtle));
-  background: color-mix(in srgb, var(--ui-accent-primary) 9%, transparent);
-  color: var(--ui-accent-primary);
+  border-right: 1px solid var(--ui-border-subtle);
+  background: color-mix(in srgb, var(--foldout-accent) 6%, transparent);
+  color: var(--foldout-accent);
+}
+.session-trigger__emblem.is-warn {
+  background: color-mix(in srgb, var(--ui-warning) 8%, transparent);
 }
 .session-trigger__copy {
-  display: flex;
-  flex: 1;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
   min-width: 0;
-  flex-direction: column;
-  align-items: flex-start;
-  gap: 2px;
-  padding: 0 9px;
-  text-align: left;
+  padding-left: 8px;
 }
 .session-trigger__mode {
-  color: var(--ui-text-primary);
-  font: 11px/1.2 var(--ui-font-pixel);
-  transition: color 140ms ease;
+  color: inherit;
+  font: 11px/1 var(--ui-font-pixel);
 }
 .session-trigger__mode.is-warn,
 .session-trigger__emblem.is-warn {
   color: var(--ui-warning);
 }
 .session-trigger__model {
-  max-width: 150px;
+  max-width: 132px;
   overflow: hidden;
+  padding-left: 6px;
+  border-left: 1px solid var(--ui-border-subtle);
   color: var(--ui-text-tertiary);
-  font: 9px/1.2 var(--ui-font-mono);
+  font: 10px/1 var(--ui-font-sans);
   text-overflow: ellipsis;
 }
 .session-trigger__badge {
+  margin-left: 6px;
   padding: 2px 4px;
-  border: 1px solid color-mix(in srgb, var(--ui-accent-purple) 32%, transparent);
-  background: var(--ui-accent-purple-soft);
+  border: 1px solid var(--ui-border-subtle);
+  background: var(--ui-bg-surface-soft);
   color: var(--ui-accent-purple);
   font-size: 9px;
 }
 .session-trigger__chevron {
-  margin-inline: 2px 8px;
+  margin-inline: 6px 7px;
   color: var(--ui-text-tertiary);
-  transition: transform 180ms ease;
+  transition: transform 140ms ease;
 }
 .session-trigger__chevron.is-open {
   transform: rotate(180deg);

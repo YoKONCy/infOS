@@ -24,8 +24,6 @@ const scope = useHomeScope()
 const local = computed(() => home.supported ? settings.value : null)
 const content = ref<HTMLElement | null>(null)
 const activeSection = ref<HomeSection>(home.supported ? 'desktop' : 'belongings')
-// 访问后保留分区实例，切换时保留表单草稿、选中来源和下载状态。
-const visited = ref(new Set<HomeSection>([activeSection.value]))
 const sections = computed(() => [
   ...(home.supported ? [
     {
@@ -64,7 +62,6 @@ const current = computed(() => sections.value.find((item) => item.id === activeS
 const scopedSection = computed(() => ['belongings', 'trust'].includes(activeSection.value))
 
 function selectSection(id: HomeSection): void {
-  visited.value.add(id)
   activeSection.value = id
   content.value?.scrollTo({ top: 0 })
 }
@@ -126,19 +123,17 @@ async function save(section: DesktopHomeSection, patch: Record<string, unknown>)
           <h2>{{ current.title }}</h2>
           <p>{{ current.hint }}</p>
         </header>
-        <HomeScopePicker v-show="scopedSection" :state="scope" />
+        <HomeScopePicker v-if="scopedSection" :state="scope" />
 
         <section
-          v-if="visited.has('desktop') && home.supported"
-          v-show="activeSection === 'desktop'"
+          v-if="activeSection === 'desktop' && home.supported"
           id="home-panel-desktop"
           aria-labelledby="home-section-desktop"
         >
           <DesktopControlSettings />
         </section>
         <section
-          v-if="visited.has('perception') && home.supported"
-          v-show="activeSection === 'perception'"
+          v-else-if="activeSection === 'perception' && home.supported"
           id="home-panel-perception"
           aria-labelledby="home-section-perception"
         >
@@ -154,8 +149,7 @@ async function save(section: DesktopHomeSection, patch: Record<string, unknown>)
           <p v-else-if="!error" class="desktop-home-loading" role="status">{{ t('ui.desktop', '正在读取桌面设置…') }}</p>
         </section>
         <section
-          v-if="visited.has('belongings')"
-          v-show="activeSection === 'belongings'"
+          v-else-if="activeSection === 'belongings'"
           id="home-panel-belongings"
           class="desktop-home-space"
           aria-labelledby="home-section-belongings"
@@ -164,16 +158,14 @@ async function save(section: DesktopHomeSection, patch: Record<string, unknown>)
           <HomeMapPanel :scope="scope.scope.value" />
         </section>
         <section
-          v-if="visited.has('trust')"
-          v-show="activeSection === 'trust'"
+          v-else-if="activeSection === 'trust'"
           id="home-panel-trust"
           aria-labelledby="home-section-trust"
         >
           <HomeTrust :agent-id="scope.agentId.value" :scope="scope.scope.value" />
         </section>
         <section
-          v-if="visited.has('safety')"
-          v-show="activeSection === 'safety'"
+          v-else-if="activeSection === 'safety'"
           id="home-panel-safety"
           aria-labelledby="home-section-safety"
         >

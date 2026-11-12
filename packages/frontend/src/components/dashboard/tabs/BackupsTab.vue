@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import {
   computed,
+  defineAsyncComponent,
   nextTick,
   onActivated,
   onBeforeUnmount,
@@ -13,6 +14,7 @@ import {
 import { PButton, PDialog, PInput, PSelect, PSwitch, PixelIcon } from '../../pixel'
 import SteamCloudStatus from '../SteamCloudStatus.vue'
 import { t, getDisplayLocale } from '../../../i18n'
+import { useMainNav } from '../../../composables/main/useMainNav'
 import { backupApi, type BackupCatalogue } from '../../../api/modules/backupApi'
 import { inspectBackupFile } from '../../../api/modules/backupFile'
 import { ApiError } from '../../../api/errors'
@@ -29,6 +31,28 @@ import type {
 } from '@infos/shared'
 
 const tr = (source: string, values: readonly unknown[] = []) => t('ui.backup', source, values)
+const ResetTab = defineAsyncComponent(() => import('./ResetTab.vue'))
+const { expandDangerReset } = useMainNav()
+const dangerResetOpen = ref(false)
+const dangerSectionRef = ref<HTMLDetailsElement | null>(null)
+
+function onDangerToggle(event: Event): void {
+  const open = (event.target as HTMLDetailsElement).open
+  dangerResetOpen.value = open
+  if (!open) expandDangerReset.value = false
+}
+
+watch(
+  expandDangerReset,
+  (shouldOpen) => {
+    if (!shouldOpen) return
+    dangerResetOpen.value = true
+    void nextTick(() => {
+      dangerSectionRef.value?.scrollIntoView({ behavior: 'smooth', block: 'start' })
+    })
+  },
+  { immediate: true },
+)
 const modules: BackupModule[] = [
   'settings',
   'agents',
@@ -617,7 +641,7 @@ onBeforeUnmount(() => {
           <span><PixelIcon name="heart" size="xs" /></span>
         </div>
         <div>
-          <h1>{{ tr('数据与备份') }}</h1>
+          <h1>{{ t('ui.navigation', '数据与重置') }}</h1>
           <p>{{ tr('把相伴的记录，妥善收藏') }}</p>
           <small class="backup-location">
             <span />
@@ -1128,6 +1152,30 @@ onBeforeUnmount(() => {
         </div>
       </article>
     </section>
+
+    <details
+      ref="dangerSectionRef"
+      class="backup-danger-disclosure"
+      :open="dangerResetOpen"
+      @toggle="onDangerToggle"
+    >
+      <summary class="backup-danger-summary">
+        <span class="backup-danger-summary__icon">
+          <PixelIcon name="alert" size="sm" />
+        </span>
+        <span class="backup-danger-summary__text">
+          <strong>{{ tr('高级清理与重置') }}</strong>
+          <small>{{ tr('隐私痕迹清理、清空对话记录、重置全部记忆与恢复出厂设置') }}</small>
+        </span>
+        <span class="backup-danger-summary__toggle font-pixel">
+          {{ dangerResetOpen ? tr('收起') : tr('展开') }}
+        </span>
+      </summary>
+      <div v-if="dangerResetOpen" class="backup-danger-body">
+        <ResetTab embedded />
+      </div>
+    </details>
+
     <PDialog
       v-model="recoveryGuide"
       :title="tr(pending ? '备份已暂存，下一步：重启服务端' : '备份恢复结果')"
@@ -1404,6 +1452,62 @@ onBeforeUnmount(() => {
 }
 .backup-history {
   --backup-accent: var(--ui-accent-primary);
+}
+.backup-danger-disclosure {
+  margin-top: 24px;
+  background: var(--backup-paper);
+  border: 1px solid color-mix(in srgb, var(--ui-danger) 32%, var(--ui-border-default));
+  border-radius: 3px;
+  box-shadow: var(--ui-shadow-md);
+}
+.backup-danger-summary {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 16px 22px;
+  cursor: pointer;
+  list-style: none;
+  user-select: none;
+}
+.backup-danger-summary::-webkit-details-marker {
+  display: none;
+}
+.backup-danger-summary__icon {
+  display: grid;
+  place-items: center;
+  width: 32px;
+  height: 32px;
+  flex-shrink: 0;
+  color: var(--ui-danger);
+  background: color-mix(in srgb, var(--ui-danger) 10%, var(--ui-bg-surface));
+  border: 1px solid color-mix(in srgb, var(--ui-danger) 28%, var(--ui-border-subtle));
+}
+.backup-danger-summary__text {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+}
+.backup-danger-summary__text strong {
+  font-size: 14px;
+  font-weight: 700;
+  color: var(--ui-text-primary);
+}
+.backup-danger-summary__text small {
+  font-size: 12px;
+  color: var(--ui-text-secondary);
+}
+.backup-danger-summary__toggle {
+  margin-left: auto;
+  font-size: 11px;
+  color: var(--ui-text-secondary);
+  padding: 4px 10px;
+  border: 1px solid var(--ui-border-subtle);
+  background: var(--ui-bg-surface);
+}
+.backup-danger-body {
+  padding: 0 22px 22px;
+  border-top: 1px solid var(--ui-border-subtle);
 }
 .backup-section-title {
   display: flex;

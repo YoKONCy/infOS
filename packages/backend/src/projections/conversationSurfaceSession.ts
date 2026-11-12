@@ -32,12 +32,17 @@ export class ConversationSurfaceSession {
   constructor(
     readonly threadId: string,
     readonly principalId: string,
-    readonly executionId?: string,
+    public executionId?: string,
     private readonly retainLiveSnapshot = false,
     private readonly processCollapsed = false,
     private readonly threadGeneration?: number,
   ) {
     this.surfaceId = `conversation:${threadId}:${executionId ?? this.generation}` as SurfaceId
+  }
+
+  /** 准备阶段提前开流后，在正式 Execution 创建完成时补齐因果身份，保持 surfaceId 恒定不变。 */
+  bindExecution(executionId: string): void {
+    this.executionId = executionId
   }
 
   /** 队列回合在页面刷新或切换后，可恢复当前画面而无需重放模型请求。 */
@@ -57,13 +62,13 @@ export class ConversationSurfaceSession {
     }
   }
 
-  open(): SurfaceFrame {
+  open(initialMessage?: string): SurfaceFrame {
     return this.frame({
       type: 'surface.open',
       processCollapsed: this.processCollapsed,
       threadId: this.threadId,
       principalId: this.principalId,
-      nodes: [this.statusNode('thinking')],
+      nodes: [this.statusNode('thinking', initialMessage)],
     })
   }
 

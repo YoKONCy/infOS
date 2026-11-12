@@ -525,9 +525,23 @@ describe('MemoryRouter', () => {
     expect((await router.request('http://test/', { method: 'POST' })).status).toBe(404)
     expect((await router.request('http://test/import', { method: 'POST' })).status).toBe(404)
     expect((await router.request('http://test/search', { method: 'POST' })).status).toBe(404)
-    expect((await router.request('http://test/event-1', { method: 'DELETE' })).status).toBe(200)
-    expect(ctx.privacyDeletionService.deleteMemory).toHaveBeenCalledWith('event-1', false)
+    expect((await router.request('http://test/event-1?deleteSource=true', { method: 'DELETE' })).status).toBe(200)
+    expect(ctx.privacyDeletionService.deleteMemory).toHaveBeenCalledWith('event-1')
     expect(ctx.eventMemoryService.archive).not.toHaveBeenCalled()
+  })
+
+  it('批量删除忽略旧来源删除参数，只向清理服务传递记忆标识', async () => {
+    const ctx = createCtx()
+    const router = createMemoryRouter(ctx as never)
+
+    const response = await router.request('http://test/batch', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ ids: ['event-1', 'event-2'], action: 'delete', deleteSource: true }),
+    })
+
+    expect(response.status).toBe(200)
+    expect(ctx.privacyDeletionService.deleteMemory.mock.calls).toEqual([['event-1'], ['event-2']])
   })
 })
 

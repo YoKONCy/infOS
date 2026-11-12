@@ -30,8 +30,16 @@ const hasWaiting = computed(
     (pending.value.length > 0 &&
       Boolean(props.snapshot.active || running.value || pending.value.length > 1)),
 )
+const isCompactPaused = computed(
+  () => props.snapshot.paused && pending.value.length === 0 && !running.value,
+)
 const notice = computed(() =>
-  queueNotice(props.snapshot.paused, props.unavailable, props.snapshot.reason),
+  queueNotice(
+    props.snapshot.paused,
+    props.unavailable,
+    props.snapshot.reason,
+    pending.value.length > 0,
+  ),
 )
 const labels = {
   get queued() {
@@ -68,8 +76,29 @@ watch(
   <section
     v-if="hasWaiting"
     class="conversation-queue"
+    :class="{ 'conversation-queue--inline': isCompactPaused }"
     :aria-label="__t('ui.chat', '待发送消息队列')"
   >
+    <div v-if="isCompactPaused" class="queue-inline-strip" role="status">
+      <span class="queue-inline-text">
+        <PixelIcon
+          :name="notice?.icon ?? 'info'"
+          size="xs"
+          :animation="notice?.animation"
+        />
+        <span>{{ notice?.text ?? __t('ui.chat', '队列已暂停') }}</span>
+      </span>
+      <button
+        type="button"
+        class="queue-control"
+        :disabled="busy || unavailable"
+        @click="emit('control', false)"
+      >
+        <PixelIcon name="send" size="xs" />
+        {{ __t('ui.chat', '继续对话') }}
+      </button>
+    </div>
+    <template v-else>
     <header class="queue-heading">
       <button
         type="button"
@@ -213,6 +242,7 @@ watch(
         </li>
       </TransitionGroup>
     </ConversationQueueBody>
+    </template>
   </section>
 </template>
 
@@ -227,6 +257,26 @@ watch(
   color: var(--ui-text-primary);
   font-size: 12px;
   box-shadow: var(--ui-shadow-xs);
+}
+.queue-inline-strip {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  padding: 5px 12px;
+}
+.queue-inline-text {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+  color: var(--ui-text-secondary);
+  font-size: 12px;
+}
+.queue-inline-text span {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 .queue-heading {
   display: flex;

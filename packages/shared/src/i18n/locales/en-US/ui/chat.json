@@ -411,6 +411,8 @@
   "这条回复对味": "This reply feels right",
   "人机": "Robotic",
   "这条回复像人机": "This reply sounds robotic",
+  "评价回复表达": "Rate reply tone",
+  "收起表达判据": "Collapse tone actions",
   "连批注一起取消？": "Remove with note?",
   "整条回复": "Whole reply",
   "红笔批注": "Red-pen note",
@@ -567,5 +569,14 @@
   "已学出的规则可在手册中单独管理。": "Manage already learned rules separately in the handbook.",
   "来源会话 {0}": "Source conversation {0}",
   "学出的习惯由角色共享，可直接编辑或删除。": "Learned habits are shared across the character’s conversations and can be edited or deleted.",
-  "极简模式：心流、完成任务与主会话发言": "Minimal mode: flow updates, task completion, and main-thread messaging"
+  "极简模式：心流、完成任务与主会话发言": "Minimal mode: flow updates, task completion, and main-thread messaging",
+  "继续对话": "Resume",
+  "对话历史已更新，队列已暂停": "Conversation history updated; queue paused",
+  "指令": "Commands",
+  "会话心流": "Session Flow",
+  "上下文容量": "Context capacity",
+  "现用": "Used",
+  "上限": "Limit",
+  "第 {0} 轮输入{1}": "Turn {0} input{1}",
+  "思考轨迹": "Thought trace"
 }

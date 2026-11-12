@@ -18,6 +18,7 @@ export function queueNotice(
   paused: boolean,
   unavailable: boolean,
   reason = '',
+  hasPending = true,
 ):
   | {
       icon: string
@@ -45,7 +46,9 @@ export function queueNotice(
     return {
       icon: 'info',
       get text() {
-        return __t('ui.chat', '历史已更新，请核对待发消息')
+        return hasPending
+          ? __t('ui.chat', '历史已更新，请核对待发消息')
+          : __t('ui.chat', '对话历史已更新，队列已暂停')
       },
     }
   if (/重启/.test(reason))

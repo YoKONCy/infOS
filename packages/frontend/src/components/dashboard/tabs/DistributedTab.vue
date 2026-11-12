@@ -254,7 +254,7 @@ onMounted(() => void refresh())
     <header class="distributed-hero">
       <div class="hero-icon"><PixelIcon name="network" size="xl" /></div>
       <div>
-        <h1>{{ __t('ui.settings', '分布式') }}</h1>
+        <h1>{{ __t('ui.navigation', '多端协同') }}</h1>
         <p>{{ __t('ui.settings', '管理设备、服务器与数据同步') }}</p>
       </div>
       <span class="mode-badge" :class="{ local: isElectronBound && !isElectronRemote }">

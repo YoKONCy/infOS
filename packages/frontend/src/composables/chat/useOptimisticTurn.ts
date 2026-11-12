@@ -47,18 +47,21 @@ export function useOptimisticTurn(snapshot: Ref<ConversationQueueSnapshot>) {
     return true
   }
 
-  /** 队列空闲时这条消息会立刻开跑，可以先在消息流里显示出来。 */
+  /** 队列空闲时这条消息会立刻开跑（空队列服务端入队会自动解除 paused），先在消息流里显示出来。 */
   function runsImmediately(input: QueuedConversationInput): boolean {
     const current = snapshot.value
-    return (
-      threads.threadId === input.threadId &&
-      !threads.isGenerating &&
-      !threads.isLoadingHistory &&
-      current.threadId === input.threadId &&
-      !current.active &&
-      !current.paused &&
-      !current.items.some((entry) => entry.state === 'queued' || entry.state === 'running')
+    if (
+      threads.threadId !== input.threadId ||
+      threads.isGenerating ||
+      threads.isLoadingHistory
+    ) {
+      return false
+    }
+    if (current.threadId !== input.threadId) return true
+    const hasPendingQueueItems = current.items.some(
+      (entry) => entry.state === 'queued' || entry.state === 'running',
     )
+    return !current.active && !hasPendingQueueItems
   }
 
   /** 发送前调用：会立刻开跑时插入两条乐观消息，否则返回 null。 */
@@ -69,6 +72,30 @@ export function useOptimisticTurn(snapshot: Ref<ConversationQueueSnapshot>) {
   ): OptimisticTurn | null {
     if (!runsImmediately(input)) return null
     return { threadId: input.threadId, ...threads.beginPendingTurn(input.content, attachments, queueId) }
+  }
+
+  /** 主会话重新生成前调用：立即插入「正在思考」占位。 */
+  function beginRegeneration(targetThreadId: string): OptimisticTurn | null {
+    if (threads.threadId !== targetThreadId || threads.isLoadingHistory) return null
+    return { threadId: targetThreadId, ...threads.beginPendingRegeneration() }
+  }
+
+  /** 若服务端返回的快照表明该消息实际排在其它任务之后或队列仍暂停，撤下乐观气泡交由队列面板展示。 */
+  function demoteIfQueuedBehind(
+    turn: OptimisticTurn | null,
+    id: string,
+    next: ConversationQueueSnapshot,
+  ): OptimisticTurn | null {
+    if (!turn) return null
+    const activeItems = next.items.filter(
+      (entry) => entry.state === 'queued' || entry.state === 'running',
+    )
+    const firstId = activeItems[0]?.id
+    if (next.paused || (firstId && firstId !== id)) {
+      threads.cancelPendingTurn(turn)
+      return null
+    }
+    return turn
   }
 
   /** 服务端已接收：记下这一轮，返回是否有乐观消息需要跟踪。 */
@@ -101,7 +128,7 @@ export function useOptimisticTurn(snapshot: Ref<ConversationQueueSnapshot>) {
 
   /** 回合在用户消息落盘前就失败了：气泡已撤下，至少告诉用户没发出去。 */
   function warnIfUnsent(turn: OptimisticTurn | null, next: ConversationQueueSnapshot): void {
-    if (!turn || !next.paused) return
+    if (!turn || !turn.userId || !next.paused) return
     const persisted = threads.messages.some(
       (message) => message.role === 'user' && threads.renderKey(message.id) === turn.userId,
     )
@@ -116,5 +143,16 @@ export function useOptimisticTurn(snapshot: Ref<ConversationQueueSnapshot>) {
     optimistic = null
   }
 
-  return { adopt, begin, accept, cancel, inFlight, take, warnIfUnsent, reset }
+  return {
+    adopt,
+    begin,
+    beginRegeneration,
+    demoteIfQueuedBehind,
+    accept,
+    cancel,
+    inFlight,
+    take,
+    warnIfUnsent,
+    reset,
+  }
 }

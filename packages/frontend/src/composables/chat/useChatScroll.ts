@@ -23,7 +23,7 @@ import type { Ref } from 'vue'
 import { useEventListener } from '../useEventListener'
 
 /** 底部判定阈值 (px) */
-const BOTTOM_THRESHOLD = 50
+const BOTTOM_THRESHOLD = 96
 
 /**
  * @param containerRef - 可滚动容器

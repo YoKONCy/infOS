@@ -83,14 +83,40 @@ export async function runChatStream(
       environmentEvents: body.environmentEvents,
       generationType: body.generationType,
       signal,
+      onInputAccepted: async (accepted) => {
+        ctx.conversationProjection.invalidate(threadId)
+        if (surfaceRef.current) return
+        surfaceRef.current = new ConversationSurfaceSession(
+          threadId,
+          accepted.agentId || agentId,
+          undefined,
+          true,
+          accepted.threadKind === 'main',
+          accepted.generation,
+        )
+        ctx.conversationQueue.setLive(threadId, surfaceRef.current)
+        await writeSurface(surfaceRef.current.open())
+      },
       onRagProgress: async (progress) => {
         await writeEvent({
           event: 'rag_progress',
           data: JSON.stringify(progress),
         })
+        if (
+          surfaceRef.current &&
+          progress.status !== 'failed' &&
+          progress.stage !== 'completed' &&
+          progress.message
+        ) {
+          await updateRunState('thinking', progress.message)
+        }
       },
       onExecutionStarted: async (execution) => {
         ctx.conversationProjection.invalidate(threadId)
+        if (surfaceRef.current) {
+          surfaceRef.current.bindExecution(execution.executionId)
+          return
+        }
         surfaceRef.current = new ConversationSurfaceSession(
           threadId,
           agentId,

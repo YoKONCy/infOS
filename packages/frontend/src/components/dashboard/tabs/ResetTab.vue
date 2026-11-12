@@ -25,6 +25,10 @@ import { logger } from '../../../lib/logger'
 import { useNotificationStore } from '../../../stores'
 import PrivacyCleanupPanel from '../PrivacyCleanupPanel.vue'
 
+const props = withDefaults(defineProps<{ embedded?: boolean }>(), {
+  embedded: false,
+})
+
 const ctx = useDashboardContext()
 const notif = useNotificationStore()
 
@@ -206,12 +210,14 @@ const { setTab } = useMainNav()
 </script>
 
 <template>
-  <div class="reset-tab-root p-8 h-full overflow-y-auto overflow-x-hidden">
+  <div
+    class="reset-tab-root overflow-x-hidden"
+    :class="props.embedded ? 'pt-3' : 'p-8 h-full overflow-y-auto'"
+  >
     <div class="reset-tab-content">
       <PrivacyCleanupPanel />
-      <!-- 顶部标题（红色像素风） -->
-      <div class="mb-6 relative group/header">
-        <!-- 背景氛围光晕 (红色警告感) -->
+      <!-- 顶部标题（独立面板模式下显示） -->
+      <div v-if="!props.embedded" class="mb-6 relative group/header">
         <div
           class="absolute -right-20 -top-10 w-40 h-40 bg-rose-400/10 blur-[60px] rounded-full pointer-events-none group-hover/header:bg-rose-400/20 transition-all duration-1000"
         />
@@ -223,15 +229,10 @@ const { setTab } = useMainNav()
           </span>
           <span>{{ __t('ui.settings', '危险区域') }}</span>
         </h2>
-        <p
-          class="text-[10px] font-bold uppercase tracking-[0.15em] text-[var(--rz-sub)] mt-1 ml-9 font-pixel"
-        >
-          DANGER ZONE
-        </p>
       </div>
 
-      <!-- 数据导出 (安全操作)：使用本页像素卡片，避免 PCard 内层 body 干扰横向布局 -->
-      <div class="rz-export-card mb-6">
+      <!-- 数据导出跳转（仅在独立面板模式下显示） -->
+      <div v-if="!props.embedded" class="rz-export-card mb-6">
         <div class="rz-export-info">
           <div class="rz-export-icon">
             <PixelIcon name="download" size="sm" />
@@ -767,22 +768,22 @@ const { setTab } = useMainNav()
 }
 
 /* ── 暗色细节：主体保持冷灰黑，仅强调色保留暖色 ── */
-:global([data-theme='dark']) .rz-card {
+[data-theme='dark'] .rz-card {
   background: #171b24;
   border-color: #343b48;
   box-shadow: 4px 4px 0 rgba(0, 0, 0, 0.46);
 }
-:global([data-theme='dark']) .rz-card:hover {
+[data-theme='dark'] .rz-card:hover {
   background: #1d222d;
   border-color: color-mix(in srgb, var(--rz-card-accent) 58%, #343b48);
 }
-:global([data-theme='dark']) .rz-card-icon {
+[data-theme='dark'] .rz-card-icon {
   background: color-mix(in srgb, var(--rz-card-accent) 9%, #171b24);
 }
-:global([data-theme='dark']) .rz-btn-ghost {
+[data-theme='dark'] .rz-btn-ghost {
   background: #20252f;
 }
-:global([data-theme='dark']) .rz-btn-ghost:hover:not(:disabled) {
+[data-theme='dark'] .rz-btn-ghost:hover:not(:disabled) {
   background: #292f3b;
 }
 

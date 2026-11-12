@@ -58,6 +58,8 @@ import {
 } from '../../../composables/main/useTaskNavigation'
 import { useTaskDetail } from '../../../composables/main/useTaskDetail'
 
+defineOptions({ name: 'TasksTab' })
+
 const ctx = useDashboardContext()
 const taskCenter = useTaskCenterStore()
 
@@ -591,9 +593,12 @@ watch(
 
 watch([activeView, showCronTasks], () => syncCronPolling(true))
 
+let lastTasksActivatedAt = 0
+
 onMounted(() => {
   componentActive = true
-  void agentStore.fetchAgents()
+  lastTasksActivatedAt = Date.now()
+  if (!agentStore.agents.length) void agentStore.fetchAgents()
   void taskCenter.refreshActive()
   if (!scheduledAgentId.value)
     scheduledAgentId.value = agentStore.activeAgentId || agentStore.agents[0]?.id || ''
@@ -604,9 +609,12 @@ onMounted(() => {
 })
 
 onActivated(() => {
-  if (!componentActive) {
-    void agentStore.fetchAgents()
+  const now = Date.now()
+  if (!componentActive && now - lastTasksActivatedAt > 10_000) {
+    lastTasksActivatedAt = now
+    if (!agentStore.agents.length) void agentStore.fetchAgents()
     void taskCenter.refreshActive()
+    fetchReminders()
   }
   componentActive = true
   syncCronPolling(true)

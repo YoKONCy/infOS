@@ -100,6 +100,54 @@ export class ConversationQueueRepository {
     })
   }
 
+  /** 单事务原子写入重新生成任务：清除旧交接优先权、解除暂停并排入队首，避免多次同步刷盘。 */
+  enqueueRegeneration(id: string, input: QueuedConversationInput): ConversationQueueItem {
+    return durableQueueWrite(this.db, () => {
+      const existing = this.get(id)
+      if (existing) {
+        if (existing.input.threadId !== input.threadId)
+          throw new AppError('CONFLICT', { message: '提交标识已属于另一会话' })
+        return existing
+      }
+      const snapshot = this.snapshot(input.threadId)
+      if (snapshot.items.length >= 100)
+        throw new AppError('CONFLICT', { message: '待发消息最多 100 条' })
+      this.db
+        .update(items)
+        .set({ immediate: false, revision: sql`${items.revision} + 1` })
+        .where(
+          and(
+            eq(items.threadId, input.threadId),
+            eq(items.state, 'queued'),
+            eq(items.immediate, true),
+          ),
+        )
+        .run()
+      this.db
+        .insert(threads)
+        .values({ threadId: input.threadId, paused: false, reason: null })
+        .onConflictDoUpdate({
+          target: threads.threadId,
+          set: { paused: false, reason: null },
+        })
+        .run()
+      const position = Math.min(0, ...snapshot.items.map((entry) => entry.position)) - 1
+      const row = this.db
+        .insert(items)
+        .values({
+          id,
+          threadId: input.threadId,
+          inputJson: JSON.stringify(input),
+          immediate: true,
+          position,
+          createdAt: Date.now(),
+        })
+        .returning()
+        .get()!
+      return this.dto(row)
+    })
+  }
+
   mutate(
     threadId: string,
     id: string,
@@ -230,7 +278,7 @@ export class ConversationQueueRepository {
   }
 
   claim(threadId: string): ConversationQueueItem | undefined {
-    return durableQueueWrite(this.db, () => {
+    return this.db.transaction(() => {
       const snapshot = this.snapshot(threadId)
       if (snapshot.paused || snapshot.items.some((entry) => entry.state === 'running')) return
       const entry = snapshot.items.find((item) => item.state === 'queued')
@@ -245,7 +293,7 @@ export class ConversationQueueRepository {
   }
 
   settle(id: string, state: ConversationQueueItem['state'], error?: string): void {
-    durableQueueWrite(this.db, () =>
+    this.db.transaction(() =>
       this.db
         .update(items)
         .set({
@@ -261,7 +309,7 @@ export class ConversationQueueRepository {
 
   /** 崩溃后不猜测工具是否成功；只有已保存完整回复的条目能直接结算。 */
   recover(): void {
-    durableQueueWrite(this.db, () => {
+    this.db.transaction(() => {
       // 停用旧版本尚未发送的合成续接项；已有聊天消息不在此修改。
       this.db
         .update(items)

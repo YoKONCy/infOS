@@ -104,10 +104,11 @@ defineExpose({ close })
 <template>
   <InputBarFoldout
     ref="menu"
-    variant="text"
+    class="skill-controls-entry"
     :label="t('ui.chat', 'Skills')"
     :title="t('ui.chat', '本会话 Skills')"
     icon="skill"
+    accent="var(--ui-accent-purple)"
     :summary="String(count)"
     :scope-key="threadId"
     :compact="compact"
@@ -117,17 +118,21 @@ defineExpose({ close })
     @open="emit('open'); load()"
   >
     <template #trigger="{ open }">
-      <PixelIcon name="skill" size="xs" aria-hidden="true" />
-      <span v-if="!compact">{{ t('ui.chat', 'Skills') }}</span>
-      <small v-if="count && !compact" class="skill-trigger-count">{{ count }}</small>
-      <PixelIcon
-        v-if="!compact"
-        name="chevron-down"
-        size="xs"
-        class="skill-trigger-chevron"
-        :class="{ 'is-open': open }"
-        aria-hidden="true"
-      />
+      <span class="skill-trigger__emblem" aria-hidden="true">
+        <PixelIcon v-if="loading || saving" name="refresh" size="xs" animation="spin" />
+        <PixelIcon v-else name="skill" size="xs" />
+      </span>
+      <span v-if="!compact" class="skill-trigger__body">
+        <span class="skill-trigger__label">{{ t('ui.chat', 'Skills') }}</span>
+        <small v-if="count" class="skill-trigger-count">{{ count }}</small>
+        <PixelIcon
+          name="chevron-up"
+          size="xs"
+          class="skill-trigger-chevron"
+          :class="{ 'is-open': open }"
+          aria-hidden="true"
+        />
+      </span>
     </template>
     <div class="skill-head">
       <span>{{ t('ui.chat', '仅选中的 Skills 会用于本会话。') }}</span>
@@ -171,13 +176,37 @@ defineExpose({ close })
 </template>
 
 <style scoped>
+.skill-trigger__emblem {
+  display: grid;
+  flex: 0 0 29px;
+  align-self: stretch;
+  place-items: center;
+  border-right: 1px solid var(--ui-border-subtle);
+  background: color-mix(in srgb, var(--ui-accent-purple) 6%, transparent);
+  color: var(--ui-accent-purple);
+}
+.skill-controls-entry.is-compact .skill-trigger__emblem {
+  flex: 1;
+  border-right: 0;
+}
+.skill-trigger__body {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 0 7px 0 8px;
+}
+.skill-trigger__label {
+  color: inherit;
+}
 .skill-trigger-count {
+  padding-left: 6px;
+  border-left: 1px solid var(--ui-border-subtle);
   color: var(--ui-text-tertiary);
-  font: 9px/1 var(--ui-font-mono);
+  font: 700 9.5px/1 var(--ui-font-mono);
 }
 .skill-trigger-chevron {
   color: var(--ui-text-tertiary);
-  transition: transform 180ms ease;
+  transition: transform 140ms ease;
 }
 .skill-trigger-chevron.is-open {
   transform: rotate(180deg);
@@ -242,8 +271,8 @@ button:disabled { opacity: 0.5; cursor: not-allowed; }
     transition: none;
   }
 }
-:global([data-motion='off']) .skill-trigger-chevron,
-:global([data-motion='reduced']) .skill-trigger-chevron {
+[data-motion='off'] .skill-trigger-chevron,
+[data-motion='reduced'] .skill-trigger-chevron {
   transition: none;
 }
 </style>

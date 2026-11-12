@@ -20,10 +20,12 @@ import {
 } from '@infos/shared'
 import PixelIcon from '../pixel/PixelIcon.vue'
 import { useWatchAlongInput } from '../../composables/chat/useWatchAlongInput'
+import { cacheThreadUsableModel } from '../../composables/chat/sendModelGuard'
 import { attachmentsApi, type AttachmentInfo } from '../../api/modules/attachmentsApi'
 import { ApiError } from '../../api/errors'
 import { configApi } from '../../api/modules/configApi'
 import ThreadSkillControls from './ThreadSkillControls.vue'
+import ThreadExperiences from './ThreadExperiences.vue'
 import SessionSettingsPanel from './SessionSettingsPanel.vue'
 import { voiceApi } from '../../api/modules/voiceApi'
 import { useAgentStore, useNotificationStore, useThreadStore } from '../../stores'
@@ -71,6 +73,10 @@ interface Props {
   mentionCandidates?: MentionCandidate[]
   /** @ 弹窗中「全体成员」选项的展示名。 */
   mentionAllLabel?: string
+  /** 当前对话角色信息（供主会话「生活经历」抽屉使用）。 */
+  agentId?: string
+  agentName?: string
+  agentAvatarUrl?: string
 }
 
 const props = withDefaults(defineProps<Props>(), {
@@ -87,6 +93,9 @@ const props = withDefaults(defineProps<Props>(), {
   participantLabel: '群聊成员',
   mentionCandidates: () => [],
   mentionAllLabel: '全体成员',
+  agentId: '',
+  agentName: '',
+  agentAvatarUrl: '',
 })
 
 const emit = defineEmits<{
@@ -116,6 +125,10 @@ const displayPlaceholder = computed(
   () => props.placeholder ?? __t('ui.chat', '向角色下达指令或输入 / 打开命令面板…'),
 )
 const agentStore = useAgentStore()
+const resolvedAgentId = computed(() => props.agentId || agentStore.activeAgentId || '')
+const resolvedAgentName = computed(
+  () => props.agentName || agentStore.currentAgent?.name || 'Pero',
+)
 const notify = useNotificationStore()
 const { isMobile } = useMobileLayout()
 const inputText = ref('')
@@ -157,18 +170,39 @@ const submittedAttachments = new Set<PendingAttachment>()
 let attachmentDraftVersion = 0
 const pdfAvailable = ref(false)
 const maxPdfBytes = ref(0)
-async function loadPdfCapabilities(): Promise<void> {
-  try {
-    const response = await attachmentsApi.capabilities()
-    pdfAvailable.value = response.data?.pdf ?? false
-    maxPdfBytes.value = response.data?.maxPdfBytes ?? 0
-  } catch {
-    pdfAvailable.value = false
-    maxPdfBytes.value = 0
-  }
+let pdfCapabilitiesLoaded = false
+let pdfCapabilitiesPromise: Promise<void> | null = null
+async function loadPdfCapabilities(force = false): Promise<void> {
+  if (pdfCapabilitiesLoaded && !force) return
+  if (pdfCapabilitiesPromise && !force) return pdfCapabilitiesPromise
+  const task = (async () => {
+    try {
+      const response = await attachmentsApi.capabilities()
+      pdfAvailable.value = response.data?.pdf ?? false
+      maxPdfBytes.value = response.data?.maxPdfBytes ?? 0
+      pdfCapabilitiesLoaded = true
+    } catch {
+      pdfAvailable.value = false
+      maxPdfBytes.value = 0
+    }
+  })().finally(() => {
+    if (pdfCapabilitiesPromise === task) pdfCapabilitiesPromise = null
+  })
+  pdfCapabilitiesPromise = task
+  return task
 }
+let lastFocusSyncAt = 0
 function onIntegrationsChanged(): void {
-  void loadPdfCapabilities()
+  pdfCapabilitiesLoaded = false
+  capabilitiesLoadedKey = ''
+  void loadPdfCapabilities(true)
+  void loadCapabilities(true)
+  if (!toolsSaving.value) void loadThreadTools()
+}
+function onWindowFocus(): void {
+  const now = Date.now()
+  if (now - lastFocusSyncAt < 30_000) return
+  lastFocusSyncAt = now
   if (!toolsSaving.value) void loadThreadTools()
 }
 const textareaRef = ref<HTMLTextAreaElement | null>(null)
@@ -243,12 +277,12 @@ let capabilitiesRequest = 0
 
 function onThreadModelChanged(settings: ThreadModelSettings): void {
   if (settings.threadId !== threadStore.threadId) return
+  cacheThreadUsableModel(settings.threadId, Boolean(settings.effective.modelId))
   enableVision.value = settings.effective.enableVision
   enableAudioInput.value = settings.effective.enableAudioInput
   nativeAudioAvailable.value = settings.effective.nativeAudioAvailable === true
   tokenBudget.value = null
   scheduleTokenBudgetRefresh()
-  void loadCapabilities()
 }
 const asrAvailable = ref(false)
 
@@ -300,7 +334,6 @@ const recordState = computed(() =>
           : 'idle',
 )
 
-const activeAgent = computed(() => agentStore.currentAgent)
 const isGroupChannel = computed(() => props.channel === 'group')
 const channelLabel = computed(
   () =>
@@ -336,8 +369,7 @@ const availableToolCount = computed(
 )
 const modeSwitchDisabled = computed(
   () =>
-    toolsLoading.value ||
-    toolsSaving.value ||
+    (toolsLoading.value && !threadTools.value.length) ||
     props.isSending ||
     threadStore.isGenerating ||
     threadStore.isLoadingHistory ||
@@ -375,7 +407,44 @@ const tokenBudgetRatio = computed(() => {
   if (!budget?.maxInputTokens) return 0
   return Math.min(1, Math.max(0, budget.usedTokens / budget.maxInputTokens))
 })
-const tokenBudgetDegrees = computed(() => `${tokenBudgetRatio.value * 360}deg`)
+const hasTokenBudget = computed(() => Boolean(displayedTokenBudget.value?.maxInputTokens))
+const tokenBudgetPercent = computed(() => Math.round(tokenBudgetRatio.value * 100))
+const tokenBudgetPercentText = computed(() =>
+  hasTokenBudget.value ? `${tokenBudgetPercent.value}%` : '--%',
+)
+const tokenBudgetSweepDeg = computed(() => {
+  if (!hasTokenBudget.value || tokenBudgetRatio.value <= 0) return '0deg'
+  const deg = Math.min(360, Math.max(18, Math.round(tokenBudgetRatio.value * 360)))
+  return `${deg}deg`
+})
+const tokenBudgetTone = computed<'idle' | 'normal' | 'warn' | 'danger'>(() => {
+  if (!hasTokenBudget.value) return 'idle'
+  if (tokenBudgetPercent.value >= 90) return 'danger'
+  if (tokenBudgetPercent.value >= 75) return 'warn'
+  return 'normal'
+})
+const tokenBudgetUsedText = computed(() => {
+  const budget = displayedTokenBudget.value
+  return budget?.maxInputTokens ? formatTokenCount(budget.usedTokens) : '—'
+})
+const tokenBudgetMaxText = computed(() => {
+  const budget = displayedTokenBudget.value
+  return budget?.maxInputTokens ? formatTokenCount(budget.maxInputTokens) : '—'
+})
+const tokenBudgetStatusNote = computed(() => {
+  const budget = currentLiveContextBudget.value
+  if (budget) {
+    return __t('ui.chat', '第 {0} 轮输入{1}', [
+      budget.turn,
+      budget.estimated ? __t('ui.chat', '（估算）') : '',
+    ])
+  }
+  if (budgetIsRunning.value) return __t('ui.chat', '等待输入统计')
+  const note = tokenBudget.value?.memoryRetrievalDeferred
+    ? __t('ui.chat', '（不含待检索记忆）')
+    : ''
+  return __t('ui.chat', '预计输入{0}', [note])
+})
 const tokenBudgetLabel = computed(() => {
   const budget = displayedTokenBudget.value
   if (!budget?.maxInputTokens) return '— / — Token'
@@ -478,27 +547,34 @@ async function loadThreadTools(): Promise<void> {
 async function switchInteractionMode(mode: InteractionMode): Promise<void> {
   if (skillSettingsBusy.value) return
   if (modeSwitchDisabled.value || threadStore.interactionMode === mode) return
+  const previousMode = threadStore.interactionMode
+  threadStore.interactionMode = mode
   toolsSaving.value = true
   modeSaving.value = true
   pendingInteractionMode.value = mode
   let request = 0
+  let targetThreadId = threadStore.threadId
   try {
-    const threadId = await ensureThread()
+    targetThreadId = await ensureThread()
     request = ++toolsRequest
-    const response = await threadsApi.updateInteractionMode(threadId, mode)
-    if (threadId !== threadStore.threadId) return
-    request = ++toolsRequest
+    const response = await threadsApi.updateInteractionMode(targetThreadId, mode)
+    if (request !== toolsRequest || targetThreadId !== threadStore.threadId) return
     if (response.data) applyThreadTools(response.data)
     scheduleTokenBudgetRefresh()
   } catch (error) {
+    if (request === toolsRequest && targetThreadId === threadStore.threadId) {
+      threadStore.interactionMode = previousMode
+    }
     notify.toast(error instanceof Error ? error.message : __t('ui.chat', '切换会话模式失败'), {
       type: 'error',
     })
   } finally {
-    modeSaving.value = false
-    pendingInteractionMode.value = null
-    toolsSaving.value = false
-    if (request === toolsRequest) toolsLoading.value = false
+    if (request === toolsRequest || request === 0) {
+      modeSaving.value = false
+      pendingInteractionMode.value = null
+      toolsSaving.value = false
+      toolsLoading.value = false
+    }
   }
 }
 
@@ -507,13 +583,12 @@ async function changeExecutionMode(nextMode: ExecutionMode): Promise<void> {
   const threadId = threadStore.threadId
   if (!threadId) return
   const previous = executionMode.value
-  ++toolsRequest
+  const request = ++toolsRequest
   executionMode.value = nextMode
   toolsSaving.value = true
   try {
     const response = await threadsApi.updateExecutionMode(threadId, nextMode)
-    if (threadId !== threadStore.threadId) return
-    ++toolsRequest
+    if (request !== toolsRequest || threadId !== threadStore.threadId) return
     toolsLoading.value = false
     executionMode.value = resolveExecutionMode(
       response.data?.executionMode,
@@ -526,12 +601,14 @@ async function changeExecutionMode(nextMode: ExecutionMode): Promise<void> {
       { type: 'success' },
     )
   } catch (error) {
-    if (threadId === threadStore.threadId) executionMode.value = previous
+    if (request === toolsRequest && threadId === threadStore.threadId) {
+      executionMode.value = previous
+    }
     notify.toast(error instanceof Error ? error.message : __t('ui.chat', '保存执行模式失败'), {
       type: 'error',
     })
   } finally {
-    toolsSaving.value = false
+    if (request === toolsRequest) toolsSaving.value = false
   }
 }
 
@@ -717,40 +794,65 @@ const commands = computed(() => [
   })),
 ])
 
-async function loadCapabilities(): Promise<void> {
+let capabilitiesLoadedKey = ''
+let capabilitiesPromise: Promise<void> | null = null
+
+async function loadCapabilities(force = false): Promise<void> {
   // 据点群聊当前仅支持文本，不读取 desktop 模型和语音能力。
   if (isGroupChannel.value) return
   const threadId = threadStore.threadId
-  const request = ++capabilitiesRequest
-  try {
-    const [modelResult, voiceResult, relayResult] = await Promise.allSettled([
-      threadId ? threadsApi.getModelSettings(threadId) : Promise.resolve(null),
-      voiceApi.getStatus(),
-      configApi.batch(['multimodalRelay.enabled', 'multimodalRelay.modelConfigId']),
-    ])
-    if (request !== capabilitiesRequest || threadId !== threadStore.threadId) return
-    const modelRes = modelResult.status === 'fulfilled' ? modelResult.value : null
-    const voiceRes = voiceResult.status === 'fulfilled' ? voiceResult.value : null
-    const relayRes = relayResult.status === 'fulfilled' ? relayResult.value : null
-    const relayConfig = relayRes?.data ?? {}
-    relayAvailable.value =
-      relayConfig['multimodalRelay.enabled'] === 'true' &&
-      Boolean(relayConfig['multimodalRelay.modelConfigId'])
-    asrAvailable.value = voiceRes?.data?.asr?.available === true
-    enableVision.value = modelRes?.data?.effective.enableVision === true
-    enableAudioInput.value = modelRes?.data?.effective.enableAudioInput === true
-    nativeAudioAvailable.value = modelRes?.data?.effective.nativeAudioAvailable === true
-  } catch (error) {
-    logger.error('InputBar', __t('logs.frontend.chat', '读取输入能力状态失败'), error)
+  const scopeKey = `${agentStore.activeAgentId}:${threadId}`
+  if (!force && capabilitiesLoadedKey === scopeKey) return
+  if (!force && capabilitiesPromise && capabilitiesLoadedKey === `pending:${scopeKey}`) {
+    return capabilitiesPromise
   }
+  const request = ++capabilitiesRequest
+  capabilitiesLoadedKey = `pending:${scopeKey}`
+  const task = (async () => {
+    try {
+      const [modelResult, voiceResult, relayResult] = await Promise.allSettled([
+        threadId ? threadsApi.getModelSettings(threadId) : Promise.resolve(null),
+        voiceApi.getStatus(),
+        configApi.batch(['multimodalRelay.enabled', 'multimodalRelay.modelConfigId']),
+      ])
+      if (request !== capabilitiesRequest || threadId !== threadStore.threadId) return
+      const modelRes = modelResult.status === 'fulfilled' ? modelResult.value : null
+      const voiceRes = voiceResult.status === 'fulfilled' ? voiceResult.value : null
+      const relayRes = relayResult.status === 'fulfilled' ? relayResult.value : null
+      const relayConfig = relayRes?.data ?? {}
+      if (threadId && modelRes?.data) {
+        cacheThreadUsableModel(threadId, Boolean(modelRes.data.effective.modelId))
+      }
+      relayAvailable.value =
+        relayConfig['multimodalRelay.enabled'] === 'true' &&
+        Boolean(relayConfig['multimodalRelay.modelConfigId'])
+      asrAvailable.value = voiceRes?.data?.asr?.available === true
+      enableVision.value = modelRes?.data?.effective.enableVision === true
+      enableAudioInput.value = modelRes?.data?.effective.enableAudioInput === true
+      nativeAudioAvailable.value = modelRes?.data?.effective.nativeAudioAvailable === true
+      capabilitiesLoadedKey = scopeKey
+    } catch (error) {
+      if (request === capabilitiesRequest) capabilitiesLoadedKey = ''
+      logger.error('InputBar', __t('logs.frontend.chat', '读取输入能力状态失败'), error)
+    }
+  })().finally(() => {
+    if (capabilitiesPromise === task) capabilitiesPromise = null
+  })
+  capabilitiesPromise = task
+  return task
 }
 
-watch([() => agentStore.activeAgentId, () => threadStore.threadId], loadCapabilities, {
-  immediate: true,
-})
+watch(
+  [() => agentStore.activeAgentId, () => threadStore.threadId],
+  () => {
+    void loadCapabilities()
+  },
+  { immediate: true },
+)
 
 function onModelCapabilitiesChanged(): void {
-  void loadCapabilities()
+  capabilitiesLoadedKey = ''
+  void loadCapabilities(true)
 }
 
 watch(
@@ -872,8 +974,18 @@ function onKeydown(event: KeyboardEvent) {
   }
 }
 
+let creatingThreadPromise: Promise<string> | null = null
 async function ensureThread(): Promise<string> {
-  if (!threadStore.threadId) await threadStore.createNewThread(agentStore.activeAgentId, 'desktop')
+  if (threadStore.threadId) return threadStore.threadId
+  if (!creatingThreadPromise) {
+    const task = threadStore
+      .createNewThread(agentStore.activeAgentId, 'desktop')
+      .finally(() => {
+        if (creatingThreadPromise === task) creatingThreadPromise = null
+      })
+    creatingThreadPromise = task
+  }
+  await creatingThreadPromise
   return threadStore.threadId
 }
 
@@ -885,31 +997,14 @@ function validateFile(file: File): 'image' | 'text' | 'pdf' | 'audio' | 'file' |
   return classifyAttachmentUpload(file.name, file.type, file.size)
 }
 
-async function uploadFile(file: File, signal?: AbortSignal) {
-  if (props.disabled || isGroupChannel.value) return
-  const version = attachmentDraftVersion,
-    agentId = agentStore.activeAgentId
-  const validDraft = () =>
-    !signal?.aborted &&
-    version === attachmentDraftVersion &&
-    agentId === agentStore.activeAgentId &&
-    !props.disabled
-  if (file.type === 'application/pdf' || /\.pdf$/i.test(file.name)) await loadPdfCapabilities()
+/** 0ms 同步构建待发送缩略图占位，消除粘贴/拖入文件后的无反馈空白期。 */
+function stagePendingAttachment(file: File): PendingAttachment | null {
+  if (props.disabled || isGroupChannel.value) return null
   const kind = validateFile(file)
-  if (!kind) return
-  // 模型配置可能由设置页或其他窗口刚刚更新；上传前复核权威能力，避免使用陈旧快照。
-  if (kind === 'image') await loadCapabilities()
-  if (!validDraft()) return
-  const referenceOnly =
-    kind === 'file' ||
-    (kind === 'pdf' && (!pdfAvailable.value || file.size > maxPdfBytes.value)) ||
-    (kind === 'image' &&
-      ((!enableVision.value && !relayAvailable.value) ||
-        (imageMode.value === 'native' && !enableVision.value) ||
-        (imageMode.value === 'relay' && !relayAvailable.value)))
+  if (!kind) return null
   if (pendingAttachments.value.length >= 5) {
     notify.toast(__t('ui.chat', '每轮最多添加 5 个附件'), { type: 'warning' })
-    return
+    return null
   }
   const localKey = `${Date.now()}-${Math.random()}`
   const previewUrl = kind === 'image' || kind === 'audio' ? URL.createObjectURL(file) : undefined
@@ -928,8 +1023,43 @@ async function uploadFile(file: File, signal?: AbortSignal) {
     previewUrl,
     sourceFile: file,
   }
-  pendingAttachments.value.push(pending)
+  pendingAttachments.value = [...pendingAttachments.value, pending]
+  return pending
+}
+
+async function uploadStagedAttachment(
+  pending: PendingAttachment,
+  file: File,
+  version: number,
+  agentId: string,
+  signal?: AbortSignal,
+): Promise<void> {
+  const { localKey, kind } = pending
+  const validDraft = () =>
+    !signal?.aborted &&
+    version === attachmentDraftVersion &&
+    agentId === agentStore.activeAgentId &&
+    !props.disabled &&
+    pendingAttachments.value.some((item) => item.localKey === localKey)
   try {
+    if (kind === 'pdf' || file.type === 'application/pdf' || /\.pdf$/i.test(file.name)) {
+      await loadPdfCapabilities()
+    } else if (kind === 'image') {
+      await loadCapabilities()
+    }
+    if (!validDraft()) {
+      if (signal?.aborted || version !== attachmentDraftVersion || agentId !== agentStore.activeAgentId) {
+        detachAttachment(pending)
+      }
+      return
+    }
+    const referenceOnly =
+      kind === 'file' ||
+      (kind === 'pdf' && (!pdfAvailable.value || file.size > maxPdfBytes.value)) ||
+      (kind === 'image' &&
+        ((!enableVision.value && !relayAvailable.value) ||
+          (imageMode.value === 'native' && !enableVision.value) ||
+          (imageMode.value === 'relay' && !relayAvailable.value)))
     const threadId = await ensureThread()
     if (!validDraft() || threadStore.threadId !== threadId) {
       detachAttachment(pending)
@@ -940,11 +1070,7 @@ async function uploadFile(file: File, signal?: AbortSignal) {
       ...(signal ? { signal } : {}),
     })
     if (!response.data) throw new Error('服务端未返回附件信息')
-    if (
-      !validDraft() ||
-      threadStore.threadId !== threadId ||
-      !pendingAttachments.value.some((item) => item.localKey === localKey)
-    ) {
+    if (!validDraft() || threadStore.threadId !== threadId) {
       detachAttachment(pending)
       await cleanupPendingAttachment(response.data)
       return
@@ -965,6 +1091,15 @@ async function uploadFile(file: File, signal?: AbortSignal) {
   }
 }
 
+async function uploadFile(file: File, signal?: AbortSignal) {
+  if (signal?.aborted) return
+  const version = attachmentDraftVersion
+  const agentId = agentStore.activeAgentId
+  const pending = stagePendingAttachment(file)
+  if (!pending) return
+  await uploadStagedAttachment(pending, file, version, agentId, signal)
+}
+
 function failPendingAttachment(item: PendingAttachment, cause: unknown): void {
   if (!pendingAttachments.value.some((entry) => entry.localKey === item.localKey)) return
   item.uploadState = 'failed'
@@ -979,30 +1114,34 @@ async function handleFiles(event: Event) {
   input.value = ''
 }
 
-let uploadQueue = Promise.resolve()
-function uploadFiles(files: File[]): Promise<void> {
-  const version = attachmentDraftVersion,
-    agentId = agentStore.activeAgentId
-  const operation = uploadQueue
-    .catch(() => undefined)
-    .then(async () => {
-      for (const file of files) {
-        if (
-          version !== attachmentDraftVersion ||
-          agentId !== agentStore.activeAgentId ||
-          props.disabled ||
-          isGroupChannel.value
-        )
-          break
-        if (pendingAttachments.value.length >= 5) {
-          notify.toast(__t('ui.chat', '每轮最多添加 5 个附件'), { type: 'warning' })
-          break
-        }
-        await uploadFile(file)
+const UPLOAD_CONCURRENCY = 3
+async function uploadFiles(files: File[]): Promise<void> {
+  if (props.disabled || isGroupChannel.value || !files.length) return
+  const version = attachmentDraftVersion
+  const agentId = agentStore.activeAgentId
+  // 先在首帧同步推入所有缩略图占位，再按有界并发上传到服务端
+  const staged: Array<{ pending: PendingAttachment; file: File }> = []
+  for (const file of files) {
+    const pending = stagePendingAttachment(file)
+    if (!pending) {
+      if (pendingAttachments.value.length >= 5) break
+      continue
+    }
+    staged.push({ pending, file })
+  }
+  if (!staged.length) return
+  let cursor = 0
+  const workers = Array.from(
+    { length: Math.min(UPLOAD_CONCURRENCY, staged.length) },
+    async () => {
+      while (cursor < staged.length) {
+        const entry = staged[cursor++]
+        if (!entry) break
+        await uploadStagedAttachment(entry.pending, entry.file, version, agentId)
       }
-    })
-  uploadQueue = operation
-  return operation
+    },
+  )
+  await Promise.all(workers)
 }
 const fileDrop = useFileDrop({
   enabled: () => !props.disabled && !isGroupChannel.value,
@@ -1292,9 +1431,7 @@ function send() {
   if (
     voiceBusy.value ||
     startingVoice.value ||
-    modelSettingsBusy.value ||
     skillSettingsBusy.value ||
-    modeSaving.value ||
     submitting.value ||
     props.submissionBusy ||
     (props.isSending && !props.queueEnabled) ||
@@ -1507,14 +1644,16 @@ function formatSize(bytes: number) {
 onMounted(() => {
   void loadPdfCapabilities()
   window.addEventListener('infos:integrations-changed', onIntegrationsChanged)
-  window.addEventListener('focus', onIntegrationsChanged)
+  window.addEventListener('focus', onWindowFocus)
   window.addEventListener('infos:model-capabilities-changed', onModelCapabilitiesChanged)
+  window.addEventListener('infos:input-foldout-open', onFoldoutOpened)
 })
 
 onBeforeUnmount(() => {
   window.removeEventListener('infos:integrations-changed', onIntegrationsChanged)
-  window.removeEventListener('focus', onIntegrationsChanged)
+  window.removeEventListener('focus', onWindowFocus)
   window.removeEventListener('infos:model-capabilities-changed', onModelCapabilitiesChanged)
+  window.removeEventListener('infos:input-foldout-open', onFoldoutOpened)
   if (tokenBudgetTimer) clearTimeout(tokenBudgetTimer)
   tokenBudgetRequest++
   cancelRecording()
@@ -1607,55 +1746,17 @@ defineExpose({
     @dragleave="fileDrop.leave"
     @drop="fileDrop.drop"
   >
-    <div class="deck-status">
-      <span class="deck-brand">CHAR OPS</span>
-      <template v-if="isGroupChannel">
-        <span class="deck-chip">
-          <PixelIcon name="home" size="xs" />
-          {{ contextLabel }}
-        </span>
-        <span class="deck-chip">GROUP</span>
-        <span class="deck-chip">
-          <PixelIcon name="user" size="xs" />
-          {{ participantLabel }}
-        </span>
-        <span class="deck-chip" :class="{ active: isSending }">
-          {{ isSending ? __t('ui.chat', '等待角色回复') : __t('ui.chat', '群聊就绪') }}
-        </span>
-      </template>
-      <template v-else>
-        <span class="deck-chip">
-          <PixelIcon name="user" size="xs" />
-          {{ activeAgent?.name ?? __t('ui.chat', '角色') }}
-        </span>
-        <span class="deck-chip">DESKTOP</span>
-        <span class="deck-chip" :class="{ off: !enableVision }">
-          {{ __t('ui.chat', '视觉') }} {{ enableVision ? 'ON' : 'OFF' }}
-        </span>
-        <span class="deck-chip" :class="{ off: !asrAvailable }">
-          ASR {{ asrAvailable ? 'READY' : 'OFF' }}
-        </span>
-        <span class="deck-chip" :class="{ active: isSending }">
-          {{ __t('ui.chat', '工具') }} {{ isSending ? 'BUSY' : 'STANDBY' }}
-        </span>
-        <button
-          class="deck-flow-chip"
-          :class="{ active: flowOpen }"
-          :title="__t('ui.chat', '查看当前会话心流')"
-          @click="toggleFlowPanel"
-        >
-          <PixelIcon name="thought" size="xs" />
-          {{ __t('ui.chat', '心流') }}
-        </button>
-      </template>
-      <span v-if="!isGroupChannel" class="token-capacitor" :title="tokenBudgetTitle">
-        <span
-          class="token-capacitor-ring"
-          :style="{ '--token-capacitor-angle': tokenBudgetDegrees }"
-        >
-          <span class="token-capacitor-core" />
-        </span>
-        <span class="token-capacitor-value">{{ tokenBudgetLabel }}</span>
+    <div v-if="isGroupChannel" class="deck-status">
+      <span class="deck-chip">
+        <PixelIcon name="home" size="xs" />
+        {{ contextLabel }}
+      </span>
+      <span class="deck-chip">
+        <PixelIcon name="user" size="xs" />
+        {{ participantLabel }}
+      </span>
+      <span class="deck-chip" :class="{ active: isSending }">
+        {{ isSending ? __t('ui.chat', '等待角色回复') : __t('ui.chat', '群聊就绪') }}
       </span>
     </div>
 
@@ -1847,63 +1948,66 @@ defineExpose({
           @debug-change="loadThreadTools"
           @reset="resetSessionSettings"
         />
-        <div class="deck-tool-group">
-          <ThreadSkillControls
-            ref="skillControls"
-            :thread-id="threadStore.threadId"
-            :compact="compact || isMobile"
-            :disabled="modeSwitchDisabled || modeSaving || modelSettingsBusy || threadStore.interactionMode === 'minimal'"
-            @open="onFoldoutOpened"
-            @busy="skillSettingsBusy = $event"
-            @changed="scheduleTokenBudgetRefresh"
-          />
-          <slot
-            name="session-tools"
-            :compact="compact || isMobile"
-            :disabled="disabled"
-            :dismiss="closeInputPopovers"
-          />
-          <button
-            type="button"
-            class="input-tool-trigger"
-            :title="__t('ui.chat', '管理本会话可用工具')"
-            :aria-label="__t('ui.chat', '管理本会话可用工具')"
-            :aria-expanded="toolOpen"
-            :disabled="modeSaving || skillSettingsBusy"
-            :class="{ 'is-open': toolOpen }"
-            @click="toggleToolManager"
-          >
+        <ThreadSkillControls
+          ref="skillControls"
+          :thread-id="threadStore.threadId"
+          :compact="compact || isMobile"
+          :disabled="modeSwitchDisabled || modeSaving || modelSettingsBusy || threadStore.interactionMode === 'minimal'"
+          @open="onFoldoutOpened"
+          @busy="skillSettingsBusy = $event"
+          @changed="scheduleTokenBudgetRefresh"
+        />
+        <button
+          type="button"
+          class="input-tool-trigger input-tool-trigger--chambered"
+          :title="__t('ui.chat', '管理本会话可用工具')"
+          :aria-label="__t('ui.chat', '管理本会话可用工具')"
+          :aria-expanded="toolOpen"
+          :disabled="modeSaving || skillSettingsBusy"
+          :class="{ 'is-open': toolOpen, 'is-compact': compact || isMobile }"
+          @click="toggleToolManager"
+        >
+          <span class="tool-trigger__emblem" aria-hidden="true">
             <PixelIcon name="tool" size="xs" />
-            <span v-if="!compact && !isMobile">{{ __t('ui.chat', '会话工具') }}</span>
-            <span v-if="threadTools.length && !compact && !isMobile" class="tool-count">
+          </span>
+          <span v-if="!compact && !isMobile" class="tool-trigger__body">
+            <span>{{ __t('ui.chat', '会话工具') }}</span>
+            <span v-if="threadTools.length" class="tool-count">
               {{ enabledToolCount }}/{{ availableToolCount }}
             </span>
-          </button>
-        </div>
-        <div class="deck-tool-group deck-tool-group--shortcuts">
-          <button
-            type="button"
-            class="input-tool-trigger"
-            :class="{ 'is-open': commandOpen }"
-            :title="__t('ui.chat', '命令')"
-            :aria-label="__t('ui.chat', '命令')"
-            :aria-expanded="commandOpen"
-            @click="commandOpen = !commandOpen"
-          >
-            <PixelIcon name="terminal" size="xs" class="deck-tool-icon" />
-            <span v-if="!compact && !isMobile">/ CMD</span>
-          </button>
-          <button
-            type="button"
-            class="deck-add-file input-tool-trigger"
-            :title="__t('ui.attachments', '添加文件')"
-            :aria-label="__t('ui.attachments', '添加文件')"
-            :disabled="disabled"
-            @click="fileInputRef?.click()"
-          >
-            <PixelIcon name="plus" size="xs" aria-hidden="true" />
-          </button>
-        </div>
+          </span>
+        </button>
+        <button
+          type="button"
+          class="input-tool-trigger input-cmd-trigger"
+          :class="{ 'is-open': commandOpen }"
+          :title="__t('ui.chat', '命令')"
+          :aria-label="__t('ui.chat', '命令')"
+          :aria-expanded="commandOpen"
+          @click="commandOpen = !commandOpen"
+        >
+          <PixelIcon v-if="compact || isMobile" name="terminal" size="xs" class="deck-tool-icon" />
+          <template v-else>
+            <span class="cmd-trigger__slash" aria-hidden="true">/</span>
+            <span>{{ __t('ui.chat', '指令') }}</span>
+          </template>
+        </button>
+        <button
+          type="button"
+          class="deck-add-file input-tool-trigger"
+          :title="__t('ui.attachments', '添加文件')"
+          :aria-label="__t('ui.attachments', '添加文件')"
+          :disabled="disabled"
+          @click="fileInputRef?.click()"
+        >
+          <PixelIcon name="plus" size="xs" aria-hidden="true" />
+        </button>
+        <slot
+          name="session-tools"
+          :compact="compact || isMobile"
+          :disabled="disabled"
+          :dismiss="closeInputPopovers"
+        />
       </div>
       <div v-else-if="isGroupChannel" class="group-footer-tools">
         <button
@@ -1915,6 +2019,77 @@ defineExpose({
           <span class="mention-btn-at">@</span>
           <span>{{ __t('ui.chat', '提及') }}</span>
         </button>
+      </div>
+      <!-- 右侧角色生活经历、会话心流与像素切角晶环上下文容量指示器 -->
+      <div v-if="!isGroupChannel" class="deck-telemetry">
+        <ThreadExperiences
+          v-if="threadStore.threadKind === 'main' && resolvedAgentId"
+          :key="threadStore.threadId"
+          :thread-id="threadStore.threadId"
+          :generation="threadStore.threadGeneration"
+          :agent-id="resolvedAgentId"
+          :agent-name="resolvedAgentName"
+          :agent-avatar-url="agentAvatarUrl"
+          :compact="compact || isMobile"
+          :disabled="disabled || !threadStore.threadId || !!threadStore.navigationTarget"
+        />
+        <button
+          type="button"
+          class="deck-flow-trigger input-tool-trigger input-tool-trigger--chambered"
+          :class="{ 'is-open': flowOpen, 'is-compact': compact || isMobile }"
+          :title="__t('ui.chat', '查看当前会话心流')"
+          :aria-label="__t('ui.chat', '查看当前会话心流')"
+          :aria-expanded="flowOpen"
+          @click="toggleFlowPanel"
+        >
+          <span class="flow-trigger__emblem" aria-hidden="true">
+            <PixelIcon name="thought" size="xs" />
+          </span>
+          <span v-if="!compact && !isMobile" class="flow-trigger__body">
+            {{ __t('ui.chat', '心流') }}
+          </span>
+        </button>
+
+        <div
+          class="token-meter"
+          :class="[`token-meter--${tokenBudgetTone}`, { 'is-running': budgetIsRunning }]"
+          :style="{ '--token-deg': tokenBudgetSweepDeg }"
+          tabindex="0"
+          :aria-label="tokenBudgetTitle"
+        >
+          <span class="token-meter__emblem" aria-hidden="true">
+            <span class="token-meter__gauge">
+              <i class="token-meter__core" />
+            </span>
+          </span>
+          <span class="token-meter__percent">{{ tokenBudgetPercentText }}</span>
+
+          <div class="token-meter__popover" role="tooltip">
+            <div class="token-meter__pop-head">
+              <span class="token-meter__pop-title">
+                <PixelIcon name="crystal" size="xs" />
+                {{ __t('ui.chat', '上下文容量') }}
+              </span>
+              <strong class="token-meter__pop-pct">{{ tokenBudgetPercentText }}</strong>
+            </div>
+            <div class="token-meter__pop-bar" aria-hidden="true">
+              <i :style="{ width: `${Math.max(hasTokenBudget ? 2 : 0, tokenBudgetPercent)}%` }" />
+            </div>
+            <div class="token-meter__pop-stats">
+              <div>
+                <small>{{ __t('ui.chat', '现用') }}</small>
+                <b>{{ tokenBudgetUsedText }}</b>
+              </div>
+              <span class="token-meter__pop-sep">/</span>
+              <div>
+                <small>{{ __t('ui.chat', '上限') }}</small>
+                <b>{{ tokenBudgetMaxText }}</b>
+              </div>
+              <span class="token-meter__pop-unit">Token</span>
+            </div>
+            <p class="token-meter__pop-note">{{ tokenBudgetStatusNote }}</p>
+          </div>
+        </div>
       </div>
       <div class="deck-actions">
         <button
@@ -2014,65 +2189,108 @@ defineExpose({
     <Transition name="motion-pop">
       <div v-if="flowOpen" class="deck-popover flow-popover">
         <header class="flow-panel__head">
-          <div>
-            <strong>{{ __t('ui.chat', '私有临时心流') }}</strong>
-            <span>{{ __t('ui.chat', '当前会话 · Agent 自维护') }}</span>
+          <div class="flow-panel__title">
+            <span class="flow-panel__emblem" aria-hidden="true">
+              <PixelIcon name="thought" size="xs" />
+            </span>
+            <strong>{{ __t('ui.chat', '会话心流') }}</strong>
           </div>
           <div class="flow-panel__actions">
             <button
+              type="button"
               :title="__t('ui.chat', '刷新心流')"
+              :aria-label="__t('ui.chat', '刷新心流')"
               :disabled="flowLoading"
               @click="loadFlowState"
             >
               <PixelIcon name="refresh" size="xs" :animation="flowLoading ? 'spin' : undefined" />
             </button>
-            <button :title="__t('ui.chat', '收起心流')" @click="flowOpen = false">
+            <button
+              type="button"
+              :title="__t('ui.chat', '收起心流')"
+              :aria-label="__t('ui.chat', '收起心流')"
+              @click="flowOpen = false"
+            >
               <PixelIcon name="chevron-down" size="xs" />
             </button>
           </div>
         </header>
-        <div v-if="flowLoading && !flowStates.length" class="flow-panel__empty">
-          <PixelIcon name="refresh" size="xs" animation="spin" />
-          {{ __t('ui.chat', '正在读取心流…') }}
-        </div>
-        <div v-else-if="!flowStates.length" class="flow-panel__empty">
-          {{ __t('ui.chat', '当前会话还没有心流') }}
-        </div>
-        <article v-for="state in flowStates" v-else :key="state.agentId" class="flow-state-card">
-          <header>
-            <span>
-              {{
-                agentStore.agents.find((agent) => agent.id === state.agentId)?.name ?? state.agentId
-              }}
+
+        <div class="flow-panel__body settings-scrollbar">
+          <div v-if="flowLoading && !flowStates.length" class="flow-panel__empty">
+            <span class="flow-panel__empty-icon" aria-hidden="true">
+              <PixelIcon name="refresh" size="sm" animation="spin" />
             </span>
-            <b>REV.{{ state.revision }}</b>
-          </header>
-          <section>
-            <small>{{ __t('ui.chat', '当前目标') }}</small>
-            <p>{{ state.currentGoal || __t('ui.chat', '暂无明确的持续目标。') }}</p>
-          </section>
-          <section class="flow-state-card__private">
-            <small>{{ __t('ui.chat', '私有事实') }}</small>
-            <p>{{ state.privateFacts || __t('ui.chat', '暂无需要私下持续记住的事实。') }}</p>
-          </section>
-          <footer>
-            <time>
-              {{
-                state.updatedAt
-                  ? __t('ui.chat', '更新于 {0}', [state.updatedAt])
-                  : __t('ui.chat', '尚未更新')
-              }}
-            </time>
-            <button
-              :disabled="flowClearing || (!state.currentGoal && !state.privateFacts)"
-              @click="clearFlowState(state.agentId)"
-            >
-              <PixelIcon name="trash" size="xs" />
-              {{ __t('ui.chat', '清空') }}
-            </button>
-          </footer>
-        </article>
-        <p class="flow-panel__notice">{{ __t('ui.chat', '仅用于当前会话，不存入长期记忆。') }}</p>
+            <span>{{ __t('ui.chat', '正在读取心流…') }}</span>
+          </div>
+          <div v-else-if="!flowStates.length" class="flow-panel__empty">
+            <span class="flow-panel__empty-icon" aria-hidden="true">
+              <PixelIcon name="thought" size="sm" />
+            </span>
+            <span>{{ __t('ui.chat', '当前会话还没有心流') }}</span>
+          </div>
+          <article v-for="state in flowStates" v-else :key="state.agentId" class="flow-state-card">
+            <header class="flow-state-card__head">
+              <div class="flow-state-card__agent">
+                <span class="flow-state-card__agent-icon" aria-hidden="true">
+                  <PixelIcon name="bot" size="xs" />
+                </span>
+                <strong>
+                  {{
+                    agentStore.agents.find((agent) => agent.id === state.agentId)?.name ??
+                    state.agentId
+                  }}
+                </strong>
+              </div>
+              <time class="flow-state-card__time">
+                {{
+                  state.updatedAt
+                    ? __t('ui.chat', '更新于 {0}', [state.updatedAt])
+                    : __t('ui.chat', '尚未更新')
+                }}
+              </time>
+            </header>
+
+            <div class="flow-state-card__sections">
+              <section class="flow-state-card__block flow-state-card__block--goal">
+                <small>
+                  <PixelIcon name="sparkle" size="xs" />
+                  <span>{{ __t('ui.chat', '当前目标') }}</span>
+                </small>
+                <p :class="{ 'is-placeholder': !state.currentGoal }">
+                  {{ state.currentGoal || __t('ui.chat', '暂无明确的持续目标。') }}
+                </p>
+              </section>
+
+              <section class="flow-state-card__block flow-state-card__block--private">
+                <small>
+                  <PixelIcon name="key" size="xs" />
+                  <span>{{ __t('ui.chat', '私有事实') }}</span>
+                </small>
+                <p :class="{ 'is-placeholder': !state.privateFacts }">
+                  {{ state.privateFacts || __t('ui.chat', '暂无需要私下持续记住的事实。') }}
+                </p>
+              </section>
+            </div>
+
+            <footer class="flow-state-card__foot">
+              <button
+                type="button"
+                class="flow-state-card__clear"
+                :disabled="flowClearing || (!state.currentGoal && !state.privateFacts)"
+                @click="clearFlowState(state.agentId)"
+              >
+                <PixelIcon name="trash" size="xs" />
+                <span>{{ __t('ui.chat', '清空') }}</span>
+              </button>
+            </footer>
+          </article>
+        </div>
+
+        <p class="flow-panel__notice">
+          <PixelIcon name="info" size="xs" />
+          <span>{{ __t('ui.chat', '仅用于当前会话，不存入长期记忆。') }}</span>
+        </p>
       </div>
     </Transition>
 
@@ -2165,11 +2383,11 @@ defineExpose({
 .record-btn {
   display: grid;
   place-items: center;
-  width: 36px;
-  height: 36px;
+  width: 30px;
+  height: 30px;
   flex-shrink: 0;
   border: 1px solid var(--ui-border-default);
-  border-radius: var(--ui-radius-xs);
+  border-radius: 0;
   background: var(--ui-bg-surface);
   color: var(--ui-text-secondary);
   cursor: pointer;
@@ -2217,9 +2435,9 @@ defineExpose({
 <style scoped>
 .deck {
   position: relative;
-  background: var(--ui-bg-surface);
+  background: var(--app-panel-fill, var(--ui-bg-surface));
   border: 1px solid var(--ui-border-default);
-  border-radius: var(--ui-radius-md);
+  border-radius: 2px;
   box-shadow: var(--ui-shadow-md);
   transition:
     border-color var(--ui-duration-fast) var(--ui-ease-standard),
@@ -2247,8 +2465,7 @@ defineExpose({
   background: var(--ui-bg-surface-soft);
   white-space: nowrap;
 }
-.deck-brand,
-.token-capacitor {
+.deck-brand {
   display: inline-flex;
   align-items: center;
   flex: 0 0 auto;
@@ -2256,42 +2473,240 @@ defineExpose({
   color: var(--ui-success);
   font: 800 9px var(--font-mono);
 }
-.token-capacitor {
-  margin-left: auto;
-  padding-left: 10px;
+
+/* ── 硬朗分仓晶环 Token 容量指示器 + 悬停详情卡片 ── */
+.token-meter {
+  --token-accent: var(--ui-accent-sky);
+  --token-soft: var(--ui-accent-sky-soft);
+  --token-track: rgba(15, 23, 42, 0.14);
+  --token-cavity: #f6f7fb;
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  flex: 0 0 auto;
+  gap: 0;
+  height: 30px;
+  padding: 0;
+  border: 1px solid var(--mech-border, var(--ui-border-default));
+  border-radius: 0;
+  background: var(--mech-bg, var(--ui-bg-surface));
+  box-shadow: var(--mech-shadow, none);
+  color: var(--ui-text-secondary);
+  font: 700 10.5px/1 var(--ui-font-mono);
+  font-variant-numeric: tabular-nums;
+  cursor: default;
+  user-select: none;
+  outline: none;
+  transition:
+    border-color var(--ui-duration-fast) var(--ui-ease-standard),
+    background-color var(--ui-duration-fast) var(--ui-ease-standard),
+    color var(--ui-duration-fast) var(--ui-ease-standard);
 }
-.token-capacitor-ring {
-  --token-capacitor-angle: 0deg;
+[data-theme='dark'] .token-meter {
+  --token-track: rgba(255, 255, 255, 0.14);
+  --token-cavity: #141720;
+}
+.token-meter--idle {
+  --token-accent: var(--ui-text-tertiary);
+  --token-soft: transparent;
+}
+.token-meter--warn {
+  --token-accent: var(--ui-warning);
+  --token-soft: var(--ui-warning-soft);
+  border-color: color-mix(in srgb, var(--ui-warning) 44%, var(--ui-border-default));
+}
+.token-meter--danger {
+  --token-accent: var(--ui-danger);
+  --token-soft: var(--ui-danger-soft);
+  border-color: color-mix(in srgb, var(--ui-danger) 50%, var(--ui-border-default));
+}
+.token-meter:hover,
+.token-meter:focus-visible {
+  border-color: var(--token-accent);
+  background: color-mix(in srgb, var(--token-accent) 7%, var(--mech-bg, var(--ui-bg-surface)));
+}
+.token-meter__emblem {
+  display: grid;
+  flex: 0 0 28px;
+  align-self: stretch;
+  place-items: center;
+  border-right: 1px solid var(--mech-divider, var(--ui-border-subtle));
+  background: color-mix(in srgb, var(--token-accent) 6%, transparent);
+}
+/* 八角切角像素晶环：顺时针扇形表示“已占用容量”，空槽表示剩余空间 */
+.token-meter__gauge {
   position: relative;
   display: inline-grid;
-  width: 16px;
-  height: 16px;
-  flex: 0 0 16px;
   place-items: center;
-  border-radius: 50%;
+  width: 13px;
+  height: 13px;
+  flex: 0 0 13px;
   background: conic-gradient(
-    var(--ui-success) var(--token-capacitor-angle),
-    color-mix(in srgb, var(--ui-success) 16%, transparent) 0
+    from 0deg,
+    var(--token-accent) 0deg var(--token-deg, 0deg),
+    var(--token-track) var(--token-deg, 0deg) 360deg
   );
-  box-shadow: 0 0 6px color-mix(in srgb, var(--ui-success) 58%, transparent);
+  clip-path: polygon(
+    3px 0,
+    calc(100% - 3px) 0,
+    100% 3px,
+    100% calc(100% - 3px),
+    calc(100% - 3px) 100%,
+    3px 100%,
+    0 calc(100% - 3px),
+    0 3px
+  );
 }
-.token-capacitor-ring::before {
+.token-meter__gauge::before {
+  content: '';
   position: absolute;
   inset: 3px;
-  border-radius: 50%;
-  background: var(--ui-bg-surface-soft);
-  content: '';
+  background: var(--token-cavity);
+  clip-path: polygon(
+    2px 0,
+    calc(100% - 2px) 0,
+    100% 2px,
+    100% calc(100% - 2px),
+    calc(100% - 2px) 100%,
+    2px 100%,
+    0 calc(100% - 2px),
+    0 2px
+  );
 }
-.token-capacitor-core {
+.token-meter__core {
   position: relative;
-  width: 4px;
-  height: 4px;
-  border-radius: 50%;
-  background: var(--ui-success);
-  box-shadow: 0 0 5px var(--ui-success);
+  z-index: 1;
+  display: block;
+  width: 2px;
+  height: 2px;
+  background: var(--token-accent);
+  opacity: 0.85;
 }
-.token-capacitor-value {
-  font-variant-numeric: tabular-nums;
+.token-meter--idle .token-meter__core {
+  opacity: 0.4;
+}
+.token-meter.is-running .token-meter__core {
+  animation: token-core-pulse 1.1s ease-in-out infinite;
+}
+@keyframes token-core-pulse {
+  50% {
+    opacity: 0.25;
+    transform: scale(1.35);
+  }
+}
+.token-meter__percent {
+  padding: 0 8px;
+  color: var(--token-accent);
+  letter-spacing: 0.01em;
+}
+.token-meter--normal .token-meter__percent {
+  color: var(--ui-text-secondary);
+}
+.token-meter:hover .token-meter__percent,
+.token-meter:focus-visible .token-meter__percent {
+  color: var(--token-accent);
+}
+.token-meter__popover {
+  position: absolute;
+  right: 0;
+  bottom: calc(100% + 9px);
+  z-index: 35;
+  width: 224px;
+  padding: 10px 11px;
+  border: 1px solid var(--ui-border-strong);
+  border-top: 2px solid var(--token-accent);
+  border-radius: 0;
+  background: var(--ui-bg-elevated);
+  box-shadow: var(--ui-shadow-lg);
+  color: var(--ui-text-primary);
+  opacity: 0;
+  visibility: hidden;
+  transform: translateY(4px);
+  pointer-events: none;
+  transition:
+    opacity var(--ui-duration-fast) var(--ui-ease-standard),
+    transform var(--ui-duration-fast) var(--ui-ease-emphasized),
+    visibility var(--ui-duration-fast);
+}
+[data-theme='dark'] .token-meter__popover {
+  background: #171a25;
+}
+.token-meter:hover .token-meter__popover,
+.token-meter:focus-visible .token-meter__popover {
+  opacity: 1;
+  visibility: visible;
+  transform: translateY(0);
+}
+.token-meter__pop-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  margin-bottom: 7px;
+}
+.token-meter__pop-title {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  color: var(--ui-text-secondary);
+  font: 700 11px/1.2 var(--ui-font-pixel);
+}
+.token-meter__pop-title :deep(.pixel-icon) {
+  color: var(--token-accent);
+}
+.token-meter__pop-pct {
+  color: var(--token-accent);
+  font: 800 12px/1 var(--ui-font-mono);
+}
+.token-meter__pop-bar {
+  height: 5px;
+  margin-bottom: 8px;
+  overflow: hidden;
+  border: 1px solid var(--ui-border-subtle);
+  background: color-mix(in srgb, var(--ui-bg-canvas) 80%, transparent);
+}
+.token-meter__pop-bar > i {
+  display: block;
+  height: 100%;
+  background: var(--token-accent);
+  transition: width var(--ui-duration-normal) var(--ui-ease-standard);
+}
+.token-meter__pop-stats {
+  display: flex;
+  align-items: baseline;
+  gap: 6px;
+  padding: 5px 7px;
+  border: 1px solid var(--ui-border-subtle);
+  background: var(--ui-bg-surface-soft);
+  font-family: var(--ui-font-mono);
+}
+.token-meter__pop-stats > div {
+  display: flex;
+  align-items: baseline;
+  gap: 4px;
+}
+.token-meter__pop-stats small {
+  color: var(--ui-text-tertiary);
+  font: 10px/1 var(--ui-font-sans);
+}
+.token-meter__pop-stats b {
+  color: var(--ui-text-primary);
+  font-size: 11.5px;
+  font-weight: 700;
+}
+.token-meter__pop-sep {
+  color: var(--ui-text-disabled);
+  font-size: 11px;
+}
+.token-meter__pop-unit {
+  margin-left: auto;
+  color: var(--ui-text-tertiary);
+  font-size: 9.5px;
+}
+.token-meter__pop-note {
+  margin: 6px 0 0 !important;
+  color: var(--ui-text-tertiary);
+  font: 10.5px/1.35 var(--ui-font-sans);
 }
 .deck-chip {
   display: inline-flex;
@@ -2550,7 +2965,7 @@ button {
   min-width: 0;
   align-items: center;
   gap: 8px;
-  padding: 8px 10px;
+  padding: 7px 10px 6px;
   border-top: 1px solid var(--ui-border-subtle);
 }
 .deck-tools {
@@ -2558,12 +2973,18 @@ button {
   min-width: 0;
   flex: 1;
   align-items: center;
-  gap: 8px;
+  gap: 6px;
   overflow-x: auto;
   scrollbar-width: none;
 }
-/* 各子组件的入口统一由工具行定尺寸和状态，弹层内容继续使用各自样式。 */
-.deck-tools :deep(.input-tool-trigger) {
+.deck-telemetry {
+  display: inline-flex;
+  flex: 0 0 auto;
+  align-items: center;
+  gap: 6px;
+}
+/* 硬朗哑光机械键基础形态（分仓与阴影变量由 input-toolbar.css 统一提供） */
+.deck-footer :deep(.input-tool-trigger) {
   position: relative;
   display: inline-flex;
   flex: 0 0 auto;
@@ -2571,53 +2992,78 @@ button {
   justify-content: center;
   gap: 5px;
   min-width: 30px;
-  height: 32px;
-  min-height: 32px;
+  height: 30px;
+  min-height: 30px;
   margin: 0;
   padding: 0 9px;
-  border: 0;
+  border: 1px solid var(--mech-border, var(--ui-border-default));
   border-radius: 0;
-  background: transparent;
+  background: var(--mech-bg, var(--ui-bg-surface));
   color: var(--ui-text-secondary);
-  box-shadow: none;
+  box-shadow: var(--mech-shadow, none);
   font: 11px/1 var(--ui-font-pixel);
   white-space: nowrap;
   cursor: pointer;
-  transition: color 140ms ease, background-color 140ms ease, border-color 140ms ease;
+  transition:
+    color 140ms ease,
+    background-color 140ms ease,
+    border-color 140ms ease;
 }
-.deck-tools :deep(.input-tool-trigger:hover:not(:disabled)),
-.deck-tools :deep(.input-tool-trigger.is-open) {
-  background: var(--ui-bg-hover);
+.deck-footer :deep(.input-tool-trigger:hover:not(:disabled)),
+.deck-footer :deep(.input-tool-trigger.is-open) {
+  background: color-mix(
+    in srgb,
+    var(--ui-accent-primary) 7%,
+    var(--mech-bg, var(--ui-bg-surface))
+  );
+  border-color: var(--ui-accent-primary);
   color: var(--ui-accent-primary);
-  box-shadow: none;
 }
-.deck-tools :deep(.input-tool-trigger:active:not(:disabled)) {
-  box-shadow: none;
+.deck-footer :deep(.input-tool-trigger:active:not(:disabled)) {
+  transform: translate(1px, 1px);
+  box-shadow: var(--mech-shadow-active, none);
 }
-.deck-tools :deep(.input-tool-trigger:disabled) {
+.deck-footer :deep(.input-tool-trigger:disabled) {
   cursor: not-allowed;
-  opacity: 0.4;
+  opacity: 0.45;
 }
-.deck-tools :deep(.input-tool-trigger:focus-visible) {
-  outline: 1px solid var(--ui-accent-primary);
-  outline-offset: -1px;
+.deck-footer :deep(.input-tool-trigger:focus-visible) {
+  outline: 2px solid var(--ui-accent-primary);
+  outline-offset: 2px;
 }
-.deck-tools :deep(.input-tool-trigger .pixel-icon) {
+.deck-footer :deep(.input-tool-trigger .pixel-icon) {
   flex: 0 0 auto;
 }
-.deck--compact .deck-tools :deep(.input-tool-trigger),
+.deck--compact .deck-footer :deep(.input-tool-trigger),
 .deck-tools .deck-add-file {
-  width: 32px;
+  width: 30px;
+  min-width: 30px;
   padding: 0;
 }
 @media (prefers-reduced-motion: reduce) {
-  .deck-tools :deep(.input-tool-trigger) {
+  .deck-footer :deep(.input-tool-trigger),
+  .token-meter,
+  .token-meter__popover,
+  .token-meter__pop-bar > i {
     transition: none;
   }
+  .token-meter.is-running .token-meter__core {
+    animation: none;
+  }
 }
-:global([data-motion='off']) .deck-tools :deep(.input-tool-trigger),
-:global([data-motion='reduced']) .deck-tools :deep(.input-tool-trigger) {
+[data-motion='off'] .deck-footer :deep(.input-tool-trigger),
+[data-motion='reduced'] .deck-footer :deep(.input-tool-trigger),
+[data-motion='off'] .token-meter,
+[data-motion='reduced'] .token-meter,
+[data-motion='off'] .token-meter__popover,
+[data-motion='reduced'] .token-meter__popover,
+[data-motion='off'] .token-meter__pop-bar > i,
+[data-motion='reduced'] .token-meter__pop-bar > i {
   transition: none;
+}
+[data-motion='off'] .token-meter.is-running .token-meter__core,
+[data-motion='reduced'] .token-meter.is-running .token-meter__core {
+  animation: none;
 }
 .stop-btn,
 .send-btn {
@@ -2625,101 +3071,126 @@ button {
   flex: 0 0 auto;
   align-items: center;
   justify-content: center;
-  gap: 4px;
+  gap: 5px;
   min-width: 0;
   min-height: 30px;
-  padding: 0 8px;
+  padding: 0 11px;
   white-space: nowrap;
-  background: var(--ui-bg-surface);
+  background: var(--mech-bg, var(--ui-bg-surface));
   color: var(--ui-text-secondary);
-  border: 1px solid var(--ui-border-subtle);
-  border-radius: 3px;
-  font-size: 10px;
-  font-weight: 700;
+  border: 1px solid var(--mech-border, var(--ui-border-default));
+  border-radius: 0;
+  font-size: 11px;
+  font-weight: 600;
   transition:
     background-color var(--ui-duration-fast) var(--ui-ease-standard),
     border-color var(--ui-duration-fast) var(--ui-ease-standard),
     color var(--ui-duration-fast) var(--ui-ease-standard),
     box-shadow var(--ui-duration-fast) var(--ui-ease-standard);
 }
-/* 据点群聊的 @ 提及按钮：品牌色描边，突出 @ 符号 */
+/* 据点群聊的 @ 提及按钮：哑光机械底座 + 品牌色 @ 符号 */
 .group-footer-tools {
   display: flex;
   min-width: 0;
   align-items: center;
-  gap: 5px;
+  gap: 6px;
 }
 .mention-btn {
   display: inline-flex;
   align-items: center;
-  gap: 4px;
+  gap: 5px;
+  height: 30px;
   min-height: 30px;
   padding: 0 10px;
   white-space: nowrap;
-  background: var(--ui-bg-surface);
-  color: var(--ui-accent-primary);
-  border: 1px solid var(--ui-accent-primary);
-  border-radius: 3px;
-  font-size: 11px;
-  font-weight: 800;
+  background: var(--mech-bg, var(--ui-bg-surface));
+  color: var(--ui-text-secondary);
+  border: 1px solid var(--mech-border, var(--ui-border-default));
+  border-radius: 0;
+  box-shadow: var(--mech-shadow, none);
+  font: 11px/1 var(--ui-font-pixel);
   transition:
     background-color var(--ui-duration-fast) var(--ui-ease-standard),
     border-color var(--ui-duration-fast) var(--ui-ease-standard),
-    color var(--ui-duration-fast) var(--ui-ease-standard),
-    box-shadow var(--ui-duration-fast) var(--ui-ease-standard);
+    color var(--ui-duration-fast) var(--ui-ease-standard);
 }
 .mention-btn:hover:not(:disabled) {
-  background: var(--ui-accent-primary-soft);
-  box-shadow: var(--ui-glow-pink);
+  background: color-mix(
+    in srgb,
+    var(--ui-accent-primary) 7%,
+    var(--mech-bg, var(--ui-bg-surface))
+  );
+  border-color: var(--ui-accent-primary);
+  color: var(--ui-accent-primary);
+}
+.mention-btn:active:not(:disabled) {
+  transform: translate(1px, 1px);
+  box-shadow: var(--mech-shadow-active, none);
 }
 .mention-btn:disabled {
   cursor: not-allowed;
   opacity: 0.4;
 }
 .mention-btn-at {
+  color: var(--ui-accent-primary);
   font-family: var(--font-pixel), monospace;
-  font-size: 13px;
+  font-size: 12px;
   line-height: 1;
-}
-[data-theme='dark'] .mention-btn {
-  border-color: var(--ui-accent-purple);
-  color: var(--ui-accent-purple);
-}
-[data-theme='dark'] .mention-btn:hover:not(:disabled) {
-  background: var(--ui-accent-purple-soft);
-  box-shadow: 0 0 12px rgba(139, 92, 246, 0.3);
 }
 .deck-actions {
   display: inline-flex;
   flex: 0 0 auto;
   align-items: center;
-  gap: 7px;
+  gap: 6px;
   margin-left: auto;
 }
+/* 普通对话已有 flex:1 工具轨与右侧状态组，操作组紧贴其右侧 */
+.deck-telemetry + .deck-actions {
+  margin-left: 0;
+}
 .deck-actions > button {
-  min-height: 32px;
-  gap: 7px;
-  padding: 0 12px;
-  border-radius: 6px;
+  min-height: 30px;
+  height: 30px;
+  gap: 6px;
+  padding: 0 11px;
+  border-radius: 0;
+  font-family: var(--ui-font-pixel);
   font-size: 11px;
   font-weight: 600;
   line-height: 1;
   cursor: pointer;
-  box-shadow: inset 0 1px 0 color-mix(in srgb, var(--ui-text-inverse) 8%, transparent);
   transition:
     background-color var(--ui-duration-fast) var(--ui-ease-standard),
     border-color var(--ui-duration-fast) var(--ui-ease-standard),
     color var(--ui-duration-fast) var(--ui-ease-standard),
-    box-shadow var(--ui-duration-fast) var(--ui-ease-standard),
-    transform var(--ui-duration-instant) var(--ui-ease-standard);
+    box-shadow var(--ui-duration-fast) var(--ui-ease-standard);
+}
+.deck-actions > .record-btn {
+  width: 30px;
+  min-width: 30px;
+  padding: 0;
+  border: 1px solid var(--mech-border, var(--ui-border-default));
+  background: var(--mech-bg, var(--ui-bg-surface));
+  color: var(--ui-text-secondary);
+  box-shadow: var(--mech-shadow, none);
+}
+.deck-actions > .record-btn:hover:not(:disabled) {
+  border-color: var(--ui-accent-sky);
+  background: color-mix(in srgb, var(--ui-accent-sky) 7%, var(--mech-bg, var(--ui-bg-surface)));
+  color: var(--ui-accent-sky);
+}
+.deck-actions > .record-btn.is-recording {
+  border-color: var(--ui-danger);
+  background: var(--ui-danger-soft);
+  color: var(--ui-danger);
 }
 .deck-actions > button:active:not(:disabled) {
-  transform: translateY(1px);
-  box-shadow: none;
+  transform: translate(1px, 1px);
+  box-shadow: var(--mech-shadow-active, none);
 }
 .deck-actions > button:focus-visible {
   outline: 2px solid var(--ui-focus-color);
-  outline-offset: 3px;
+  outline-offset: 2px;
 }
 .deck-actions :deep(.pixel-icon) {
   flex-shrink: 0;
@@ -2729,213 +3200,367 @@ button {
   background: var(--ui-accent-primary);
   border-color: var(--ui-accent-primary);
   color: var(--ui-text-inverse);
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.2),
+    2px 2px 0 var(--mech-step, rgba(0, 0, 0, 0.28));
 }
 .send-btn:hover:not(:disabled) {
   background: color-mix(in srgb, var(--ui-accent-primary) 88%, var(--ui-text-primary));
   border-color: var(--ui-accent-primary);
 }
 .send-btn--queue {
-  background: var(--ui-accent-primary-soft);
-  border-color: color-mix(in srgb, var(--ui-accent-primary) 30%, transparent);
+  background: var(--mech-bg, var(--ui-bg-surface));
+  border-color: color-mix(in srgb, var(--ui-accent-primary) 42%, var(--ui-border-default));
   color: var(--ui-accent-primary);
+  box-shadow: var(--mech-shadow, none);
 }
 .send-btn--queue:hover:not(:disabled) {
-  background: color-mix(in srgb, var(--ui-accent-primary) 18%, var(--ui-bg-surface));
+  background: color-mix(
+    in srgb,
+    var(--ui-accent-primary) 10%,
+    var(--mech-bg, var(--ui-bg-surface))
+  );
   border-color: var(--ui-accent-primary);
 }
 .deck-actions .send-btn:disabled {
-  background: var(--ui-bg-surface-soft);
-  border-color: var(--ui-border-subtle);
+  background: var(--mech-bg-soft, var(--ui-bg-surface-soft));
+  border-color: var(--mech-divider, var(--ui-border-subtle));
   color: var(--ui-text-disabled);
   box-shadow: none;
   cursor: not-allowed;
 }
+.deck-actions .record-btn:disabled {
+  background: var(--mech-bg-soft, var(--ui-bg-surface-soft));
+  border-color: var(--mech-divider, var(--ui-border-subtle));
+  color: var(--ui-text-disabled);
+  box-shadow: none;
+  opacity: 0.65;
+  cursor: not-allowed;
+}
 .stop-btn {
   --ui-focus-color: var(--ui-danger);
-  border-color: color-mix(in srgb, var(--ui-danger) 30%, transparent);
-  background: var(--ui-danger-soft);
+  border-color: color-mix(in srgb, var(--ui-danger) 42%, var(--ui-border-default));
+  background: color-mix(in srgb, var(--ui-danger) 10%, var(--mech-bg, var(--ui-bg-surface)));
   color: var(--ui-danger);
+  box-shadow: var(--mech-shadow, none);
 }
 .stop-btn:hover {
   border-color: var(--ui-danger);
-  background: color-mix(in srgb, var(--ui-danger) 18%, var(--ui-bg-surface));
+  background: color-mix(in srgb, var(--ui-danger) 16%, var(--mech-bg, var(--ui-bg-surface)));
 }
 .stop-btn-mark {
   width: 9px;
   height: 9px;
   flex: 0 0 auto;
-  border-radius: 2px;
+  border-radius: 1px;
   background: currentColor;
 }
+/* ── 会话心流展开卡片（硬朗哑光 HUD 检视器） ── */
 .flow-popover {
-  width: min(430px, calc(100% - 20px));
+  --flow-surface: #ffffff;
+  --flow-head-bg: #f6f8fb;
+  --flow-inset-bg: #eef1f6;
+  --flow-border: rgba(15, 23, 42, 0.14);
+  --flow-border-strong: rgba(15, 23, 42, 0.24);
+  --flow-key-bg: #ffffff;
+  --flow-key-hover: #f2f5fa;
+  --flow-step-shadow: rgba(15, 23, 42, 0.08);
+
+  --motion-origin: bottom right;
+  right: 10px;
+  width: min(440px, calc(100% - 20px));
   padding: 0;
   overflow: hidden;
-  border-top: 3px solid var(--ui-accent-purple);
+  border-radius: 0;
+  border: 1px solid var(--flow-border-strong);
+  border-top: 2px solid var(--ui-accent-purple);
+  background: var(--flow-surface);
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.9),
+    4px 4px 0 rgba(15, 23, 42, 0.12),
+    0 16px 36px rgba(15, 23, 42, 0.16);
 }
+
+[data-theme='dark'] .flow-popover {
+  --flow-surface: #161922;
+  --flow-head-bg: #12151e;
+  --flow-inset-bg: #0d1017;
+  --flow-border: rgba(255, 255, 255, 0.11);
+  --flow-border-strong: rgba(255, 255, 255, 0.22);
+  --flow-key-bg: #181b24;
+  --flow-key-hover: #202533;
+  --flow-step-shadow: rgba(0, 0, 0, 0.46);
+
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.05),
+    4px 4px 0 rgba(0, 0, 0, 0.52),
+    0 18px 42px rgba(0, 0, 0, 0.56);
+}
+
 .flow-panel__head {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  padding: 10px 12px;
-  border-bottom: 1px solid var(--ui-border-default);
-  background: var(--ui-accent-purple-soft);
+  gap: 10px;
+  height: 40px;
+  padding: 0 12px;
+  border-bottom: 1px solid var(--flow-border);
+  background: var(--flow-head-bg);
 }
-.flow-panel__head > div {
+
+.flow-panel__title {
   display: flex;
-  flex-direction: column;
-  gap: 2px;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
 }
+
+.flow-panel__emblem {
+  display: grid;
+  place-items: center;
+  width: 24px;
+  height: 24px;
+  flex-shrink: 0;
+  border: 1px solid var(--flow-border);
+  border-left: 2px solid var(--ui-accent-purple);
+  background: color-mix(in srgb, var(--ui-accent-purple) 8%, var(--flow-inset-bg));
+  color: var(--ui-accent-purple);
+}
+
 .flow-panel__head strong {
   color: var(--ui-text-primary);
-  font-size: 12px;
+  font: 800 12.5px/1 var(--ui-font-pixel);
+  letter-spacing: 0.03em;
 }
-.flow-panel__head span {
-  color: var(--ui-text-tertiary);
-  font: 800 8px var(--ui-font-mono);
-}
+
 .flow-panel__actions {
   display: flex;
   align-items: center;
   gap: 5px;
 }
+
 .flow-panel__actions > button {
   display: grid;
-  width: 28px;
-  height: 28px;
+  width: 26px;
+  height: 26px;
   place-items: center;
-  border: 1px solid var(--ui-border-default);
-  border-radius: var(--ui-radius-sm);
-  background: var(--ui-bg-surface);
-  color: var(--ui-accent-purple);
+  border: 1px solid var(--flow-border);
+  border-radius: 0;
+  background: var(--flow-key-bg);
+  box-shadow: 1px 1px 0 var(--flow-step-shadow);
+  color: var(--ui-text-secondary);
   cursor: pointer;
+  transition:
+    background-color 140ms ease,
+    border-color 140ms ease,
+    color 140ms ease;
 }
+
 .flow-panel__actions > button:hover:not(:disabled) {
-  border-color: var(--ui-accent-purple);
-  background: var(--ui-accent-purple-soft);
+  border-color: var(--flow-border-strong);
+  background: var(--flow-key-hover);
+  color: var(--ui-text-primary);
 }
+
+.flow-panel__actions > button:active:not(:disabled) {
+  transform: translate(1px, 1px);
+  box-shadow: none;
+}
+
 .flow-panel__actions > button:focus-visible {
-  outline: 2px solid var(--ui-accent-primary);
-  outline-offset: 2px;
+  outline: 2px solid var(--ui-accent-sky);
+  outline-offset: 1px;
 }
+
 .flow-panel__actions > button:disabled {
-  opacity: 0.5;
+  opacity: 0.45;
   cursor: default;
 }
+
+.flow-panel__body {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  max-height: min(420px, 58vh);
+  overflow-y: auto;
+  padding: 12px;
+}
+
 .flow-panel__empty {
   display: flex;
-  min-height: 90px;
+  flex-direction: column;
+  min-height: 112px;
   align-items: center;
   justify-content: center;
-  gap: 7px;
+  gap: 9px;
+  padding: 18px 14px;
+  border: 1px solid var(--flow-border);
+  background-color: var(--flow-inset-bg);
+  background-image: radial-gradient(
+    color-mix(in srgb, var(--ui-text-primary) 8%, transparent) 1px,
+    transparent 1px
+  );
+  background-size: 12px 12px;
   color: var(--ui-text-tertiary);
-  font-size: 10px;
+  font-size: 12px;
 }
+
+.flow-panel__empty-icon {
+  display: grid;
+  place-items: center;
+  width: 32px;
+  height: 32px;
+  border: 1px solid var(--flow-border);
+  background: var(--flow-surface);
+  color: var(--ui-text-tertiary);
+}
+
 .flow-state-card {
-  margin: 10px;
-  border: 1px solid var(--ui-border-default);
-  background: var(--ui-bg-elevated);
-  box-shadow: 3px 3px 0 var(--ui-border-subtle);
+  border: 1px solid var(--flow-border);
+  background: var(--flow-surface);
+  box-shadow: 2px 2px 0 var(--flow-step-shadow);
 }
-.flow-state-card > header {
+
+.flow-state-card__head {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  padding: 7px 9px;
-  border-bottom: 1px solid var(--ui-border-default);
+  gap: 10px;
+  padding: 8px 11px;
+  border-bottom: 1px solid var(--flow-border);
+  background: var(--flow-head-bg);
 }
-.flow-state-card > header span {
+
+.flow-state-card__agent {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  min-width: 0;
+}
+
+.flow-state-card__agent-icon {
+  display: grid;
+  place-items: center;
+  width: 22px;
+  height: 22px;
+  flex-shrink: 0;
+  border: 1px solid var(--flow-border);
+  background: var(--flow-inset-bg);
   color: var(--ui-accent-purple);
-  font: 900 9px var(--ui-font-mono);
 }
-.flow-state-card > header b {
-  color: var(--ui-text-disabled);
-  font: 800 8px var(--ui-font-mono);
+
+.flow-state-card__agent strong {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--ui-text-primary);
+  font: 700 12px/1.2 var(--ui-font-pixel);
 }
-.flow-state-card section {
-  padding: 9px;
-  border-bottom: 1px solid var(--ui-border-subtle);
+
+.flow-state-card__time {
+  flex-shrink: 0;
+  color: var(--ui-text-tertiary);
+  font: 500 11px/1 var(--ui-font-mono);
+  font-variant-numeric: tabular-nums;
 }
-.flow-state-card section small {
-  display: block;
-  margin-bottom: 5px;
+
+.flow-state-card__sections {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 10px;
+}
+
+.flow-state-card__block {
+  padding: 9px 11px;
+  border: 1px solid var(--flow-border);
+  border-left: 2px solid var(--ui-accent-sky);
+  background: var(--flow-inset-bg);
+}
+
+.flow-state-card__block--private {
+  border-left-color: var(--ui-accent-purple);
+}
+
+.flow-state-card__block small {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  margin-bottom: 6px;
   color: var(--ui-accent-sky);
-  font: 800 8px var(--ui-font-mono);
-  letter-spacing: 0.08em;
+  font: 700 11px/1.2 var(--ui-font-pixel);
+  letter-spacing: 0.03em;
 }
-.flow-state-card__private small {
-  color: var(--ui-accent-purple) !important;
+
+.flow-state-card__block--private small {
+  color: var(--ui-accent-purple);
 }
-.flow-state-card section p {
-  max-height: 110px;
+
+.flow-state-card__block p {
+  max-height: 132px;
   margin: 0;
   overflow: auto;
-  color: var(--ui-text-secondary);
-  font-size: 10px;
-  line-height: 1.55;
+  color: var(--ui-text-primary);
+  font-size: 12.5px;
+  line-height: 1.6;
   white-space: pre-wrap;
+  overflow-wrap: anywhere;
 }
 
-.flow-state-card__work {
-  border-left: 3px solid #8b5cf6;
-  background: color-mix(in srgb, #8b5cf6 7%, var(--ui-bg-elevated));
-}
-
-.flow-work-meta {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 8px;
-  margin-top: 8px;
-  font-size: 10px;
+.flow-state-card__block p.is-placeholder {
   color: var(--ui-text-tertiary);
+  font-size: 12px;
 }
 
-.flow-work-meta button {
-  display: inline-flex;
-  align-items: center;
-  gap: 4px;
-  color: var(--ui-accent-purple, #8b5cf6);
-}
-.flow-state-card > footer {
+.flow-state-card__foot {
   display: flex;
   align-items: center;
-  justify-content: space-between;
-  gap: 8px;
-  padding: 7px 9px;
-  background: var(--ui-bg-surface-soft);
+  justify-content: flex-end;
+  padding: 7px 10px;
+  border-top: 1px solid var(--flow-border);
+  background: var(--flow-head-bg);
 }
-.flow-state-card time {
-  color: var(--ui-text-disabled);
-  font: 7px var(--ui-font-mono);
-}
-.flow-state-card footer button {
+
+.flow-state-card__clear {
   display: inline-flex;
   align-items: center;
-  gap: 4px;
-  padding: 4px 7px;
-  border: 1px solid var(--ui-danger);
-  background: var(--ui-danger-soft);
-  color: var(--ui-danger);
-  font-size: 8px;
-  font-weight: 800;
+  gap: 5px;
+  height: 26px;
+  padding: 0 9px;
+  border: 1px solid var(--flow-border);
+  border-radius: 0;
+  background: var(--flow-key-bg);
+  color: var(--ui-text-secondary);
+  font: 600 11px/1 var(--ui-font-pixel);
   cursor: pointer;
+  transition:
+    background-color 140ms ease,
+    border-color 140ms ease,
+    color 140ms ease;
 }
-.flow-state-card footer button:disabled {
-  opacity: 0.4;
+
+.flow-state-card__clear:hover:not(:disabled) {
+  border-color: color-mix(in srgb, var(--ui-danger) 55%, var(--flow-border-strong));
+  background: color-mix(in srgb, var(--ui-danger) 10%, var(--flow-key-bg));
+  color: var(--ui-danger);
+}
+
+.flow-state-card__clear:disabled {
+  opacity: 0.42;
   cursor: default;
 }
+
 .flow-panel__notice {
+  display: flex;
+  align-items: center;
+  gap: 6px;
   margin: 0;
-  padding: 8px 10px;
-  border-top: 1px solid var(--ui-warning);
-  background: var(--ui-warning-soft);
-  color: var(--ui-warning);
-  font-size: 8px;
-}
-:global([data-theme='dark']) .flow-state-card {
-  background: color-mix(in srgb, var(--ui-accent-purple) 5%, var(--ui-bg-elevated));
-  box-shadow: 3px 3px 0 rgba(0, 0, 0, 0.36);
+  padding: 8px 12px;
+  border-top: 1px solid var(--flow-border);
+  background: var(--flow-head-bg);
+  color: var(--ui-text-tertiary);
+  font-size: 11px;
+  line-height: 1.4;
 }
 
 .deck-popover {
@@ -2944,12 +3569,12 @@ button {
   --motion-pop-direction: 1;
   position: absolute;
   z-index: 20;
-  bottom: 50px;
+  bottom: 52px;
   width: min(360px, calc(100% - 20px));
   padding: 8px;
   background: var(--ui-bg-surface);
   border: 1px solid var(--ui-border-default);
-  border-radius: 4px;
+  border-radius: 2px;
   box-shadow: var(--ui-shadow-lg);
 }
 .command-popover {
@@ -2994,18 +3619,21 @@ button {
   color: var(--ui-text-tertiary);
 }
 .tool-count {
+  margin-left: 1px;
+  padding-left: 6px;
+  border-left: 1px solid var(--mech-divider, var(--ui-border-subtle));
   color: var(--ui-text-tertiary);
-  font: 9px/1 var(--ui-font-mono);
+  font: 700 9.5px/1 var(--ui-font-mono);
 }
 .tool-popover {
   display: flex;
   flex-direction: column;
-  right: 10px;
+  left: 10px;
   width: min(430px, calc(100% - 20px));
   max-height: min(520px, 70vh);
   overflow: hidden;
   padding: 0;
-  border-radius: 0;
+  border-radius: 2px;
 }
 .tool-manager__head {
   display: flex;
@@ -3267,8 +3895,8 @@ button {
   overflow: visible;
 }
 .deck--compact .deck-actions > button {
-  width: 34px;
-  min-width: 34px;
+  width: 30px;
+  min-width: 30px;
   padding: 0;
   justify-content: center;
 }
@@ -3287,14 +3915,14 @@ button {
     display: none;
   }
   .deck-actions > button {
-    width: 34px;
-    min-width: 34px;
+    width: 30px;
+    min-width: 30px;
     padding: 0;
   }
 }
 [data-theme='dark'] .deck {
-  background: rgba(30, 27, 45, 0.92);
-  border-color: rgba(139, 92, 246, 0.25);
+  background: var(--app-panel-fill, rgba(20, 23, 31, 0.94));
+  border-color: var(--ui-border-default);
 }
 </style>
 

@@ -13,7 +13,6 @@ import { configApi } from '../../../api/modules/configApi'
 import TtsSettings from '../../voice/TtsSettings.vue'
 import { modelApi } from '../../../api/modules/modelApi'
 import { useDashboardContext } from '../../../composables/dashboard'
-import PetControlSettings from '../../pet/PetControlSettings.vue'
 import BrandIcon from '../../brands/BrandIcon.vue'
 import BrandSelect from '../../brands/BrandSelect.vue'
 import { resolveModelBrand } from '../../../lib/modelBrands'
@@ -145,20 +144,14 @@ onMounted(loadVoiceConfig)
         >
           <PixelIcon name="mic" size="md" />
         </span>
-        <span>{{ __t('ui.settings', '语音功能') }}</span>
+        <span>{{ __t('ui.navigation', '语音服务') }}</span>
         <span class="opacity-0 group-hover/header:opacity-100 transition-opacity duration-500">
           <PixelIcon name="sparkle" size="xs" />
         </span>
       </h2>
-      <p
-        class="text-[10px] font-bold uppercase tracking-[0.15em] text-slate-400 mt-1 ml-9 font-pixel"
-      >
-        VOICE CONFIGURATION
-      </p>
     </div>
 
     <div class="flex-1 min-h-0 overflow-y-auto flex flex-col gap-6 voice-scrollbar voice-sections">
-      <PetControlSettings />
       <TtsSettings />
 
       <!-- ASR -->

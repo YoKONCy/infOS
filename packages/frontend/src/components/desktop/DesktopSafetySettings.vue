@@ -211,12 +211,7 @@ onUnmounted(() => {
     </div>
 
     <div class="desktop-safety__block">
-      <span>
-        {{ __t('ui.desktop', '内置名单') }}
-        <span v-if="state.draftStatus !== 'FINAL'" class="desktop-safety__alert">
-          {{ __t('ui.desktop', '草案，待审阅') }}
-        </span>
-      </span>
+      <span>{{ __t('ui.desktop', '内置保护名单') }}</span>
       <p v-if="!state.draftValid" class="desktop-safety__notice" role="alert">
         {{ __t('ui.desktop', '内置名单无效，所有程序按高危区处理。') }}
       </p>
@@ -227,39 +222,45 @@ onUnmounted(() => {
       >
         {{ issueText(issue) }}
       </p>
-      <template v-if="state.draft">
-        <p
-          v-for="(programs, group) in state.draft.forbidden"
-          :key="`f-${group}`"
-          class="desktop-safety__muted"
-        >
-          {{
-            __t('ui.desktop', '禁区 · {0}：{1}', [__t('ui.desktop', group), programs.join('、')])
-          }}
-        </p>
-        <p
-          v-for="(programs, group) in state.draft.mustConfirm"
-          :key="`c-${group}`"
-          class="desktop-safety__muted"
-        >
-          {{
-            __t('ui.desktop', '高危区 · {0}：{1}', [__t('ui.desktop', group), programs.join('、')])
-          }}
-        </p>
-      </template>
+      <details v-if="state.draft" class="desktop-safety__details">
+        <summary>{{ __t('ui.desktop', '查看内置保护程序名单') }}</summary>
+        <div class="desktop-safety__details-body">
+          <p
+            v-for="(programs, group) in state.draft.forbidden"
+            :key="`f-${group}`"
+            class="desktop-safety__muted"
+          >
+            {{
+              __t('ui.desktop', '禁区 · {0}：{1}', [__t('ui.desktop', group), programs.join('、')])
+            }}
+          </p>
+          <p
+            v-for="(programs, group) in state.draft.mustConfirm"
+            :key="`c-${group}`"
+            class="desktop-safety__muted"
+          >
+            {{
+              __t('ui.desktop', '高危区 · {0}：{1}', [
+                __t('ui.desktop', group),
+                programs.join('、'),
+              ])
+            }}
+          </p>
+        </div>
+      </details>
     </div>
 
     <div class="desktop-safety__row">
       <p class="desktop-safety__muted">
-        {{
-          __t(
-            'ui.desktop',
-            '终端与脚本宿主每次都要你确认，禁区一律拒绝。放宽权限会弹出系统确认框。',
-          )
-        }}
+        {{ __t('ui.desktop', '终端与脚本每次均需确认，禁区程序一律拦截。') }}
       </p>
-      <PButton size="sm" variant="ghost" :disabled="busy" @click="call('desktop-safety:show-file')">
-        {{ __t('ui.desktop', '在文件夹中显示设置文件') }}
+      <PButton
+        size="sm"
+        variant="secondary"
+        :disabled="busy"
+        @click="call('desktop-safety:show-file')"
+      >
+        {{ __t('ui.desktop', '打开配置文件目录') }}
       </PButton>
     </div>
   </section>
@@ -303,5 +304,29 @@ onUnmounted(() => {
   margin-top: 10px;
   font-size: 11px;
   color: var(--ui-danger, #d9534f);
+}
+.desktop-safety__details {
+  margin-top: 4px;
+  border: 1px solid var(--ui-border-subtle);
+  border-radius: var(--ui-radius-xs);
+  background: var(--ui-bg-surface-soft);
+}
+.desktop-safety__details summary {
+  padding: 7px 10px;
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--ui-text-secondary);
+  cursor: pointer;
+  user-select: none;
+}
+.desktop-safety__details summary:hover {
+  color: var(--ui-text-primary);
+}
+.desktop-safety__details-body {
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+  padding: 8px 10px 10px;
+  border-top: 1px solid var(--ui-border-subtle);
 }
 </style>

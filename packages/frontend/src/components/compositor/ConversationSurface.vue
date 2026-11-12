@@ -31,6 +31,7 @@ import type { CompositorSurface } from '../../stores'
 import { StreamMarkdownSegmenter } from '../../compositor/markdownSegmentation'
 import {
   groupExecutionItems,
+  summarizeSurfaceProcess,
   type ConversationRenderItem as RenderItem,
 } from '../../compositor/executionGroups'
 import ExecutionProcess from './ExecutionProcess.vue'
@@ -42,12 +43,14 @@ import { clearAgentInputDraft } from '../agent/agentInputDraft'
 import { surfacesApi } from '../../api/modules/surfacesApi'
 import { useCompositorStore } from '../../stores'
 import { useGateway } from '../../composables/gateway/useGateway'
-import PixelIcon from '../pixel/PixelIcon.vue'
 import ChatRichText from '../chat/ChatRichText.vue'
 import RunPulse from '../chat/RunPulse.vue'
 import ModelRetryRecord from '../chat/ModelRetryRecord.vue'
 import ToolCallCard from '../tools/ToolCallCard.vue'
+import TrajectoryIcon, { type TrajectoryIconName } from '../tools/TrajectoryIcon.vue'
+import { resolveTrajectoryVisual } from '../tools/toolSignatures'
 import { toolCallView, type ToolCallView } from '../tools/toolCallView'
+import '../tools/trajectory-tactile.css'
 import MermaidSurfaceNode from './MermaidSurfaceNode.vue'
 import ProgrammableSurfaceNode from './ProgrammableSurfaceNode.vue'
 import ResourceCard from '../resources/ResourceCard.vue'
@@ -106,12 +109,12 @@ watch(
     const live = new Set<string>()
     let changed = false
     for (const node of props.surface.nodes) {
-      if (node.kind !== 'native-reasoning') continue
+      if (node.kind !== 'native-reasoning' && node.kind !== 'thinking') continue
       live.add(node.nodeId)
+      const rawPhase =
+        node.kind === 'thinking' ? thinkingProps(node).phase : reasoningProps(node).phase
       const phase =
-        props.surface.state === 'open' && reasoningProps(node).phase !== 'committed'
-          ? 'preview'
-          : 'committed'
+        props.surface.state === 'open' && rawPhase !== 'committed' ? 'preview' : 'committed'
       if (reasoningPhases.get(node.nodeId) === phase) continue
       reasoningPhases.set(node.nodeId, phase)
       next[node.nodeId] = phase === 'preview'
@@ -128,9 +131,19 @@ watch(
   { immediate: true },
 )
 
+/** 提取思考折叠态单行摘要，过滤 Markdown 装饰符 */
+function thoughtPreview(source?: string): string {
+  if (!source) return ''
+  const plain = source
+    .replace(/[`*_#>~[\]]+/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim()
+  return plain.length > 44 ? `${plain.slice(0, 44)}…` : plain
+}
+
 function formatDuration(value?: number): string {
   if (value === undefined) return '—'
-  return value < 1000 ? `${value} ms` : `${(value / 1000).toFixed(1)} s`
+  return value < 1000 ? `${value}ms` : `${(value / 1000).toFixed(1)}s`
 }
 
 const renderItems = computed<RenderItem[]>(() => {
@@ -205,6 +218,49 @@ const renderItems = computed<RenderItem[]>(() => {
 const executionGroups = computed(() =>
   groupExecutionItems(renderItems.value, props.surface.state !== 'open'),
 )
+
+const toolExecutionGroupCount = computed(
+  () => executionGroups.value.filter((group) => group.toolCount > 0).length,
+)
+
+const surfaceProcessMeta = computed(() =>
+  summarizeSurfaceProcess(props.surface.nodes, props.surface.state !== 'open'),
+)
+
+const surfaceProcessBadges = computed(() => {
+  const seen = new Map<
+    TrajectoryIconName,
+    { key: string; icon: TrajectoryIconName; color: string }
+  >()
+  for (const step of surfaceProcessMeta.value.steps) {
+    const token =
+      step.kind === 'thinking'
+        ? { icon: 'whisper' as const, color: 'var(--ui-accent-primary)' }
+        : step.kind === 'reasoning'
+          ? { icon: 'prism' as const, color: 'var(--ui-accent-purple)' }
+          : resolveTrajectoryVisual(step.name ?? '', { hasChildren: step.hasChildren })
+    if (seen.has(token.icon) || seen.size >= 4) continue
+    seen.set(token.icon, {
+      key: `${seen.size}-${token.icon}`,
+      icon: token.icon,
+      color: step.state === 'error' ? 'var(--ui-danger)' : token.color,
+    })
+  }
+  if (seen.size === 0) {
+    return [{ key: 'fallback', icon: 'prism' as const, color: 'var(--ui-accent-purple)' }]
+  }
+  return [...seen.values()]
+})
+
+const surfaceProcessFootprints = computed(() =>
+  Math.max(1, surfaceProcessMeta.value.toolCount + surfaceProcessMeta.value.thoughtCount),
+)
+
+const surfaceProcessDuration = computed(() => {
+  const ms = surfaceProcessMeta.value.totalDurationMs
+  if (!ms || ms <= 0) return ''
+  return ms >= 1000 ? `${(ms / 1000).toFixed(1)}s` : `${ms}ms`
+})
 
 function toolChain(node: SurfaceNode): string {
   const name = toolProps(node).name
@@ -495,20 +551,133 @@ function errorMessage(node: SurfaceNode): string {
     <button
       v-if="surface.processCollapsed && hasProcess"
       type="button"
-      class="surface-process-toggle"
+      class="surface-process-toggle traj-capsule traj-shell traj-shell--interactive"
+      :class="{
+        'is-open': processExpanded,
+        'is-live': surface.state === 'open',
+        'is-error': surfaceProcessMeta.failureCount > 0,
+      }"
       :aria-expanded="processExpanded"
       @click="processExpanded = !processExpanded"
     >
-      {{ __t('ui.chat', processExpanded ? '收起执行过程' : '查看执行过程') }}
+      <span class="traj-capsule__dock" aria-hidden="true">
+        <span class="traj-capsule__stack">
+          <span
+            v-for="badge in surfaceProcessBadges"
+            :key="badge.key"
+            class="traj-capsule__badge"
+            :style="{ '--badge-c': badge.color }"
+          >
+            <TrajectoryIcon :name="badge.icon" size="sm" />
+          </span>
+        </span>
+        <span v-if="surface.state === 'open'" class="traj-capsule__live">
+          <TrajectoryIcon name="prism" size="sm" class="traj-live-spin" />
+        </span>
+      </span>
+
+      <span class="traj-capsule__main">
+        <strong class="traj-capsule__title">
+          {{
+            surface.state === 'open'
+              ? __t('ui.compositor', '正在探索')
+              : __t('ui.compositor', '走过 {0} 步足迹', [surfaceProcessFootprints])
+          }}
+        </strong>
+        <span
+          v-if="
+            surfaceProcessMeta.nitCount > 0 ||
+            surfaceProcessMeta.hasDiff ||
+            surfaceProcessMeta.reminderHint ||
+            surfaceProcessMeta.failureCount > 0 ||
+            surfaceProcessMeta.thoughtCount > 0
+          "
+          class="traj-capsule__tags"
+        >
+          <span
+            v-if="surfaceProcessMeta.nitCount > 0"
+            class="traj-mini-chip"
+            :style="{ '--pill-c': 'var(--ui-accent-purple)' }"
+          >
+            <TrajectoryIcon name="nit" size="xs" />
+            <span>NIT ×{{ surfaceProcessMeta.nitCount }}</span>
+          </span>
+          <span
+            v-if="surfaceProcessMeta.hasDiff"
+            class="traj-mini-chip traj-mono"
+            :style="{ '--pill-c': 'var(--ui-success)' }"
+          >
+            <TrajectoryIcon name="patch" size="xs" />
+            <span>
+              +{{ surfaceProcessMeta.diffInsertions }}
+              <em class="surface-process-toggle__del">−{{ surfaceProcessMeta.diffDeletions }}</em>
+            </span>
+          </span>
+          <span
+            v-if="surfaceProcessMeta.reminderHint"
+            class="traj-mini-chip traj-mono"
+            :style="{ '--pill-c': 'var(--ui-warning)' }"
+          >
+            <TrajectoryIcon name="alarm" size="xs" />
+            <span>{{ surfaceProcessMeta.reminderHint }}</span>
+          </span>
+          <span
+            v-if="surfaceProcessMeta.failureCount > 0"
+            class="traj-mini-chip"
+            :style="{ '--pill-c': 'var(--ui-danger)' }"
+          >
+            <TrajectoryIcon name="error" size="xs" />
+            <span>{{ __t('ui.compositor', '{0} 项异常', [surfaceProcessMeta.failureCount]) }}</span>
+          </span>
+          <span
+            v-else-if="
+              !surfaceProcessMeta.nitCount &&
+              !surfaceProcessMeta.hasDiff &&
+              !surfaceProcessMeta.reminderHint &&
+              surfaceProcessMeta.thoughtCount > 0
+            "
+            class="traj-mini-chip"
+            :style="{ '--pill-c': 'var(--ui-accent-purple)' }"
+          >
+            <TrajectoryIcon name="prism" size="xs" />
+            <span>{{ __t('ui.compositor', '{0} 段思考', [surfaceProcessMeta.thoughtCount]) }}</span>
+          </span>
+        </span>
+        <time v-if="surfaceProcessDuration" class="traj-capsule__time">
+          {{ surfaceProcessDuration }}
+        </time>
+      </span>
+
+      <span class="traj-capsule__trigger" aria-hidden="true">
+        <span>
+          {{ processExpanded ? __t('ui.compositor', '收起') : __t('ui.compositor', '展开') }}
+        </span>
+        <TrajectoryIcon name="chev-down" size="xs" class="traj-capsule__chev" />
+      </span>
     </button>
     <ExecutionProcess
       v-for="group in executionGroups"
       :key="group.id"
       v-slot="{ expanded }"
-      :enabled="group.toolCount > 0"
+      :enabled="
+        group.toolCount > 0 ||
+        Boolean(surface.processCollapsed && processExpanded && group.thoughtCount > 0)
+      "
       :ended="surface.state !== 'open'"
       :tool-count="group.toolCount"
+      :thought-count="group.thoughtCount"
       :failure-count="group.failureCount"
+      :total-duration-ms="group.totalDurationMs"
+      :steps="group.steps"
+      :nit-count="group.nitCount"
+      :has-diff="group.hasDiff"
+      :diff-insertions="group.diffInsertions"
+      :diff-deletions="group.diffDeletions"
+      :reminder-hint="group.reminderHint"
+      :headless="Boolean(surface.processCollapsed && processExpanded && toolExecutionGroupCount <= 1)"
+      :default-expanded="
+        surface.processCollapsed ? Boolean(processExpanded) : undefined
+      "
     >
       <template v-for="{ item, index: itemIndex } in group.items" :key="item.id">
         <div
@@ -537,23 +706,55 @@ function errorMessage(node: SurfaceNode): string {
             :record="item.node.props as ModelRetrySurfaceProps"
             :active="expanded && surface.state === 'open' && !surface.suspended && mainVisible"
           />
-          <details v-else-if="item.node.kind === 'thinking'" class="surface-thinking" open>
-            <summary>
-              <span class="surface-thinking__spark" aria-hidden="true" />
-              <strong>{{ __t('ui.compositor', '碎碎念') }}</strong>
-              <span class="surface-thinking__meta">
-                {{
-                  thinkingProps(item.node).phase === 'preview'
-                    ? __t('ui.compositor', '正在冒泡')
-                    : __t('ui.compositor', '暂告一段')
-                }}
+          <details
+            v-else-if="item.node.kind === 'thinking'"
+            class="surface-thinking surface-thought-node"
+            :class="{
+              'is-live': surface.state === 'open' && thinkingProps(item.node).phase === 'preview',
+            }"
+            :open="reasoningOpen[item.node.nodeId]"
+            @toggle="
+              reasoningOpen[item.node.nodeId] = ($event.currentTarget as HTMLDetailsElement).open
+            "
+          >
+            <summary class="surface-thinking__summary">
+              <span
+                class="traj-node-glyph surface-thought__badge"
+                :class="{
+                  'traj-node-glyph--live':
+                    surface.state === 'open' && thinkingProps(item.node).phase === 'preview',
+                }"
+                :style="{ '--ng-c': 'var(--ui-accent-primary)' }"
+                aria-hidden="true"
+              >
+                <TrajectoryIcon name="whisper" size="sm" />
               </span>
-              <time v-if="thinkingProps(item.node).durationMs !== undefined">
-                {{ formatDuration(thinkingProps(item.node).durationMs) }}
-              </time>
-              <PixelIcon name="chevron-down" size="xs" />
+              <span class="surface-whisper-note">
+                <TrajectoryIcon name="spark-four" size="xs" class="surface-whisper-spark" />
+                <strong>{{ __t('ui.compositor', '碎碎念') }}</strong>
+                <span
+                  v-if="
+                    !reasoningOpen[item.node.nodeId] &&
+                    thoughtPreview(thinkingProps(item.node).source)
+                  "
+                  class="surface-thought__snippet"
+                >
+                  “{{ thoughtPreview(thinkingProps(item.node).source) }}”
+                </span>
+                <span v-else class="surface-thinking__meta">
+                  {{
+                    thinkingProps(item.node).phase === 'preview'
+                      ? __t('ui.compositor', '正在冒泡')
+                      : __t('ui.compositor', '暂告一段')
+                  }}
+                </span>
+                <time v-if="thinkingProps(item.node).durationMs !== undefined">
+                  {{ formatDuration(thinkingProps(item.node).durationMs) }}
+                </time>
+                <TrajectoryIcon name="chev-right" size="xs" class="surface-thought__chevron" />
+              </span>
             </summary>
-            <div class="surface-thinking__body">
+            <div class="surface-thinking__body surface-thought__body traj-recess-pane">
               <p v-if="thinkingProps(item.node).phase === 'preview'" class="surface-thinking__live">
                 {{ thinkingProps(item.node).source }}
                 <i class="surface-thinking__cursor" />
@@ -568,32 +769,58 @@ function errorMessage(node: SurfaceNode): string {
           </details>
           <details
             v-else-if="item.node.kind === 'native-reasoning'"
-            class="surface-native-reasoning"
+            class="surface-native-reasoning surface-thought-node"
+            :class="{
+              'is-live':
+                surface.state === 'open' && reasoningProps(item.node).phase !== 'committed',
+            }"
             :open="reasoningOpen[item.node.nodeId]"
             @toggle="
               reasoningOpen[item.node.nodeId] = ($event.currentTarget as HTMLDetailsElement).open
             "
           >
-            <summary>
-              <span class="surface-native-reasoning__cube" aria-hidden="true" />
-              <strong>{{ __t('ui.compositor', '思考过程') }}</strong>
-              <span class="surface-native-reasoning__meta">
-                {{
-                  reasoningProps(item.node).mode === 'stream'
-                    ? __t('ui.compositor', '流式')
-                    : __t('ui.compositor', '非流式')
-                }}
-                <template v-if="reasoningProps(item.node).turn">
-                  {{ __t('ui.compositor', '· 第') }} {{ reasoningProps(item.node).turn }}
-                  {{ __t('ui.compositor', '轮') }}
-                </template>
+            <summary class="surface-reasoning__summary">
+              <span
+                class="traj-node-glyph surface-thought__badge"
+                :class="{
+                  'traj-node-glyph--live':
+                    surface.state === 'open' && reasoningProps(item.node).phase !== 'committed',
+                }"
+                :style="{ '--ng-c': 'var(--ui-accent-purple)' }"
+                aria-hidden="true"
+              >
+                <TrajectoryIcon name="prism" size="sm" />
               </span>
-              <time v-if="reasoningProps(item.node).durationMs !== undefined">
-                {{ formatDuration(reasoningProps(item.node).durationMs) }}
-              </time>
-              <PixelIcon name="chevron-down" size="xs" />
+              <span class="surface-reasoning-line">
+                <strong>{{ __t('ui.compositor', '思考过程') }}</strong>
+                <span
+                  v-if="
+                    !reasoningOpen[item.node.nodeId] &&
+                    thoughtPreview(reasoningProps(item.node).source)
+                  "
+                  class="surface-thought__snippet"
+                >
+                  {{ thoughtPreview(reasoningProps(item.node).source) }}
+                </span>
+                <span v-else class="surface-native-reasoning__meta">
+                  {{
+                    surface.state === 'open' && reasoningProps(item.node).phase !== 'committed'
+                      ? __t('ui.compositor', '思考中')
+                      : reasoningProps(item.node).turn
+                        ? __t('ui.compositor', '第 {0} 轮', [reasoningProps(item.node).turn])
+                        : ''
+                  }}
+                </span>
+                <time
+                  v-if="reasoningProps(item.node).durationMs !== undefined"
+                  class="surface-reasoning-badge"
+                >
+                  {{ formatDuration(reasoningProps(item.node).durationMs) }}
+                </time>
+                <TrajectoryIcon name="chev-right" size="xs" class="surface-thought__chevron" />
+              </span>
             </summary>
-            <div class="surface-native-reasoning__body">
+            <div class="surface-native-reasoning__body surface-thought__body traj-recess-pane">
               <StreamMarkdown
                 v-if="reasoningOpen[item.node.nodeId]"
                 :source="reasoningProps(item.node).source"
@@ -704,18 +931,12 @@ function errorMessage(node: SurfaceNode): string {
 
 <style scoped>
 .surface-process-toggle {
-  margin-block: 4px 10px;
-  padding: 5px 10px;
-  border: 1px solid var(--ui-border-subtle);
-  border-radius: var(--ui-radius-md);
-  background: var(--ui-bg-surface);
-  color: var(--ui-text-secondary);
-  font: inherit;
-  font-size: 12px;
-  cursor: pointer;
+  margin-block: 6px 8px;
 }
-.surface-process-toggle:hover {
-  color: var(--ui-accent-sky);
+.surface-process-toggle__del {
+  margin-left: 3px;
+  color: var(--ui-danger);
+  font-style: normal;
 }
 .msg-streaming-cursor {
   display: inline-block;
@@ -738,7 +959,7 @@ function errorMessage(node: SurfaceNode): string {
 }
 @media (prefers-reduced-motion: reduce) {
   .msg-streaming-cursor,
-  .surface-thinking__spark,
+  .surface-thought-node.is-live .surface-thought__badge,
   .surface-thinking__cursor {
     animation: none;
     opacity: 0.7;
@@ -764,300 +985,215 @@ function errorMessage(node: SurfaceNode): string {
 .surface-markdown-block:last-child {
   margin-block-end: 0;
 }
-.surface-thinking {
+/* ── v6 轨迹内部异构思考节点：无框静默思考行 & 双层叠纸角色碎碎念 ── */
+.surface-thought-node {
+  --thought-accent: var(--ui-accent-purple);
+  --thought-soft: var(--ui-accent-purple-soft);
   position: relative;
-  width: fit-content;
-  max-width: min(96%, 640px);
-  margin: 8px 4px 10px 2px;
-  overflow: visible;
-  border: 0;
-  background: transparent;
+  min-width: 0;
+  max-width: min(100%, 56rem);
+  margin: 2.5px 0;
   color: var(--ui-text-secondary);
-  font-size: 12px;
-  filter: drop-shadow(2px 3px 0 color-mix(in srgb, var(--ui-accent-purple) 18%, transparent));
+  font-size: 13px;
 }
-.surface-thinking[open] {
-  width: min(100%, 60rem);
+.surface-thinking {
+  --thought-accent: var(--ui-accent-primary);
+  --thought-soft: var(--ui-accent-primary-soft);
+}
+.surface-native-reasoning {
+  --thought-accent: var(--ui-accent-purple);
+  --thought-soft: var(--ui-accent-purple-soft);
+}
+.surface-thought-node[open] {
   max-width: 100%;
-  filter: none;
 }
-.surface-thinking:not([open]) summary {
-  grid-template-columns: 12px auto minmax(0, auto) auto 14px;
-}
-.surface-thinking summary {
-  position: relative;
-  z-index: 1;
-  display: grid;
-  min-width: 176px;
-  min-height: 34px;
-  grid-template-columns: 18px auto auto 1fr 14px;
+
+.surface-thought-node > summary {
+  display: inline-flex;
   align-items: center;
-  gap: 7px;
-  padding: 0 12px 0 10px;
-  border: 1px solid color-mix(in srgb, var(--ui-accent-pink) 40%, var(--ui-border-default));
-  background:
-    linear-gradient(
-      135deg,
-      color-mix(in srgb, var(--ui-text-inverse) 8%, transparent) 0 24%,
-      transparent 24%
-    ),
-    color-mix(in srgb, var(--ui-accent-pink-soft) 48%, var(--ui-bg-elevated));
-  box-shadow:
-    inset 0 1px 0 color-mix(in srgb, var(--ui-text-inverse) 13%, transparent),
-    inset 0 -2px 0 color-mix(in srgb, var(--ui-accent-purple) 15%, transparent);
-  clip-path: polygon(
-    0 7px,
-    7px 7px,
-    7px 0,
-    calc(100% - 13px) 0,
-    calc(100% - 13px) 4px,
-    100% 4px,
-    100% calc(100% - 7px),
-    calc(100% - 7px) calc(100% - 7px),
-    calc(100% - 7px) 100%,
-    13px 100%,
-    13px calc(100% - 4px),
-    0 calc(100% - 4px)
-  );
-  color: var(--ui-text-primary);
+  gap: 8.5px;
+  max-width: 100%;
+  padding: 0;
   cursor: pointer;
   list-style: none;
   user-select: none;
-  transform-origin: 24px 50%;
-  transition:
-    transform 0.18s cubic-bezier(0.34, 1.56, 0.64, 1),
-    filter 0.18s ease,
-    background-color 0.18s ease;
 }
-.surface-thinking:not([open]) summary::after {
-  position: absolute;
-  right: 12px;
-  bottom: -4px;
-  width: 18px;
-  height: 5px;
-  background: var(--ui-accent-purple);
-  clip-path: polygon(0 0, 100% 0, 75% 100%, 25% 100%);
-  content: '';
-  opacity: 0.72;
-}
-.surface-thinking:not([open]) summary:hover {
-  background-color: color-mix(in srgb, var(--ui-accent-pink-soft) 66%, var(--ui-bg-elevated));
-  filter: brightness(1.08);
-  transform: translateY(-2px) rotate(-0.7deg) scale(1.015);
-}
-.surface-thinking:not([open]) summary:hover .surface-thinking__spark {
-  animation-duration: 0.45s;
-  transform: rotate(225deg) scale(1.12);
-}
-.surface-thinking summary:active {
-  transform: translateY(1px) scale(0.985);
-}
-.surface-thinking[open] summary {
-  clip-path: polygon(
-    0 7px,
-    7px 7px,
-    7px 0,
-    calc(100% - 10px) 0,
-    calc(100% - 10px) 5px,
-    100% 5px,
-    100% 100%,
-    0 100%
-  );
-}
-.surface-thinking summary::-webkit-details-marker {
+.surface-thought-node > summary::-webkit-details-marker {
   display: none;
 }
-.surface-thinking summary strong {
-  font-size: 11px;
-  font-weight: 800;
-  letter-spacing: 0.06em;
-  text-shadow: 0 1px 0 color-mix(in srgb, var(--ui-text-inverse) 10%, transparent);
+.surface-thought-node > summary::marker {
+  content: '';
 }
-.surface-thinking__spark {
-  width: 7px;
-  height: 7px;
-  background: var(--ui-accent-pink);
-  box-shadow:
-    5px -4px 0 -2px var(--ui-accent-purple),
-    -3px 5px 0 -2px var(--ui-accent-sky);
-  transform: rotate(45deg);
-  animation: thinking-spark 1.1s steps(2, end) infinite;
+.surface-thought-node > summary:focus-visible {
+  outline: 2px solid var(--thought-accent);
+  outline-offset: 2px;
+  border-radius: 5px;
 }
-.surface-thinking__meta {
-  color: var(--ui-accent-pink);
-  font-family: var(--font-mono), monospace;
-  font-size: 8px;
+
+/* 位于纵向双线压痕主轴内时，23×23 双调铭牌精准骑跨在主轴中心线上 */
+.surface-execution__body > .surface-thought-node > summary > .surface-thought__badge {
+  position: absolute;
+  left: -36px;
+  top: 3px;
 }
-.surface-thinking time {
-  color: var(--ui-text-muted);
-  font-family: var(--font-mono), monospace;
-  font-size: 9px;
-  text-align: right;
+@media (hover: hover) {
+  .surface-thought-node:hover > summary > .surface-thought__badge {
+    transform: translate(-0.5px, -0.5px) scale(1.08);
+    border-color: color-mix(in srgb, var(--thought-accent) 65%, var(--traj-border));
+  }
 }
-.surface-thinking summary :deep(.pixel-icon) {
-  color: var(--ui-text-muted);
-  transition: transform 0.12s steps(2, end);
+@media (max-width: 480px) {
+  .surface-execution__body > .surface-thought-node > summary > .surface-thought__badge {
+    left: -32px;
+  }
 }
-.surface-thinking[open] summary :deep(.pixel-icon) {
-  transform: rotate(180deg);
-}
-.surface-thinking__body {
-  position: relative;
-  width: 100%;
-  margin: -1px 0 0;
-  padding: 11px 13px 11px 17px;
-  border: 1px solid color-mix(in srgb, var(--ui-accent-pink) 30%, var(--ui-border-default));
-  border-top-style: dashed;
-  background:
-    repeating-linear-gradient(
-      90deg,
-      transparent 0 9px,
-      color-mix(in srgb, var(--ui-accent-pink) 6%, transparent) 9px 10px
-    ),
-    color-mix(in srgb, var(--ui-accent-pink-soft) 34%, var(--ui-bg-elevated));
-  box-shadow: 3px 3px 0 color-mix(in srgb, var(--ui-accent-purple) 12%, transparent);
-  clip-path: polygon(
-    0 0,
-    100% 0,
-    100% calc(100% - 9px),
-    calc(100% - 9px) calc(100% - 9px),
-    calc(100% - 9px) 100%,
-    8px 100%,
-    8px calc(100% - 5px),
-    0 calc(100% - 5px)
-  );
+
+/* 1. 思考过程：无框静默灵动行 */
+.surface-reasoning-line {
+  display: inline-flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 7px;
+  min-height: 29px;
+  max-width: 100%;
+  padding: 2px 8px 2px 5px;
+  border-radius: 5px;
   color: var(--ui-text-secondary);
-  font-size: 11px;
-  line-height: 1.85;
+  transition:
+    background-color 120ms ease,
+    color 120ms ease;
+}
+@media (hover: hover) {
+  .surface-reasoning-line:hover {
+    background: var(--ui-bg-hover);
+    color: var(--ui-text-primary);
+  }
+}
+.surface-reasoning-line > strong {
+  flex: 0 0 auto;
+  font-weight: 580;
+  color: var(--ui-text-primary);
+}
+.surface-reasoning-badge {
+  display: inline-flex;
+  align-items: center;
+  padding: 1px 7px;
+  border-radius: 4px;
+  border: 1px solid var(--ui-border-subtle);
+  background: var(--traj-compartment);
+  box-shadow: inset 0 1px 0 var(--traj-top-edge);
+  color: var(--ui-text-tertiary);
+  font-family: var(--ui-font-mono);
+  font-size: 11.5px;
+  font-variant-numeric: tabular-nums;
+}
+
+/* 2. 角色碎碎念：2px 哑光双层叠纸温暖便签 */
+.surface-whisper-note {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 7px;
+  max-width: min(100%, 46rem);
+  padding: 5.5px 13px 5.5px 11px;
+  border: 1px solid color-mix(in srgb, var(--ui-accent-primary) 32%, var(--traj-border));
+  border-radius: 3px 12px 12px 12px;
+  background: color-mix(in srgb, var(--ui-accent-primary-soft) 18%, var(--traj-face));
+  box-shadow:
+    inset 0 1px 0 var(--traj-top-edge),
+    2px 2px 0 color-mix(in srgb, var(--ui-accent-primary) 22%, var(--traj-lip));
+  color: var(--ui-text-secondary);
+  line-height: 1.62;
+  transition:
+    transform 150ms cubic-bezier(0.34, 1.56, 0.64, 1),
+    box-shadow 150ms ease;
+}
+@media (hover: hover) {
+  .surface-whisper-note:hover {
+    transform: translate(-0.5px, -0.5px);
+    box-shadow:
+      inset 0 1px 0 var(--traj-top-edge),
+      3px 3px 0 color-mix(in srgb, var(--ui-accent-primary) 26%, var(--traj-lip));
+  }
+}
+.surface-whisper-spark {
+  color: var(--ui-accent-primary);
+}
+.surface-whisper-note > strong {
+  flex: 0 0 auto;
+  font-weight: 600;
+  color: var(--ui-accent-primary);
+}
+.surface-whisper-note > time {
+  color: var(--ui-text-tertiary);
+  font-family: var(--ui-font-mono);
+  font-size: 12px;
+  font-variant-numeric: tabular-nums;
+}
+
+.surface-thought__snippet {
+  min-width: 0;
+  max-width: 48ch;
+  overflow: hidden;
+  color: var(--ui-text-tertiary);
+  font-size: 12.5px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.surface-whisper-note .surface-thought__snippet {
+  color: var(--ui-text-secondary);
+}
+.surface-thinking__meta,
+.surface-native-reasoning__meta {
+  min-width: 0;
+  overflow: hidden;
+  color: var(--thought-accent);
+  font: 600 12px/1.2 var(--ui-font-mono);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.surface-thought__chevron {
+  flex: 0 0 auto;
+  color: var(--ui-text-tertiary);
+  transition: transform 150ms cubic-bezier(0.34, 1.56, 0.64, 1);
+}
+.surface-thought-node[open] .surface-thought__chevron {
+  transform: rotate(90deg);
+}
+
+/* 展开态轻内凹正文窗 */
+.surface-thought__body {
+  margin: 6px 0 4px;
+  max-width: min(100%, 50rem);
+  padding: 10px 14px;
+  color: var(--ui-text-secondary);
+  font-size: 12.5px;
+  line-height: 1.74;
+}
+.surface-thinking:not(:is(.surface-execution__body > *)) > .surface-thought__body,
+.surface-native-reasoning:not(:is(.surface-execution__body > *)) > .surface-thought__body {
+  margin-left: 31px;
 }
 .surface-thinking__live {
-  min-height: 1.85em;
+  min-height: 1.72em;
   margin: 0;
   white-space: pre-wrap;
   overflow-wrap: anywhere;
 }
-.surface-thinking__body::before {
-  position: absolute;
-  top: 9px;
-  bottom: 9px;
-  left: 3px;
-  width: 2px;
-  background: repeating-linear-gradient(
-    to bottom,
-    var(--ui-accent-pink) 0 4px,
-    transparent 4px 7px
-  );
-  content: '';
-  opacity: 0.68;
-}
 .surface-thinking__cursor {
   display: inline-block;
   width: 5px;
-  height: 9px;
+  height: 11px;
   margin-left: 4px;
-  background: var(--ui-accent-pink);
+  background: var(--thought-accent);
   animation: thinking-cursor 0.7s steps(1, end) infinite;
   vertical-align: -1px;
-}
-@keyframes thinking-spark {
-  50% {
-    opacity: 0.55;
-    transform: rotate(135deg) scale(0.82);
-  }
 }
 @keyframes thinking-cursor {
   50% {
     opacity: 0;
   }
-}
-
-.surface-native-reasoning {
-  width: fit-content;
-  max-width: 100%;
-  margin: 10px 0;
-  overflow: hidden;
-  border: 1px solid color-mix(in srgb, var(--ui-accent-purple) 24%, var(--ui-border-default));
-  border-radius: 10px;
-  background: color-mix(in srgb, var(--ui-accent-purple-soft) 52%, var(--ui-bg-elevated));
-  color: var(--ui-text-secondary);
-  box-shadow: 0 6px 18px color-mix(in srgb, var(--ui-accent-purple) 8%, transparent);
-  font-size: 12px;
-}
-.surface-native-reasoning[open] {
-  width: min(100%, 60rem);
-}
-.surface-native-reasoning:not([open]) summary {
-  grid-template-columns: 12px auto minmax(0, auto) auto 14px;
-}
-.surface-native-reasoning__meta,
-.surface-thinking__meta {
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-.surface-native-reasoning summary {
-  display: grid;
-  min-height: 34px;
-  grid-template-columns: 18px auto auto 1fr 14px;
-  align-items: center;
-  gap: 7px;
-  padding: 0 10px;
-  color: var(--ui-text-primary);
-  cursor: pointer;
-  list-style: none;
-  user-select: none;
-}
-.surface-native-reasoning summary::-webkit-details-marker {
-  display: none;
-}
-.surface-native-reasoning summary strong {
-  font-size: 12px;
-  font-weight: 750;
-}
-.surface-native-reasoning__cube {
-  width: 10px;
-  height: 10px;
-  border-radius: 3px;
-  background: var(--ui-accent-purple);
-  box-shadow: inset -2px -2px 0 color-mix(in srgb, var(--ui-accent-purple) 56%, #000);
-  transform: rotate(45deg);
-}
-.surface-native-reasoning__meta {
-  color: var(--ui-text-muted);
-  font-size: 10px;
-}
-.surface-native-reasoning time {
-  color: var(--ui-text-muted);
-  font-family: var(--font-mono), monospace;
-  font-size: 10px;
-  font-variant-numeric: tabular-nums;
-  text-align: right;
-}
-.surface-native-reasoning summary :deep(.pixel-icon) {
-  color: var(--ui-text-muted);
-  transition: transform 0.2s ease;
-}
-.surface-native-reasoning[open] summary :deep(.pixel-icon) {
-  transform: rotate(180deg);
-}
-.surface-native-reasoning__body {
-  position: relative;
-  margin: 0 10px 10px;
-  padding: 10px 12px 10px 15px;
-  border-top: 1px solid color-mix(in srgb, var(--ui-accent-purple) 18%, var(--ui-border-default));
-  color: var(--ui-text-secondary);
-  line-height: 1.85;
-}
-.surface-native-reasoning__body::before {
-  position: absolute;
-  top: 10px;
-  bottom: 10px;
-  left: 3px;
-  width: 2px;
-  border-radius: 999px;
-  background: linear-gradient(var(--ui-accent-purple), var(--ui-accent-sky));
-  content: '';
-  opacity: 0.55;
 }
 .surface-run-pulse {
   margin: 6px 0;

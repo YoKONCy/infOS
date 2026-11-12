@@ -73,39 +73,39 @@ const range = computed(() => {
 </template>
 <style scoped>
 .read-inspector {
-  background: var(--ui-bg-surface);
+  background: transparent;
 }
 .read-inspector > header {
   display: grid;
-  min-height: 38px;
-  grid-template-columns: 54px minmax(0, 1fr) auto;
+  min-height: 32px;
+  grid-template-columns: 52px minmax(0, 1fr) auto;
   align-items: center;
-  border-bottom: 1px solid var(--ui-border-default);
-  background: var(--ui-bg-surface-soft);
+  border-bottom: 1px solid var(--ui-border-subtle);
+  background: var(--traj-compartment, var(--ui-bg-surface-soft));
 }
 .read-inspector > header b {
   display: grid;
   height: 100%;
   place-items: center;
-  border-right: 1px solid var(--ui-border-default);
-  color: var(--tc-accent);
+  border-right: 1px solid var(--ui-border-subtle);
+  color: var(--tc-accent, var(--ui-accent-sky));
   font: 800 9px var(--ui-font-mono);
-  letter-spacing: 0.12em;
+  letter-spacing: 0.1em;
 }
 .read-inspector > header strong {
   overflow: hidden;
   padding: 0 10px;
   color: var(--ui-text-primary);
-  font: 700 11px var(--ui-font-mono);
+  font: 600 11px var(--ui-font-mono);
   text-overflow: ellipsis;
   white-space: nowrap;
 }
 .read-inspector > header code {
   height: 100%;
   padding: 0 10px;
-  border-left: 1px solid var(--ui-border-default);
+  border-left: 1px solid var(--ui-border-subtle);
   color: var(--ui-text-tertiary);
-  font: 9px/38px var(--ui-font-mono);
+  font: 9.5px/32px var(--ui-font-mono);
 }
 .read-audit > span {
   display: block;

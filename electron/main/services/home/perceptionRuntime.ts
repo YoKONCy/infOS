@@ -144,6 +144,13 @@ export function registerPerceptionIpc(assertTrusted: (sender: WebContents) => vo
   ipcMain.handle('desktop-home:perception-snapshot', async (event) => {
     assertTrusted(event.sender)
     if (event.senderFrame !== event.sender.mainFrame) throw new Error('PERCEPTION_FORBIDDEN')
+    // 未处于采集中时直接返回空，避免无意义拉起原生桌面桥接进程。
+    if (!perceptionControl.state().collecting) return null
+    const cached = perceptionCoordinator.snapshot()
+    if (cached) {
+      void samplePerception(true)
+      return cached
+    }
     await samplePerception(true)
     return perceptionCoordinator.snapshot()
   })

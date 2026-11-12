@@ -17,5 +17,14 @@
   "隔离的可编程Surface": "Isolated Programmable Surface",
   "正在验证可编程Surface…": "is verifying the programmable Surface…",
   "已阻止：": "has blocked:",
-  "可编程Surface已暂停": "programmable Surface has been suspended"
+  "可编程Surface已暂停": "programmable Surface has been suspended",
+  "正在探索": "Exploring",
+  "行动足迹": "Action trail",
+  "{0} 次调用 · {1} 段思考": "{0} calls · {1} thoughts",
+  "思考中": "Thinking",
+  "第 {0} 轮": "Turn {0}",
+  "走过 {0} 步足迹": "{0} steps taken",
+  "{0} 段思考": "{0} thoughts",
+  "展开": "Expand",
+  "收起": "Collapse"
 }

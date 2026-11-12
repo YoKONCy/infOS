@@ -120,24 +120,24 @@ export function usePerception() {
   const label = computed(() => {
     switch (phase.value) {
       case 'stopped':
-        return __t('ui.desktop', '感知已全部停止')
+        return __t('ui.desktop', '感知已停止')
       case 'blocked':
         switch (blockedReason.value) {
           case 'desktop-disabled':
-            return __t('ui.desktop', '感知停了：桌面操作关着')
+            return __t('ui.desktop', '感知暂停：桌面操作未启用')
           case 'locked':
             return __t('ui.desktop', '感知暂停：电脑已锁屏')
           case 'suspended':
-            return __t('ui.desktop', '感知暂停：电脑在休眠')
+            return __t('ui.desktop', '感知暂停：电脑休眠中')
           case 'sensitive-target':
-            return __t('ui.desktop', '感知暂停：当前是敏感窗口')
+            return __t('ui.desktop', '感知暂停：当前为敏感窗口')
           default:
-            return __t('ui.desktop', '感知停了：桌面暂时用不了')
+            return __t('ui.desktop', '感知暂停：桌面暂不可用')
         }
       case 'off':
-        return __t('ui.desktop', '感知没开')
+        return __t('ui.desktop', '感知未开启')
       case 'paused':
-        return __t('ui.desktop', '感知暂停到 {0}', [
+        return __t('ui.desktop', '感知暂停至 {0}', [
           new Date(state.value?.settings.pausedUntil ?? 0).toLocaleTimeString([], {
             hour: '2-digit',
             minute: '2-digit',
@@ -150,19 +150,19 @@ export function usePerception() {
     }
   })
 
-  /** 总览方块地方小，只放几个字。 */
+  /** 总览方块地方小，统一用简短规范状态词。 */
   const shortLabel = computed(() => {
     switch (phase.value) {
       case 'stopped':
         return __t('ui.desktop', '已停止')
       case 'blocked':
-        return __t('ui.desktop', '暂时停了')
+        return __t('ui.desktop', '已暂停')
       case 'off':
-        return __t('ui.desktop', '没开')
+        return __t('ui.desktop', '未开启')
       case 'paused':
-        return __t('ui.desktop', '暂停中')
+        return __t('ui.desktop', '已暂停')
       case 'running':
-        return __t('ui.desktop', '运行中')
+        return __t('ui.desktop', '感知中')
       default:
         return ''
     }
@@ -212,5 +212,5 @@ export function usePerception() {
     if (--users === 0) disconnect()
   })
 
-  return { state, phase, label, shortLabel, error, act, updateSettings, readSnapshot }
+  return { state, phase, blockedReason, label, shortLabel, error, act, updateSettings, readSnapshot }
 }

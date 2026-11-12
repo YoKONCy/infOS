@@ -117,7 +117,7 @@ PrincipalAgent 继续通过 `agentId` 关联 Identity、Memory、Workspace、Con
 
 消息提交事件和事实同事务写入 Outbox。主线执行结算发布 `conversation.execution.settled`。`EventNoteDraftCommitter.consumeExecution` 与 `consumeMessage` 保留已受理历史草稿的恢复职责，按原操作编号和 Coverage 幂等处理。当前 Agent 通过查询使用事件记忆，主动要点写入记事本，共享事实修改统一核验有效 MainThread。具体职责见 [记忆引擎](./A05_MEMORY_ENGINE.md)。
 
-消息撤回保留已形成的记忆，来源页标示撤回或修订状态。永久遗忘沿用 `PrivacyDeletionService`，覆盖新增亲历、共享状态贡献及跨会话来源。记忆重置同时记录聊天和亲历来源截止编号，后续补记遵守截止标记。
+消息撤回保留已形成的记忆，来源页标示撤回或修订状态。永久遗忘沿用 `PrivacyDeletionService` 清理记忆及其派生资料，并登记跨会话来源的遗忘标记。记忆重置同时记录聊天和亲历来源截止编号，后续补记遵守截止标记。
 
 ## 据点执行与亲历
 

@@ -12,7 +12,7 @@ import { inject, onActivated, onDeactivated, onBeforeUnmount, shallowRef, ref, w
 import EmbeddedWebPreview from './EmbeddedWebPreview.vue'
 import StreamText from './StreamText.vue'
 import { segmentChatContent } from '../../lib/embeddedWebPreview'
-import { queueTextRender } from '../../compositor/renderQueue'
+import { onChatMathReady, renderChatRichTextResult } from '../../lib/chatRichRenderer'
 import {
   matchesRichTextSnapshot,
   readRichTextSnapshot,
@@ -48,114 +48,149 @@ const props = withDefaults(
 )
 const notify = useNotificationStore()
 const mainVisible = inject('infos:main-surface-visible', shallowRef(true))
-const segments = shallowRef<readonly RichTextSegment[]>([
-  { type: 'rich-text', source: props.content },
-])
+const segments = shallowRef<readonly RichTextSegment[]>([])
 let residentSnapshot: RichTextSnapshot | undefined
-let cancelRender: (() => void) | undefined
-let generation = 0
+let tailFrame = 0
+let tailInitialized = false
 let disposed = false
 let mathPending = false
 let stopMathReady: (() => void) | undefined
 const pageActive = ref(true)
-// 按需加载解析器，避免首次切屏必须同步初始化公式和全部高亮语言。
-let rendererPromise: Promise<typeof import('../../lib/chatRichRenderer')> | undefined
+
+function cancelTailFrame(): void {
+  if (tailFrame) {
+    cancelAnimationFrame(tailFrame)
+    tailFrame = 0
+  }
+}
+
+function buildRichSegments(
+  content: string,
+  stable: boolean,
+  webPreview: boolean,
+  useCache: boolean,
+): { segments: readonly RichTextSegment[]; mathReady: boolean } {
+  let mathReady = true
+  const rawSegments =
+    webPreview && stable
+      ? segmentChatContent(content)
+      : [{ type: 'rich-text' as const, source: content }]
+  const nextSegments = rawSegments
+    .flatMap<{
+      type: 'rich-text' | 'web-preview' | 'resource-reference'
+      source: string
+      label?: string
+    }>((segment) =>
+      segment.type === 'rich-text' && stable ? splitResourceCards(segment.source) : [segment],
+    )
+    .map((segment) => {
+      if (segment.type !== 'rich-text') return { ...segment, html: '' }
+      const result = renderChatRichTextResult(segment.source, {
+        cache: useCache && stable,
+      })
+      mathReady &&= result.mathReady
+      return { ...segment, html: result.html }
+    })
+  return { segments: nextSegments, mathReady }
+}
+
+function ensureMathSubscription(): void {
+  if (disposed || stopMathReady) return
+  stopMathReady = onChatMathReady(() => {
+    if (!disposed && mathPending) updateSegments()
+  })
+}
+
+function renderStreamingTailNow(): void {
+  try {
+    const { segments: nextSegments, mathReady } = buildRichSegments(
+      props.content,
+      false,
+      false,
+      false,
+    )
+    mathPending = !mathReady
+    if (mathPending) ensureMathSubscription()
+    segments.value = nextSegments
+  } catch {
+    segments.value = [{ type: 'rich-text', source: props.content }]
+  }
+}
+
+/**
+ * 首帧同步渲染富文本 HTML，彻底消除 StreamText -> v-html 的版式与行高抽搐；
+ * 流式尾部按动画帧（16ms）节流合并更新，且在段落稳定时不发生样式跳变。
+ */
 function updateSegments(): void {
-  const current = ++generation
-  cancelRender?.()
-  if (!pageActive.value || !props.active || !mainVisible.value) return
+  if (disposed) return
   if (!props.stable) {
     residentSnapshot = undefined
-    segments.value = [{ type: 'rich-text', source: props.content }]
+    if (!pageActive.value || !mainVisible.value) {
+      if (!segments.value.length) renderStreamingTailNow()
+      return
+    }
+    if (!tailInitialized || !segments.value.length) {
+      tailInitialized = true
+      cancelTailFrame()
+      renderStreamingTailNow()
+      return
+    }
+    if (tailFrame) return
+    tailFrame = requestAnimationFrame(() => {
+      tailFrame = 0
+      if (!disposed && !props.stable) renderStreamingTailNow()
+    })
     return
   }
+
+  cancelTailFrame()
+  tailInitialized = false
   const input = { content: props.content, webPreview: props.webPreview, locale: appLocale.value }
   if (matchesRichTextSnapshot(residentSnapshot, input)) return
   const cached = props.cache ? readRichTextSnapshot(input) : undefined
   if (cached) {
+    mathPending = false
     residentSnapshot = cached
     segments.value = cached.segments
     return
   }
-  rendererPromise ??= import('../../lib/chatRichRenderer')
-  const content = props.content
-  void rendererPromise
-    .then(async (module) => {
-      if (!disposed)
-        stopMathReady ??= module.onChatMathReady(() => {
-          if (mathPending) updateSegments()
-        })
-      // 公式依赖只在正文可能含公式时加载，加载期间被更新的渲染直接作废。
-      await module.prepareChatRichText(content)
-      return module
-    })
-    .then(({ renderChatRichTextResult }) => {
-      if (disposed || current !== generation) return
-      cancelRender = queueTextRender(() => {
-        if (disposed || current !== generation) return
-        try {
-          let mathReady = true
-          segments.value =
-            // 流式尾部先显示源码；内容稳定后才创建 iframe，避免每个增量都取消并重启导航。
-            (
-              props.webPreview && props.stable
-                ? segmentChatContent(props.content)
-                : [{ type: 'rich-text' as const, source: props.content }]
-            )
-              .flatMap<{
-                type: 'rich-text' | 'web-preview' | 'resource-reference'
-                source: string
-                label?: string
-              }>((segment) =>
-                segment.type === 'rich-text' ? splitResourceCards(segment.source) : [segment],
-              )
-              .map((segment) => {
-                if (segment.type !== 'rich-text') return { ...segment, html: '' }
-                const result = renderChatRichTextResult(segment.source, {
-                  cache: props.cache && props.stable,
-                })
-                mathReady &&= result.mathReady
-                return { ...segment, html: result.html }
-              })
-          mathPending = !mathReady
-          // 降级结果不能进入组件驻留或共享快照，否则依赖恢复后仍会命中源码。
-          residentSnapshot = mathReady ? { ...input, segments: segments.value } : undefined
-          if (props.cache && residentSnapshot) writeRichTextSnapshot(residentSnapshot)
-        } catch {
-          segments.value = [{ type: 'rich-text', source: props.content }]
-        }
-      })
-    })
-    .catch(() => {
-      if (!disposed && current === generation)
-        segments.value = [{ type: 'rich-text', source: props.content }]
-      rendererPromise = undefined
-    })
+  try {
+    const { segments: nextSegments, mathReady } = buildRichSegments(
+      props.content,
+      true,
+      props.webPreview,
+      props.cache,
+    )
+    segments.value = nextSegments
+    mathPending = !mathReady
+    if (mathPending) ensureMathSubscription()
+    // 降级结果不能进入组件驻留或共享快照，否则依赖恢复后仍会命中源码。
+    residentSnapshot = mathReady ? { ...input, segments: nextSegments } : undefined
+    if (props.cache && residentSnapshot) writeRichTextSnapshot(residentSnapshot)
+  } catch {
+    segments.value = [{ type: 'rich-text', source: props.content }]
+  }
 }
+
 watch(
-  () => [
-    props.content,
-    props.stable,
-    props.active,
-    props.cache,
-    props.webPreview,
-    appLocale.value,
-    mainVisible.value,
-    pageActive.value,
-  ],
+  () => [props.content, props.stable, props.cache, props.webPreview, appLocale.value] as const,
   updateSegments,
   { immediate: true },
+)
+watch(
+  () => [mainVisible.value, pageActive.value] as const,
+  ([visible, active]) => {
+    if (visible && active && (!props.stable || mathPending)) updateSegments()
+  },
 )
 onBeforeUnmount(() => {
   disposed = true
   stopMathReady?.()
-  generation++
-  cancelRender?.()
+  cancelTailFrame()
 })
 onDeactivated(() => {
   pageActive.value = false
-  generation++
-  cancelRender?.()
+  cancelTailFrame()
 })
 onActivated(() => {
   pageActive.value = true

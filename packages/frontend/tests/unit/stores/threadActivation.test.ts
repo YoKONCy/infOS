@@ -1,4 +1,4 @@
-import { beforeEach, describe, expect, it, vi } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { createPinia, setActivePinia } from 'pinia'
 import type {
   ApiResponse,
@@ -9,6 +9,7 @@ import type {
 import type { ThreadInfo } from '@infos/frontend/api/modules/threadsApi'
 import { useThreadStore } from '@infos/frontend/stores/useThreadStore'
 import { useCompositorStore } from '@infos/frontend/stores/useCompositorStore'
+import { ApiError } from '@infos/frontend/api/errors'
 
 const api = vi.hoisted(() => ({
   latest: vi.fn(),
@@ -102,7 +103,64 @@ beforeEach(() => {
   api.projection.mockImplementation(async (id: string) => projectionResponse(recordFor(id)))
 })
 
+afterEach(() => {
+  vi.unstubAllGlobals()
+})
+
 describe('最近会话激活与初始化竞态', () => {
+  it('删除缓存会话后重新进入角色，从有效来源恢复并排除旧快照', async () => {
+    const store = useThreadStore()
+    await store.loadThreadMessages('selected-thread', 'pero')
+    store.forgetThread('selected-thread', 'pero')
+    store.clearThread()
+    api.get.mockClear()
+    api.projection.mockClear()
+
+    await expect(store.ensureLatestThread('pero')).resolves.toBe('pero-thread')
+
+    expect(api.get).toHaveBeenCalledWith('pero-thread', expect.any(Object))
+    expect(api.get).not.toHaveBeenCalledWith('selected-thread', expect.any(Object))
+    expect(store.threadId).toBe('pero-thread')
+  })
+
+  it('已记住的会话返回 NOT_FOUND 后清理选择并回退到有效会话', async () => {
+    const selection = new Map<string, string>()
+    const storage = {
+      getItem: (key: string) => selection.get(key) ?? null,
+      setItem: (key: string, value: string) => { selection.set(key, value) },
+      removeItem: vi.fn((key: string) => { selection.delete(key) }),
+    }
+    vi.stubGlobal('sessionStorage', storage)
+    const store = useThreadStore()
+    await store.loadThreadMessages('selected-thread', 'pero')
+    store.clearThread()
+    api.get.mockImplementation(async (id: string) => {
+      if (id === 'selected-thread') throw new ApiError('NOT_FOUND', '会话已删除')
+      return { code: 'OK', data: { thread: recordFor(id), messages: [], total: 0 } }
+    })
+
+    await expect(store.ensureLatestThread('pero')).resolves.toBe('pero-thread')
+    expect(storage.removeItem).toHaveBeenCalledWith('infos:conversation:pero')
+    expect(selection.get('infos:conversation:pero')).toBe('pero-thread')
+    expect(store.historyError).toBeNull()
+    expect(store.threadId).toBe('pero-thread')
+  })
+
+  it('删除正在加载的目标后，迟到投影结束为已失效请求', async () => {
+    const store = useThreadStore()
+    await store.loadThreadMessages('pero-thread', 'pero')
+    const delayed = deferred<ReturnType<typeof projectionResponse>>()
+    api.projection.mockReturnValueOnce(delayed.promise)
+    const loading = store.loadThreadMessages('selected-thread', 'pero')
+
+    store.forgetThread('selected-thread', 'pero')
+    delayed.resolve(projectionResponse(recordFor('selected-thread')))
+
+    await expect(loading).resolves.toEqual({ status: 'superseded' })
+    expect(store.threadId).toBe('pero-thread')
+    expect(store.isLoadingHistory).toBe(false)
+  })
+
   it('取消断流恢复后，迟到快照不能覆盖当前消息或重新占用界面', async () => {
     const store = useThreadStore()
     await store.loadThreadMessages('pero-thread', 'pero')
@@ -379,7 +437,7 @@ describe('最近会话激活与初始化竞态', () => {
     expect(api.projection).toHaveBeenCalledTimes(1)
     await store.loadLatestThread('pero')
     expect(api.latest).toHaveBeenCalledTimes(1)
-    expect(api.get).toHaveBeenCalledWith('pero-thread', { pageSize: 1 })
+    expect(api.get).toHaveBeenCalledWith('pero-thread', { page: 1, pageSize: 1 })
     expect(api.projection).toHaveBeenCalledTimes(2)
   })
   it('主窗口与聊天组件同时恢复同一角色时共用一次请求', async () => {

@@ -57,10 +57,10 @@ export const memoryApi = {
   /** 将核心记忆移入归档，保留关系图结构 */
   archiveNote: (id: string) => apiClient.post<void>(`/memories/${encodeURIComponent(id)}/archive`),
   restoreNote: (id: string) => apiClient.post<void>(`/memories/${encodeURIComponent(id)}/restore`),
-  deleteNote: (id: string, deleteSource = false) =>
-    apiClient.delete<void>(`/memories/${encodeURIComponent(id)}?deleteSource=${deleteSource}`),
-  batch: (ids: string[], action: 'archive' | 'restore' | 'delete', deleteSource = false) =>
-    apiClient.post<void>('/memories/batch', { ids, action, deleteSource }),
+  deleteNote: (id: string) =>
+    apiClient.delete<void>(`/memories/${encodeURIComponent(id)}`),
+  batch: (ids: string[], action: 'archive' | 'restore' | 'delete') =>
+    apiClient.post<void>('/memories/batch', { ids, action }),
   cleanupJobs: () => apiClient.get<PrivacyCleanupJob[]>('/memories/deletions/status'),
   retryCleanup: (id: string) =>
     apiClient.post<void>(`/memories/deletions/${encodeURIComponent(id)}/retry`),

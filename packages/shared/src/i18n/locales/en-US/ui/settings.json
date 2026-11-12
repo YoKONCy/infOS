@@ -564,7 +564,6 @@
   "归档后仅在归档页可见，退出自动召回。": "is archived, it is only visible on the archive page and exits automatic recall.",
   "永久删除记忆？": "permanently delete memory?",
   "将删除记忆及关联日记，无法恢复。": "will delete the memory and associated diary and cannot restore it.",
-  "同时删除来源对话": "Also delete the source conversation",
   "永久删除所选记忆？": "Permanently delete selected memories?",
   "恢复所选记忆？": "Restore selected memory?",
   "归档所选记忆？": "Archive selected memory?",
@@ -1528,5 +1527,7 @@
   "主动模式": "Proactive mode",
   "已更新全局默认模式": "Global default mode updated",
   "等待回答": "Waiting for a reply",
-  "等待任务": "Waiting for a task"
+  "等待任务": "Waiting for a task",
+  "回复策略": "Reply Strategy",
+  "输入消息…": "Type a message…"
 }

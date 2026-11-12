@@ -247,8 +247,8 @@
   --ui-panel-width-lg: 720px;
 
   /* ── 导航尺寸 ── */
-  --ui-nav-width: 240px;
-  --ui-nav-collapsed-width: 68px;
+  --ui-nav-width: 228px;
+  --ui-nav-collapsed-width: 78px;
 }
 
 /* ── 用户动效偏好 ── */

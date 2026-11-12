@@ -35,8 +35,6 @@ function fixture() {
     listAgentIds: () => ['pero'],
     resetSqlite: vi.fn(async () => {}),
     forgetSocial: vi.fn(async () => {}),
-    retractCharacterState: (threadId: string, pairIds: string[]) =>
-      characterStates.rollbackPairs(threadId, pairIds),
   }
   const service = new PrivacyDeletionService(deps)
   cleanup.push(async () => {
@@ -79,8 +77,8 @@ function fixture() {
 }
 
 describe('长记忆永久删除', () => {
-  it('删除来源时撤回并清除来源状态正文，保留后续轮次状态和防迟到标记', async () => {
-    const { db, service, characterStates } = fixture()
+  it('删除记忆后保留来源会话贡献的角色状态与修订', async () => {
+    const { service, characterStates } = fixture()
     const publish = vi.fn().mockResolvedValue(undefined)
     characterStates.setPublisher(publish)
     await characterStates.update(
@@ -100,58 +98,35 @@ describe('长记忆永久删除', () => {
       },
     )
     const before = (await characterStates.get('pero', 'thread-delete'))!.revision
-    await service.deleteMemory('memory-delete', true)
+    publish.mockClear()
+    await service.deleteMemory('memory-delete')
     expect(await characterStates.get('pero', 'thread-delete')).toMatchObject({
-      mood: '开心',
+      mood: '紧张',
       mind: '保留的后续心声',
     })
-    expect(publish).toHaveBeenCalledWith(
-      expect.objectContaining({
-        threadId: 'thread-delete',
-        mood: '开心',
-        mind: '保留的后续心声',
-        revision: expect.any(Number),
-      }),
-    )
-    expect((await characterStates.get('pero', 'thread-delete'))!.revision).toBeGreaterThan(before)
-    expect(
-      db
-        .prepare(
-          "SELECT patch_json FROM thread_character_state_events WHERE kind='update' AND pair_id='pair-delete'",
-        )
-        .all(),
-    ).toEqual([])
-    await expect(
-      characterStates.update(
-        'pero',
-        { mood: '紧张' },
-        {
-          threadId: 'thread-delete',
-          pairId: 'pair-delete',
-        },
-      ),
-    ).rejects.toThrow('已撤回')
+    expect(publish).not.toHaveBeenCalled()
+    expect((await characterStates.get('pero', 'thread-delete'))!.revision).toBe(before)
   })
 
-  it('同时删除来源时使用真实 session_id 列，完成清理并保留其他会话', async () => {
+  it('永久删除记忆及派生数据，保留来源正文、旧日志和会话标题', async () => {
     const { db, service, policy, rebuildAgentStore, deps } = fixture()
-    const columns = db.pragma('table_info(conversation_logs)') as Array<{ name: string }>
-    expect(columns.map((column) => column.name)).toContain('session_id')
-    expect(columns.map((column) => column.name)).not.toContain('thread_id')
 
-    await service.deleteMemory('memory-delete', true)
+    await service.deleteMemory('memory-delete')
 
     expect(db.prepare('SELECT 1 FROM event_notes WHERE id=?').get('memory-delete')).toBeUndefined()
     expect(
-      db.prepare('SELECT 1 FROM conversation_logs WHERE session_id=?').get('thread-delete'),
-    ).toBeUndefined()
+      db.prepare('SELECT content FROM conversation_logs WHERE session_id=?').get('thread-delete'),
+    ).toEqual({ content: '旧来源正文' })
     expect(
       db.prepare('SELECT content FROM conversation_logs WHERE session_id=?').get('thread-keep'),
     ).toEqual({ content: '保留的旧正文' })
-    expect(db.prepare('SELECT pair_id FROM thread_messages ORDER BY id').all()).toEqual([
-      { pair_id: 'pair-keep' },
-      { pair_id: 'pair-other' },
+    expect(db.prepare('SELECT pair_id,content FROM thread_messages ORDER BY id').all()).toEqual([
+      { pair_id: 'pair-delete', content: '来源正文' },
+      { pair_id: 'pair-keep', content: '同会话其他正文' },
+      { pair_id: 'pair-other', content: '另一会话正文' },
     ])
+    expect(db.prepare('SELECT title FROM threads WHERE id=?').get('thread-delete'))
+      .toEqual({ title: '待清理对话' })
     expect(
       db
         .prepare(
@@ -165,9 +140,12 @@ describe('长记忆永久删除', () => {
     expect(policy.sourceForgotten('pero', 'thread-delete', 'pair-delete')).toBe(true)
   })
 
-  it('仅删除记忆时保留原对话和旧日志', async () => {
-    const { db, service } = fixture()
-    await service.deleteMemory('memory-delete', false)
+  it('删除主会话独立消息来源的记忆时保留原对话和旧日志', async () => {
+    const { db, service, origin } = fixture()
+    db.prepare("UPDATE threads SET thread_kind='main' WHERE id=?").run(origin.threadId)
+    db.prepare('UPDATE event_notes SET origin_json=? WHERE id=?')
+      .run(JSON.stringify({ ...origin, pairIds: ['message:1@1'] }), 'memory-delete')
+    await service.deleteMemory('memory-delete')
     expect(db.prepare('SELECT count(*) AS count FROM thread_messages').get()).toEqual({ count: 3 })
     expect(db.prepare('SELECT count(*) AS count FROM conversation_logs').get()).toEqual({
       count: 2,
@@ -219,13 +197,14 @@ describe('长记忆永久删除', () => {
     expect(rebuildAgentStore).toHaveBeenCalledWith('pero', true)
   })
 
-  it('启动时接续已达重试上限的清理记录，不需要重新建立删除任务', async () => {
+  it('恢复旧联动删除任务时只接续记忆清理，来源记录继续保留', async () => {
     const { db, service, origin, now, rebuildAgentStore } = fixture()
     const metadata = {
       ids: ['memory-delete'],
       agents: ['pero'],
       sources: [{ threadId: origin.threadId, pairIds: origin.pairIds }],
       deleteSource: true,
+      attachments: [{ id: 'source-attachment', storageKey: 'original' }],
     }
     db.prepare(
       'INSERT INTO privacy_deletions(id,kind,target_id,agent_id,metadata_json,status,attempts,last_error,created_at) VALUES(?,?,?,?,?,?,?,?,?)',
@@ -250,5 +229,14 @@ describe('长记忆永久删除', () => {
     ).toEqual([{ id: 'failed-job', status: 'completed', attempts: 1, last_error: null }])
     expect(rebuildAgentStore).toHaveBeenCalledOnce()
     expect(db.prepare('SELECT 1 FROM event_notes WHERE id=?').get('memory-delete')).toBeUndefined()
+    expect(db.prepare('SELECT content FROM thread_messages ORDER BY id').all()).toEqual([
+      { content: '来源正文' },
+      { content: '同会话其他正文' },
+      { content: '另一会话正文' },
+    ])
+    expect(db.prepare('SELECT content FROM conversation_logs ORDER BY id').all()).toEqual([
+      { content: '旧来源正文' },
+      { content: '保留的旧正文' },
+    ])
   })
 })

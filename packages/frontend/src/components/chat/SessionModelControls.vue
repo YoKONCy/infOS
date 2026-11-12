@@ -14,6 +14,7 @@ import {
   type ThreadModelSettings,
 } from '@infos/shared'
 import { threadsApi } from '../../api/modules/threadsApi'
+import { cacheThreadUsableModel } from '../../composables/chat/sendModelGuard'
 import { useNotificationStore } from '../../stores/useNotificationStore'
 import { resolveModelBrand } from '../../lib/modelBrands'
 import BrandIcon from '../brands/BrandIcon.vue'
@@ -40,7 +41,7 @@ const pendingEffort = ref<{ value: ReasoningEffort | null } | null>(null)
 const effortSlider = ref<InstanceType<typeof SessionSlider> | null>(null)
 const listId = `thread-model-list-${useId()}`
 let sequence = 0
-const blocked = computed(() => props.disabled || loading.value || saving.value || !settings.value)
+const blocked = computed(() => props.disabled || (loading.value && !settings.value) || !settings.value)
 const modelValue = computed(() => settings.value?.modelConfigId?.toString() ?? '')
 const modelOptions = computed(() => [
   {
@@ -147,6 +148,7 @@ async function load(): Promise<void> {
     if (request !== sequence || id !== props.threadId) return
     if (!response.data) throw new Error('未收到会话配置')
     settings.value = response.data
+    cacheThreadUsableModel(id, Boolean(response.data.effective.modelId))
     emit('changed', response.data)
   } catch {
     if (request === sequence) error.value = true
@@ -158,10 +160,25 @@ async function load(): Promise<void> {
 async function save(modelConfigId: number | null, effort: ReasoningEffort | null): Promise<void> {
   if (blocked.value || !settings.value) return
   const id = props.threadId
+  const previous = settings.value
   const request = ++sequence
   saving.value = true
   pendingEffort.value = { value: effort }
-  emit('busy', true)
+  const chosenModel =
+    modelConfigId !== null ? previous.models.find((item) => item.id === modelConfigId) : undefined
+  // 乐观更新本地模型与思考档位，最后一次写入胜出（Last-Write-Wins），失败时回滚
+  settings.value = {
+    ...previous,
+    modelConfigId,
+    reasoningEffort: effort,
+    effective: chosenModel
+      ? {
+          ...previous.effective,
+          name: chosenModel.name,
+          modelId: chosenModel.modelId,
+        }
+      : previous.effective,
+  }
   try {
     const response = await threadsApi.updateModelSettings(id, {
       modelConfigId,
@@ -170,15 +187,17 @@ async function save(modelConfigId: number | null, effort: ReasoningEffort | null
     if (request !== sequence || id !== props.threadId) return
     if (!response.data) throw new Error('保存失败')
     settings.value = response.data
+    cacheThreadUsableModel(id, Boolean(response.data.effective.modelId))
     emit('changed', response.data)
   } catch (cause) {
-    if (request === sequence)
+    if (request === sequence && id === props.threadId) {
+      settings.value = previous
       notify.toast(cause instanceof Error ? cause.message : __t('ui.chat', '保存失败'), 'error')
+    }
   } finally {
     if (request === sequence) {
       pendingEffort.value = null
       saving.value = false
-      emit('busy', false)
     }
   }
 }
@@ -229,13 +248,11 @@ watch(
 )
 onMounted(() => {
   window.addEventListener('infos:model-capabilities-changed', refresh)
-  window.addEventListener('focus', refresh)
 })
 onBeforeUnmount(() => {
   sequence++
   emit('busy', false)
   window.removeEventListener('infos:model-capabilities-changed', refresh)
-  window.removeEventListener('focus', refresh)
 })
 defineExpose({ reset, collapse })
 </script>

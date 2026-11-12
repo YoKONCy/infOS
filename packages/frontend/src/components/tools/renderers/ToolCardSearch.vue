@@ -13,7 +13,7 @@ import { resourceNavigation } from '../../../composables/resources/useResources'
 import { useAgentStore } from '../../../stores/useAgentStore'
 import { useThreadStore } from '../../../stores/useThreadStore'
 import { useNotificationStore } from '../../../stores/useNotificationStore'
-import PixelIcon from '../../pixel/PixelIcon.vue'
+import TrajectoryIcon from '../TrajectoryIcon.vue'
 const props = defineProps<{ args: string; result?: string; isError?: boolean }>()
 function parse(raw?: string): Record<string, unknown> {
   try {
@@ -95,7 +95,7 @@ const partialPreview = computed(() => result.value?.previewTruncated || result.v
 <template>
   <section class="search-inspector">
     <header>
-      <b><PixelIcon name="search" size="xs" aria-hidden="true" /></b>
+      <b><TrajectoryIcon name="radar" size="sm" aria-hidden="true" /></b>
       <code :title="query">{{ query || __t('ui.tools', '搜索结果') }}</code>
       <strong>{{ summary }}</strong>
     </header>
@@ -119,11 +119,7 @@ const partialPreview = computed(() => result.value?.previewTruncated || result.v
         :title="__t('ui.toolSearchResult', '在工作区打开：{0}', [file.file])"
         @click="openFile(file)"
       >
-        <PixelIcon
-          :name="file.kind === 'directory' ? 'folder' : 'file'"
-          size="xs"
-          aria-hidden="true"
-        />
+        <TrajectoryIcon name="files" size="sm" aria-hidden="true" />
         <span class="search-file__copy">
           <strong>{{ fileName(file.file) }}</strong>
           <small :title="file.content || file.file">
@@ -135,7 +131,7 @@ const partialPreview = computed(() => result.value?.previewTruncated || result.v
           {{ file.line }}:{{ file.column ?? 1 }}
           <small v-if="file.hits > 1">+{{ file.hits - 1 }}</small>
         </code>
-        <PixelIcon name="chevron-right" size="xs" aria-hidden="true" />
+        <TrajectoryIcon name="chev-right" size="xs" aria-hidden="true" />
       </button>
     </div>
     <pre v-else-if="isError" class="search-error">{{ props.result }}</pre>
@@ -233,22 +229,22 @@ const partialPreview = computed(() => result.value?.previewTruncated || result.v
   color: var(--ui-text-tertiary);
 }
 .search-inspector {
-  background: var(--ui-bg-surface);
+  background: transparent;
 }
 .search-inspector > header {
   display: grid;
   min-height: 32px;
   grid-template-columns: 32px minmax(0, 1fr) auto;
   align-items: center;
-  border-bottom: 1px solid var(--ui-border-default);
-  background: var(--ui-bg-surface-soft);
+  border-bottom: 1px solid var(--ui-border-subtle);
+  background: var(--traj-compartment, var(--ui-bg-surface-soft));
 }
 .search-inspector > header b {
   display: grid;
   height: 100%;
   place-items: center;
-  border-right: 1px solid var(--ui-border-default);
-  color: var(--tc-accent);
+  border-right: 1px solid var(--ui-border-subtle);
+  color: var(--tc-accent, var(--ui-accent-sky));
   font: 800 9px var(--ui-font-mono);
   letter-spacing: 0.1em;
 }
@@ -263,8 +259,8 @@ const partialPreview = computed(() => result.value?.previewTruncated || result.v
 .search-inspector > header strong {
   height: 100%;
   padding: 0 10px;
-  border-left: 1px solid var(--ui-border-default);
-  color: var(--tc-accent);
+  border-left: 1px solid var(--ui-border-subtle);
+  color: var(--tc-accent, var(--ui-accent-sky));
   font: 800 9px/32px var(--ui-font-mono);
 }
 .search-empty {

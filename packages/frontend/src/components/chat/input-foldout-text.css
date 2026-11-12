@@ -22,5 +22,6 @@
   background: var(--ui-bg-hover);
 }
 .input-foldout__trigger--text:active:not(:disabled) {
+  translate: none;
   box-shadow: none;
 }

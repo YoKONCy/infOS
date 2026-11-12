@@ -1,58 +1,118 @@
 /*
- * 「桌面与家」里各个小面板（授权、改动、活动、回收区、置物架、地图）共用的样式。
- * 字号只有三档：标题 13px、正文 12px、标签 11px；间距按 4 的倍数。
+ * 「桌面与家」与「共享空间」各子面板（授权、改动、活动、回收区、置物架、地图）共用的硬朗哑光工程面板样式。
+ * 直角边界、中性石板/纯白面板层级、阶梯微阴影，兼容共享空间与桌面安全设置两处挂载环境。
  */
 .home-panel {
+  --panel-surface: var(--home-surface, #ffffff);
+  --panel-surface-soft: var(--home-surface-soft, #f6f8fb);
+  --panel-inset: var(--home-inset-bg, #eef1f6);
+  --panel-border: var(--home-border, rgba(15, 23, 42, 0.12));
+  --panel-border-strong: var(--home-border-strong, rgba(15, 23, 42, 0.22));
+  --panel-step-shadow: var(--home-step-shadow, rgba(15, 23, 42, 0.06));
+  --panel-shadow: var(
+    --home-panel-shadow,
+    inset 0 1px 0 rgba(255, 255, 255, 0.88),
+    2px 2px 0 var(--panel-step-shadow)
+  );
+  --panel-key-bg: var(--home-key-bg, #ffffff);
+  --panel-key-hover: var(--home-key-hover, #f3f6fa);
+  --panel-key-border: var(--home-key-border, rgba(15, 23, 42, 0.14));
+  --panel-key-shadow: var(
+    --home-key-shadow,
+    inset 0 1px 0 rgba(255, 255, 255, 0.92),
+    2px 2px 0 var(--panel-step-shadow)
+  );
+
   margin-top: 12px;
-  padding: 14px;
-  border: 1px solid var(--ui-border-subtle);
-  border-radius: var(--ui-radius-md);
-  background: var(--ui-bg-surface-soft);
+  padding: 16px;
+  border: 1px solid var(--panel-border);
+  border-top: 2px solid var(--panel-border-strong);
+  border-radius: 0;
+  background: var(--panel-surface);
+  box-shadow: var(--panel-shadow);
   color: var(--ui-text-primary);
   min-width: 0;
 }
+
+[data-theme='dark'] .home-panel {
+  --panel-surface: var(--home-surface, rgba(22, 25, 34, 0.94));
+  --panel-surface-soft: var(--home-surface-soft, rgba(17, 20, 28, 0.92));
+  --panel-inset: var(--home-inset-bg, #0d1017);
+  --panel-border: var(--home-border, rgba(255, 255, 255, 0.11));
+  --panel-border-strong: var(--home-border-strong, rgba(255, 255, 255, 0.22));
+  --panel-step-shadow: var(--home-step-shadow, rgba(0, 0, 0, 0.44));
+  --panel-shadow: var(
+    --home-panel-shadow,
+    inset 0 1px 0 rgba(255, 255, 255, 0.05),
+    2px 2px 0 var(--panel-step-shadow)
+  );
+  --panel-key-bg: var(--home-key-bg, #181b24);
+  --panel-key-hover: var(--home-key-hover, #1f2431);
+  --panel-key-border: var(--home-key-border, rgba(255, 255, 255, 0.12));
+  --panel-key-shadow: var(
+    --home-key-shadow,
+    inset 0 1px 0 rgba(255, 255, 255, 0.05),
+    2px 2px 0 var(--panel-step-shadow)
+  );
+}
+
 .home-panel > header {
   display: flex;
   align-items: flex-start;
   justify-content: space-between;
-  gap: 8px 12px;
+  gap: 10px 14px;
   flex-wrap: wrap;
+  padding-bottom: 12px;
+  border-bottom: 1px solid var(--panel-border);
 }
+
 .home-panel > header > div:first-child {
   flex: 1 1 200px;
   min-width: 0;
 }
+
 .home-panel h4 {
-  font-weight: 700;
-  font-size: 13px;
-  line-height: 1.5;
+  margin: 0;
+  font-family: var(--ui-font-pixel);
+  font-weight: 800;
+  font-size: 14px;
+  line-height: 1.35;
   color: var(--ui-text-primary);
 }
+
 .home-muted {
-  margin-top: 4px;
+  margin: 3px 0 0;
   color: var(--ui-text-secondary);
   font-size: 12px;
-  line-height: 1.6;
+  line-height: 1.55;
 }
+
 .home-list {
-  margin-top: 10px;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin: 12px 0 0;
   list-style: none;
   padding: 0;
 }
+
 .home-list > li {
-  padding: 8px 6px;
-  border-top: 1px solid var(--ui-border-subtle);
-  border-radius: var(--ui-radius-xs);
-  transition: background-color var(--motion-duration-fast) var(--motion-ease-out);
+  padding: 9px 10px;
+  border: 1px solid var(--panel-border);
+  border-radius: 0;
+  background: var(--panel-surface-soft);
+  transition:
+    background-color 140ms ease,
+    border-color 140ms ease;
 }
-.home-list > li:first-child {
-  border-top-color: transparent;
-}
+
 @media (hover: hover) {
   .home-list > li:hover {
-    background: var(--ui-bg-hover);
+    background: var(--panel-key-hover);
+    border-color: var(--panel-border-strong);
   }
 }
+
 .home-row {
   display: flex;
   align-items: center;
@@ -60,6 +120,7 @@
   flex-wrap: wrap;
   font-size: 12px;
 }
+
 .home-path {
   flex: 1 1 160px;
   min-width: 0;
@@ -67,97 +128,134 @@
   text-overflow: ellipsis;
   white-space: nowrap;
 }
+
 .home-row-actions {
   display: flex;
-  gap: 4px;
+  align-items: center;
+  gap: 5px;
   margin-left: auto;
 }
+
 .home-tag {
-  padding: 1px 6px;
-  border: 1px solid var(--ui-border-subtle);
-  border-radius: var(--ui-radius-xs);
-  font-size: 11px;
-  line-height: 1.6;
+  display: inline-flex;
+  align-items: center;
+  height: 20px;
+  padding: 0 6px;
+  border: 1px solid var(--panel-border);
+  border-radius: 0;
+  background: var(--panel-inset);
+  font-family: var(--ui-font-pixel);
+  font-size: 10.5px;
+  line-height: 1;
   color: var(--ui-text-secondary);
   white-space: nowrap;
 }
+
 .home-tag.is-bad {
-  border-color: color-mix(in srgb, var(--ui-danger) 45%, transparent);
+  border-color: color-mix(in srgb, var(--ui-danger) 45%, var(--panel-border));
+  background: color-mix(in srgb, var(--ui-danger) 8%, var(--panel-inset));
   color: var(--ui-danger);
 }
+
 .home-tag.is-warn {
-  border-color: color-mix(in srgb, var(--ui-warning) 45%, transparent);
+  border-color: color-mix(in srgb, var(--ui-warning) 45%, var(--panel-border));
+  background: color-mix(in srgb, var(--ui-warning) 8%, var(--panel-inset));
   color: var(--ui-warning);
 }
+
 .home-detail {
   display: grid;
   grid-template-columns: max-content minmax(0, 1fr);
-  gap: 4px 10px;
+  gap: 5px 12px;
   margin-top: 8px;
-  padding: 8px 10px;
-  border-radius: var(--ui-radius-xs);
-  background: var(--ui-bg-surface);
+  padding: 9px 11px;
+  border: 1px solid var(--panel-border);
+  border-radius: 0;
+  background: var(--panel-inset);
   font-size: 12px;
   color: var(--ui-text-secondary);
   overflow-wrap: anywhere;
 }
+
 .home-detail dt {
   color: var(--ui-text-tertiary);
 }
+
 .home-diff {
   display: grid;
   grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
   gap: 8px;
   margin-top: 8px;
 }
+
 .home-diff pre {
   max-height: 240px;
   overflow: auto;
   margin-top: 4px;
   padding: 8px;
-  border-radius: var(--ui-radius-xs);
+  border: 1px solid var(--panel-border);
+  border-radius: 0;
   font-size: 11px;
   white-space: pre-wrap;
   overflow-wrap: anywhere;
-  background: var(--ui-bg-surface);
+  background: var(--panel-inset);
   color: var(--ui-text-primary);
 }
+
 .home-actions,
 .home-filters {
   display: flex;
-  gap: 8px;
+  gap: 6px;
   align-items: center;
   flex-wrap: wrap;
 }
+
 .home-actions {
   margin-top: 10px;
 }
+
 .home-filter-select {
   width: 136px;
 }
-/* 空状态：虚线框里一句话，不抢眼 */
+
+/* 凹陷工程点阵空状态 */
 .home-empty {
-  margin-top: 10px;
-  padding: 14px 12px;
-  border: 1px dashed var(--ui-border-default);
-  border-radius: var(--ui-radius-sm);
-  color: var(--ui-text-secondary);
+  margin: 12px 0 0;
+  padding: 20px 14px;
+  border: 1px solid var(--panel-border);
+  border-radius: 0;
+  background-color: var(--panel-inset);
+  background-image: radial-gradient(
+    color-mix(in srgb, var(--ui-text-primary) 9%, transparent) 1px,
+    transparent 1px
+  );
+  background-size: 12px 12px;
+  color: var(--ui-text-tertiary);
   font-size: 12px;
   text-align: center;
 }
+
 /* 错误：左侧红条，正文用主文字色，深浅色都清楚 */
 .home-error {
-  margin-top: 10px;
-  padding: 8px 10px;
-  border-left: 3px solid var(--ui-danger);
-  border-radius: var(--ui-radius-xs);
-  background: color-mix(in srgb, var(--ui-danger) 8%, transparent);
+  margin: 10px 0 0;
+  padding: 8px 11px;
+  border: 1px solid color-mix(in srgb, var(--ui-danger) 35%, var(--panel-border));
+  border-left: 2px solid var(--ui-danger);
+  border-radius: 0;
+  background: color-mix(in srgb, var(--ui-danger) 8%, var(--panel-inset));
   color: var(--ui-text-primary);
   font-size: 12px;
   overflow-wrap: anywhere;
 }
+
 /* 轻提示：保存成功、已递给她等 */
 .home-ok {
+  margin: 10px 0 0;
+  padding: 7px 10px;
+  border: 1px solid color-mix(in srgb, var(--ui-success) 35%, var(--panel-border));
+  border-left: 2px solid var(--ui-success);
+  border-radius: 0;
+  background: color-mix(in srgb, var(--ui-success) 8%, var(--panel-inset));
   color: var(--ui-success);
   font-size: 12px;
 }

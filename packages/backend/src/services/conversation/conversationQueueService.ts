@@ -117,7 +117,7 @@ export class ConversationQueueService {
       throw new AppError('CONFLICT', { message: '会话已重置，本次执行已过期' })
     this.repo.enqueue(id, { ...input, agentId: thread.agentId, expectedGeneration: thread.generation })
     if (!existing && !input.taskResultEvent && this.onUserInput) {
-      await this.onUserInput(thread.agentId, thread.id).catch((error) =>
+      void this.onUserInput(thread.agentId, thread.id).catch((error) =>
         logger.warn(__t('logs.companion', '保存主动行为活动时间失败'), { error }))
     }
     this.kick(thread.id)
@@ -135,14 +135,23 @@ export class ConversationQueueService {
     }
     const source = await this.threads.getRegenerationSource(threadId, messageId, revision)
     const thread = await this.threads.getThread(threadId)
-    if (!thread) throw new AppError('NOT_FOUND', { message: '会话不存在' })
-    this.pause(threadId, true)
-    await this.enqueue(id, {
-      threadId, agentId: thread.agentId, expectedGeneration: thread.generation,
-      content: source.message.content, regeneration: { messageId, revision },
+    if (!thread || thread.channel !== 'desktop' || thread.status !== 'active')
+      throw new AppError('NOT_FOUND', { message: '目标对话不存在' })
+    this.assertQueueMutable(threadId)
+    this.repo.enqueueRegeneration(id, {
+      threadId,
+      agentId: thread.agentId,
+      expectedGeneration: thread.generation,
+      content: source.message.content,
+      regeneration: { messageId, revision },
     })
-    const queued = this.repo.get(id)!
-    return this.change(threadId, id, queued.revision, { immediate: true })
+    if (this.onUserInput) {
+      void this.onUserInput(thread.agentId, thread.id).catch((error) =>
+        logger.warn(__t('logs.companion', '保存主动行为活动时间失败'), { error }))
+    }
+    this.runtime.requestHandoff(threadId)
+    this.kick(threadId)
+    return this.snapshot(threadId)
   }
 
   async change(

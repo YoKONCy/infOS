@@ -101,6 +101,7 @@ function close(): void {
 
 function show(): void {
   if (props.disabled || !props.threadId || open.value) return
+  window.dispatchEvent(new CustomEvent('infos:input-foldout-open', { detail: sourceId }))
   emit('open')
   query.value = ''
   open.value = true
@@ -149,7 +150,7 @@ onBeforeUnmount(() => version++)
   <span class="experience-access">
     <button
       type="button"
-      class="experience-trigger input-tool-trigger"
+      class="experience-trigger"
       :class="{ 'is-compact': compact, 'is-open': open }"
       :disabled="disabled || !threadId"
       :title="t('ui.chat', '生活经历')"
@@ -158,8 +159,10 @@ onBeforeUnmount(() => version++)
       aria-haspopup="dialog"
       @click="show"
     >
-      <PixelIcon name="clock" size="xs" aria-hidden="true" />
-      <span v-if="!compact">{{ t('ui.chat', '生活经历') }}</span>
+      <span class="experience-trigger__emblem" aria-hidden="true">
+        <PixelIcon name="book" size="xs" />
+      </span>
+      <span v-if="!compact" class="experience-trigger__label">{{ t('ui.chat', '生活经历') }}</span>
     </button>
 
     <PDrawer v-if="open" :title="t('ui.chat', '生活经历')" :width="520" @close="close">

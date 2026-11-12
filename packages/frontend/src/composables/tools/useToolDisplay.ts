@@ -46,6 +46,7 @@ const STYLE_FALLBACK: Record<string, { icon: string; color: string }> = {
   script: { icon: 'code', color: 'purple' },
   screen: { icon: 'image', color: 'pink' },
   reminder: { icon: 'clock', color: 'orange' },
+  state: { icon: 'heart', color: 'pink' },
   task: { icon: 'check', color: 'green' },
   skill: { icon: 'puzzle', color: 'purple' },
   social: { icon: 'chat', color: 'green' },
@@ -61,7 +62,7 @@ const FALLBACK_TOOL_STYLE: Record<string, string> = {
   edit_file: 'edit',
   write_file: 'edit',
   read_file: 'read',
-  read_image: 'read',
+  read_image: 'screen',
   read_file_range: 'read',
   browser_get_content: 'read',
   code_search: 'search',
@@ -94,6 +95,8 @@ const FALLBACK_TOOL_STYLE: Record<string, string> = {
   suggest_next_step: 'task',
   list_reminders: 'reminder',
   cancel_reminder: 'reminder',
+  update_state: 'state',
+  update_flow_state: 'state',
   finish_task: 'task',
   load_skill: 'skill',
   social_notify_owner: 'social',
@@ -101,7 +104,12 @@ const FALLBACK_TOOL_STYLE: Record<string, string> = {
   stronghold_list_rooms: 'stronghold',
   stronghold_get_room_info: 'stronghold',
   stronghold_set_environment: 'stronghold',
+  stronghold_summon_agents: 'stronghold',
   stronghold_call_butler: 'stronghold',
+  home_shelf: 'stronghold',
+  home_map: 'stronghold',
+  home_card: 'stronghold',
+  home_files: 'file',
   get_system_info: 'system',
   open_application: 'system',
   get_active_windows: 'system',
@@ -367,6 +375,9 @@ const FALLBACK_TOOL_LABEL: Record<string, string> = {
   get update_state() {
     return __t('ui.tools', '更新角色状态')
   },
+  get update_flow_state() {
+    return __t('ui.tools', '整理心流')
+  },
   get load_skill() {
     return __t('ui.tools', '加载技能')
   },
@@ -425,4 +436,22 @@ export function toolDisplayColor(display?: AgentToolDisplay): string {
 export function toolDisplayColorSoft(display?: AgentToolDisplay): string {
   const semantic = display?.color || 'pink'
   return TOOL_COLOR_CSS[semantic]?.soft ?? FALLBACK_COLOR.soft
+}
+
+/** 语义色名 → 主色/软底令牌对 */
+export function toolColorTokens(semantic?: string): { solid: string; soft: string } {
+  return TOOL_COLOR_CSS[semantic || 'pink'] ?? FALLBACK_COLOR
+}
+
+/** 同步读取工具足迹摘要（优先命中已缓存 API 元数据，否则回退内置样式表，避免折叠条闪烁） */
+export function peekToolDisplay(name: string): { icon: string; color: string; label: string } {
+  if (!loaded) void ensureLoaded()
+  const fromApi = metaByTool.get(name) ?? resolvedCache.get(name)
+  const style = fromApi?.style ?? FALLBACK_TOOL_STYLE[name]
+  const fallback = (style ? STYLE_FALLBACK[style] : STYLE_FALLBACK.generic) ?? STYLE_FALLBACK.generic!
+  return {
+    icon: fromApi?.icon || fallback.icon || 'tool',
+    color: fromApi?.color || fallback.color || 'pink',
+    label: toolDisplayLabel(name, fromApi),
+  }
 }

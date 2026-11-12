@@ -254,10 +254,8 @@ async function fetchSessions(): Promise<void> {
       )
       logs.value = grouped.map((entry) => {
         const old = oldLogs.find((log) => log.id === entry.id)
-        // 若该条已展开且消息已加载,保留原有 messages/messagesLoaded/isLoadingMessages,
-        // 防止刷新时展开的详情区域全部消失（UX 事故）。
-        // messageCount 始终使用最新拉取的真实总数，与消息预览窗口解耦。
-        if (old && old.messagesLoaded) {
+        // 仅为当前正展开的条目保留已加载的调试消息详情，已收起条目的 metadataJson 等大对象立即随列表刷新释放
+        if (entry.id === expandedId.value && old && old.messagesLoaded) {
           entry.messages = old.messages
           entry.messagesLoaded = true
           entry.isLoadingMessages = false
@@ -273,13 +271,26 @@ async function fetchSessions(): Promise<void> {
   }
 }
 
-/** 展开时加载消息详情 */
+/** 展开时按需加载消息详情，收起或切换到其他会话时立即清空旧消息数组释放内存 */
 async function toggleExpand(id: string): Promise<void> {
   if (expandedId.value === id) {
     expandedId.value = null
+    logs.value = logs.value.map((item) =>
+      item.id === id
+        ? { ...item, messages: [], messagesLoaded: false, isLoadingMessages: false }
+        : item,
+    )
     return
   }
+  const prevId = expandedId.value
   expandedId.value = id
+  if (prevId) {
+    logs.value = logs.value.map((item) =>
+      item.id === prevId
+        ? { ...item, messages: [], messagesLoaded: false, isLoadingMessages: false }
+        : item,
+    )
+  }
 
   const log = logs.value.find((item) => item.id === id)
   if (log && !log.messagesLoaded) {
@@ -699,11 +710,10 @@ onUnmounted(() => {
           <!-- 搜索 -->
           <div class="flex flex-col gap-1.5 flex-1 min-w-[160px] max-w-[280px]">
             <label
-              class="text-[10px] font-bold text-ui-text-secondary flex items-center gap-1.5 ml-1 uppercase tracking-wider"
+              class="text-[10px] font-bold text-ui-text-secondary flex items-center gap-1.5 ml-1"
             >
               <span class="w-1.5 h-1.5 rounded-full bg-ui-accent-sky" />
               {{ __t('ui.settings', '搜索') }}
-              <span class="opacity-50 font-normal">Search</span>
             </label>
             <PInput
               v-model="searchQuery"
@@ -715,11 +725,10 @@ onUnmounted(() => {
           <!-- Agent -->
           <div class="flex flex-col gap-1.5 min-w-[130px]">
             <label
-              class="text-[10px] font-bold text-ui-text-secondary flex items-center gap-1.5 ml-1 uppercase tracking-wider"
+              class="text-[10px] font-bold text-ui-text-secondary flex items-center gap-1.5 ml-1"
             >
               <span class="w-1.5 h-1.5 rounded-full bg-ui-accent-sky animate-pulse" />
               {{ __t('ui.settings', '角色') }}
-              <span class="opacity-50 font-normal">Agent</span>
             </label>
             <PSelect v-model="filterAgent" :options="agentOptions" @change="fetchSessions" />
           </div>
@@ -727,11 +736,10 @@ onUnmounted(() => {
           <!-- 来源 -->
           <div class="flex flex-col gap-1.5 min-w-[130px]">
             <label
-              class="text-[10px] font-bold text-ui-text-secondary flex items-center gap-1.5 ml-1 uppercase tracking-wider"
+              class="text-[10px] font-bold text-ui-text-secondary flex items-center gap-1.5 ml-1"
             >
               <span class="w-1.5 h-1.5 rounded-full bg-ui-accent-sky" />
               {{ __t('ui.settings', '来源') }}
-              <span class="opacity-50 font-normal">Source</span>
             </label>
             <PSelect v-model="filterChannel" :options="channelOptions" @change="fetchSessions" />
           </div>
@@ -739,11 +747,10 @@ onUnmounted(() => {
           <!-- 排序 -->
           <div class="flex flex-col gap-1.5 min-w-[120px]">
             <label
-              class="text-[10px] font-bold text-ui-text-secondary flex items-center gap-1.5 ml-1 uppercase tracking-wider"
+              class="text-[10px] font-bold text-ui-text-secondary flex items-center gap-1.5 ml-1"
             >
               <span class="w-1.5 h-1.5 rounded-full bg-ui-accent-sky" />
               {{ __t('ui.settings', '排序') }}
-              <span class="opacity-50 font-normal">Sort</span>
             </label>
             <PSelect v-model="selectedSort" :options="sortOptions" />
           </div>

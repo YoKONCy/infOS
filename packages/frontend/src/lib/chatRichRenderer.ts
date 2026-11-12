@@ -49,15 +49,29 @@ function codeLanguage(lang?: string): string {
   return (lang || 'text').trim().split(/\s+/)[0]?.toLowerCase() || 'text'
 }
 
-/** 公式围栏使用同一解析器的词法规则，包含引用/列表内的围栏与大小写变体。 */
+const BLOCK_MATH_DETECT_RE =
+  /(^|\n)[ \t]*\$\$[ \t]*(?:\n|$)[\s\S]*?(?:\n|^)[ \t]*\$\$[ \t]*(?=\n|$)/
+const INLINE_MATH_DETECT_RE = /(?<!\\)\$([^\n$]+?)(?<!\\)\$/
+
+/** 公式围栏使用同一解析器的词法规则，包含引用/列表内的围栏与大小写变体；过滤单独货币符号如 $100。 */
 function mayContainMath(source: string): boolean {
-  if (source.includes('$')) return true
+  if (
+    source.includes('$') &&
+    (BLOCK_MATH_DETECT_RE.test(source) || INLINE_MATH_DETECT_RE.test(source))
+  ) {
+    return true
+  }
   if (!/peromath/i.test(source)) return false
   let found = false
   marked.walkTokens(marked.lexer(normalizeRichTextSource(source)), (token) => {
     if (token.type === 'code' && codeLanguage(token.lang) === 'peromath') found = true
   })
   return found
+}
+
+/** 判断当前文本是否可直接同步完成最终公式渲染（无公式或 KaTeX 已就绪）。 */
+export function isChatMathReadyFor(source: string): boolean {
+  return Boolean(katex) || !mayContainMath(source)
 }
 
 /** 渲染前准备按需依赖；加载失败时公式回退为源码显示，不阻断正文渲染。 */

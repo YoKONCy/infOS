@@ -339,6 +339,55 @@ export const useCompositorStore = defineStore('compositor', () => {
     surfaces.value = next
   }
 
+  /** 批量更新多个消息 Surface 的挂起状态，单次浅拷贝避免滚动或切页时的 O(N^2) Map 克隆风暴。 */
+  function setSuspendedBatch(entries: ReadonlyArray<readonly [string, boolean]>): void {
+    if (!entries.length) return
+    let next: Map<SurfaceId, CompositorSurface> | null = null
+    for (const [surfaceId, suspended] of entries) {
+      const current = (next ?? surfaces.value).get(surfaceId as SurfaceId)
+      if (!current || current.suspended === suspended) continue
+      next ??= new Map(surfaces.value)
+      next.set(current.surfaceId, { ...current, suspended })
+    }
+    if (next) surfaces.value = next
+  }
+
+  /** 本地乐观预览编辑后的消息正文，返回失败时的原样回滚函数。 */
+  function previewMarkdownText(surfaceId: string | undefined, content: string): (() => void) | null {
+    if (!surfaceId) return null
+    const snapshot = get(surfaceId)
+    if (!snapshot) return null
+    let lastMarkdownIndex = -1
+    for (let i = snapshot.nodes.length - 1; i >= 0; i--) {
+      if (snapshot.nodes[i]?.kind === 'markdown') {
+        lastMarkdownIndex = i
+        break
+      }
+    }
+    if (lastMarkdownIndex < 0) return null
+    const targetNode = snapshot.nodes[lastMarkdownIndex]!
+    const nextNodes = snapshot.nodes.slice()
+    nextNodes[lastMarkdownIndex] = {
+      ...targetNode,
+      revision: targetNode.revision + 1,
+      props: { ...targetNode.props, source: content },
+    }
+    const next = new Map(surfaces.value)
+    next.set(snapshot.surfaceId, {
+      ...snapshot,
+      revision: snapshot.revision + 1,
+      nodes: nextNodes,
+    })
+    surfaces.value = next
+    return () => {
+      const current = surfaces.value.get(snapshot.surfaceId)
+      if (!current) return
+      const restored = new Map(surfaces.value)
+      restored.set(snapshot.surfaceId, snapshot)
+      surfaces.value = restored
+    }
+  }
+
   function setScopeSuspended(scopeId: string, suspended: boolean): void {
     const next = new Map(surfaces.value)
     for (const [surfaceId, surface] of next) {
@@ -460,6 +509,8 @@ export const useCompositorStore = defineStore('compositor', () => {
     installLocalMessage,
     terminateThinking,
     setSuspended,
+    setSuspendedBatch,
+    previewMarkdownText,
     setScopeSuspended,
     disposeScope,
     dispose,
@@ -506,6 +557,7 @@ function reduceFrame(
   }
 
   const surface = current!
+  if (frame.executionId) surface.executionId = frame.executionId
   surface.revision = frame.revision
   surface.sequence = frame.sequence
   surface.operationIds = operationIds

@@ -11,11 +11,12 @@ import { t as __t } from '../../i18n/index'
  * - tool: 工具调用块 (NIT) (可折叠)
  */
 import { computed, onMounted, ref } from 'vue'
-import PixelIcon from '../pixel/PixelIcon.vue'
+import TrajectoryIcon from '../tools/TrajectoryIcon.vue'
+import { resolveTrajectoryVisual } from '../tools/toolSignatures'
 import ChatRichText from './ChatRichText.vue'
+import '../tools/trajectory-tactile.css'
 import {
   resolveToolDisplay,
-  toolDisplayIcon,
   toolDisplayLabel,
 } from '../../composables/tools/useToolDisplay'
 import type { AgentToolDisplay } from '../../api/modules/agentApi'
@@ -46,7 +47,7 @@ onMounted(async () => {
   }
 })
 
-const toolIcon = computed(() => toolDisplayIcon(display.value))
+const toolVisual = computed(() => resolveTrajectoryVisual(props.segment.name ?? 'NIT'))
 const toolLabel = computed(() => toolDisplayLabel(props.segment.name ?? 'NIT', display.value))
 
 function toggleCollapse() {
@@ -56,15 +57,19 @@ function toggleCollapse() {
 
 <template>
   <!-- 思考过程块 -->
-  <div v-if="segment.type === 'thinking'" class="segment-card segment-thinking pixel-border-moe">
+  <div v-if="segment.type === 'thinking'" class="segment-card segment-thinking traj-shell">
     <div class="segment-header segment-thinking-header" @click="toggleCollapse">
       <div class="segment-title">
-        <PixelIcon name="brain" size="xs" />
+        <TrajectoryIcon name="prism" size="sm" />
         <span>{{ __t('ui.chat', '碎碎念') }}</span>
       </div>
-      <span :class="['segment-chevron', { 'rotate-180': !isCollapsed }]">▼</span>
+      <TrajectoryIcon
+        name="chev-down"
+        size="xs"
+        :class="['segment-chevron', { 'is-open': !isCollapsed }]"
+      />
     </div>
-    <div v-show="!isCollapsed" class="segment-body segment-thinking-body">
+    <div v-show="!isCollapsed" class="segment-body segment-thinking-body traj-recess-pane">
       {{ segment.content }}
     </div>
   </div>
@@ -72,33 +77,41 @@ function toggleCollapse() {
   <!-- 内心独白块 -->
   <div
     v-else-if="segment.type === 'monologue'"
-    class="segment-card segment-monologue pixel-border-moe"
+    class="segment-card segment-monologue traj-shell"
   >
     <div class="segment-header segment-monologue-header" @click="toggleCollapse">
       <div class="segment-title">
-        <PixelIcon name="quote" size="xs" />
+        <TrajectoryIcon name="whisper" size="sm" />
         <span>{{ __t('ui.chat', '内心独白') }}</span>
       </div>
-      <span :class="['segment-chevron', { 'rotate-180': !isCollapsed }]">▼</span>
+      <TrajectoryIcon
+        name="chev-down"
+        size="xs"
+        :class="['segment-chevron', { 'is-open': !isCollapsed }]"
+      />
     </div>
-    <div v-show="!isCollapsed" class="segment-body segment-monologue-body">
+    <div v-show="!isCollapsed" class="segment-body segment-monologue-body traj-recess-pane">
       {{ segment.content }}
     </div>
   </div>
 
   <!-- 工具调用块 (NIT) -->
-  <div v-else-if="segment.type === 'tool'" class="segment-card segment-tool pixel-border-moe">
+  <div v-else-if="segment.type === 'tool'" class="segment-card segment-tool traj-shell">
     <div class="segment-header segment-tool-header" @click="toggleCollapse">
       <div class="segment-title">
-        <PixelIcon :name="toolIcon" size="xs" />
+        <TrajectoryIcon :name="toolVisual.icon" size="sm" :style="{ color: toolVisual.color }" />
         <span>{{ toolLabel }}</span>
       </div>
       <div class="segment-title">
         <span v-if="segment.id" class="segment-id">{{ segment.id }}</span>
-        <span :class="['segment-chevron', { 'rotate-180': !isCollapsed }]">▼</span>
+        <TrajectoryIcon
+          name="chev-down"
+          size="xs"
+          :class="['segment-chevron', { 'is-open': !isCollapsed }]"
+        />
       </div>
     </div>
-    <div v-show="!isCollapsed" class="segment-body segment-tool-body">
+    <div v-show="!isCollapsed" class="segment-body segment-tool-body traj-recess-pane">
       {{ segment.content }}
     </div>
   </div>
@@ -113,88 +126,87 @@ function toggleCollapse() {
 .segment-card {
   margin: 6px 0;
   overflow: hidden;
-  background: rgba(255, 252, 249, 0.72);
+  border-radius: 7px;
 }
 
 .segment-header {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  padding: 7px 10px;
+  padding: 7.5px 12px;
   cursor: pointer;
   user-select: none;
-  font-size: 12px;
-  font-weight: 900;
+  font-size: 13px;
+  font-weight: 600;
   transition: background 0.16s ease;
 }
 
 .segment-title {
   display: flex;
   align-items: center;
-  gap: 6px;
+  gap: 7px;
 }
 
 .segment-thinking-header {
-  color: var(--color-moe-sky);
-  background: rgba(167, 216, 240, 0.12);
+  color: var(--ui-accent-purple);
 }
 
 .segment-thinking-header:hover {
-  background: rgba(167, 216, 240, 0.2);
+  background: var(--traj-face-hover, var(--ui-bg-hover));
 }
 
 .segment-monologue-header {
-  color: var(--color-moe-pink);
-  background: rgba(249, 168, 212, 0.12);
+  color: var(--ui-accent-primary);
 }
 
 .segment-monologue-header:hover {
-  background: rgba(249, 168, 212, 0.2);
+  background: var(--traj-face-hover, var(--ui-bg-hover));
 }
 
 .segment-tool-header {
-  color: white;
-  background: linear-gradient(90deg, var(--color-moe-pink), var(--color-moe-purple));
+  color: var(--ui-text-primary);
 }
 
 .segment-tool-header:hover {
-  filter: brightness(1.04);
+  background: var(--traj-face-hover, var(--ui-bg-hover));
 }
 
 .segment-chevron {
-  font-size: 10px;
+  color: var(--ui-text-tertiary);
   transition: transform 0.16s ease;
 }
 
+.segment-chevron.is-open {
+  transform: rotate(180deg);
+}
+
 .segment-body {
-  padding: 12px;
+  margin: 0 6px 6px;
+  padding: 9px 11px;
   white-space: pre-wrap;
-  font-size: 12px;
+  font-size: 11.5px;
   line-height: 1.65;
-  color: var(--color-moe-cocoa);
-  border-top: 1px solid rgba(45, 27, 30, 0.08);
+  color: var(--ui-text-secondary);
 }
 
 .segment-thinking-body,
 .segment-tool-body {
-  font-family: monospace;
+  font-family: var(--ui-font-mono);
 }
 
 .segment-tool-body {
   overflow-x: auto;
   white-space: pre;
-  background: rgba(45, 27, 30, 0.04);
 }
 
 .segment-id {
-  font-family: monospace;
+  font-family: var(--ui-font-mono);
   font-size: 10px;
   opacity: 0.72;
 }
 
 .segment-text {
   min-height: 1.5em;
-  color: var(--color-moe-cocoa);
-  font-weight: 700;
+  color: var(--ui-text-primary);
 }
 </style>

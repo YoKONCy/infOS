@@ -529,7 +529,51 @@ export class ContextCompiler {
     // ── 3. 提取最后一条 user 消息作为检索查询 ──
     const lastUserMessage = options.retrievalQuery?.trim() || this.extractLastUserMessage(messages)
 
-    // ── 4. [可选] RAG 记忆检索 → memory_context 字符串 ──
+    // ── 4. 能力门控解析（同步 CPU 计算前置，以便与记忆/知识库多路检索并行） ──
+    // CapabilityGate 是能力解析的单一权威来源，统一返回工具白名单/Skills/prompt_fragments/
+    // 工具描述/Skill 菜单。ContextCompiler 与 ToolExecutor 都通过此方法获取能力。
+    // ability_fragments 的渲染需要用到 vars（含 owner_name 等），故此处先取 ResolvedCapability，
+    // 具体渲染延迟到 vars 组装完成后进行。
+    const capability = this.capabilityGate.resolve(
+      agentId,
+      channel,
+      undefined,
+      options.capabilityScope,
+      thread.interactionMode === 'minimal' || options.realmExecution ? [] : (thread.enabledSkills ?? []),
+    )
+    const disabledTools = new Set(
+      (thread.disabledTools ?? []).filter((name) => !isSystemProtocolTool(name)),
+    )
+    const protocolTools =
+      options.capabilityScope && options.capabilityScope !== 'default'
+        ? ['finish_task']
+        : [...SYSTEM_PROTOCOL_TOOLS]
+    const enabledTools = new Set(
+      [...capability.allowedTools, ...protocolTools].filter(
+        (name) =>
+          !disabledTools.has(name) &&
+          isMemoryToolAllowed(name, thread.threadKind) &&
+          this.capabilityGate.isToolAllowedInMode(name, thread.interactionMode, thread.threadKind),
+      ),
+    )
+    if (!capability.enabledSkills?.length) {
+      enabledTools.delete('skill_list_resources')
+      enabledTools.delete('skill_read_resource')
+    }
+
+    // 工具描述：改用 CapabilityGate 已按 channel 过滤白名单的版本（替代原 toolRegistry 直取逻辑）
+    // 仅当 Channel 策略启用时才注入工具描述；请求级 ambient 会进一步收窄工具集。
+    let toolsDescription = ''
+    let toolCount = 0
+    if (policy.enableToolDescriptions) {
+      toolsDescription = this.capabilityGate.describeTools(
+        new Set([...enabledTools].filter((name) => !isAdvancedTool(name))),
+        thread.interactionMode,
+      )
+      toolCount = [...enabledTools].filter((name) => !isAdvancedTool(name)).length
+    }
+
+    // ── 5. 并行执行 RAG 记忆检索、知识库参考召回、状态注入与心流读取 ──
     let expressionNotes: EventNote[] = []
     let memoryContext = ''
     let memoryHitCount = 0
@@ -537,7 +581,9 @@ export class ContextCompiler {
       !options.disableMemoryRetrieval &&
       shouldRunAutoRag(policy.enableMemoryRetrieval, channelMemoryConfig) &&
       Boolean(lastUserMessage)
-    if (enableAutoRag) {
+
+    const runAutoRag = async (): Promise<void> => {
+      if (!enableAutoRag) return
       try {
         const eventNotes = this.eventMemory
           ? await this.eventMemory.automaticRag(
@@ -597,61 +643,18 @@ export class ContextCompiler {
       }
     }
 
-    // ── 5. 能力门控解析：(Agent, Channel) → 能力上下文 ──
-    // CapabilityGate 是能力解析的单一权威来源，统一返回工具白名单/Skills/prompt_fragments/
-    // 工具描述/Skill 菜单。ContextCompiler 与 ToolExecutor 都通过此方法获取能力。
-    // ability_fragments 的渲染需要用到 vars（含 owner_name 等），故此处先取 ResolvedCapability，
-    // 具体渲染延迟到 vars 组装完成后进行。
-    const capability = this.capabilityGate.resolve(
-      agentId,
-      channel,
-      undefined,
-      options.capabilityScope,
-      thread.interactionMode === 'minimal' || options.realmExecution ? [] : (thread.enabledSkills ?? []),
-    )
-    const disabledTools = new Set(
-      (thread.disabledTools ?? []).filter((name) => !isSystemProtocolTool(name)),
-    )
-    const protocolTools =
-      options.capabilityScope && options.capabilityScope !== 'default'
-        ? ['finish_task']
-        : [...SYSTEM_PROTOCOL_TOOLS]
-    const enabledTools = new Set(
-      [...capability.allowedTools, ...protocolTools].filter(
-        (name) =>
-          !disabledTools.has(name) &&
-          isMemoryToolAllowed(name, thread.threadKind) &&
-          this.capabilityGate.isToolAllowedInMode(name, thread.interactionMode, thread.threadKind),
-      ),
-    )
-    if (!capability.enabledSkills?.length) {
-      enabledTools.delete('skill_list_resources')
-      enabledTools.delete('skill_read_resource')
-    }
-
-    // 工具描述：改用 CapabilityGate 已按 channel 过滤白名单的版本（替代原 toolRegistry 直取逻辑）
-    // 仅当 Channel 策略启用时才注入工具描述；请求级 ambient 会进一步收窄工具集。
-    let toolsDescription = ''
-    let toolCount = 0
-    if (policy.enableToolDescriptions) {
-      toolsDescription = this.capabilityGate.describeTools(
-        new Set([...enabledTools].filter((name) => !isAdvancedTool(name))),
-        thread.interactionMode,
-      )
-      toolCount = [...enabledTools].filter((name) => !isAdvancedTool(name)).length
-    }
-
-    const referenceContext =
+    const [, referenceContext, stateVars, flowState] = await Promise.all([
+      runAutoRag(),
       !options.realmExecution && !options.disableReferenceRetrieval && this.knowledgeRecallService
-        ? await this.knowledgeRecallService.recall(lastUserMessage, enabledTools, options.signal)
-        : { knowledge: '', facts: '', documentHits: 0, factHits: 0 }
-
-    // ── 6. [可选] 状态注入 → 组装状态变量对象 ──
-    // buildStateSection 返回 current_time/mood/vibe/mind/owner_name/environment_info/user_persona 等变量
-    let stateVars: Record<string, string> = {}
-    if (policy.enableStateInjection) {
-      stateVars = await this.buildStateSection(agentId, threadId)
-    }
+        ? this.knowledgeRecallService.recall(lastUserMessage, enabledTools, options.signal)
+        : Promise.resolve({ knowledge: '', facts: '', documentHits: 0, factHits: 0 }),
+      policy.enableStateInjection
+        ? this.buildStateSection(agentId, threadId)
+        : Promise.resolve({} as Record<string, string>),
+      options.realmExecution || options.expressionPreview
+        ? Promise.resolve({ currentGoal: '', privateFacts: '' })
+        : this.flowStateService.get(threadId, agentId),
+    ])
 
     // ── 7. 读取 agent.promptPath 的 system_prompt.md 内容 → persona_definition 变量 ──
     // 人设是显式模板来源，由所选框架的数据装配决定是否渲染。
@@ -659,10 +662,6 @@ export class ContextCompiler {
 
     // 模板内部构造由框架声明，编译器只提供数据。
     const systemCore = ''
-
-    const flowState = options.realmExecution || options.expressionPreview
-      ? { currentGoal: '', privateFacts: '' }
-      : await this.flowStateService.get(threadId, agentId)
     const taskPlanEnabled =
       channel === 'desktop' &&
       !options.realmExecution &&

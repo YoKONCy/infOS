@@ -2,34 +2,87 @@
   display: inline-flex;
   flex: 0 0 auto;
 }
+/* 角色生活经历（伴侣手账）硬朗哑光分仓机械按钮，紧邻输入栏右侧心流按钮左侧 */
 .experience-trigger {
+  --exp-accent: var(--ui-accent-primary);
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  gap: 5px;
+  gap: 0;
+  height: 30px;
   min-height: 30px;
-  padding: 0 7px;
-  border: 1px solid transparent;
+  padding: 0;
+  border: 1px solid var(--mech-border, var(--ui-border-default));
   border-radius: 0;
-  background: transparent;
-  color: var(--ui-text-tertiary);
+  background: var(--mech-bg, var(--app-soft-fill, var(--ui-bg-surface)));
+  color: var(--ui-text-secondary);
+  box-shadow: var(
+    --mech-shadow,
+    inset 0 1px 0 color-mix(in srgb, var(--ui-text-primary) 5%, transparent),
+    2px 2px 0 var(--ui-border-subtle)
+  );
   font: 11px/1 var(--ui-font-pixel);
   white-space: nowrap;
   cursor: pointer;
-  transition: color 140ms ease, background-color 140ms ease;
+  transition:
+    color 140ms ease,
+    border-color 140ms ease,
+    background-color 140ms ease;
+}
+[data-theme='dark'] .experience-trigger {
+  background: var(--mech-bg, var(--app-soft-fill, #181b24));
+  border-color: var(--mech-border, rgba(255, 255, 255, 0.11));
+  box-shadow: var(
+    --mech-shadow,
+    inset 0 1px 0 rgba(255, 255, 255, 0.05),
+    2px 2px 0 rgba(0, 0, 0, 0.42)
+  );
+}
+.experience-trigger__emblem {
+  display: grid;
+  flex: 0 0 29px;
+  align-self: stretch;
+  place-items: center;
+  border-right: 1px solid var(--mech-divider, var(--ui-border-subtle));
+  background: color-mix(in srgb, var(--exp-accent) 6%, transparent);
+  color: var(--exp-accent);
+}
+.experience-trigger__label {
+  padding: 0 8px;
 }
 .experience-trigger:hover:not(:disabled),
 .experience-trigger.is-open {
-  background: var(--ui-bg-hover);
-  color: var(--ui-accent-primary);
+  border-color: var(--exp-accent);
+  color: var(--exp-accent);
+  background: color-mix(
+    in srgb,
+    var(--exp-accent) 7%,
+    var(--mech-bg, var(--app-soft-fill, var(--ui-bg-surface)))
+  );
+}
+.experience-trigger:active:not(:disabled) {
+  transform: translate(1px, 1px);
+  box-shadow: var(--mech-shadow-active, inset 1px 1px 0 var(--ui-border-subtle));
 }
 .experience-trigger.is-compact {
   width: 30px;
-  padding: 0;
+  min-width: 30px;
+  height: 30px;
+  min-height: 30px;
+}
+html[data-mobile] .experience-trigger.is-compact {
+  width: 40px;
+  min-width: 40px;
+  height: 40px;
+  min-height: 40px;
+}
+.experience-trigger.is-compact .experience-trigger__emblem {
+  flex: 1;
+  border-right: 0;
 }
 .experience-trigger:disabled {
   cursor: not-allowed;
-  opacity: 0.5;
+  opacity: 0.45;
 }
 .experience-sheet {
   padding: 20px;
@@ -380,7 +433,7 @@
     transition: none;
   }
 }
-:global([data-motion='off']) .experience-trigger,
-:global([data-motion='reduced']) .experience-trigger {
+[data-motion='off'] .experience-trigger,
+[data-motion='reduced'] .experience-trigger {
   transition: none;
 }

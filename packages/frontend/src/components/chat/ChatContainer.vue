@@ -1,5 +1,4 @@
 <script setup lang="ts">
-import ThreadExperiences from './ThreadExperiences.vue'
 import PackageSlot from '../integrations/PackageSlot.vue'
 import { t as __t } from '../../i18n/index'
 
@@ -360,6 +359,15 @@ const messages = computed<BubbleMessage[]>(() => {
   })
 })
 
+const INITIAL_RENDER_WINDOW = 24
+const WINDOW_STEP = 24
+const renderLimit = ref(INITIAL_RENDER_WINDOW)
+
+const visibleMessages = computed<BubbleMessage[]>(() => {
+  const all = messages.value
+  return all.length > renderLimit.value ? all.slice(-renderLimit.value) : all
+})
+
 const messageCount = computed(() => messages.value.length)
 
 // ── 滚动管理 ──
@@ -372,6 +380,20 @@ const { showScrollDown, scrollToBottom, isAtBottom, observeContent, unobserveCon
       !props.focusRequest ||
       focusedRequest === props.focusRequest.revision + ':' + props.focusRequest.messageId,
   )
+
+watch(
+  () => threadStore.threadId,
+  (next, previous) => {
+    if (next !== previous) renderLimit.value = INITIAL_RENDER_WINDOW
+  },
+)
+
+watch(messageCount, (nextLen, prevLen) => {
+  if (nextLen > prevLen && !isAtBottom.value && renderLimit.value < nextLen) {
+    renderLimit.value = Math.min(nextLen, renderLimit.value + (nextLen - prevLen))
+  }
+})
+
 const hasUnseenMessages = useUnseenMessages(messages, isAtBottom)
 let focusingMessage = false
 let focusedRequest = ''
@@ -395,6 +417,13 @@ async function focusRequestedMessage(): Promise<void> {
     ) {
       const added = await threadStore.loadOlderMessages()
       if (!added) break
+    }
+    const targetIdx = messages.value.findIndex((message) => message.id === target.messageId)
+    if (targetIdx !== -1) {
+      const neededFromEnd = messages.value.length - targetIdx + 4
+      if (neededFromEnd > renderLimit.value) {
+        renderLimit.value = Math.min(messages.value.length, neededFromEnd)
+      }
     }
     await nextTick()
     if (!stillRequested()) return
@@ -427,10 +456,18 @@ watch(
 
 // ── IntersectionObserver 不可见消息暂停 ──
 
-const { observe, unobserve } = useMessageVisibility(containerRef, (element, visible) => {
-  const surfaceId = element.dataset.surfaceId
-  if (surfaceId) compositor.setSuspended(surfaceId, !visible)
-})
+const { observe, unobserve } = useMessageVisibility(
+  containerRef,
+  undefined,
+  (changes) => {
+    const updates: Array<readonly [string, boolean]> = []
+    for (const [element, visible] of changes) {
+      const surfaceId = element.dataset.surfaceId
+      if (surfaceId) updates.push([surfaceId, !visible] as const)
+    }
+    if (updates.length) compositor.setSuspendedBatch(updates)
+  },
+)
 
 function getComponentRootElement(event: unknown): Element | null {
   if (event instanceof Element) return event
@@ -454,18 +491,42 @@ function onBubbleUnmounted(event: unknown) {
   unobserveContent(element)
 }
 
+let expandingWindow = false
+async function expandWindowWithAnchor(): Promise<void> {
+  const container = containerRef.value
+  if (!container || expandingWindow || renderLimit.value >= messages.value.length) return
+  expandingWindow = true
+  const previousHeight = container.scrollHeight
+  const previousTop = container.scrollTop
+  const anchor = [...container.querySelectorAll<HTMLElement>('[data-message-id]')].find(
+    (element) => element.offsetTop + element.offsetHeight >= previousTop,
+  )
+  const anchorOffset = anchor ? anchor.offsetTop - previousTop : 0
+  try {
+    renderLimit.value = Math.min(messages.value.length, renderLimit.value + WINDOW_STEP)
+    await nextTick()
+    if (disposed) return
+    if (anchor?.isConnected) container.scrollTop = anchor.offsetTop - anchorOffset
+    else container.scrollTop = previousTop + container.scrollHeight - previousHeight
+  } finally {
+    expandingWindow = false
+  }
+}
+
 async function loadOlderWithAnchor(): Promise<void> {
   const container = containerRef.value
   if (!container || !threadStore.hasMoreHistory || threadStore.isLoadingOlderHistory) return
   const previousHeight = container.scrollHeight
   const previousTop = container.scrollTop
   const ownerThread = threadStore.threadId
+  const visibleBefore = Math.min(renderLimit.value, messages.value.length)
   const anchor = [...container.querySelectorAll<HTMLElement>('[data-message-id]')].find(
     (element) => element.offsetTop + element.offsetHeight >= previousTop,
   )
   const anchorOffset = anchor ? anchor.offsetTop - previousTop : 0
   const added = await threadStore.loadOlderMessages()
   if (!added || ownerThread !== threadStore.threadId || disposed) return
+  renderLimit.value = visibleBefore + Math.min(WINDOW_STEP, added)
   const userMoved = Math.abs(container.scrollTop - previousTop) > 2
   await nextTick()
   if (userMoved) return
@@ -479,8 +540,12 @@ function handleMessageScroll(): void {
   scrollFrame = requestAnimationFrame(() => {
     scrollFrame = null
     const container = containerRef.value
-    if (container?.scrollTop !== undefined && container.scrollTop < 240) {
-      void loadOlderWithAnchor()
+    if (container?.scrollTop !== undefined && container.scrollTop < 320) {
+      if (renderLimit.value < messages.value.length) {
+        void expandWindowWithAnchor()
+      } else {
+        void loadOlderWithAnchor()
+      }
     }
   })
 }
@@ -613,7 +678,7 @@ function handleEdit(msg: BubbleMessage) {
   })
 }
 
-/** 保存编辑：后端确认后再更新本地，避免持久化失败造成界面与服务端不一致。 */
+/** 保存编辑：首帧乐观更新文本与重生成气泡，持久化失败时无痕回滚并恢复编辑弹窗。 */
 async function saveEdit(regenerate = false) {
   if (!editingMessage.value || !editContext.value || editSaving.value || isGenerating.value) return
   const target = editingMessage.value
@@ -627,10 +692,22 @@ async function saveEdit(regenerate = false) {
     props.agentId === context.agentId &&
     !props.switching &&
     !threadStore.navigationTarget
+  if (!stillCurrent()) {
+    notif.toast(__t('ui.chat', '会话已切换，请返回原会话后保存'), { type: 'error' })
+    return
+  }
   editSaving.value = true
   let saved = false
+  const rollbackPreview = threadStore.previewEditedMessage(target.id, nextContent)
+  editingMessage.value = null
+  const pendingRegen =
+    regenerate && threadStore.threadKind === 'main'
+      ? queue.beginOptimisticRegeneration(context.threadId)
+      : null
+  if (pendingRegen) {
+    void nextTick(() => scrollToBottom())
+  }
   try {
-    if (!stillCurrent()) throw new Error('会话已切换，请返回原会话后保存')
     const response = await threadStore.editMessage(
       target.id,
       nextContent,
@@ -638,12 +715,19 @@ async function saveEdit(regenerate = false) {
       context.origin,
     )
     saved = true
-    editingMessage.value = null
     notif.toast(__t('ui.chat', '消息已保存'), { type: 'success' })
     if (regenerate) {
-      if (!stillCurrent()) throw new Error('消息已保存，会话已切换，未重新生成')
+      if (!stillCurrent()) {
+        queue.cancelOptimisticTurn(pendingRegen)
+        throw new Error('消息已保存，会话已切换，未重新生成')
+      }
       if (threadStore.threadKind === 'main') {
-        await chatApi.regenerate(context.threadId, Number(response.message.id), response.message.revision ?? 1)
+        await queue.regenerate(
+          context.threadId,
+          Number(response.message.id),
+          response.message.revision ?? 1,
+          pendingRegen,
+        )
         return
       }
       const list = response.projection.messages
@@ -739,6 +823,14 @@ async function saveEdit(regenerate = false) {
       })
     }
   } catch (err) {
+    if (!saved) {
+      rollbackPreview?.()
+      queue.cancelOptimisticTurn(pendingRegen)
+      if (stillCurrent()) {
+        editingMessage.value = target
+        editText.value = nextContent
+      }
+    }
     logger.error('ChatContainer', __t('logs.frontend.chat', '消息编辑保存失败'), err)
     notif.toast(
       `${saved ? __t('ui.chat', '消息已保存。') : ''}${err instanceof Error ? err.message : __t('ui.chat', '保存失败，编辑内容已保留')}`,
@@ -898,18 +990,12 @@ async function handleCopy(content: string) {
 }
 
 let historyActivationGeneration = 0
-let displayedThreadId = props.threadId
 watch(
   () => [props.agentId, props.threadId, props.switching] as const,
   async ([agentId, threadId, switching]) => {
     const generation = ++historyActivationGeneration
     // 外层正在执行明确导航时只呈现过渡，避免默认会话恢复抢占指定目标。
     if (switching) return
-    const previousThreadId = displayedThreadId
-    displayedThreadId = threadId
-    if (previousThreadId && previousThreadId !== threadId) {
-      compositor.disposeScope(`conversation:${previousThreadId}`)
-    }
     try {
       // Store 已提交的会话直接复用，避免 threadId 更新再次触发相同 Projection 请求。
       if (threadId && threadStore.agentId === agentId) {
@@ -985,7 +1071,6 @@ onUnmounted(() => {
   scrollFrame = null
   window.removeEventListener('online', restoreProjection)
   window.removeEventListener('infos:conversation-rewound', handleConversationRewound)
-  if (threadStore.threadId) compositor.disposeScope(`conversation:${threadStore.threadId}`)
 })
 </script>
 
@@ -1048,7 +1133,7 @@ onUnmounted(() => {
         </div>
 
         <MessageBubble
-          v-for="msg in messages"
+          v-for="msg in visibleMessages"
           :key="threadStore.renderKey(msg.id)"
           v-memo="[
             msg,
@@ -1183,6 +1268,9 @@ onUnmounted(() => {
       />
       <InputBar
         ref="inputBarRef"
+        :agent-id="agentId"
+        :agent-name="agentName"
+        :agent-avatar-url="agentAvatarUrl"
         :queue-enabled="true"
         :queue-pending="queue.hasPending.value"
         :submission-busy="queue.changing.value || restoringQueueDraft"
@@ -1194,22 +1282,7 @@ onUnmounted(() => {
         @stop="handleStop"
         @new-thread="handleNewThread"
         @draft-consumed="emit('draftConsumed')"
-      >
-        <template #session-tools="{ compact, disabled, dismiss }">
-          <ThreadExperiences
-            v-if="threadStore.threadKind === 'main'"
-            :key="threadStore.threadId"
-            :thread-id="threadStore.threadId"
-            :generation="threadStore.threadGeneration"
-            :agent-id="agentId"
-            :agent-name="agentName"
-            :agent-avatar-url="agentAvatarUrl"
-            :compact="compact"
-            :disabled="disabled"
-            @open="dismiss"
-          />
-        </template>
-      </InputBar>
+      />
     </div>
 
     <!-- 编辑对话框 -->
@@ -1526,13 +1599,16 @@ onUnmounted(() => {
   content-visibility: visible;
 }
 
-:deep(.msg-paused) video,
-:deep(.msg-paused) canvas {
+:deep(.msg-paused video),
+:deep(.msg-paused canvas) {
   visibility: hidden;
 }
 
-:deep(.msg-paused) * {
-  animation-play-state: paused !important;
+.chat-messages.chat-surface-paused :deep(.thinking-dot),
+.chat-messages.chat-surface-paused :deep(.pixel-icon--spin),
+:deep(.msg-paused .thinking-dot),
+:deep(.msg-paused .pixel-icon--spin) {
+  animation-play-state: paused;
 }
 
 /* ── 流式渲染区域 ── */

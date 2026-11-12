@@ -2,10 +2,10 @@
 /**
  * SessionSlider — 会话设置面板的分档细滑块。
  *
- * 原生 range 接收鼠标、触屏与键盘输入，拖动时预览，结束后提交；档位文字也可直接选择。
- * 原生手柄中心、可见刻度和档位文字共用同一组坐标。
+ * 上方刻度轨道区统一接收点击与拖动指针输入（点击任意刻度直接切换，拖动实时预览、松手提交），
+ * 下方档位文字也可直接点击选择，隐藏的原生 range 保留键盘方向键与读屏器支持。
  */
-import { computed, onBeforeUnmount, ref, watch } from 'vue'
+import { computed, nextTick, onBeforeUnmount, ref, watch } from 'vue'
 
 const props = withDefaults(
   defineProps<{
@@ -30,7 +30,11 @@ const emit = defineEmits<{
 }>()
 
 const input = ref<HTMLInputElement | null>(null)
+const hitArea = ref<HTMLElement | null>(null)
 const dragIndex = ref<number | null>(null)
+const hoverIndex = ref<number | null>(null)
+const activePointerId = ref<number | null>(null)
+let pointerCommitted = false
 
 const last = computed(() => Math.max(0, props.options.length - 1))
 const shown = computed(() => dragIndex.value ?? Math.max(0, Math.min(props.modelValue, last.value)))
@@ -42,27 +46,99 @@ function position(index: number): string {
   return `${ratio * 100}%`
 }
 
+/** 将指针横坐标映射为最近刻度下标（与下方 N 等分列宽严格对齐）。 */
+function resolveIndexFromClientX(clientX: number): number {
+  const el = hitArea.value
+  const count = props.options.length
+  if (!el || count <= 1) return 0
+  const rect = el.getBoundingClientRect()
+  if (rect.width <= 0) return 0
+  const ratio = (clientX - rect.left) / rect.width
+  return Math.min(last.value, Math.max(0, Math.floor(ratio * count)))
+}
+
 function setDrag(index: number | null): void {
   if (dragIndex.value === index) return
   dragIndex.value = index
   emit('preview', index)
 }
 
-function onInput(event: Event): void {
+function onRangeInput(event: Event): void {
   if (blocked.value) return
   setDrag((event.target as HTMLInputElement).valueAsNumber)
 }
 
 function commit(index: number): void {
   if (blocked.value) return
+  const clamped = Math.min(last.value, Math.max(0, index))
   // 先把选中意图交给父组件，再结束预览，保持保存期间的视觉连续性。
-  emit('update:modelValue', index)
-  cancelDrag()
+  emit('update:modelValue', clamped)
+  setDrag(null)
+  void nextTick(() => {
+    if (input.value) input.value.value = String(shown.value)
+  })
 }
 
 function cancelDrag(): void {
+  activePointerId.value = null
   setDrag(null)
   if (input.value) input.value.value = String(shown.value)
+}
+
+function onTrackPointerDown(event: PointerEvent): void {
+  if (blocked.value) return
+  if (event.pointerType === 'mouse' && event.button !== 0) return
+  event.preventDefault()
+  pointerCommitted = false
+  input.value?.focus({ preventScroll: true })
+  activePointerId.value = event.pointerId
+  ;(event.currentTarget as HTMLElement | null)?.setPointerCapture?.(event.pointerId)
+  const index = resolveIndexFromClientX(event.clientX)
+  hoverIndex.value = index
+  setDrag(index)
+}
+
+function onTrackPointerMove(event: PointerEvent): void {
+  if (blocked.value) {
+    hoverIndex.value = null
+    return
+  }
+  const index = resolveIndexFromClientX(event.clientX)
+  hoverIndex.value = index
+  if (activePointerId.value === event.pointerId) {
+    setDrag(index)
+  }
+}
+
+function onTrackPointerUp(event: PointerEvent): void {
+  if (activePointerId.value !== event.pointerId) return
+  ;(event.currentTarget as HTMLElement | null)?.releasePointerCapture?.(event.pointerId)
+  activePointerId.value = null
+  if (blocked.value) {
+    cancelDrag()
+    return
+  }
+  const index = resolveIndexFromClientX(event.clientX)
+  pointerCommitted = true
+  window.setTimeout(() => {
+    pointerCommitted = false
+  }, 0)
+  commit(index)
+}
+
+function onTrackPointerLeave(): void {
+  if (activePointerId.value === null) {
+    hoverIndex.value = null
+  }
+}
+
+function onTrackClick(event: MouseEvent): void {
+  if (pointerCommitted) {
+    pointerCommitted = false
+    return
+  }
+  if (blocked.value) return
+  commit(resolveIndexFromClientX(event.clientX))
 }
 
 watch(() => [blocked.value, props.options.length], cancelDrag)
@@ -91,22 +167,38 @@ defineExpose({ cancel: cancelDrag })
       :disabled="blocked"
       :aria-label="label"
       :aria-valuetext="valueText || options[shown]"
-      @input="onInput"
+      @input="onRangeInput"
       @change="commit(($event.target as HTMLInputElement).valueAsNumber)"
-      @pointercancel="cancelDrag"
       @blur="cancelDrag"
     />
-    <span class="session-slider__track" aria-hidden="true">
-      <i class="session-slider__rail" />
-      <i class="session-slider__fill" :style="{ width: position(shown) }" />
-      <i
-        v-for="(_, index) in options"
-        :key="index"
-        class="session-slider__tick"
-        :class="{ 'is-passed': index < shown }"
-        :style="{ left: position(index) }"
-      />
-      <i class="session-slider__thumb" :style="{ left: position(shown) }" />
+    <!-- 刻度轨道交互层：支持直接点击任意刻度切换，或按住轨道滑动预览 -->
+    <span
+      ref="hitArea"
+      class="session-slider__hit"
+      :title="!blocked && hoverIndex !== null ? options[hoverIndex] : undefined"
+      @pointerdown="onTrackPointerDown"
+      @pointermove="onTrackPointerMove"
+      @pointerup="onTrackPointerUp"
+      @pointercancel="cancelDrag"
+      @pointerleave="onTrackPointerLeave"
+      @click="onTrackClick"
+    >
+      <span class="session-slider__track" aria-hidden="true">
+        <i class="session-slider__rail" />
+        <i class="session-slider__fill" :style="{ width: position(shown) }" />
+        <i
+          v-for="(_, index) in options"
+          :key="index"
+          class="session-slider__tick"
+          :class="{
+            'is-passed': index < shown,
+            'is-active': index === shown,
+            'is-hovered': hoverIndex === index && index !== shown,
+          }"
+          :style="{ left: position(index) }"
+        />
+        <i class="session-slider__thumb" :style="{ left: position(shown) }" />
+      </span>
     </span>
     <span class="session-slider__labels">
       <button
@@ -115,7 +207,7 @@ defineExpose({ cancel: cancelDrag })
         type="button"
         tabindex="-1"
         data-foldout-skip
-        :class="{ 'is-selected': index === shown }"
+        :class="{ 'is-selected': index === shown, 'is-hovered': hoverIndex === index && index !== shown }"
         :aria-pressed="index === shown"
         :disabled="blocked"
         :title="option"
@@ -131,69 +223,47 @@ defineExpose({ cancel: cancelDrag })
   padding-top: 2px;
   cursor: pointer;
   outline: none;
-  touch-action: none;
   user-select: none;
 }
-/* 输入轨道比可见轨道两侧各多半个手柄，原生手柄中心与首尾刻度重合。 */
+/* 原生 range 仅承担键盘焦点与无障碍语义，指针点击与拖动交由刻度轨道层精准接管。 */
 .session-slider__input {
   position: absolute;
-  z-index: 1;
-  top: 2px;
-  left: calc(50% / var(--slider-count) - 7px);
-  width: calc(100% - 100% / var(--slider-count) + 14px);
-  height: 20px;
-  margin: 0;
+  width: 1px;
+  height: 1px;
+  margin: -1px;
   padding: 0;
-  appearance: none;
+  overflow: hidden;
   border: 0;
-  border-radius: 0;
-  outline: none;
-  background: transparent;
+  clip: rect(0 0 0 0);
+  clip-path: inset(50%);
+  white-space: nowrap;
+  pointer-events: none;
+}
+.session-slider__hit {
+  position: relative;
+  display: block;
+  width: 100%;
+  height: 22px;
   cursor: inherit;
   touch-action: none;
-}
-.session-slider__input::-webkit-slider-runnable-track {
-  height: 20px;
-  background: transparent;
-}
-.session-slider__input::-webkit-slider-thumb {
-  width: 14px;
-  height: 20px;
-  appearance: none;
-  border: 0;
-  border-radius: 0;
-  background: transparent;
-}
-.session-slider__input::-moz-range-track,
-.session-slider__input::-moz-range-progress {
-  height: 20px;
-  border: 0;
-  background: transparent;
-}
-.session-slider__input::-moz-range-thumb {
-  width: 14px;
-  height: 20px;
-  border: 0;
-  border-radius: 0;
-  background: transparent;
 }
 .session-slider__track {
   position: relative;
   display: block;
-  height: 20px;
+  height: 22px;
   margin: 0 calc(50% / var(--slider-count));
   pointer-events: none;
 }
 .session-slider__rail,
 .session-slider__fill {
   position: absolute;
-  top: 8px;
+  top: 9px;
   left: 0;
   height: 3px;
 }
 .session-slider__rail {
   right: 0;
-  background: color-mix(in srgb, var(--slider-accent) 14%, transparent);
+  background: color-mix(in srgb, var(--slider-accent) 16%, transparent);
 }
 .session-slider__fill {
   background-color: var(--slider-accent);
@@ -205,18 +275,26 @@ defineExpose({ cancel: cancelDrag })
 .session-slider__tick {
   position: absolute;
   top: 7px;
-  width: 4px;
-  height: 5px;
-  margin-left: -2px;
+  width: 5px;
+  height: 7px;
+  margin-left: -2.5px;
   background-color: var(--ui-border-strong);
-  transition: background-color 180ms ease;
+  transition:
+    background-color 150ms ease,
+    transform 150ms ease,
+    box-shadow 150ms ease;
 }
 .session-slider__tick.is-passed {
   background-color: var(--slider-accent);
 }
+.session-slider__tick.is-hovered {
+  background-color: var(--slider-accent);
+  transform: scale(1.32);
+  box-shadow: 0 0 6px color-mix(in srgb, var(--slider-accent) 45%, transparent);
+}
 .session-slider__thumb {
   position: absolute;
-  top: 3px;
+  top: 4px;
   width: 14px;
   height: 14px;
   margin-left: -7px;
@@ -275,7 +353,8 @@ defineExpose({ cancel: cancelDrag })
   cursor: inherit;
   transition: color 180ms ease;
 }
-.session-slider__labels > button:hover:not(:disabled) {
+.session-slider__labels > button:hover:not(:disabled),
+.session-slider__labels > button.is-hovered:not(:disabled) {
   color: var(--ui-text-primary);
 }
 .session-slider__labels > .is-selected {
@@ -297,14 +376,14 @@ defineExpose({ cancel: cancelDrag })
     transition: none;
   }
 }
-:global([data-motion='off']) .session-slider__fill,
-:global([data-motion='off']) .session-slider__thumb,
-:global([data-motion='off']) .session-slider__tick,
-:global([data-motion='off']) .session-slider__labels > button,
-:global([data-motion='reduced']) .session-slider__fill,
-:global([data-motion='reduced']) .session-slider__thumb,
-:global([data-motion='reduced']) .session-slider__tick,
-:global([data-motion='reduced']) .session-slider__labels > button {
+[data-motion='off'] .session-slider__fill,
+[data-motion='off'] .session-slider__thumb,
+[data-motion='off'] .session-slider__tick,
+[data-motion='off'] .session-slider__labels > button,
+[data-motion='reduced'] .session-slider__fill,
+[data-motion='reduced'] .session-slider__thumb,
+[data-motion='reduced'] .session-slider__tick,
+[data-motion='reduced'] .session-slider__labels > button {
   transition: none;
 }
 </style>

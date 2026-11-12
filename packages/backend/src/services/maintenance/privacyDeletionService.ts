@@ -35,10 +35,6 @@ interface Metadata {
   includeSocial?: boolean
   dates?: Array<{ agentId: string; date: string }>
   files?: Array<{ agentId: string; name: string }>
-  deleteSource?: boolean
-  sources?: Array<Pick<EventNoteOrigin, 'threadId' | 'pairIds' | 'experienceIds'>>
-  scenes?: Array<{ roomId: string; pairId: string; sourceMessageId: number }>
-  attachments?: Array<{ id: string; storageKey: string }>
 }
 
 /** SQLite 中登记无正文的清理任务；中断后按相同标识继续跨存储删除。 */
@@ -46,10 +42,6 @@ export class PrivacyDeletionService {
   private queue: Promise<unknown> = Promise.resolve()
   private retryTimer?: ReturnType<typeof setTimeout>
   private stopped = false
-  private removeAttachment?: (id: string, storageKey: string) => Promise<void>
-  setAttachmentCleaner(cleaner: (id: string, storageKey: string) => Promise<void>): void {
-    this.removeAttachment = cleaner
-  }
   constructor(
     private readonly deps: {
       db: Database.Database
@@ -63,8 +55,6 @@ export class PrivacyDeletionService {
       listAgentIds(): string[]
       resetSqlite(): Promise<unknown>
       forgetSocial(agentId: string): Promise<void>
-      retractCharacterState?(threadId: string, pairIds: string[]): Promise<void>
-      retractSceneState?(roomId: string, pairId: string): Promise<void>
     },
   ) {}
 
@@ -111,7 +101,7 @@ export class PrivacyDeletionService {
     this.queue = pending.catch(() => {})
     return pending
   }
-  async deleteMemory(id: string, deleteSource = false): Promise<void> {
+  async deleteMemory(id: string): Promise<void> {
     return this.serialize(async () => {
       const { db, policy } = this.deps
       const rows = db
@@ -125,29 +115,6 @@ export class PrivacyDeletionService {
       const old = this.job('memory', id)
       if (!rows.length && !old) return
       const agents = [...new Set(rows.map((row) => row.agent_id))]
-      const sources = rows.flatMap((row) => {
-        const origin = JSON.parse(row.origin_json) as EventNoteOrigin
-        return [origin, ...(origin.sources ?? [])]
-      })
-      const scenes = sources.flatMap((source) => (source.experienceIds ?? []).flatMap((id) =>
-        db.prepare('SELECT m.room_id AS roomId,m.pair_id AS pairId,m.id AS sourceMessageId FROM agent_experiences e JOIN group_chat_messages m ON m.id=e.source_message_id WHERE e.id=? AND e.thread_id=?')
-          .all(Number(id), source.threadId) as Array<{ roomId: string; pairId: string; sourceMessageId: number }>,
-      ))
-      const attachments = deleteSource
-        ? sources.flatMap(
-            (source) =>
-              db
-                .prepare(
-                  `SELECT a.id,a.storage_key AS storageKey FROM message_attachments a
-        JOIN thread_messages m ON a.message_id=m.id WHERE m.thread_id=? AND
-          (m.pair_id IN (SELECT value FROM json_each(?)) OR m.id IN (SELECT value FROM json_each(?)))`,
-                )
-                .all(source.threadId, JSON.stringify(source.pairIds), JSON.stringify(source.messageIds)) as Array<{
-                id: string
-                storageKey: string
-              }>,
-          )
-        : []
       const dates = new Set(
         rows.map((row) => {
           const date = new Date(row.event_at)
@@ -169,10 +136,6 @@ export class PrivacyDeletionService {
         .filter((row) => dates.has(`${row.agent_id}:${row.date}`))
         .map((row) => ({ agentId: row.agent_id, date: row.date }))
       db.transaction(() => {
-        if (deleteSource) for (const scene of scenes) {
-          db.prepare("UPDATE group_chat_messages SET status='deleted' WHERE id=?").run(scene.sourceMessageId)
-          db.prepare('UPDATE agent_experiences SET withdrawn=1 WHERE source_message_id=?').run(scene.sourceMessageId)
-        }
         for (const row of rows) {
           this.mark('memory-block', row.id, row.agent_id, {}, 'completed')
           const origin = JSON.parse(row.origin_json) as EventNoteOrigin
@@ -191,10 +154,6 @@ export class PrivacyDeletionService {
             agents,
             dates: affectedDates,
             files,
-            sources,
-            scenes,
-            deleteSource,
-            attachments,
           })
         db.prepare(
           "UPDATE event_notes SET status='archived' WHERE id IN (SELECT value FROM json_each(?))",
@@ -391,11 +350,6 @@ export class PrivacyDeletionService {
         await this.deps.invalidateMemory()
       if (job.kind === 'memory') {
         const ids = metadata.ids ?? [job.target_id]
-        if (metadata.deleteSource) {
-          for (const source of metadata.sources ?? [])
-            await this.deps.retractCharacterState?.(source.threadId, source.pairIds)
-          for (const scene of metadata.scenes ?? []) await this.deps.retractSceneState?.(scene.roomId, scene.pairId)
-        }
         db.transaction(() => {
           this.scrubOperations('event_memory_operations', ids)
           const serialized = JSON.stringify(ids)
@@ -429,69 +383,7 @@ export class PrivacyDeletionService {
               date.agentId,
               date.date,
             )
-          if (metadata.deleteSource)
-            for (const source of metadata.sources ?? []) {
-              const messageIds = source.pairIds.flatMap((key) => {
-                const match = /^message:(\d+)@\d+$/.exec(key)
-                return match ? [Number(match[1])] : []
-              })
-              if (messageIds.length) {
-                const ids = JSON.stringify(messageIds)
-                const executions = db.prepare(`SELECT id FROM conversation_executions WHERE thread_id=? AND
-                  (EXISTS (SELECT 1 FROM json_each(input_sources_json) WHERE json_extract(value,'$.messageId') IN (SELECT value FROM json_each(?)))
-                   OR id IN (SELECT execution_id FROM thread_messages WHERE id IN (SELECT value FROM json_each(?)))
-                   OR json_extract(metadata_json,'$.regeneration.messageId') IN (SELECT value FROM json_each(?))
-                   OR EXISTS (SELECT 1 FROM json_each(metadata_json,'$.historyRevisions') WHERE json_extract(value,'$[0]') IN (SELECT value FROM json_each(?))))`)
-                  .all(source.threadId, ids, ids, ids, ids) as Array<{ id: string }>
-                const runIds = JSON.stringify(executions.map((run) => run.id))
-                db.prepare("UPDATE conversation_executions SET status='revoked',metadata_json='{}',input_sources_json='[]' WHERE id IN (SELECT value FROM json_each(?))").run(runIds)
-                db.prepare("DELETE FROM conversation_expectations WHERE execution_id IN (SELECT value FROM json_each(?)) OR EXISTS (SELECT 1 FROM json_each(response_sources_json) WHERE json_extract(value,'$.messageId') IN (SELECT value FROM json_each(?)))").run(runIds, ids)
-                db.prepare('DELETE FROM agent_character_state_events WHERE thread_id=? AND pair_id IN (SELECT value FROM json_each(?))').run(source.threadId, runIds)
-                db.prepare('DELETE FROM file_change_snapshots WHERE thread_id=? AND pair_id IN (SELECT value FROM json_each(?))').run(source.threadId, runIds)
-                db.prepare("UPDATE message_attachments SET status='deleted',extracted_text=NULL,metadata_json='{}' WHERE message_id IN (SELECT value FROM json_each(?))").run(ids)
-                db.prepare('DELETE FROM conversation_message_sources WHERE message_id IN (SELECT value FROM json_each(?)) OR source_message_id IN (SELECT value FROM json_each(?))').run(ids, ids)
-                db.prepare('DELETE FROM thread_messages WHERE thread_id=? AND id IN (SELECT value FROM json_each(?))').run(source.threadId, ids)
-                db.prepare("UPDATE conversation_queue_items SET state='cancelled',input_json=json_set(input_json,'$.content','') WHERE thread_id=? AND json_extract(input_json,'$.regeneration.messageId') IN (SELECT value FROM json_each(?))")
-                  .run(source.threadId, ids)
-              }
-              db.prepare(
-                "UPDATE message_attachments SET status='deleted',extracted_text=NULL,metadata_json='{}' WHERE message_id IN (SELECT id FROM thread_messages WHERE thread_id=? AND pair_id IN (SELECT value FROM json_each(?)))",
-              ).run(source.threadId, JSON.stringify(source.pairIds))
-              db.prepare(
-                'DELETE FROM file_change_snapshots WHERE thread_id=? AND pair_id IN (SELECT value FROM json_each(?))',
-              ).run(source.threadId, JSON.stringify(source.pairIds))
-              db.prepare(
-                'DELETE FROM thread_messages WHERE thread_id=? AND pair_id IN (SELECT value FROM json_each(?))',
-              ).run(source.threadId, JSON.stringify(source.pairIds))
-              db.prepare('DELETE FROM thread_summaries WHERE thread_id=?').run(source.threadId)
-              // 旧对话日志通过 session_id 记录会话标识，并没有 thread_id 列。
-              db.prepare('DELETE FROM conversation_logs WHERE session_id=?').run(source.threadId)
-              db.prepare('DELETE FROM task_plan_mutations WHERE thread_id=?').run(source.threadId)
-              db.prepare('DELETE FROM task_plans WHERE thread_id=?').run(source.threadId)
-              db.prepare('DELETE FROM flow_state_revisions WHERE thread_id=?').run(source.threadId)
-              db.prepare('DELETE FROM flow_states WHERE thread_id=?').run(source.threadId)
-              db.prepare(
-                "DELETE FROM thread_character_state_events WHERE kind='update' AND thread_id=? AND pair_id IN (SELECT value FROM json_each(?))",
-              ).run(source.threadId, JSON.stringify(source.pairIds))
-              if (db.prepare("SELECT 1 FROM sqlite_master WHERE type='table' AND name='agent_character_state_events'").get())
-                db.prepare("DELETE FROM agent_character_state_events WHERE kind='update' AND thread_id=? AND pair_id IN (SELECT value FROM json_each(?))").run(source.threadId, JSON.stringify(source.pairIds))
-              db.prepare(
-                `UPDATE threads SET title='',message_count=(SELECT count(*) FROM thread_messages WHERE thread_id=?),
-              pair_count=(SELECT count(DISTINCT pair_id) FROM thread_messages WHERE thread_id=?),
-              last_message_at=(SELECT max(timestamp) FROM thread_messages WHERE thread_id=?) WHERE id=?`,
-              ).run(source.threadId, source.threadId, source.threadId, source.threadId)
-            }
-          if (metadata.deleteSource) for (const scene of metadata.scenes ?? []) {
-            db.prepare("DELETE FROM agent_character_state_events WHERE kind='update' AND pair_id=? AND thread_id IN (SELECT thread_id FROM agent_experiences WHERE source_message_id=?)").run(scene.pairId, scene.sourceMessageId)
-            db.prepare('DELETE FROM agent_experiences WHERE source_message_id=?').run(scene.sourceMessageId)
-            db.prepare('DELETE FROM group_chat_messages WHERE id=?').run(scene.sourceMessageId)
-          }
         })()
-        for (const attachment of metadata.attachments ?? []) {
-          if (!this.removeAttachment) throw new Error('附件清理服务尚未就绪')
-          await this.removeAttachment(attachment.id, attachment.storageKey)
-          db.prepare('DELETE FROM message_attachments WHERE id=?').run(attachment.id)
-        }
         for (const agentId of metadata.agents ?? []) await memory.rebuildAgentStore(agentId, true)
       } else if (job.kind === 'fact') {
         db.transaction(() => {

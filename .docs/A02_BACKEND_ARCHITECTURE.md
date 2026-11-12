@@ -2,7 +2,7 @@
 
 > **适用范围**：`packages/backend/` 全部代码
 > **技术栈**：Hono + Drizzle + better-sqlite3 + TriviumDB
-> **最后更新**：2026-10-17
+> **最后更新**：2026-11-12
 
 ---
 
@@ -47,7 +47,7 @@ Router 由 `app.ts` 挂载，使用 `AppContext` 获取所需服务。以 `route
 
 SQLite 访问由 `repositories/` 下各领域 Repository 和 Drizzle Schema 承担；`EventNoteRepository` 管理事件记忆的 SQLite 备份与事务记录。TriviumDB 句柄及文件组由 `MemoryStoreRegistry` 管理，事件记忆和事实分别使用自己的领域实现。两种存储的权威关系、事务重放和重建边界见 [记忆引擎](./A05_MEMORY_ENGINE.md)。
 
-主库在 `database/connection.ts` 使用 `journal_mode=WAL` 与 `synchronous=FULL`，事务提交同步 WAL，以增加系统崩溃或断电时已提交记录的持久性；代价是每次提交增加同步磁盘写入。Steam 自动云存档建立在已提交数据及一致性快照之上，触发、缓存与恢复边界见 [Steam 集成](./M04_STEAM_INTEGRATION.md#5-steam-cloud-自动完整快照同步)。
+主库在 `database/connection.ts` 默认使用 `journal_mode=WAL`、`synchronous=NORMAL`、`journal_size_limit=64MB` 与 `temp_store=MEMORY`，避免常规配置、状态与流式结算在每次提交时强制同步刷盘，同时保持应用进程崩溃安全性与容器挂载卷下的低延迟写入；用户显式队列受理与变更则通过 `conversationQueue.repo.ts` 的 `durableQueueWrite` 在事务前后临时提升至 `synchronous=FULL`，同步落盘后再向客户端确认。Steam 自动云存档建立在已提交数据及一致性快照之上，触发、缓存与恢复边界见 [Steam 集成](./M04_STEAM_INTEGRATION.md#5-steam-cloud-自动完整快照同步)。
 
 ### 4.1 结构迁移与执行记录
 
@@ -146,7 +146,7 @@ GatewayHub 管理连接、协议握手、订阅与消息路由，并通过注入
 
 ### 9.2 Context Compiler
 
-聊天入口只接收当前输入与 `threadId`。后端从 Thread 读取 active 消息、策略与 Agent，并由 Compiler 只读组装原生 `user/assistant` 消息；禁止客户端上传完整历史，禁止 XML 形式的历史重复注入。
+聊天入口只接收当前输入与 `threadId`。后端从 Thread 读取 active 消息、策略与 Agent，先完成 `CapabilityGate` 工具门控解析，再通过 `Promise.all` 并行执行自动 RAG、知识库召回、角色状态装配与心流状态读取，最后由 Compiler 按固定顺序只读组装原生 `user/assistant` 消息；禁止客户端上传完整历史，禁止 XML 形式的历史重复注入。
 
 ### 9.3 Daemon 与能力提供者
 

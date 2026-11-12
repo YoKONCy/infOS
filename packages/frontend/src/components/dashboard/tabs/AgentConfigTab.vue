@@ -1881,10 +1881,10 @@ onBeforeUnmount(() => {
     transition: none;
   }
 }
-:global([data-motion='off']) .index-head button,
-:global([data-motion='off']) .initialize-agent,
-:global([data-motion='reduced']) .index-head button,
-:global([data-motion='reduced']) .initialize-agent {
+[data-motion='off'] .index-head button,
+[data-motion='off'] .initialize-agent,
+[data-motion='reduced'] .index-head button,
+[data-motion='reduced'] .initialize-agent {
   transition: none;
 }
 .atlas-workspace {

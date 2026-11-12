@@ -36,6 +36,7 @@ import DesktopTabBar from '../components/layout/DesktopTabBar.vue'
 import DesktopHomeIndicator from '../components/desktop/DesktopHomeIndicator.vue'
 import PerceptionStatus from '../components/desktop/perception/PerceptionStatus.vue'
 import { revealPerceptionSettings } from '../composables/usePerception'
+import { detachedPageIds } from '../composables/shell/useDetachedPanels'
 import AppWallpaper from '../components/layout/AppWallpaper.vue'
 import DesktopNewTab from '../components/layout/DesktopNewTab.vue'
 import DesktopBrowserToolbar from '../components/layout/DesktopBrowserToolbar.vue'
@@ -46,6 +47,7 @@ import { useDesktopToasts } from '../composables/main/useDesktopToasts'
 import { resolveArcaUiUrl } from '../applications/openArcaSurface'
 import { resolvePictoriaUiUrl } from '../applications/openPictoriaSurface'
 import MainNav from '../components/main/MainNav.vue'
+import SettingsHubModal from '../components/main/SettingsHubModal.vue'
 import UpdateCenterDialog from '../components/main/UpdateCenterDialog.vue'
 import { TaskToastContainer } from '../components/taskCenter'
 import { createDashboardContext, DASHBOARD_CTX_KEY, useGateway } from '../composables/dashboard'
@@ -200,49 +202,52 @@ const createTabComponent = (id: string): Component => {
   return defineAsyncComponent({
     loader,
     loadingComponent: MainTabLoading,
-    delay: 80,
+    delay: 0,
     timeout: 30_000,
     suspensible: false,
   })
 }
 
 const tabComponents: Record<string, Component> = Object.fromEntries(
-  [
-    'chat',
-    'workspace',
-    'overview',
-    'logs',
-    'memories',
-    'knowledge',
-    'tasks',
-    'stronghold',
-    'agent_config',
-    'user_settings',
-    'desktop_home',
-    'model_config',
-    'prompts',
-    'voice_config',
-    'mcp_config',
-    'distributed',
-    'backups',
-    'social',
-    'terminal',
-    'system_reset',
-    'cards',
-  ].map((id) => [id, createTabComponent(id)]),
+  ['chat', 'stronghold', 'workspace', 'companions', 'memory_hub', 'tasks', 'cards'].map((id) => [
+    id,
+    createTabComponent(id),
+  ]),
 )
 
 /** 不属于 Dashboard 主题作用域的独立页面。 */
 const STANDALONE_TABS = new Set(['chat', 'workspace', 'stronghold'])
-/** 仅高成本重建且需要保持交互现场的页面进入缓存。 */
-const CACHED_TABS = new Set(['chat', 'workspace', 'stronghold', 'social'])
-const cachedTabNames = ['ChatTab', 'WorkspaceTab', 'StrongholdTab', 'SocialTab']
+/** 一级常驻主舞台页面全部纳入有界 KeepAlive 缓存，实现主侧栏全入口零重建瞬切。 */
+const CACHED_TABS = new Set([
+  'chat',
+  'workspace',
+  'stronghold',
+  'companions',
+  'memory_hub',
+  'tasks',
+  'cards',
+])
+const cachedTabNames = [
+  'ChatTab',
+  'WorkspaceTab',
+  'StrongholdTab',
+  'CompanionsTab',
+  'MemoryHubTab',
+  'TasksTab',
+  'CardsTab',
+]
 
 /** 当前页面是否使用 Dashboard 主题套件。 */
 const isDashboardTab = computed(() => !STANDALONE_TABS.has(currentTab.value))
 
-/** 需要全屏 overflow:hidden 的 Tab */
-const FULL_HEIGHT_TABS = new Set(['chat', 'workspace', 'logs', 'terminal', 'social', 'stronghold', 'desktop_home'])
+/** 需要全屏 overflow:hidden 的一级舞台 Tab（内部自管滚动） */
+const FULL_HEIGHT_TABS = new Set([
+  'chat',
+  'stronghold',
+  'workspace',
+  'companions',
+  'memory_hub',
+])
 
 // ── 导航状态 ──
 
@@ -250,19 +255,26 @@ const {
   currentTab,
   pendingTab,
   tabDirection,
+  companionsSubTab,
+  settingsOpen,
   currentAmbient,
   theme,
   toggleTheme,
   setTab,
-  navGroups,
+  openSettings,
+  getPageLabel,
 } = useMainNav()
-const mobilePageTitle = computed(
-  () =>
-    navGroups.flatMap((group) => group.items).find((item) => item.id === currentTab.value)?.label ||
-    'infOS',
-)
+const mobilePageTitle = computed(() => getPageLabel(currentTab.value))
 watch(currentTab, () => {
   mobileNavOpen.value = false
+})
+watch(settingsOpen, (open) => {
+  if (open) {
+    mobileNavOpen.value = false
+    if (desktopEnabled && !desktopIsHome.value) {
+      void desktopShell.activate('home')
+    }
+  }
 })
 useDesktopToasts(theme)
 const conversationNavigation = useConversationNavigation()
@@ -285,12 +297,25 @@ watch(
   { immediate: true },
 )
 async function openHomeSection(id: string): Promise<void> {
-  await desktopShell.activate('home')
+  if (desktopEnabled && !desktopIsHome.value) {
+    await desktopShell.activate('home')
+  }
   await setTab(id)
 }
 function openPerceptionSettings(): void {
-  revealPerceptionSettings()
-  void openHomeSection('desktop_home')
+  if (detachedPageIds.value.has('desktop_home')) {
+    revealPerceptionSettings()
+    void setTab('desktop_home')
+    return
+  }
+  void openHomeSection('perception_pet')
+}
+function openDesktopSecuritySettings(): void {
+  if (detachedPageIds.value.has('desktop_home')) {
+    void setTab('desktop_home')
+    return
+  }
+  void openHomeSection('desktop_security')
 }
 const appBackground = useAppBackground()
 const backgroundReadyUrl = ref('')
@@ -323,8 +348,13 @@ const activeTabComponent = computed(() => tabComponents[currentTab.value] ?? nul
 /** 当前 Tab 是否需要全屏高度 */
 const isFullHeightTab = computed(() => FULL_HEIGHT_TABS.has(currentTab.value))
 
-/** 是否显示环境光(仅总览页) */
-const showAmbient = computed(() => currentTab.value === 'overview' && !showsAppBackground.value)
+/** 是否显示环境光(仅伙伴状态总览页) */
+const showAmbient = computed(
+  () =>
+    currentTab.value === 'companions' &&
+    companionsSubTab.value === 'overview' &&
+    !showsAppBackground.value,
+)
 
 // ── Dashboard 全局上下文 (provide 给所有 Tab) ──
 
@@ -344,7 +374,6 @@ const {
   confirmPromptPlaceholder,
   handleConfirm,
   handleCancel,
-  handleQuitApp,
 } = ctx
 const desktopGuideReady = computed(
   () =>
@@ -702,8 +731,21 @@ onUnmounted(() => {
 onMounted(() => {
   stopPerformance = startFrontendPerformanceObserver()
   stopWarmup = warmTabsWhenIdle(
-    // Web 首屏不抢先下载工作区编辑器和据点模块，用户导航时仍按需加载。
-    isElectron() ? ['workspace', 'stronghold'] : [],
+    // 首屏空闲后优先预热一级导航页与高频设置分区，点击侧栏常用 TAB 与「设置」时直接秒开。
+    isElectron()
+      ? [
+          'companions',
+          'memory_hub',
+          'tasks',
+          'cards',
+          'user_settings',
+          'model_config',
+          'perception_pet',
+          'mcp_config',
+          'workspace',
+          'stronghold',
+        ]
+      : ['companions', 'memory_hub', 'tasks', 'user_settings', 'model_config'],
     () =>
       mainSurfaceVisible.value &&
       desktopEntryComplete.value &&
@@ -766,7 +808,7 @@ onMounted(() => {
       role="tabpanel"
       :aria-labelledby="desktopEnabled ? 'desktop-tab-home' : undefined"
     >
-      <header v-if="isMobile" class="main-mobile-header">
+      <header v-if="isMobile" class="main-mobile-header" :inert="settingsOpen || undefined">
         <button
           :aria-label="__t('ui.navigation', '打开应用导航')"
           aria-controls="mobile-main-navigation"
@@ -776,11 +818,11 @@ onMounted(() => {
           <PixelIcon name="menu" size="sm" />
         </button>
         <strong>{{ mobilePageTitle }}</strong>
-        <button :aria-label="__t('ui.navigation', '系统设定')" @click="setTab('user_settings')">
+        <button :aria-label="__t('ui.navigation', '打开设置')" @click="openSettings()">
           <PixelIcon name="settings" size="sm" />
         </button>
       </header>
-      <div class="main-view-body">
+      <div class="main-view-body" :inert="settingsOpen || undefined">
         <!-- 左侧导航 -->
         <button
           v-if="isMobile && mobileNavOpen"
@@ -805,7 +847,7 @@ onMounted(() => {
         <!-- 右侧内容区 -->
         <main
           class="main-content"
-          :inert="isMobile && mobileNavOpen"
+          :inert="(isMobile && mobileNavOpen) || settingsOpen || undefined"
           :class="{
             'main-content--full': isFullHeightTab,
           }"
@@ -835,7 +877,7 @@ onMounted(() => {
             :direction="tabDirection"
             :label="__t('ui.navigation', '正在切换页面')"
           >
-            <KeepAlive :include="cachedTabNames" :max="4">
+            <KeepAlive :include="cachedTabNames" :max="7">
               <component
                 :is="activeTabComponent"
                 v-if="activeTabComponent"
@@ -856,7 +898,7 @@ onMounted(() => {
       </div>
 
       <!-- 底部状态栏 -->
-      <footer class="main-statusbar">
+      <footer class="main-statusbar" :inert="settingsOpen || undefined">
         <div class="main-statusbar-left">
           <span
             class="main-status-dot"
@@ -869,7 +911,10 @@ onMounted(() => {
           <span class="main-status-text">
             {{ agentStore.currentAgent?.name || __t('ui.navigation', '助手') }}
           </span>
-          <PerceptionStatus @settings="openPerceptionSettings" />
+          <PerceptionStatus
+            @settings="openPerceptionSettings"
+            @desktop-security="openDesktopSecuritySettings"
+          />
         </div>
 
         <div class="main-statusbar-right">
@@ -902,16 +947,11 @@ onMounted(() => {
             <PixelIcon name="refresh" size="xs" :animation="isRefreshing ? 'spin' : ''" />
           </button>
           <span class="main-status-version font-pixel">v{{ appVersion }}</span>
-          <button
-            v-if="isElectron()"
-            class="main-statusbar-btn main-statusbar-btn--danger"
-            :title="__t('ui.navigation', '退出')"
-            @click="handleQuitApp"
-          >
-            <PixelIcon name="power" size="xs" />
-          </button>
         </div>
       </footer>
+
+      <!-- 设置中心 HUD 挂载在主工作面内部，天然保留顶部窗口标签栏与主题切换能力 -->
+      <SettingsHubModal />
     </div>
 
     <section

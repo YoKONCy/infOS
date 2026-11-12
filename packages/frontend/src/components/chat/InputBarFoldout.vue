@@ -351,7 +351,7 @@ defineExpose({ close })
   overflow-anchor: none;
   overscroll-behavior: contain;
   border: 1px solid var(--ui-border-strong);
-  border-radius: 0;
+  border-radius: 2px;
   background: var(--app-reading-fill, var(--ui-bg-elevated));
   color: var(--ui-text-primary);
   backdrop-filter: blur(var(--app-material-blur, 12px));
@@ -430,12 +430,12 @@ defineExpose({ close })
     transition: none;
   }
 }
-:global([data-motion='off']) .input-foldout__chevron,
-:global([data-motion='reduced']) .input-foldout__chevron {
+[data-motion='off'] .input-foldout__chevron,
+[data-motion='reduced'] .input-foldout__chevron {
   transition: none;
 }
-:global([data-motion='off']) .input-foldout-panel,
-:global([data-motion='reduced']) .input-foldout-panel {
+[data-motion='off'] .input-foldout-panel,
+[data-motion='reduced'] .input-foldout-panel {
   transition: none;
 }
 </style>

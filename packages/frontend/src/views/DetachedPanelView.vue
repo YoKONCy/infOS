@@ -46,10 +46,8 @@ const route = useRoute()
 const pageId = String(route.params.pageId ?? '')
 const supported = isDetachablePage(pageId)
 
-const { navGroups } = useMainNav()
-const title = computed(
-  () => navGroups.flatMap((group) => group.items).find((item) => item.id === pageId)?.label ?? '',
-)
+const { getPageLabel } = useMainNav()
+const title = computed(() => getPageLabel(pageId))
 watch(
   title,
   (value) => {

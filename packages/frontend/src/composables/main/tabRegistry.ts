@@ -12,15 +12,20 @@ export type TabLoader = () => Promise<TabModule>
 const loaders: Record<string, TabLoader> = {
   chat: () => import('../../components/main/tabs/ChatTab.vue'),
   workspace: () => import('../../components/main/tabs/WorkspaceTab.vue'),
+  stronghold: () => import('../../components/main/tabs/StrongholdTab.vue'),
+  companions: () => import('../../components/main/tabs/CompanionsTab.vue'),
+  memory_hub: () => import('../../components/main/tabs/MemoryHubTab.vue'),
+  schedule_hub: () => import('../../components/dashboard/tabs/TasksTab.vue'),
   overview: () => import('../../components/dashboard/tabs/OverviewTab.vue'),
   logs: () => import('../../components/dashboard/tabs/LogsTab.vue'),
   memories: () => import('../../components/dashboard/tabs/MemoriesTab.vue'),
   knowledge: () => import('../../components/dashboard/tabs/KnowledgeTab.vue'),
   tasks: () => import('../../components/dashboard/tabs/TasksTab.vue'),
-  stronghold: () => import('../../components/main/tabs/StrongholdTab.vue'),
   agent_config: () => import('../../components/dashboard/tabs/AgentConfigTab.vue'),
   user_settings: () => import('../../components/dashboard/tabs/UserSettingsTab.vue'),
   desktop_home: () => import('../../components/desktop/DesktopHomeSettings.vue'),
+  perception_pet: () => import('../../components/desktop/DesktopPerceptionSettingsTab.vue'),
+  desktop_security: () => import('../../components/desktop/DesktopSecuritySettingsTab.vue'),
   model_config: () => import('../../components/dashboard/tabs/ModelConfigTab.vue'),
   prompts: () => import('../../components/dashboard/tabs/PromptManagementTab.vue'),
   voice_config: () => import('../../components/dashboard/tabs/VoiceTab.vue'),
@@ -35,6 +40,7 @@ const loaders: Record<string, TabLoader> = {
 
 const pending = new Map<string, Promise<TabModule>>()
 const ready = new Set<string>()
+const resolvedComponents = new Map<string, Component>()
 
 export function getTabLoader(id: string): TabLoader | undefined {
   const loader = loaders[id]
@@ -46,6 +52,11 @@ export function isTabReady(id: string): boolean {
   return ready.has(id)
 }
 
+/** 同步读取已解析完成的 Tab 组件定义（供模态舞台直接挂载，避免 KeepAlive 嵌套异步包装器）。 */
+export function getResolvedTab(id: string): Component | null {
+  return resolvedComponents.get(id) ?? null
+}
+
 /** 同一 Tab 的下载、解析和模块执行始终复用同一个 Promise。 */
 export function preloadTab(id: string): Promise<TabModule> {
   const cached = pending.get(id)
@@ -54,6 +65,7 @@ export function preloadTab(id: string): Promise<TabModule> {
   if (!loader) return Promise.reject(new Error(`未知 Tab: ${id}`))
   const promise = loader()
     .then((module) => {
+      resolvedComponents.set(id, module.default)
       ready.add(id)
       return module
     })
@@ -91,7 +103,7 @@ export function warmTabsWhenIdle(ids: readonly string[], canLoad: () => boolean)
       }
       if (typeof requestIdleCallback === 'function') idle = requestIdleCallback(load)
       else load()
-    }, 1500)
+    }, 400)
   }
   schedule()
   return () => {

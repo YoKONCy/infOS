@@ -174,10 +174,10 @@ function onKeydown(event: KeyboardEvent): void {
     transition: none;
   }
 }
-:global([data-motion='off']) .session-segment__fill,
-:global([data-motion='off']) .session-segment__bar,
-:global([data-motion='reduced']) .session-segment__fill,
-:global([data-motion='reduced']) .session-segment__bar {
+[data-motion='off'] .session-segment__fill,
+[data-motion='off'] .session-segment__bar,
+[data-motion='reduced'] .session-segment__fill,
+[data-motion='reduced'] .session-segment__bar {
   transition: none;
 }
 </style>

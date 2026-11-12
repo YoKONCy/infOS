@@ -432,10 +432,10 @@ button:focus-visible {
     transition: opacity 100ms ease;
   }
 }
-:global([data-motion='reduced']) .desktop-tab-selection.is-ready {
+[data-motion='reduced'] .desktop-tab-selection.is-ready {
   transition: opacity 100ms ease;
 }
-:global([data-motion='off']) .desktop-tab-selection.is-ready {
+[data-motion='off'] .desktop-tab-selection.is-ready {
   transition: none;
 }
 </style>

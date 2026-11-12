@@ -130,12 +130,7 @@ function change(option: HomeOption, value: unknown): void {
       />
       <PerceptionListEditor
         :title="__t('ui.desktop', '不录声音的程序')"
-        :hint="
-          __t(
-            'ui.desktop',
-            '通话程序默认在这里，一行一个程序名。挡不住浏览器里的网页通话：分不清来源时她不会转写。',
-          )
-        "
+        :hint="__t('ui.desktop', '默认包含常见通话软件，每行一个程序名；来源不明的网页音频不会转写。')"
         :value="perception.unrecordedApps"
         :saved="shownKey === 'perception.unrecordedApps'"
         @save="saveStored({ unrecordedApps: $event })"
@@ -170,7 +165,7 @@ function change(option: HomeOption, value: unknown): void {
         }}
       </p>
       <p class="perception-note">
-        {{ __t('ui.desktop', '智能陪伴在总览页设置，它和感知叫醒共用每日主动回合。') }}
+        {{ __t('ui.desktop', '与「伙伴 → 状态总览」中的智能陪伴共用每日主动回合额度。') }}
       </p>
     </template>
 
@@ -210,26 +205,16 @@ function change(option: HomeOption, value: unknown): void {
     </MotionCollapse>
 
     <template v-if="perception">
-      <h5 class="perception-sub">{{ __t('ui.desktop', '保护') }}</h5>
+      <h5 class="perception-sub">{{ __t('ui.desktop', '隐私遮挡') }}</h5>
       <PerceptionListEditor
-        :title="__t('ui.desktop', '涂黑的程序')"
-        :hint="
-          __t(
-            'ui.desktop',
-            '密码管理器、网银、支付这类程序，一行一个。她不读标题、不截图、不录声音，只知道有个敏感窗口。',
-          )
-        "
+        :title="__t('ui.desktop', '屏蔽感知的程序')"
+        :hint="__t('ui.desktop', '密码管理、网银、支付等敏感程序（每行一个），切换到此类窗口时自动跳过标题、画面与收音。')"
         :value="perception.redactedApps"
         :saved="shownKey === 'perception.redactedApps'"
         @save="saveStored({ redactedApps: $event })"
       />
       <p class="perception-note">
-        {{
-          __t(
-            'ui.desktop',
-            '密钥、卡号这类文字和图上的字会先在本机打码，但不保证百分之百。她看到的内容不会长期保存；她说出口的话和她自己记下的事会保存，逐字抄原文的部分会被替换，换种说法写下的挡不住。',
-          )
-        }}
+        {{ __t('ui.desktop', '敏感字符会先在本机自动打码，画面内容仅临时读取，不会长期留存。') }}
       </p>
     </template>
   </div>

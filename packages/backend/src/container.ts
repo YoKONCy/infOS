@@ -1341,14 +1341,6 @@ export async function createAppContext(config: AppConfig): Promise<AppContext> {
     listAgentIds: () => agentManager.listAgents().map((agent) => agent.id),
     resetSqlite: () => new ResetService(db).resetMemories(),
     forgetSocial: (agentId) => socialStorage.forgetLongMemory(agentId),
-    retractCharacterState: async (threadId, sourceKeys) => {
-      const executionIds = sourceKeys.flatMap((key) => {
-        const match = /^message:(\d+)@\d+$/.exec(key)
-        return match ? threadRepo.conversations.invalidate(Number(match[1])) : [key]
-      })
-      await petStateService.rollbackPairs(threadId, [...new Set(executionIds)])
-    },
-    retractSceneState: (roomId, pairId) => petStateService.rollbackRoomPair(roomId, pairId),
   })
   kernelLifecycle.defer(() => privacyDeletionService.stop())
 
@@ -1851,9 +1843,6 @@ export async function createAppContext(config: AppConfig): Promise<AppContext> {
   await attachmentService.initialize()
   const threadForkService = new ThreadForkService(
     db, attachmentService, promptWorkspace.variableStore, taskPlanService,
-  )
-  privacyDeletionService.setAttachmentCleaner((id, storageKey) =>
-    attachmentService.purgeDeleted(id, storageKey),
   )
   await privacyDeletionService.initialize()
   kernelLifecycle.defer(() => attachmentService.dispose())

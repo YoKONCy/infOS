@@ -17,7 +17,7 @@ import { createClientUuid } from '../../lib/clientPlatform'
 import { logger } from '../../lib/logger'
 import { publishWorkspaceChanges } from './workspaceChanges'
 import { queueErrorMessage } from './queueFeedback'
-import { useOptimisticTurn } from './useOptimisticTurn'
+import { useOptimisticTurn, type OptimisticTurn } from './useOptimisticTurn'
 
 /** 队列内容以服务端为准；轮询负责断线补偿，Gateway 只负责实时显示。 */
 export function useConversationQueue() {
@@ -35,7 +35,7 @@ export function useConversationQueue() {
   let timer: ReturnType<typeof setTimeout> | undefined
   let revision = 0
   let mutationVersion = 0
-  let loading = false
+  let refreshController: AbortController | undefined
   let queuedRunObserved = false
   let lastRunId = ''
   let needsHistorySync = false
@@ -101,8 +101,10 @@ export function useConversationQueue() {
 
   async function refresh() {
     const threadId = threads.threadId
-    if (!threadId || disposed || loading) return
-    loading = true
+    const agentId = threads.agentId
+    if (!threadId || disposed || refreshController || threads.navigationTarget) return
+    const controller = new AbortController()
+    refreshController = controller
     const epoch = revision
     const mutation = mutationVersion
     try {
@@ -117,15 +119,18 @@ export function useConversationQueue() {
         nextAuthenticationCheck = Date.now() + 5000
         // 公开状态端点返回真实身份状态；不反复拿业务轮询制造同一种 401。
         const status = await clientAccessApi.session()
-        if (!status.data?.authenticated || disposed || epoch !== revision) return
+        if (!status.data?.authenticated || controller.signal.aborted || disposed || epoch !== revision ||
+            threads.threadId !== threadId || threads.agentId !== agentId || threads.navigationTarget) return
         waitingForAuthentication = false
       }
-      const response = await chatApi.queue(threadId)
+      const response = await chatApi.queue(threadId, controller.signal)
       if (
         disposed ||
         epoch !== revision ||
         mutation !== mutationVersion ||
+        threads.navigationTarget ||
         threads.threadId !== threadId ||
+        threads.agentId !== agentId ||
         !response.data
       )
         return
@@ -146,11 +151,11 @@ export function useConversationQueue() {
           lastRunId = running.id
           needsHistorySync = false
           // 正式用户消息已经由服务端写入；快照读取保留本地正在流式展示的 Shell。
-          await threads.loadThreadMessages(threadId, threads.agentId)
+          await threads.loadThreadMessages(threadId, agentId, controller.signal)
           if (epoch !== revision || disposed) return
         }
         if (!liveSurfaces.size || Date.now() - lastFrameAt > 8_000) {
-          const live = (await chatApi.queueLive(threadId)).data
+          const live = (await chatApi.queueLive(threadId, controller.signal)).data
           if (epoch !== revision || disposed || threads.threadId !== threadId) return
           if (live && live.state === 'open') {
             compositor.flush()
@@ -188,7 +193,7 @@ export function useConversationQueue() {
         queuedRunObserved = false
         const turn = optimistic.take(threadId)
         threads.finishStreaming()
-        await threads.loadThreadMessages(threadId, threads.agentId)
+        await threads.loadThreadMessages(threadId, agentId, controller.signal)
         if (epoch === revision && !disposed) optimistic.warnIfUnsent(turn, next)
         if (epoch === revision && !disposed)
           window.dispatchEvent(
@@ -198,12 +203,18 @@ export function useConversationQueue() {
           )
       }
     } catch (error) {
-      if (epoch === revision && !disposed) {
-        unavailable.value = true
-        if (error instanceof ApiError && error.code === 'UNAUTHORIZED') {
-          waitingForAuthentication = true
-          nextAuthenticationCheck = Date.now() + 5000
-        }
+      if (controller.signal.aborted || disposed || epoch !== revision ||
+          threads.threadId !== threadId || threads.agentId !== agentId || threads.navigationTarget) return
+      if (error instanceof ApiError && error.code === 'NOT_FOUND') {
+        threads.forgetThread(threadId, agentId)
+        threads.clearThread()
+        void threads.loadLatestThread(agentId)
+        return
+      }
+      unavailable.value = true
+      if (error instanceof ApiError && error.code === 'UNAUTHORIZED') {
+        waitingForAuthentication = true
+        nextAuthenticationCheck = Date.now() + 5000
       }
       if (Date.now() - lastWarningAt > 30_000) {
         lastWarningAt = Date.now()
@@ -214,8 +225,14 @@ export function useConversationQueue() {
         )
       }
     } finally {
-      loading = false
+      if (refreshController === controller) refreshController = undefined
     }
+  }
+
+  function cancelRefresh(): void {
+    const controller = refreshController
+    refreshController = undefined
+    controller?.abort()
   }
 
   async function enqueue(
@@ -229,7 +246,7 @@ export function useConversationQueue() {
     const epoch = revision
     changing.value = true
     // 发送即显示：用户消息与「正在思考」占位立刻出现，不等服务端开始回复。
-    const turn = optimistic.begin(input, options.attachments, id)
+    let turn = optimistic.begin(input, options.attachments, id)
     const accept = () => {
       if (optimistic.accept(turn, id)) queuedRunObserved = true
     }
@@ -239,6 +256,7 @@ export function useConversationQueue() {
       if (epoch === revision && response.data) {
         snapshot.value = response.data
         submittedIds.add(id)
+        turn = optimistic.demoteIfQueuedBehind(turn, id, response.data)
       }
       accept()
       void refresh()
@@ -252,6 +270,7 @@ export function useConversationQueue() {
           if (epoch === revision) {
             snapshot.value = response.data
             submittedIds.add(id)
+            turn = optimistic.demoteIfQueuedBehind(turn, id, response.data)
           }
           accept()
           return true
@@ -264,6 +283,53 @@ export function useConversationQueue() {
       notify.toast(queueErrorMessage(error), {
         type: 'error',
       })
+      return false
+    } finally {
+      changing.value = false
+    }
+  }
+
+  async function regenerate(
+    targetThreadId: string,
+    messageId: number,
+    messageRevision: number,
+    existingTurn?: OptimisticTurn | null,
+  ): Promise<boolean> {
+    mutationVersion++
+    const id = createClientUuid()
+    const epoch = revision
+    changing.value = true
+    const turn =
+      existingTurn !== undefined ? existingTurn : optimistic.beginRegeneration(targetThreadId)
+    const accept = () => {
+      if (optimistic.accept(turn, id)) queuedRunObserved = true
+    }
+    try {
+      const response = await chatApi.regenerate(targetThreadId, messageId, messageRevision, id)
+      if (epoch === revision && response.data) {
+        snapshot.value = response.data
+        submittedIds.add(id)
+      }
+      accept()
+      void refresh()
+      return true
+    } catch (error) {
+      try {
+        const response = await chatApi.queue(targetThreadId)
+        if (response.data?.items.some((entry) => entry.id === id)) {
+          if (epoch === revision) {
+            snapshot.value = response.data
+            submittedIds.add(id)
+          }
+          accept()
+          return true
+        }
+      } catch {
+        /* 继续走撤回与报错提示 */
+      }
+      optimistic.cancel(turn)
+      logger.warn('ConversationQueue', __t('logs.frontend.chat', '重新生成提交暂未确认'), error)
+      notify.toast(queueErrorMessage(error), { type: 'error' })
       return false
     } finally {
       changing.value = false
@@ -328,20 +394,26 @@ export function useConversationQueue() {
     () => [threads.threadId, threads.agentId],
     () => {
       revision++
+      cancelRefresh()
       historyVersion.value++
       liveSurfaces.clear()
       submittedIds.clear()
       queuedRunObserved = false
+      needsHistorySync = false
+      unavailable.value = false
       optimistic.reset()
       lastRunId = ''
       snapshot.value = { threadId: threads.threadId, paused: false, items: [] }
       lastFrameAt = 0
-      void refresh()
+      clearTimeout(timer)
+      void poll()
     },
   )
   async function poll() {
+    const epoch = revision
     await refresh()
-    if (!disposed) timer = setTimeout(poll, document.hidden ? 8_000 : 2_000)
+    if (!disposed && epoch === revision)
+      timer = setTimeout(poll, document.hidden ? 8_000 : 2_000)
   }
   const wake = () => {
     if (!document.hidden) void refresh()
@@ -354,6 +426,7 @@ export function useConversationQueue() {
     const detail = (event as CustomEvent<{ threadId: string; discardPending: boolean }>).detail
     if (detail.threadId !== threads.threadId) return
     revision++
+    cancelRefresh()
     historyVersion.value++
     mutationVersion++
     submittedIds.clear()
@@ -368,7 +441,8 @@ export function useConversationQueue() {
       queuedRunObserved = false
       lastRunId = ''
     }
-    void refresh()
+    clearTimeout(timer)
+    void poll()
   }
   onMounted(() => {
     void poll()
@@ -380,6 +454,7 @@ export function useConversationQueue() {
   onUnmounted(() => {
     disposed = true
     revision++
+    cancelRefresh()
     clearTimeout(timer)
     window.removeEventListener('online', wake)
     window.removeEventListener('infos:authorized', authorized)
@@ -392,6 +467,9 @@ export function useConversationQueue() {
     unavailable,
     historyVersion,
     enqueue,
+    regenerate,
+    beginOptimisticRegeneration: optimistic.beginRegeneration,
+    cancelOptimisticTurn: optimistic.cancel,
     change,
     acknowledgeDraft,
     move,

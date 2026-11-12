@@ -5,7 +5,7 @@ import { apiClient } from '../../api'
 import { t } from '../../i18n'
 import { useHomeCollection } from '../../composables/useHomeCollection'
 import { MotionCollapse, MotionList, MotionSkeleton } from '../motion'
-import { PButton } from '../pixel'
+import { PixelIcon } from '../pixel'
 import { formatBytes } from './home/homeFormat'
 import { fileBase64, shelfBlob } from './homeShelfFiles'
 
@@ -153,20 +153,43 @@ async function mutate(item: HomeShelfItem, action: 'delete' | 'restore') {
     await changed()
   }
 }
+function shelfKindIcon(kind: HomeShelfItem['kind']): string {
+  if (kind === 'text') return 'quote'
+  if (kind === 'image') return 'image'
+  return 'file'
+}
 </script>
 
 <template>
   <section class="home-panel home-shelf">
     <header>
-      <div>
-        <h4>{{ tr('置物架') }}</h4>
-        <p class="home-muted">{{ tr('你们互相递东西的地方。拖进来就是给她，她给你的也放在这里。') }}</p>
+      <div class="panel-brand">
+        <span class="panel-emblem" aria-hidden="true">
+          <PixelIcon name="inbox" size="sm" />
+        </span>
+        <div>
+          <div class="panel-title-row">
+            <h4>{{ tr('置物架') }}</h4>
+            <span v-if="scope" class="panel-count">{{ visible.length }}</span>
+          </div>
+          <p class="home-muted">
+            {{ tr('你们互相递东西的地方。拖进来就是给她，她给你的也放在这里。') }}
+          </p>
+        </div>
       </div>
-      <PButton size="sm" variant="ghost" :disabled="disabled" :loading="busy" @click="refresh">
-        {{ tr('刷新') }}
-      </PButton>
+      <button type="button" class="mech-btn" :disabled="disabled" @click="refresh">
+        <PixelIcon name="refresh" size="xs" :animation="busy ? 'spin' : ''" />
+        <span>{{ tr('刷新') }}</span>
+      </button>
     </header>
-    <p v-if="!scope" class="home-empty">{{ tr('先在上面选一段对话。') }}</p>
+
+    <div v-if="!scope" class="home-empty-state">
+      <span class="home-empty-state__icon" aria-hidden="true">
+        <PixelIcon name="chat" size="sm" />
+      </span>
+      <p>{{ tr('先在上面选一段对话。') }}</p>
+    </div>
+
     <div
       class="dropzone"
       :class="{ dragging, disabled: !scope }"
@@ -174,23 +197,41 @@ async function mutate(item: HomeShelfItem, action: 'delete' | 'restore') {
       @dragleave="dragging = false"
       @drop.prevent="drop"
     >
-      <span class="dropzone-text">
-        <strong>{{ tr('拖文件或文字到这里，就是给她。') }}</strong>
-        <small v-if="uploading" role="status">{{ tr('正在递给她…') }}</small>
-      </span>
+      <div class="dropzone-lead">
+        <span class="dropzone-icon" aria-hidden="true">
+          <PixelIcon :name="uploading ? 'loader' : 'download'" size="sm" :animation="uploading ? 'spin' : ''" />
+        </span>
+        <span class="dropzone-text">
+          <strong>{{ tr('拖文件或文字到这里，就是给她。') }}</strong>
+          <small v-if="uploading" role="status">{{ tr('正在递给她…') }}</small>
+        </span>
+      </div>
       <span class="dropzone-actions">
-        <PButton size="sm" variant="ghost" :disabled="disabled" @click="writing = !writing">
-          {{ writing ? tr('收起') : tr('写几句给她') }}
-        </PButton>
-        <PButton
-          size="sm"
-          variant="secondary"
+        <button
+          type="button"
+          class="mech-btn"
+          :class="{ 'is-active': writing }"
           :disabled="disabled"
-          :loading="uploading"
+          @click="writing = !writing"
+        >
+          <PixelIcon :name="writing ? 'chevron-up' : 'pencil'" size="xs" />
+          <span>{{ writing ? tr('收起') : tr('写几句给她') }}</span>
+        </button>
+        <button
+          type="button"
+          class="mech-btn mech-btn--split mech-btn--primary"
+          :disabled="disabled"
           @click="input?.click()"
         >
-          {{ tr('选择文件') }}
-        </PButton>
+          <span class="mech-btn__chamber" aria-hidden="true">
+            <PixelIcon
+              :name="uploading ? 'loader' : 'folder'"
+              size="xs"
+              :animation="uploading ? 'spin' : ''"
+            />
+          </span>
+          <span class="mech-btn__label">{{ tr('选择文件') }}</span>
+        </button>
       </span>
       <input
         ref="input"
@@ -201,6 +242,7 @@ async function mutate(item: HomeShelfItem, action: 'delete' | 'restore') {
         @change="giveFiles(Array.from(($event.target as HTMLInputElement).files ?? []))"
       />
     </div>
+
     <MotionCollapse :open="writing">
       <form class="give-text" @submit.prevent="giveText()">
         <label>
@@ -212,12 +254,20 @@ async function mutate(item: HomeShelfItem, action: 'delete' | 'restore') {
           <textarea v-model="text" rows="3" maxlength="65536" :disabled="disabled" />
         </label>
         <div class="actions">
-          <PButton type="submit" size="sm" :disabled="disabled || !text.trim()">
-            {{ tr('给她') }}
-          </PButton>
+          <button
+            type="submit"
+            class="mech-btn mech-btn--split mech-btn--primary"
+            :disabled="disabled || !text.trim()"
+          >
+            <span class="mech-btn__chamber" aria-hidden="true">
+              <PixelIcon name="send" size="xs" />
+            </span>
+            <span class="mech-btn__label">{{ tr('给她') }}</span>
+          </button>
         </div>
       </form>
     </MotionCollapse>
+
     <Transition name="motion-rise">
       <p v-if="error || localError" role="alert" class="home-error">
         {{ error || (localError && tr(localError.source, localError.args)) }}
@@ -226,56 +276,87 @@ async function mutate(item: HomeShelfItem, action: 'delete' | 'restore') {
     <Transition name="motion-rise">
       <p v-if="notice" role="status" class="home-ok">{{ tr(notice.source, notice.args) }}</p>
     </Transition>
+
     <div v-if="scope" class="toolbar">
-      <label class="check">
+      <label class="check" :class="{ 'is-checked': showDeleted }">
         <input v-model="showDeleted" type="checkbox" />
-        {{ tr('看已删除的') }}
+        <span class="check-box" aria-hidden="true">
+          <PixelIcon v-if="showDeleted" name="check" size="xs" />
+        </span>
+        <PixelIcon name="trash" size="xs" />
+        <span>{{ tr('看已删除的') }}</span>
       </label>
     </div>
+
     <MotionSkeleton v-if="scope && busy && !items.length" :rows="2" />
-    <p v-else-if="scope && !visible.length" class="home-empty">
-      {{ showDeleted ? tr('没有删掉的东西。') : tr('置物架还是空的。') }}
-    </p>
+    <div v-else-if="scope && !visible.length" class="home-empty-state">
+      <span class="home-empty-state__icon" aria-hidden="true">
+        <PixelIcon :name="showDeleted ? 'trash' : 'archive'" size="sm" />
+      </span>
+      <p>{{ showDeleted ? tr('没有删掉的东西。') : tr('置物架还是空的。') }}</p>
+    </div>
+
     <MotionList tag="ul" class="home-list">
       <li v-for="item in visible" :key="item.id" class="item">
+        <span class="item-badge item-badge--sky" aria-hidden="true">
+          <PixelIcon :name="shelfKindIcon(item.kind)" size="xs" />
+        </span>
         <div class="item-name">
           <strong>{{ item.name }}</strong>
-          <small>
-            {{ item.from === 'user' ? tr('你给她的') : tr('她给你的') }} ·
-            {{ formatBytes(item.size) }}
+          <small class="item-meta">
+            <span
+              class="item-chip"
+              :class="item.from === 'user' ? 'item-chip--user' : 'item-chip--agent'"
+            >
+              {{ item.from === 'user' ? tr('你给她的') : tr('她给你的') }}
+            </span>
+            <span>{{ formatBytes(item.size) }}</span>
           </small>
         </div>
         <span class="home-row-actions">
-          <PButton
+          <button
             v-if="!item.deletedAt"
-            size="sm"
-            variant="ghost"
+            type="button"
+            class="mech-btn mech-btn--sm"
             :disabled="disabled"
             @click="view(item)"
           >
-            {{ tr('查看') }}
-          </PButton>
-          <PButton
-            size="sm"
-            variant="ghost"
+            <PixelIcon name="eye" size="xs" />
+            <span>{{ tr('查看') }}</span>
+          </button>
+          <button
+            type="button"
+            class="mech-btn mech-btn--sm"
+            :class="{ 'mech-btn--danger': !item.deletedAt }"
             :disabled="disabled"
             @click="mutate(item, item.deletedAt ? 'restore' : 'delete')"
           >
-            {{ item.deletedAt ? tr('恢复') : tr('删除') }}
-          </PButton>
+            <PixelIcon :name="item.deletedAt ? 'repeat' : 'trash'" size="xs" />
+            <span>{{ item.deletedAt ? tr('恢复') : tr('删除') }}</span>
+          </button>
         </span>
       </li>
     </MotionList>
+
     <Transition name="motion-rise">
       <section v-if="selected" class="preview" :aria-label="tr('物品内容')">
         <header>
           <strong>{{ selected.name }}</strong>
-          <PButton size="sm" variant="ghost" @click="clearPreview">{{ tr('关闭') }}</PButton>
+          <button type="button" class="mech-btn mech-btn--sm" @click="clearPreview">
+            <PixelIcon name="close" size="xs" />
+            <span>{{ tr('关闭') }}</span>
+          </button>
         </header>
         <pre v-if="selected.value !== undefined">{{ selected.value }}</pre>
         <img v-if="preview && isImage" :src="preview" :alt="selected.name" />
-        <a v-if="preview" :href="preview" :download="selected.name.replace(/[/\\]/g, '_')">
-          {{ tr('下载文件') }}
+        <a
+          v-if="preview"
+          class="preview-download"
+          :href="preview"
+          :download="selected.name.replace(/[/\\]/g, '_')"
+        >
+          <PixelIcon name="download" size="xs" />
+          <span>{{ tr('下载文件') }}</span>
         </a>
       </section>
     </Transition>

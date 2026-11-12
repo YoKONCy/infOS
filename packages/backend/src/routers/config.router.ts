@@ -172,23 +172,47 @@ export function createConfigRouter(ctx: AppContext) {
     return next()
   })
 
-  let writing = false
-  // 激活期间禁止另一端修改关联配置，避免验证的是一个模型、最终保存的是另一个。
+  let activatingEmbedding = false
+  let writeChain = Promise.resolve()
+  // Embedding 远程激活期间禁止另一端并发修改配置；常规配置保存走轻量串行链，避免连续点击报错。
   router.use('*', async (c, next) => {
+    const isActivate = c.req.method === 'POST' && /\/embedding\/activate$/.test(c.req.path)
     const mutating =
+      isActivate ||
       c.req.method === 'PUT' ||
       c.req.method === 'DELETE' ||
-      (c.req.method === 'POST' && /\/(embedding\/activate|import)$/.test(c.req.path))
+      (c.req.method === 'POST' && /\/import$/.test(c.req.path))
     if (!mutating) return next()
-    if (writing)
+    if (activatingEmbedding)
       throw new AppError('RESOURCE_BUSY', {
         message: __t('server.index-maintenance', '配置正在保存，请稍后重试'),
       })
-    writing = true
+    if (isActivate) {
+      activatingEmbedding = true
+      try {
+        await writeChain.catch(() => undefined)
+        await next()
+      } finally {
+        activatingEmbedding = false
+      }
+      return
+    }
+    let release!: () => void
+    const prev = writeChain
+    writeChain = new Promise<void>((resolve) => {
+      release = resolve
+    })
+    await prev.catch(() => undefined)
+    if (activatingEmbedding) {
+      release()
+      throw new AppError('RESOURCE_BUSY', {
+        message: __t('server.index-maintenance', '配置正在保存，请稍后重试'),
+      })
+    }
     try {
       await next()
     } finally {
-      writing = false
+      release()
     }
   })
 
@@ -348,8 +372,8 @@ export function createConfigRouter(ctx: AppContext) {
   router.put('/batch', zValidator('json', batchSetConfigSchema), async (c) => {
     const { items } = c.req.valid('json')
     const pendingReloads = new Set<string>()
+    await ctx.configRepo.replaceMany(items.map((item) => [item.key, item.value] as const))
     for (const item of items) {
-      await ctx.configRepo.set(item.key, item.value)
       // 日志级别热更新（批量保存时同样生效）
       applyLogLevelHotReload(item.key, item.value)
       for (const { prefix, method } of HOT_RELOAD_MAP) {
@@ -408,6 +432,7 @@ export function createConfigRouter(ctx: AppContext) {
     let imported = 0
     let skipped = 0
     const changedKeys: string[] = []
+    const pendingWrites: Array<readonly [string, string]> = []
 
     for (const [key, value] of Object.entries(data)) {
       if (!overwrite) {
@@ -417,11 +442,16 @@ export function createConfigRouter(ctx: AppContext) {
           continue
         }
       }
-      await ctx.configRepo.set(key, value)
-      // 日志级别热更新（导入配置时同样生效）
+      pendingWrites.push([key, value])
       changedKeys.push(key)
-      applyLogLevelHotReload(key, value)
       imported++
+    }
+    if (pendingWrites.length > 0) {
+      await ctx.configRepo.replaceMany(pendingWrites)
+      for (const [key, value] of pendingWrites) {
+        // 日志级别热更新（导入配置时同样生效）
+        applyLogLevelHotReload(key, value)
+      }
     }
 
     if (Object.prototype.hasOwnProperty.call(data, MEMORY_RUNTIME_CONFIG_KEY)) {

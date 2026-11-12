@@ -14,7 +14,7 @@ import { threadDisplayName } from '../../../utils/threadPresentation'
  * 3. 全局互斥的智能陪伴与自主行动设置
  * 4. 最近对话时间线
  */
-import { ref, computed, onMounted, onUnmounted, watch } from 'vue'
+import { ref, computed, onActivated, onMounted, onUnmounted, watch } from 'vue'
 import WeatherCard from '../../weather/WeatherCard.vue'
 import TokenUsageCard from '../../usage/TokenUsageCard.vue'
 import AchievementsCard from '../../achievements/AchievementsCard.vue'
@@ -37,6 +37,8 @@ const agentStore = useAgentStore()
 const petStateStore = usePetStateStore()
 
 const isLoading = ref(true)
+const hasLoadedOnce = ref(false)
+let lastLoadedAt = 0
 
 // ══════ 统计数据 ══════
 const stats = ref({
@@ -161,7 +163,7 @@ const systemHealth = ref({
 
 // ══════ 加载 ══════
 async function loadOverview() {
-  isLoading.value = true
+  if (!hasLoadedOnce.value) isLoading.value = true
   try {
     const [sysRes, memRes, taskRes, sessRes] = await Promise.allSettled([
       systemApi.info(),
@@ -169,7 +171,9 @@ async function loadOverview() {
       schedulerApi.reminders(),
       threadsApi.list({ pageSize: 5 }),
     ])
-    await agentStore.fetchAgents()
+    if (!agentStore.agents.length) {
+      await agentStore.fetchAgents()
+    }
     ctx.activeAgentId.value = agentStore.activeAgentId
 
     // 系统信息
@@ -218,6 +222,8 @@ async function loadOverview() {
 
     // 加载当前角色状态
     await loadPetState()
+    hasLoadedOnce.value = true
+    lastLoadedAt = Date.now()
   } catch (err) {
     logger.error('OverviewTab', __t('logs.frontend.settings', '加载总览数据失败'), err)
   } finally {
@@ -235,6 +241,11 @@ onMounted(() => {
   void loadOverview()
   document.addEventListener('pointerdown', onAgentOutside)
 })
+onActivated(() => {
+  if (hasLoadedOnce.value && Date.now() - lastLoadedAt > 15_000) {
+    void loadOverview()
+  }
+})
 onUnmounted(() => document.removeEventListener('pointerdown', onAgentOutside))
 </script>
 
@@ -243,7 +254,7 @@ onUnmounted(() => document.removeEventListener('pointerdown', onAgentOutside))
     <PackageSlot region="dashboard.overview" />
     <!-- 加载中 -->
     <MotionSkeleton
-      v-if="isLoading"
+      v-if="isLoading && !hasLoadedOnce"
       variant="card"
       :rows="4"
       :label="__t('ui.settings', '加载中...')"

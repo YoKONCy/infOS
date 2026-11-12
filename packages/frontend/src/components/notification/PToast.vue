@@ -149,7 +149,7 @@ const defaultTitleMap: Record<string, string> = {
 }
 
 /* 浅色主题：浅底深字，像素风的实色描边保留 */
-:global([data-theme='light']) .toast-item {
+[data-theme='light'] .toast-item {
   --toast-bg: #ffffff;
   --toast-line: #0f172a;
   --toast-head: #f1f5f9;

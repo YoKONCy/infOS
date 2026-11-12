@@ -1,17 +1,19 @@
 <script setup lang="ts">
 import { t as __t } from '../../i18n/index'
 
-import { computed, ref } from 'vue'
+import { computed, defineAsyncComponent, ref } from 'vue'
 import { INTEGRATION_PROVIDERS, type IntegrationFeature } from '@infos/shared'
 import { PCard, PButton, PixelIcon } from '../pixel'
-import McpTab from '../dashboard/tabs/McpTab.vue'
-import ExtensionToolsPane from './ExtensionToolsPane.vue'
-import FeatureSourcesPage from './FeatureSourcesPage.vue'
 import IntegrationBrand from './IntegrationBrand.vue'
-import PackageManagerPane from './PackageManagerPane.vue'
-import ResourceVersionsPane from './ResourceVersionsPane.vue'
 import InstalledExtensionsPane from './InstalledExtensionsPane.vue'
 import { useIntegrations } from '../../composables/tools/useIntegrations'
+
+// 非默认激活的子面板按需异步加载，避免切入「技能与扩展」时一次性解析全部 7 个重型模块
+const McpTab = defineAsyncComponent(() => import('../dashboard/tabs/McpTab.vue'))
+const ExtensionToolsPane = defineAsyncComponent(() => import('./ExtensionToolsPane.vue'))
+const FeatureSourcesPage = defineAsyncComponent(() => import('./FeatureSourcesPage.vue'))
+const PackageManagerPane = defineAsyncComponent(() => import('./PackageManagerPane.vue'))
+const ResourceVersionsPane = defineAsyncComponent(() => import('./ResourceVersionsPane.vue'))
 
 const { state, error } = useIntegrations()
 const tab = ref<
@@ -76,10 +78,9 @@ const pdfLogo = computed(() => {
 <template>
   <div class="integrations-page">
     <header class="integration-heading">
-      <PixelIcon name="terminal" size="lg" />
+      <PixelIcon name="puzzle" size="lg" />
       <div>
-        <h1>{{ __t('ui.integrations', '工具与扩展') }}</h1>
-        <p>TOOLS & EXTENSIONS</p>
+        <h1>{{ __t('ui.navigation', '技能与扩展') }}</h1>
       </div>
     </header>
     <nav class="integration-tabs" :aria-label="__t('ui.integrations', '工具与扩展分类')">
