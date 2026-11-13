@@ -19,14 +19,14 @@
     "@infos/backend": "workspace:*",
     "@infos/shared": "workspace:*",
     "@hono/node-server": "^1.14.0",
-    "hono": "^4.7.0",
-    "ws": "^8.20.0"
+    "hono": "^4.13.17",
+    "ws": "^8.22.2"
   },
   "devDependencies": {
     "@types/node": "^22.15.0",
-    "@types/ws": "^8.18.1",
-    "rimraf": "^6.1.2",
-    "tsx": "^4.20.0",
+    "@types/ws": "^8.18.2",
+    "rimraf": "^6.1.4",
+    "tsx": "^4.23.15",
     "typescript": "^5.9.3"
   }
 }

@@ -12,18 +12,18 @@
     "@infos/shared": "workspace:*",
     "@nut-tree-fork/nut-js": "^4.2.6",
     "adm-zip": "^0.5.17",
-    "ws": "^8.20.0"
+    "ws": "^8.22.2"
   },
   "devDependencies": {
     "@types/node": "^22.15.0",
-    "@types/ws": "^8.18.1",
+    "@types/ws": "^8.18.2",
     "electron": "44.9.3",
     "electron-vite": "^3.1.0",
-    "rimraf": "^6.1.2",
+    "rimraf": "^6.1.4",
     "typescript": "^5.9.3"
   },
   "optionalDependencies": {
-    "bufferutil": "^4.1.0",
+    "bufferutil": "^4.2.0",
     "utf-8-validate": "^6.0.6"
   }
 }
